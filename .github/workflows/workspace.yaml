@@ -1,0 +1,29 @@
+name: workspace
+
+on:
+  push:
+    paths:
+      - 'Makefile'
+
+jobs:
+  workspace-macOS:
+    runs-on: macOS-latest
+    steps:
+    - uses: actions/checkout@v1
+
+    - name: Install nvim
+      run: |
+        export HOMEBREW_NO_AUTO_UPDATE=1
+        make nvim
+    - name: Install tmux
+      run: make tmux
+
+  workspace-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+
+    - name: Install tmux
+      run: |
+        make tmux-ubuntu
+        make tmux-config
