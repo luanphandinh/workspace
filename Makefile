@@ -1,8 +1,10 @@
 ifneq (,$(findstring mac,$(OS)))
 	install := brew install
+	nvim_deps := fd
 	setup_script := echo "Run installer for macOs"
 else
 	install := sudo apt-get install
+	nvim_deps := fd-find
 	setup_script := echo "Run installer for linux" && sudo apt-get update
 endif
 
@@ -12,7 +14,7 @@ setup:
 
 nvim-install:
 	@$(install) neovim
-	@$(install) fd || @$(install) fd-find
+	@$(install) $(nvim_deps)
 	@$(install) ripgrep
 	curl -fLo ~/.local/share/nvim/site/autoload/plug.vim --create-dirs \
     https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
@@ -24,9 +26,9 @@ nvim-config:
 	nvim -c 'CocInstall -sync|q'
 
 tmux-install:
-	@$(install) install tmux
+	@$(install) tmux
 	tmux new -d
-	git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+	test -d ~/.tmux/plugins/tpm || git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
 tmux-config:
 	cp ./tmux/.tmux.conf ~/.tmux.conf
 	tmux source ~/.tmux.conf
