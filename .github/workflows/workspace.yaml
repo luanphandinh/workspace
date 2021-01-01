@@ -11,12 +11,10 @@ jobs:
     steps:
     - uses: actions/checkout@v1
 
-    - name: Install nvim
+    - name: Workspace
       run: |
         export HOMEBREW_NO_AUTO_UPDATE=1
-        make nvim
-    - name: Install tmux
-      run: make tmux
+        make OS=mac
 
   workspace-ubuntu:
     runs-on: ubuntu-latest
@@ -24,6 +22,4 @@ jobs:
     - uses: actions/checkout@v1
 
     - name: Install tmux
-      run: |
-        make tmux-ubuntu
-        make tmux-config
+      run: make
