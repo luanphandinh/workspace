@@ -1,19 +1,21 @@
-mac: nvim-install-mac nvim-config tmux-mac tmux-config
-ubuntu: nvim-install-ubuntu nvim-config tmux-ubuntu tmux-config
+ifneq (,$(findstring mac,$(OS)))
+	install := brew install
+	nvim_deps := fd
+	setup_script := echo "Run installer for macOs"
+else
+	install := sudo apt-get install
+	nvim_deps := fd-find
+	setup_script := echo "Run installer for linux" && sudo apt-get update
+endif
 
-nvim: nvim-install-mac nvim-config
-nvim-ubuntu: nvim-install-ubuntu nvim-config
-nvim-install-mac:
-	brew install neovim
-	brew install fd
-	brew install ripgrep
-	curl -fLo ~/.local/share/nvim/site/autoload/plug.vim --create-dirs \
-    https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
+workspace: setup nvim-install nvim-config tmux-install tmux-config
+setup:
+	@$(setup_script)
 
-nvim-install-ubuntu:
-	sudo apt-get install neovim
-	sudo apt-get install fd-find
-	sudo apt-get install ripgrep
+nvim-install:
+	@$(install) neovim
+	@$(install) $(nvim_deps)
+	@$(install) ripgrep
 	curl -fLo ~/.local/share/nvim/site/autoload/plug.vim --create-dirs \
     https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
 
@@ -23,16 +25,11 @@ nvim-config:
 	nvim +PlugInstall +qall
 	nvim -c 'CocInstall -sync|q'
 
-tmux: tmux-mac tmux-config
-tmux-mac:
-	brew install tmux
+tmux-install:
+	@$(install) tmux
 	tmux new -d
-	git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
-tmux-ubuntu:
-	sudo apt-get update
-	sudo apt-get install tmux
-	tmux new -d
-	git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+	test -d ~/.tmux/plugins/tpm || git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+
 tmux-config:
 	cp ./tmux/.tmux.conf ~/.tmux.conf
 	tmux source ~/.tmux.conf
