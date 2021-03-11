@@ -1,5 +1,7 @@
 name: workspace
 
+on: [push]
+
 jobs:
   workspace-macOS:
     runs-on: macOS-latest
