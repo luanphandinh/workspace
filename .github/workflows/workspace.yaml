@@ -1,10 +1,5 @@
 name: workspace
 
-on:
-  push:
-    paths:
-      - 'Makefile'
-
 jobs:
   workspace-macOS:
     runs-on: macOS-latest
@@ -14,7 +9,7 @@ jobs:
     - name: Workspace
       run: |
         export HOMEBREW_NO_AUTO_UPDATE=1
-        make OS=mac
+        make os=mac
 
   workspace-ubuntu:
     runs-on: ubuntu-latest
