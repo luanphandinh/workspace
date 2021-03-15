@@ -20,3 +20,19 @@ jobs:
 
     - name: Install tmux
       run: make
+
+  go-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+
+    - name: Install golang
+      run: make go
+
+  go-macOs:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+
+    - name: Install golang
+      run: make go os=mac
