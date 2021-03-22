@@ -5,8 +5,8 @@ set shiftwidth=2
 set expandtab
 
 " specific filetypes
-autocmd FileType javascript setlocal expandtab! shiftwidth=4 tabstop=4
-autocmd FileType typescript setlocal expandtab! shiftwidth=4 tabstop=4
+" autocmd FileType javascript setlocal expandtab! shiftwidth=4 tabstop=4
+" autocmd FileType typescript setlocal expandtab! shiftwidth=4 tabstop=4
 autocmd FileType graphql setlocal expandtab! shiftwidth=4 tabstop=4
 
 autocmd FileType php setlocal expandtab! shiftwidth=4 tabstop=4

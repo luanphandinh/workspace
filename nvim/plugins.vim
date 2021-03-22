@@ -17,6 +17,10 @@ Plug 'tiagofumo/vim-nerdtree-syntax-highlight'
 " Able to use Ctrl + h/j/k/l to move beteen panel
 Plug 'christoomey/vim-tmux-navigator'
 
+" Indent line plugin
+Plug 'Yggdroot/indentLine'
+Plug 'vim-airline/vim-airline'
+
 " Icons
 " Need to install 'font-firacode-nerd-font-mono'
 Plug 'ryanoasis/vim-devicons'
