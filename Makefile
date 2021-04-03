@@ -10,7 +10,7 @@ else
 	setup_script := echo "Run installer for linux" && sudo apt-get update
 endif
 
-go_version := 1.16.1
+go_version := 1.16.2
 
 workspace: setup nvim-install nvim-config tmux-install tmux-config cleanup
 go: setup go-install cleanup
@@ -25,6 +25,7 @@ nvim-install:
 	@$(install) neovim
 	@$(install) $(nvim_deps)
 	@$(install) ripgrep
+	pip3 install pynvim
 	curl -fLo ~/.local/share/nvim/site/autoload/plug.vim --create-dirs \
     https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
 

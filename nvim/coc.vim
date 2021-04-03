@@ -8,7 +8,7 @@ let g:coc_global_extensions = [
   \ ]
 " This is for golang auto organize and stuff
 " https://github.com/golang/tools/blob/master/gopls/doc/vim.md
-autocmd BufWritePre *.go :call CocAction('runCommand', 'editor.action.organizeImport')
+" autocmd BufWritePre *.go :call CocAction('runCommand', 'editor.action.organizeImport')
 " let g:indentLine_enabled = 1
 " let g:indentLine_char_list = ['|', '¦', '┆', '┊']
 
