@@ -35,10 +35,6 @@ command! -bang -nargs=* Ag
 " hightlight current line
 set cursorline
 
-" Toggle comments
-vmap ++ <plug>NERDCommenterToggle
-nmap ++ <plug>NERDCommenterToggle
-
 syntax on
 colorscheme gruvbox
 set nu " line numbers
