@@ -35,6 +35,9 @@ Plug 'scrooloose/nerdcommenter'
 " Vim surround
 Plug 'tpope/vim-surround'
 
+" Vim go
+Plug 'fatih/vim-go', { 'do': ':GoUpdateBinaries' }
+
 " TS syntax
 " Plug 'HerringtonDarkholme/yats.vim'
 " Plug 'autozimu/LanguageClient-neovim', {
