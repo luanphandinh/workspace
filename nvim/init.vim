@@ -19,6 +19,10 @@ nmap <C-p> :Files <CR>
 nmap <C-f> :Ag <CR>
 " Delete buffer
 nmap <C-w> :bdelete<CR>
+" Go to the next buffer
+nmap <C-j> :bn<CR>
+" Go the previous buffer
+nmap <C-k> :bp<CR>
 " Preview window
 command! -bang -nargs=? -complete=dir Files
     \ call fzf#vim#files(<q-args>, fzf#vim#with_preview({'options': ['--layout=reverse','--info=inline']}), <bang>0)
@@ -30,10 +34,6 @@ command! -bang -nargs=* Ag
 
 " hightlight current line
 set cursorline
-
-" Toggle comments
-vmap ++ <plug>NERDCommenterToggle
-nmap ++ <plug>NERDCommenterToggle
 
 syntax on
 colorscheme gruvbox
