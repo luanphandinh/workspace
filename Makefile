@@ -34,6 +34,7 @@ nvim-config:
 	cp -r ./nvim/. ~/.config/nvim/
 	nvim +PlugInstall +qall
 	nvim -c 'CocInstall -sync|q'
+	nvim +PlugClean +qall
 
 tmux-install:
 	@$(install) tmux
