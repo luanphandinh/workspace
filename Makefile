@@ -56,3 +56,6 @@ go-install:
 	sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf ./tmp/go.tar.gz
 	chmod +x ./go.sh
 	./go.sh
+
+coc:
+	nvim -c 'GoUpdateBinaries'
