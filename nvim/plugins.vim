@@ -14,10 +14,8 @@ Plug 'Xuyuanp/nerdtree-git-plugin'
 Plug 'airblade/vim-gitgutter'
 Plug 'tiagofumo/vim-nerdtree-syntax-highlight'
 
-Plug 'fatih/vim-go', { 'do': ':GoUpdateBinaries' }
-
 " Able to use Ctrl + h/j/k/l to move beteen panel
-Plug 'christoomey/vim-tmux-navigator'
+" Plug 'christoomey/vim-tmux-navigator'
 
 " Indent line plugin
 Plug 'Yggdroot/indentLine'
