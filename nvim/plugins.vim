@@ -32,6 +32,9 @@ Plug 'morhetz/gruvbox'
 " Commenter
 Plug 'scrooloose/nerdcommenter'
 
+" Vim surround
+Plug 'tpope/vim-surround'
+
 " TS syntax
 " Plug 'HerringtonDarkholme/yats.vim'
 " Plug 'autozimu/LanguageClient-neovim', {
