@@ -18,11 +18,17 @@ nmap <C-s> :w <CR>
 nmap <C-p> :Files <CR>
 nmap <C-f> :Ag <CR>
 " Delete buffer
-nmap <C-w> :bdelete<CR>
+nmap <leader>qq :bdelete<CR>
+nmap <leader>qa :bufdo bd<CR>
 " Go to the next buffer
-nmap <C-j> :bn<CR>
+nmap <C-k> :bn<CR>
 " Go the previous buffer
-nmap <C-k> :bp<CR>
+nmap <C-j> :bp<CR>
+
+nmap <F5> :Format<CR>
+" Go to the vertercal pane
+map <C-h> <C-W>h
+map <C-l> <C-W>l
 " Preview window
 command! -bang -nargs=? -complete=dir Files
     \ call fzf#vim#files(<q-args>, fzf#vim#with_preview({'options': ['--layout=reverse','--info=inline']}), <bang>0)
