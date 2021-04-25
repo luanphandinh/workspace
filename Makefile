@@ -12,7 +12,7 @@ endif
 
 go_version := 1.16.2
 
-workspace: setup nvim-install nvim-config tmux-install tmux-config cleanup
+workspace: setup nvim-install nvim-config tmux-install tmux-config bash-config cleanup
 go: setup go-install cleanup
 setup:
 	test -d ./tmp || mkdir -p ./tmp
@@ -45,6 +45,10 @@ tmux-config:
 	cp ./tmux/.tmux.conf ~/.tmux.conf
 	tmux source ~/.tmux.conf
 	~/.tmux/plugins/tpm/scripts/install_plugins.sh
+
+bash-config:
+	chmod +x ./statusline.sh
+	./statusline.sh
 
 nodejs:
 	curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.37.2/install.sh | bash
