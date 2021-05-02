@@ -1,17 +1,19 @@
 #!/bin/bash
-STATUS_LINE='export PS1="\e[1;32m\W \$ \e[0m"'
-STOP_BELL='bind "set bell-style none"'
-if [ -f ~/.profile ]; then
-  grep -F "$STATUS_LINE" ~/.profile 2>/dev/null || echo "$STATUS_LINE" >> ~/.profile
-  grep -F "$STOP_BELL" ~/.profile 2>/dev/null || echo "$STOP_BELL" >> ~/.profile
-fi
+CONFS=(
+  'export PS1="\e[1;32m\W \$ \e[0m"'
+  'bind "set bell-style none"'
+)
 
-if [ -f ~/.bashrc ]; then
-  grep -F "$STATUS_LINE" ~/.bashrc 2>/dev/null || echo "$STATUS_LINE" >> ~/.bashrc
-  grep -F "$STOP_BELL" ~/.bashrc 2>/dev/null || echo "$STOP_BELL" >> ~/.bashrc
-fi
+for CONF in "${CONFS[@]}"; do
+  if [ -f ~/.profile ]; then
+    grep -F "$CONF" ~/.profile 2>/dev/null || echo "$CONF" >> ~/.profile
+  fi
 
-if [ -f ~/.bash_profile ]; then
-  grep -F "$STATUS_LINE" ~/.bash_profile 2>/dev/null || echo "$STATUS_LINE" >> ~/.bash_profile
-  grep -F "$STOP_BELL" ~/.bash_profile 2>/dev/null || echo "$STOP_BELL" >> ~/.bash_profile
-fi
+  if [ -f ~/.bashrc ]; then
+    grep -F "$CONF" ~/.bashrc 2>/dev/null || echo "$CONF" >> ~/.bashrc
+  fi
+
+  if [ -f ~/.bash_profile ]; then
+    grep -F "$CONF" ~/.bash_profile 2>/dev/null || echo "$CONF" >> ~/.bash_profile
+  fi
+done
