@@ -47,8 +47,8 @@ tmux-config:
 	~/.tmux/plugins/tpm/scripts/install_plugins.sh
 
 bash-config:
-	chmod +x ./statusline.sh
-	./statusline.sh
+	chmod +x ./bash-conf.sh
+	./bash-conf.sh
 
 nodejs:
 	curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.37.2/install.sh | bash
