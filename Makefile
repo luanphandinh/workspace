@@ -14,6 +14,7 @@ go_version := 1.16.2
 
 workspace: setup nvim-install nvim-config tmux-install tmux-config bash-config cleanup
 go: setup go-install cleanup
+aws-cli: setup aws-cli-install cleanup
 setup:
 	test -d ./tmp || mkdir -p ./tmp
 	@$(setup_script)
@@ -60,6 +61,11 @@ go-install:
 	sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf ./tmp/go.tar.gz
 	chmod +x ./go.sh
 	./go.sh
+
+aws-cli-install:
+	cd tmp && curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+	cd tmp && unzip awscliv2.zip
+	cd tmp && sudo ./aws/install
 
 coc:
 	nvim -c 'GoUpdateBinaries'
