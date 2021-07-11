@@ -18,7 +18,7 @@ jobs:
     steps:
     - uses: actions/checkout@v1
 
-    - name: Install tmux
+    - name: Workspace
       run: make workspace
 
   go-ubuntu:

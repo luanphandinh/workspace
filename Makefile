@@ -1,6 +1,6 @@
 ifneq (,$(findstring mac,$(os)))
 	install := brew install
-	deps := fd python3 pip3
+	deps := fd python3
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
 else
