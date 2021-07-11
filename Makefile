@@ -1,11 +1,11 @@
 ifneq (,$(findstring mac,$(os)))
 	install := brew install
-	deps := fd python3
+	deps := fd python3 node
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
 else
 	install := sudo apt-get install
-	deps := fd-find python3-pip
+	deps := fd-find python3-pip nodejs npm
 	os_name := linux
 	setup_script := echo "Run installer for linux" && sudo apt-get update
 endif
