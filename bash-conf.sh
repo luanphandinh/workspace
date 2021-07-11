@@ -2,6 +2,7 @@
 CONFS=(
   'export PS1="\e[1;32m\W \$ \e[0m"'
   'bind "set bell-style none"'
+  'export PS1="\n$PS1"'
 )
 
 for CONF in "${CONFS[@]}"; do
