@@ -20,3 +20,7 @@ autocmd BufWritePre * %s/\s\+$//e
 " coc-prettier
 command! -nargs=0 Prettier :CocCommand prettier.formatFile
 
+
+" Fold all function with marker {,}, this won't work for python tho lol
+set foldmethod=marker
+set foldmarker={,}
