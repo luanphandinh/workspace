@@ -17,7 +17,7 @@ help: ## Please use os=mac if you using mac
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t\t/'
 
 workspace:  ## Install nvim + tmux with configuration respectively.
-workspace: setup nvim tmux bash-config cleanup
+workspace: setup nvim tmux bash-config oh-my-zsh cleanup
 
 setup: ## Depend on the os params, os=mac will use brew, default is ubuntu apt-get
 	test -d ./tmp || mkdir -p ./tmp
@@ -76,3 +76,10 @@ aws-cli-install:
 
 coc:
 	nvim -c 'GoUpdateBinaries'
+
+oh-my-zsh: ## install oh-my-zsh
+oh-my-zsh:
+	@$(install) zsh
+	cd tmp && curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh -o oh-my-zsh.sh
+	cd tmp && chmod +x ./oh-my-zsh.sh
+	cd tmp && ./oh-my-zsh.sh
