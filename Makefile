@@ -3,11 +3,15 @@ ifneq (,$(findstring mac,$(os)))
 	deps := fd python3 node
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
+	setup_cmds := echo "Mac has nothing to setup"
 else
 	install := sudo apt-get install
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
 	setup_script := echo "Run installer for linux" && sudo apt-get update
+	setup_cmds := echo "npm cache clean -f\n" && npm cache clean -f && \
+		echo "npm install -g n\n" && sudo npm install -g n && \
+		echo "sudo n stable" && sudo n stable
 endif
 
 go_version := 1.16.5
@@ -23,6 +27,7 @@ setup: ## Depend on the os params, os=mac will use brew, default is ubuntu apt-g
 	test -d ./tmp || mkdir -p ./tmp
 	@$(setup_script)
 	@yes Y | $(install) $(deps)
+	@$(setup_cmds)
 
 cleanup: ## Clean up ./tmp folder
 	test -d ./tmp && rm -rf ./tmp
