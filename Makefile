@@ -1,11 +1,15 @@
 ifneq (,$(findstring mac,$(os)))
-	install := brew install
+	installer := brew install
+	neovim_script := brew install neovim
 	deps := fd python3 node
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
 	setup_cmds := echo "Mac has nothing to setup"
 else
-	install := sudo apt-get install
+	installer := sudo apt install
+	neovim_script := curl -L https://github.com/neovim/neovim/releases/latest/download/nvim.appimage > ./tmp/nvim && \
+		chmod u+x ./tmp/nvim && \
+		sudo mv ./tmp/nvim /usr/bin/nvim
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
 	setup_script := echo "Run installer for linux" && sudo apt-get update
@@ -16,7 +20,7 @@ endif
 
 go_version := 1.16.5
 
-.PHONY: help nvim tmux go
+.PHONY: help nvim tmux go update
 help: ## Please use os=mac if you using mac
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t\t/'
 
@@ -26,7 +30,7 @@ workspace: setup nvim tmux bash-config cleanup
 setup: ## Depend on the os params, os=mac will use brew, default is ubuntu apt-get
 	test -d ./tmp || mkdir -p ./tmp
 	@$(setup_script)
-	@yes Y | $(install) $(deps)
+	@yes Y | $(installer) $(deps)
 	@$(setup_cmds)
 
 cleanup: ## Clean up ./tmp folder
@@ -35,8 +39,8 @@ cleanup: ## Clean up ./tmp folder
 nvim: ## Install neovim + all plugins
 nvim: setup nvim-install nvim-config cleanup
 nvim-install: ## Install neovim
-	@$(install) neovim
-	@$(install) ripgrep
+	@$(neovim_script)
+	@$(installer) ripgrep
 	pip3 install pynvim
 	curl -fLo ~/.local/share/nvim/site/autoload/plug.vim --create-dirs \
     https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
@@ -51,7 +55,7 @@ nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 tmux: ## Install tmux + configurations + plugins
 tmux: setup tmux-install tmux-config cleanup
 tmux-install: ## Install tmux
-	@$(install) tmux
+	@$(installer) tmux
 	tmux new -d
 	test -d ~/.tmux/plugins/tpm || git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
 
