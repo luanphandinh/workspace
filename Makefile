@@ -14,7 +14,7 @@ else
 		echo "sudo n stable" && sudo n stable
 endif
 
-go_version := 1.16.5
+go_version := 1.17
 
 .PHONY: help nvim tmux go
 help: ## Please use os=mac if you using mac
