@@ -14,14 +14,14 @@ else
 		echo "sudo n stable" && sudo n stable
 endif
 
-go_version := 1.16.5
+go_version := 1.17
 
 .PHONY: help nvim tmux go
 help: ## Please use os=mac if you using mac
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t\t/'
 
 workspace:  ## Install nvim + tmux with configuration respectively.
-workspace: setup nvim tmux bash-config cleanup
+workspace: setup nvim tmux cleanup
 
 setup: ## Depend on the os params, os=mac will use brew, default is ubuntu apt-get
 	test -d ./tmp || mkdir -p ./tmp
@@ -59,10 +59,6 @@ tmux-config: ## Install tmux-config
 	cp ./tmux/.tmux.conf ~/.tmux.conf
 	tmux source ~/.tmux.conf
 	~/.tmux/plugins/tpm/scripts/install_plugins.sh
-
-bash-config: ## Change some bash config
-	chmod +x ./bash-conf.sh
-	./bash-conf.sh
 
 go: ## Install go with version from go_verion, currently 1.16.2
 go: setup go-install cleanup
