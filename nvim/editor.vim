@@ -20,3 +20,8 @@ autocmd BufWritePre * %s/\s\+$//e
 " coc-prettier
 command! -nargs=0 Prettier :CocCommand prettier.formatFile
 
+" fold
+nmap <leader>fa :setlocal foldmethod=indent<CR>
+
+" test current go func
+nmap <leader>gt :GoTestFunc<CR>
