@@ -19,6 +19,11 @@ help: ## Please use os=mac if you using mac
 workspace:  ## Install nvim + tmux with configuration respectively.
 workspace: setup nvim tmux bash-config cleanup
 
+workspace-config: ## install config for workspace
+workspace-config:
+	chmod +x workspace.sh
+	./workspace.sh
+
 setup: ## Depend on the os params, os=mac will use brew, default is ubuntu apt-get
 	test -d ./tmp || mkdir -p ./tmp
 	@$(setup_script)
@@ -41,7 +46,8 @@ nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	cp -r ./nvim/. ~/.config/nvim/
 	nvim +PlugInstall +qall
 	nvim -c 'CocInstall -sync|q'
-	nvim +PlugClean +qall
+	nvim --headless +VimspectorInstall +qall
+	nvim --headless +PlugClean +qall
 
 tmux: ## Install tmux + configurations + plugins
 tmux: setup tmux-install tmux-config cleanup

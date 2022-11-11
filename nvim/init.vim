@@ -2,6 +2,7 @@ source ~/.config/nvim/plugins.vim
 source ~/.config/nvim/editor.vim
 source ~/.config/nvim/airline.vim
 source ~/.config/nvim/coc.vim
+source ~/.config/nvim/spector.vim
 
 let $FZF_DEFAULT_COMMAND='fd --type f --hidden --exclude .git || fdfind --type f --hidden --exclude .git' " Use fd as default search
 let NERDTreeShowHidden=1
