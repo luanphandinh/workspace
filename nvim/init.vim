@@ -10,7 +10,7 @@ let NERDTreeIgnore=['\.DS_Store$', '\.git$'] " ignore files in nerd tree
 let NERDSpaceDelims=1 " NerdComenter will have extra space after comment sign
 
 nmap <C-n> :NERDTreeToggle<CR>
-nmap <C-m> :NERDTreeFind<CR>
+nmap <leader>m :NERDTreeFind<CR>
 " copy and paste to clipboard
 " set clipboard=unnamed,unnamedplus
 nmap <C-s> :w <CR>

@@ -59,7 +59,7 @@ bash-config: ## Change some bash config
 	chmod +x ./bash-conf.sh
 	./bash-conf.sh
 
-go: ## Install go with version from go_verion, currently 1.16.2
+go: ## Install go with version from go_verion, currently $(go_verion)
 go: setup go-install cleanup
 go-install:
 	curl https://dl.google.com/go/go$(go_version).$(os_name)-amd64.tar.gz > ./tmp/go.tar.gz
