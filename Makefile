@@ -33,7 +33,7 @@ cleanup: ## Clean up ./tmp folder
 	test -d ./tmp && rm -rf ./tmp
 
 nvim: ## Install neovim + all plugins
-nvim: setup nvim-install nvim-config cleanup
+nvim: setup nvim-install nvim-config nvim-plug cleanup
 nvim-install: ## Install neovim
 	@$(install) neovim
 	@$(install) ripgrep
@@ -44,6 +44,8 @@ nvim-install: ## Install neovim
 nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	cp -r ./nvim/. ~/.config/nvim/
+
+nvim-plug: ## Install neovim plugins
 	nvim +PlugInstall +qall
 	nvim -c 'CocInstall -sync|q'
 	nvim --headless +VimspectorInstall +qall

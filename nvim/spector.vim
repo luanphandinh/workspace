@@ -1,5 +1,23 @@
 let g:vimspector_enable_mappings = 'HUMAN'
+let g:vimspector_configurations = {
+\    'go-debug': {
+\      'adapter': 'delve',
+\      'configuration': {
+\        'request': 'launch',
+\        'program': '${fileDirname}',
+\        'mode': 'test',
+\         'args': [
+\                '-test.v',
+\                '-test.run',
+\                '$TEST_CASE'
+\            ],
+\            'showLog': 'true',
+\        'dlvToolPath': '$GOPATH/bin/dlv'     }
+\    }
+\ }
+
 nmap <leader>vl :call vimspector#Launch()<CR>
+nmap <leader>vd :call vimspector#LaunchWithSettings( #{ configuration: 'go-debug' } )<CR>
 nmap <leader>vr :VimspectorReset<CR>
 nmap <leader>ve :VimspectorEval
 nmap <leader>vw :VimspectorWatch
