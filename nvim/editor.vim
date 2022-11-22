@@ -56,8 +56,8 @@ nmap <F5> :Format<CR>
 " Go to the vertercal/horizontal pane
 map <C-h> <C-W>h
 map <C-l> <C-W>l
-map <C-j> <C-W>j
-map <C-k> <C-W>k
+map <C-Left> <C-W>j
+map <C-Right> <C-W>k
 
 " Preview window
 command! -bang -nargs=? -complete=dir Files

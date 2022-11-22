@@ -55,4 +55,3 @@ function spector#GetDebugTestName() abort
   let l:decl = getline(l:line)
   return split(split(l:decl, " ")[1], "(")[0]
 endfunction
-
