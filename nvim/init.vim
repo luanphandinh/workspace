@@ -9,4 +9,4 @@ let NERDTreeShowHidden=1
 let g:NERDTreeWinSize=40
 let NERDTreeIgnore=['\.DS_Store$', '\.git$'] " ignore files in nerd tree
 let NERDSpaceDelims=1 " NerdComenter will have extra space after comment sign
-
+" let g:go_gopls_options = ['-remote=auto']

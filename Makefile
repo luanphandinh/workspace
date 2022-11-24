@@ -49,7 +49,7 @@ nvim-plug: ## Install neovim plugins
 	nvim +PlugInstall +qall
 	nvim -c 'CocInstall -sync|q'
 	nvim --headless +VimspectorInstall +qall
-	nvim --headless +PlugClean +qall
+	nvim +PlugClean +qall
 
 tmux: ## Install tmux + configurations + plugins
 tmux: setup tmux-install tmux-config cleanup
