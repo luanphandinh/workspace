@@ -35,4 +35,6 @@ jobs:
     - uses: actions/checkout@v1
 
     - name: Install golang
-      run: make go os=mac
+      run: |
+        export HOMEBREW_NO_AUTO_UPDATE=1
+        make go os=mac
