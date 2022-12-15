@@ -2,13 +2,11 @@ ifneq (,$(findstring mac,$(os)))
 	install := brew install
 	deps := fd python3 node
 	os_name := darwin
-	tmux_source := tmux source
 	setup_script := echo "Run installer for macOs"
 else
 	install := sudo apt-get install
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
-	tmux_source := tmux source-file
 	setup_script := echo "Run installer for linux" && sudo apt-get update
 endif
 
@@ -62,7 +60,7 @@ tmux-install: ## Install tmux
 
 tmux-config: ## Install tmux-config
 	cp ./tmux/.tmux.conf ~/.tmux.conf
-	@$(tmux_source) ~/.tmux.conf
+	tmux source ~/.tmux.conf
 	~/.tmux/plugins/tpm/scripts/install_plugins.sh
 
 go: ## Install go with version from go_verion, currently $(go_verion)
