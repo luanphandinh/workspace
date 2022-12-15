@@ -12,7 +12,7 @@ endif
 
 go_version := 1.16.5
 
-.PHONY: help nvim tmux go
+.PHONY: help nvim tmux go scripts
 help: ## Please use os=mac if you using mac
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t\t/'
 
@@ -80,3 +80,6 @@ aws-cli-install:
 
 coc:
 	nvim -c 'GoUpdateBinaries'
+
+scripts: ## chmod +x for all scripts
+	chmod -R +x ./scripts
