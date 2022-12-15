@@ -17,7 +17,7 @@ help: ## Please use os=mac if you using mac
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t\t/'
 
 workspace:  ## Install nvim + tmux with configuration respectively.
-workspace: setup nvim tmux bash-config cleanup
+workspace: setup nvim tmux cleanup
 
 workspace-config: ## install config for workspace
 workspace-config:
@@ -62,10 +62,6 @@ tmux-config: ## Install tmux-config
 	cp ./tmux/.tmux.conf ~/.tmux.conf
 	tmux source ~/.tmux.conf
 	~/.tmux/plugins/tpm/scripts/install_plugins.sh
-
-bash-config: ## Change some bash config
-	chmod +x ./bash-conf.sh
-	./bash-conf.sh
 
 go: ## Install go with version from go_verion, currently $(go_verion)
 go: setup go-install cleanup
