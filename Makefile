@@ -4,10 +4,13 @@ ifneq (,$(findstring mac,$(os)))
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
 else
-	install := sudo apt-get install
+	install := sudo apt install
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
-	setup_script := echo "Run installer for linux" && sudo apt-get update
+	setup_script := echo "Run installer for linux" && sudo apt-get update \
+									&& yes Y | sudo apt install software-properties-common \
+									&& yes Y | sudo add-apt-repository ppa:neovim-ppa/stable \
+									&& yes Y | sudo apt update
 endif
 
 go_version := 1.16.5
