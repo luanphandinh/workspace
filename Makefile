@@ -3,37 +3,40 @@ ifneq (,$(findstring mac,$(os)))
 	deps := fd python3 node
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
-	setup_cmds := echo "Mac has nothing to setup"
 else
-	install := sudo apt-get install
+	install := sudo apt install
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
-	setup_script := echo "Run installer for linux" && sudo apt-get update
-	setup_cmds := echo "npm cache clean -f\n" && npm cache clean -f && \
-		echo "npm install -g n\n" && sudo npm install -g n && \
-		echo "sudo n stable" && sudo n stable
+	setup_script := echo "Run installer for linux" && sudo apt-get update \
+									&& yes Y | sudo apt install software-properties-common \
+									&& yes Y | sudo add-apt-repository ppa:neovim-ppa/stable \
+									&& yes Y | sudo apt update
 endif
 
 go_version := 1.16.5
 
-.PHONY: help nvim tmux go
+.PHONY: help nvim tmux go scripts
 help: ## Please use os=mac if you using mac
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t\t/'
 
 workspace:  ## Install nvim + tmux with configuration respectively.
-workspace: setup nvim tmux bash-config cleanup
+workspace: setup nvim tmux cleanup
+
+workspace-config: ## install config for workspace
+workspace-config:
+	chmod +x workspace.sh
+	./workspace.sh
 
 setup: ## Depend on the os params, os=mac will use brew, default is ubuntu apt-get
 	test -d ./tmp || mkdir -p ./tmp
 	@$(setup_script)
 	@yes Y | $(install) $(deps)
-	@$(setup_cmds)
 
 cleanup: ## Clean up ./tmp folder
 	test -d ./tmp && rm -rf ./tmp
 
 nvim: ## Install neovim + all plugins
-nvim: setup nvim-install nvim-config cleanup
+nvim: setup nvim-install nvim-config nvim-plug cleanup
 nvim-install: ## Install neovim
 	@$(install) neovim
 	@$(install) ripgrep
@@ -44,8 +47,11 @@ nvim-install: ## Install neovim
 nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	cp -r ./nvim/. ~/.config/nvim/
+
+nvim-plug: ## Install neovim plugins
 	nvim +PlugInstall +qall
 	nvim -c 'CocInstall -sync|q'
+	nvim --headless +VimspectorInstall +qall
 	nvim +PlugClean +qall
 
 tmux: ## Install tmux + configurations + plugins
@@ -60,11 +66,7 @@ tmux-config: ## Install tmux-config
 	tmux source ~/.tmux.conf
 	~/.tmux/plugins/tpm/scripts/install_plugins.sh
 
-bash-config: ## Change some bash config
-	chmod +x ./bash-conf.sh
-	./bash-conf.sh
-
-go: ## Install go with version from go_verion, currently 1.16.2
+go: ## Install go with version from go_verion, currently $(go_verion)
 go: setup go-install cleanup
 go-install:
 	curl https://dl.google.com/go/go$(go_version).$(os_name)-amd64.tar.gz > ./tmp/go.tar.gz
@@ -81,3 +83,6 @@ aws-cli-install:
 
 coc:
 	nvim -c 'GoUpdateBinaries'
+
+scripts: ## chmod +x for all scripts
+	chmod -R +x ./scripts

@@ -25,5 +25,8 @@ Plug 'tpope/vim-commentary'
 " Vim go
 Plug 'fatih/vim-go'
 
+" For debugging code
+Plug 'puremourning/vimspector'
+
 " Initialize plugin system
 call plug#end()
