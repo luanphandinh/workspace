@@ -4,10 +4,12 @@ ifneq (,$(findstring mac,$(os)))
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
 	go_setup := echo "no need"
+	nvim_cmd := echo "done"
 else
 	install := sudo apt install
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
+	nvim_cmd := echo "use coc-settings-linux" && cp ./nvim/coc-settings-linux.json ~/.config/nvim/coc-settings.json && echo "done"
 	go_setup := sudo update-alternatives --install "/usr/bin/go" "go" "/usr/local/go/bin/go" 0 \
 									&& sudo update-alternatives --set go /usr/local/go/bin/go
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
@@ -50,6 +52,7 @@ nvim-install: ## Install neovim
 nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	cp -r ./nvim/. ~/.config/nvim/
+	@$(nvim_cmd)
 
 nvim-plug: ## Install neovim plugins
 	nvim +PlugInstall +qall

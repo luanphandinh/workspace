@@ -6,6 +6,14 @@
 			"initializationOptions": {},
 			"settings": {}
 		},
+		"golang": {
+			"command": "$HOME/go/bin/gopls",
+			"rootPatterns": ["go.mod", ".vim/", ".git/", ".hg/"],
+			"filetypes": ["go"],
+			"initializationOptions": {
+				"usePlaceholders": true
+			}
+		},
 		"bash": {
 			"command": "bash-language-server",
 			"args": ["start"],
