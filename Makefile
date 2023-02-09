@@ -3,17 +3,20 @@ ifneq (,$(findstring mac,$(os)))
 	deps := fd python3 node
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
+	go_setup := echo "no need"
 else
 	install := sudo apt install
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
+	go_setup := sudo update-alternatives --install "/usr/bin/go" "go" "/usr/local/go/bin/go" 0 \
+									&& sudo update-alternatives --set go /usr/local/go/bin/go
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
 									&& yes Y | sudo apt install software-properties-common \
 									&& yes Y | sudo add-apt-repository ppa:neovim-ppa/stable \
 									&& yes Y | sudo apt update
 endif
 
-go_version := 1.16.5
+go_version := 1.18.1
 
 .PHONY: help nvim tmux go scripts
 help: ## Please use os=mac if you using mac
@@ -73,6 +76,7 @@ go-install:
 	sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf ./tmp/go.tar.gz
 	chmod +x ./go.sh
 	./go.sh
+	@$(go_setup)
 
 aws-cli: ## Install aws-cli
 aws-cli: setup aws-cli-install cleanup
