@@ -27,6 +27,7 @@ func spector#DebugCurrentGoTest() abort
     \        'mode': 'test',
     \        'args': [
     \                '-test.v',
+    \                'github.com/stretchr/testify',
     \                '-test.run',
     \                $TEST_CASE,
     \         ],

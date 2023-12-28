@@ -33,7 +33,7 @@ let g:go_term_close_on_exit = 0
 " end vim-go
 
 " Open, hide the nerd tree
-nmap <C-n> :NERDTreeToggle<CR>
+nmap <leader>n :NERDTreeToggle<CR>
 nmap <leader>m :NERDTreeFind<CR>
 " copy and paste to clipboard
 " set clipboard=unnamed,unnamedplus
@@ -45,7 +45,7 @@ nmap <C-f> :Ag <CR>
 
 " Delete buffer
 nmap <leader>qq :bdelete<CR>
-nmap <leader>qa :bufdo bd<CR>
+nnoremap <leader>qa :%bd<CR>
 
 " Go to the next buffer
 nmap <C-k> :bn<CR>
