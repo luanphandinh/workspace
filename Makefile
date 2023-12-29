@@ -10,6 +10,7 @@ else
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
 									&& yes Y | sudo apt install software-properties-common \
 									&& yes Y | sudo add-apt-repository ppa:neovim-ppa/stable \
+									&& yes Y | sudo add-apt-repository ppa:aslatter/ppa -y \
 									&& yes Y | sudo apt update
 endif
 
@@ -20,7 +21,7 @@ help: ## Please use os=mac if you using mac
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t\t/'
 
 workspace:  ## Install nvim + tmux with configuration respectively.
-workspace: setup nvim tmux cleanup
+workspace: setup nvim tmux alacritty cleanup
 
 workspace-config: ## install config for workspace
 workspace-config:
@@ -86,3 +87,13 @@ coc:
 
 scripts: ## chmod +x for all scripts
 	chmod -R +x ./scripts
+
+alacritty: ## install alacritty and all config
+alacritty: alacritty-install alacritty-config
+
+alacritty-install: ## install alacritty
+	@$(install) alacritty
+
+alacritty-config: ## install alacritty
+	test -d ~/.config/alacritty || mkdir -p ~/.config/alacritty
+	cp -r ./alacritty/. ~/.config/alacritty/
