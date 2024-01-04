@@ -69,7 +69,9 @@ command! -bang -nargs=* Ag
   \   fzf#vim#with_preview(), <bang>0)
 
 " hightlight current line
-" set cursorline
+set cursorline
+" auto central after jump definition
+nnoremap n <cmd>lua vim.lsp.buf.definition()<CR>zz
 
 syntax on
 colorscheme gruvbox
