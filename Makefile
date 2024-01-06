@@ -1,9 +1,5 @@
-ifneq (,$(findstring mac,$(os)))
-	install := brew install
-	deps := fd python3 node
-	os_name := darwin
-	setup_script := echo "Run installer for macOs"
-else
+UNAME := $(shell uname)
+ifneq (,$(findstring Linux,$(UNAME)))
 	install := sudo apt install
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
@@ -12,6 +8,11 @@ else
 									&& yes Y | sudo add-apt-repository ppa:neovim-ppa/stable \
 									&& yes Y | sudo add-apt-repository ppa:aslatter/ppa -y \
 									&& yes Y | sudo apt update
+else
+	install := brew install
+	deps := fd python3 node
+	os_name := darwin
+	setup_script := echo "Run installer for macOs"
 endif
 
 go_version := 1.20.4
