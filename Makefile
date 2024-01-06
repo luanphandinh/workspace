@@ -4,10 +4,10 @@ ifneq (,$(findstring Linux,$(UNAME)))
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
-									&& yes Y | sudo apt install software-properties-common \
-									&& yes Y | sudo add-apt-repository ppa:neovim-ppa/stable \
-									&& yes Y | sudo add-apt-repository ppa:aslatter/ppa -y \
-									&& yes Y | sudo apt update
+									&& sudo apt install software-properties-common -y \
+									&& sudo add-apt-repository ppa:neovim-ppa/stable -y \
+									&& sudo add-apt-repository ppa:aslatter/ppa -y \
+									&& sudo apt update -y
 else
 	install := brew install
 	deps := fd python3 node
