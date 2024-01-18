@@ -14,6 +14,8 @@ autocmd FileType php setlocal expandtab! shiftwidth=4 tabstop=4
 " GO code will indent with tab size 8
 autocmd FileType go setlocal expandtab! shiftwidth=8 tabstop=8
 
+autocmd FileType yml setlocal expandtab shiftwidth=2 tabstop=2
+
 " Trim trailing whitespace.
 autocmd BufWritePre * %s/\s\+$//e
 
