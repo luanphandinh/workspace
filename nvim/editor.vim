@@ -14,6 +14,8 @@ autocmd FileType php setlocal expandtab! shiftwidth=4 tabstop=4
 " GO code will indent with tab size 8
 autocmd FileType go setlocal expandtab! shiftwidth=8 tabstop=8
 
+autocmd FileType yml setlocal expandtab shiftwidth=2 tabstop=2
+
 " Trim trailing whitespace.
 autocmd BufWritePre * %s/\s\+$//e
 
@@ -33,7 +35,7 @@ let g:go_term_close_on_exit = 0
 " end vim-go
 
 " Open, hide the nerd tree
-nmap <C-n> :NERDTreeToggle<CR>
+nmap <leader>n :NERDTreeToggle<CR>
 nmap <leader>m :NERDTreeFind<CR>
 " copy and paste to clipboard
 " set clipboard=unnamed,unnamedplus
@@ -45,7 +47,7 @@ nmap <C-f> :Ag <CR>
 
 " Delete buffer
 nmap <leader>qq :bdelete<CR>
-nmap <leader>qa :bufdo bd<CR>
+nnoremap <leader>qa :%bd<CR>
 
 " Go to the next buffer
 nmap <C-k> :bn<CR>
@@ -69,7 +71,9 @@ command! -bang -nargs=* Ag
   \   fzf#vim#with_preview(), <bang>0)
 
 " hightlight current line
-" set cursorline
+set cursorline
+" auto central after jump definition
+nnoremap <cmd>lua vim.lsp.buf.definition()<CR>zz
 
 syntax on
 colorscheme gruvbox

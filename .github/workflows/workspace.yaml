@@ -11,7 +11,7 @@ jobs:
     - name: Workspace
       run: |
         export HOMEBREW_NO_AUTO_UPDATE=1
-        make workspace os=mac
+        make workspace
 
   workspace-ubuntu:
     runs-on: ubuntu-20.04
@@ -39,4 +39,4 @@ jobs:
     - name: Install golang
       run: |
         export HOMEBREW_NO_AUTO_UPDATE=1
-        make go os=mac
+        make go

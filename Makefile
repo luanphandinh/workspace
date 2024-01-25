@@ -1,26 +1,28 @@
-ifneq (,$(findstring mac,$(os)))
-	install := brew install
-	deps := fd python3 node
-	os_name := darwin
-	setup_script := echo "Run installer for macOs"
-else
+UNAME := $(shell uname)
+ifneq (,$(findstring Linux,$(UNAME)))
 	install := sudo apt install
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
-									&& yes Y | sudo apt install software-properties-common \
-									&& yes Y | sudo add-apt-repository ppa:neovim-ppa/stable \
-									&& yes Y | sudo apt update
+									&& sudo apt install software-properties-common -y \
+									&& sudo add-apt-repository ppa:neovim-ppa/stable -y \
+									&& sudo add-apt-repository ppa:aslatter/ppa -y \
+									&& sudo apt update -y
+else
+	install := brew install
+	deps := fd python3 node
+	os_name := darwin
+	setup_script := echo "Run installer for macOs"
 endif
 
-go_version := 1.16.5
+go_version := 1.20.4
 
 .PHONY: help nvim tmux go scripts
 help: ## Please use os=mac if you using mac
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t\t/'
 
 workspace:  ## Install nvim + tmux with configuration respectively.
-workspace: setup nvim tmux cleanup
+workspace: setup nvim tmux alacritty cleanup
 
 workspace-config: ## install config for workspace
 workspace-config:
@@ -86,3 +88,13 @@ coc:
 
 scripts: ## chmod +x for all scripts
 	chmod -R +x ./scripts
+
+alacritty: ## install alacritty and all config
+alacritty: alacritty-install alacritty-config
+
+alacritty-install: ## install alacritty
+	@$(install) alacritty
+
+alacritty-config: ## install alacritty
+	test -d ~/.config/alacritty || mkdir -p ~/.config/alacritty
+	cp -r ./alacritty/. ~/.config/alacritty/
