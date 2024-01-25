@@ -1,5 +1,5 @@
 let g:vimspector_enable_mappings = 'HUMAN'
-nmap <leader>vl :call vimspector#Launch()<CR>
+nmap <leader>vl :call spector#DebugMain()<CR>
 nmap <leader>vd :call spector#DebugCurrentGoTest()<CR>
 nmap <leader>vr :VimspectorReset<CR>
 nmap <leader>ve :VimspectorEval
@@ -15,27 +15,43 @@ xmap <Leader>di <Plug>VimspectorBalloonEval
 
 let g:vimspector_install_gadgets = ['delve']
 
+func spector#DebugMain() abort
+  call vimspector#LaunchWithConfigurations({
+        \    'go-debug-main': {
+        \      'adapter': 'delve',
+        \      'filetypes': [ 'go' ],
+        \      'configuration': {
+        \        'request': 'launch',
+        \        'program': '${fileDirname}',
+        \        'mode': 'debug',
+        \        'showLog': 'true',
+        \        'dlvToolPath': '$GOPATH/bin/dlv'
+        \       }
+        \    }
+        \ })
+endfunction
+
 func spector#DebugCurrentGoTest() abort
   let $TEST_CASE = spector#GetDebugTestName()
   call vimspector#LaunchWithConfigurations({
-    \    'go-debug': {
-    \      'adapter': 'delve',
-    \      'filetypes': [ 'go' ],
-    \      'configuration': {
-    \        'request': 'launch',
-    \        'program': '${fileDirname}',
-    \        'mode': 'test',
-    \        'args': [
-    \                '-test.v',
-    \                'github.com/stretchr/testify',
-    \                '-test.run',
-    \                $TEST_CASE,
-    \         ],
-    \         'showLog': 'true',
-    \         'dlvToolPath': '$GOPATH/bin/dlv'
-    \       }
-    \    }
-    \ })
+        \    'go-debug-test': {
+        \      'adapter': 'delve',
+        \      'filetypes': [ 'go' ],
+        \      'configuration': {
+        \        'request': 'launch',
+        \        'program': '${fileDirname}',
+        \        'mode': 'test',
+        \        'args': [
+        \                '-test.v',
+        \                'github.com/stretchr/testify',
+        \                '-test.run',
+        \                $TEST_CASE,
+        \         ],
+        \         'showLog': 'true',
+        \         'dlvToolPath': '$GOPATH/bin/dlv'
+        \       }
+        \    }
+        \ })
 endfunction
 
 function spector#GetDebugTestName() abort

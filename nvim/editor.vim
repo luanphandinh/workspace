@@ -73,7 +73,7 @@ command! -bang -nargs=* Ag
 " hightlight current line
 set cursorline
 " auto central after jump definition
-nnoremap n <cmd>lua vim.lsp.buf.definition()<CR>zz
+nnoremap <cmd>lua vim.lsp.buf.definition()<CR>zz
 
 syntax on
 colorscheme gruvbox
