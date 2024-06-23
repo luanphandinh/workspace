@@ -6,6 +6,7 @@ let g:coc_global_extensions = [
   \ 'coc-prettier',
   \ 'coc-json',
   \ 'coc-go',
+  \ 'coc-clangd',
   \ ]
 " This is for golang auto organize and stuff
 " https://github.com/golang/tools/blob/master/gopls/doc/vim.md
