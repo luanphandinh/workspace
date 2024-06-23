@@ -1,13 +1,13 @@
 UNAME := $(shell uname)
 ifneq (,$(findstring Linux,$(UNAME)))
-	install := sudo apt install
+	install := yes Y | sudo apt install
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
-									&& sudo apt install software-properties-common -y \
-									&& sudo add-apt-repository ppa:neovim-ppa/stable -y \
-									&& sudo add-apt-repository ppa:aslatter/ppa -y \
-									&& sudo apt update -y
+									&& yes Y | sudo apt install software-properties-common -y \
+									&& yes Y | sudo add-apt-repository ppa:neovim-ppa/unstable -y \
+									&& yes Y | sudo add-apt-repository ppa:aslatter/ppa -y \
+									&& yes Y | sudo apt update -y
 else
 	install := brew install
 	deps := fd python3 node
