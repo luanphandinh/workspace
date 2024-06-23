@@ -1,18 +1,25 @@
 #!/bin/bash
 
-function addPath() {
+function addPathToFile() {
   path=$1
-  if [ -f $path ];then
-    echo "found ${path}"
-    exported=$(grep 'export PATH=$PATH:/usr/local/go/bin' $path | wc -l)
-    if [ $exported -eq 0 ]; then
-      echo "export PATH=$PATH:/usr/local/go/bin to $path"
-      echo 'export PATH=$PATH:/usr/local/go/bin' >> $path
+  file=$2
+  if [ -f $file ];then
+    echo "try to find ${path} in $file"
+    if grep -q "$path" "$file"; then
+      echo "Pattern found in file. Do nothing"
+    else
+      echo "$path not found in $file. Insert"
+      echo "$path" >> $file
     fi
   fi
 }
 
-addPath ~/.zshrc
-addPath ~/.profile
-addPath ~/.bashrc
-addPath ~/.bash_profile
+addPathToFile 'export PATH=$PATH:/usr/local/go/bin' ~/.zshrc
+addPathToFile 'export PATH=$PATH:/usr/local/go/bin' ~/.profile
+addPathToFile 'export PATH=$PATH:/usr/local/go/bin' ~/.bashrc
+addPathToFile 'export PATH=$PATH:/usr/local/go/bin' ~/.bash_profile
+
+addPathToFile 'export PATH=$PATH:$HOME/go/bin' ~/.zshrc
+addPathToFile 'export PATH=$PATH:$HOME/go/bin' ~/.profile
+addPathToFile 'export PATH=$PATH:$HOME/go/bin' ~/.bashrc
+addPathToFile 'export PATH=$PATH:$HOME/go/bin' ~/.bash_profile

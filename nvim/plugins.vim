@@ -2,11 +2,23 @@
 call plug#begin('~/.vim/plugged')
 
 " Code server
-Plug 'neoclide/coc.nvim', {'branch': 'release'}
+" Plug 'neoclide/coc.nvim', {'branch': 'release'}
+Plug 'neovim/nvim-lspconfig'
+
+" Autocompletion plugin
+Plug 'hrsh7th/cmp-nvim-lsp'
+Plug 'hrsh7th/cmp-buffer'
+Plug 'hrsh7th/cmp-path'
+Plug 'hrsh7th/cmp-cmdline'
+Plug 'hrsh7th/nvim-cmp'
+
+" For vsnip users.
+Plug 'hrsh7th/cmp-vsnip'
+Plug 'hrsh7th/vim-vsnip'
 
 " Useful for search
-Plug 'junegunn/fzf', { 'dir': '~/.fzf', 'do': './install --all' }
-Plug 'junegunn/fzf.vim'
+Plug 'nvim-lua/plenary.nvim'
+Plug 'nvim-telescope/telescope.nvim'
 
 " Tree view
 Plug 'scrooloose/nerdtree'
@@ -19,7 +31,7 @@ Plug 'vim-airline/vim-airline'
 Plug 'morhetz/gruvbox'
 
 " Vim surround
-Plug 'tpope/vim-surround'
+Plug 'windwp/nvim-autopairs'
 Plug 'tpope/vim-commentary'
 
 " Vim go

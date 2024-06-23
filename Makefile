@@ -1,13 +1,13 @@
 UNAME := $(shell uname)
 ifneq (,$(findstring Linux,$(UNAME)))
-	install := sudo apt install
+	install := yes Y | sudo apt install
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
-									&& sudo apt install software-properties-common -y \
-									&& sudo add-apt-repository ppa:neovim-ppa/stable -y \
-									&& sudo add-apt-repository ppa:aslatter/ppa -y \
-									&& sudo apt update -y
+									&& yes Y | sudo apt install software-properties-common -y \
+									&& yes Y | sudo add-apt-repository ppa:neovim-ppa/unstable -y \
+									&& yes Y | sudo add-apt-repository ppa:aslatter/ppa -y \
+									&& yes Y | sudo apt update -y
 else
 	install := brew install
 	deps := fd python3 node
@@ -16,6 +16,7 @@ else
 endif
 
 go_version := 1.20.4
+go_pls_version := 0.15.3
 
 .PHONY: help nvim tmux go scripts
 help: ## Please use os=mac if you using mac
@@ -52,7 +53,6 @@ nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 
 nvim-plug: ## Install neovim plugins
 	nvim +PlugInstall +qall
-	nvim -c 'CocInstall -sync|q'
 	nvim --headless +VimspectorInstall +qall
 	nvim +PlugClean +qall
 
@@ -69,12 +69,14 @@ tmux-config: ## Install tmux-config
 	~/.tmux/plugins/tpm/scripts/install_plugins.sh
 
 go: ## Install go with version from go_verion, currently $(go_verion)
-go: setup go-install cleanup
+go: setup go-install go-deps cleanup
 go-install:
 	curl https://dl.google.com/go/go$(go_version).$(os_name)-amd64.tar.gz > ./tmp/go.tar.gz
 	sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf ./tmp/go.tar.gz
 	chmod +x ./go.sh
 	./go.sh
+go-deps:
+	/usr/local/go/bin/go install golang.org/x/tools/gopls@v$(go_pls_version)
 
 aws-cli: ## Install aws-cli
 aws-cli: setup aws-cli-install cleanup
