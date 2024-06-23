@@ -20,7 +20,7 @@ autocmd FileType yml setlocal expandtab shiftwidth=2 tabstop=2
 autocmd BufWritePre * %s/\s\+$//e
 
 " coc-prettier
-command! -nargs=0 Prettier :CocCommand prettier.formatFile
+" command! -nargs=0 Prettier :CocCommand prettier.formatFile
 
 " fold
 nmap <leader>fa :setlocal foldmethod=indent<CR>
@@ -42,8 +42,8 @@ nmap <leader>m :NERDTreeFind<CR>
 nmap <C-s> :w <CR>
 
 " Open files search
-nmap <C-p> :Files <CR>
-nmap <C-f> :Ag <CR>
+nmap <C-p> :Telescope find_files<CR>
+nmap <C-f> :Telescope live_grep<CR>
 
 " Delete buffer
 nmap <leader>qq :bdelete<CR>
@@ -61,22 +61,19 @@ map <C-l> <C-W>l
 map <C-Left> <C-W>j
 map <C-Right> <C-W>k
 
-" Preview window
-command! -bang -nargs=? -complete=dir Files
-    \ call fzf#vim#files(<q-args>, fzf#vim#with_preview({'options': ['--layout=reverse','--info=inline']}), <bang>0)
-
-command! -bang -nargs=* Ag
-  \ call fzf#vim#grep(
-  \   'rg --column --line-number --no-heading --color=always --smart-case -- '.shellescape(<q-args>), 1,
-  \   fzf#vim#with_preview(), <bang>0)
-
 " hightlight current line
 set cursorline
 " auto central after jump definition
-nnoremap <cmd>lua vim.lsp.buf.definition()<CR>zz
+" nnoremap <cmd>lua vim.lsp.buf.definition()<CR>zz
 
 syntax on
 colorscheme gruvbox
 set nu " line numbers
 set mouse=a
 set shell=sh
+
+let $FZF_DEFAULT_COMMAND='fd --type f --hidden --exclude .git || fdfind --type f --hidden --exclude .git' " Use fd as default search
+let NERDTreeShowHidden=1
+let g:NERDTreeWinSize=40
+let NERDTreeIgnore=['\.DS_Store$', '\.git$'] " ignore files in nerd tree
+let NERDSpaceDelims=1 " NerdComenter will have extra space after comment sign
