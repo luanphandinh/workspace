@@ -75,6 +75,7 @@ go-install:
 	sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf ./tmp/go.tar.gz
 	chmod +x ./go.sh
 	./go.sh
+	/usr/local/go/bin/go install golang.org/x/tools/gopls@latest
 
 aws-cli: ## Install aws-cli
 aws-cli: setup aws-cli-install cleanup
