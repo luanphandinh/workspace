@@ -1,0 +1,6 @@
+# import = [
+#     "~/.config/alacritty/gruvbox.toml"
+# ]
+
+[font]
+offset = { x = 0, y = 0 }
