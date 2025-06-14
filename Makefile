@@ -3,6 +3,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 	install := sudo apt install
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
+	fonts_install := sudo apt install fonts-firacode
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
 									&& sudo apt install software-properties-common -y \
 									&& sudo add-apt-repository ppa:neovim-ppa/stable -y \
@@ -13,6 +14,7 @@ else
 	deps := fd python3 node
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
+	fonts_install := brew install --cask font-fira-code
 endif
 
 go_version := 1.20.4
@@ -38,23 +40,15 @@ cleanup: ## Clean up ./tmp folder
 	test -d ./tmp && rm -rf ./tmp
 
 nvim: ## Install neovim + all plugins
-nvim: setup nvim-install nvim-config nvim-plug cleanup
+nvim: setup nvim-install nvim-config cleanup
 nvim-install: ## Install neovim
 	@$(install) neovim
 	@$(install) ripgrep
-	pip3 install pynvim
-	curl -fLo ~/.local/share/nvim/site/autoload/plug.vim --create-dirs \
-    https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
 
 nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	cp -r ./nvim/. ~/.config/nvim/
-
-nvim-plug: ## Install neovim plugins
-	nvim +PlugInstall +qall
-	nvim -c 'CocInstall -sync|q'
-	nvim --headless +VimspectorInstall +qall
-	nvim +PlugClean +qall
+	nvim --headless +"autocmd User PackerComplete quitall" +PackerSync
 
 tmux: ## Install tmux + configurations + plugins
 tmux: setup tmux-install tmux-config cleanup
@@ -83,9 +77,6 @@ aws-cli-install:
 	cd tmp && unzip awscliv2.zip
 	cd tmp && sudo ./aws/install
 
-coc:
-	nvim -c 'GoUpdateBinaries'
-
 scripts: ## chmod +x for all scripts
 	chmod -R +x ./scripts
 
@@ -94,7 +85,9 @@ alacritty: alacritty-install alacritty-config
 
 alacritty-install: ## install alacritty
 	@$(install) alacritty
+	@$(install) --cask font-fira-code-nerd-font
 
 alacritty-config: ## install alacritty
 	test -d ~/.config/alacritty || mkdir -p ~/.config/alacritty
 	cp -r ./alacritty/. ~/.config/alacritty/
+	@$(fonts_install)
