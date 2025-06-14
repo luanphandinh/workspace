@@ -125,7 +125,25 @@ require("packer").startup(function(use)
     end
   }
 
-  -- LSP Config for Go
+  -- LSP Configs
+  use {
+    "williamboman/mason.nvim",
+    config = function()
+      require("mason").setup()
+    end,
+  }
+
+  use {
+    "williamboman/mason-lspconfig.nvim",
+    after = "mason.nvim",
+    config = function()
+      require("mason-lspconfig").setup {
+        ensure_installed = { "gopls", "lua_ls" }, -- auto-install these LSPs
+        automatic_enable = true,
+      }
+    end,
+  }
+
   use {
     "neovim/nvim-lspconfig",
     config = function()
@@ -377,4 +395,3 @@ vim.api.nvim_create_autocmd("VimLeavePre", {
     end
   end,
 })
-
