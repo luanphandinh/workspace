@@ -85,7 +85,6 @@ alacritty: alacritty-install alacritty-config
 
 alacritty-install: ## install alacritty
 	@$(install) alacritty
-	@$(install) --cask font-fira-code-nerd-font
 
 alacritty-config: ## install alacritty
 	test -d ~/.config/alacritty || mkdir -p ~/.config/alacritty
