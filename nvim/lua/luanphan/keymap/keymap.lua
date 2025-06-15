@@ -48,30 +48,6 @@ vim.keymap.set("n", "<leader>d", function()
 end, { desc = "Show diagnostic at line" })
 
 vim.keymap.set("n", "<leader>gt", function()
-  go = require("luanphan.plugins.go")
-  local test_name = go.get_test_name()
-  if test_name == '' then
-    print('No test function found')
-    return
-  end
-
-  -- Find terminal buffer, or open one in a split
-  local term_buf = nil
-  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.bo[buf].buftype == "terminal" then
-      term_buf = buf
-      break
-    end
-  end
-
-  -- If no terminal buffer found, open one
-  if not term_buf then
-    vim.cmd("botright split | terminal") -- or `vsplit` if preferred
-    term_buf = vim.api.nvim_get_current_buf()
-  end
-
-  -- Send the test name to terminal
-  -- You may customize this to be `go test -run '^TestX$'` etc.
-  local cmd = string.format("echo %s\n", test_name)
-  vim.api.nvim_chan_send(vim.b.terminal_job_id, cmd)
+  local go = require("luanphan.plugins.go")
+  go.run_go_test_at_cursor()
 end)

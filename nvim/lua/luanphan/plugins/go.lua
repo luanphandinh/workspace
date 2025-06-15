@@ -19,4 +19,17 @@ function M.get_test_name()
   return name
 end
 
+---Run the Go test / example function name under (or above) the cursor.
+function M.run_go_test_at_cursor()
+  local test_name = M.get_test_name()
+  if not test_name then
+    print("No test function found")
+  end
+
+  local test_dir = vim.fn.expand("%:p:h") -- directory of current file
+  local cmd = string.format("cd %s && go test -v -run '^%s$'", test_dir, test_name)
+
+  vim.cmd("split | terminal " .. cmd)
+end
+
 return M
