@@ -1,10 +1,10 @@
+---@diagnostic disable: missing-fields
 return function(use)
   use {
     "nvim-treesitter/nvim-treesitter",
     run = ":TSUpdate", -- or `run` if still using older packer
     config = function()
       require("nvim-treesitter.configs").setup({
-        ensure_installed = { "c", "lua", "vim", "vimdoc", "json", "yaml", "go", "luadoc", "markdown" },
         sync_install = false,
         auto_install = true,
         highlight = {
@@ -13,6 +13,17 @@ return function(use)
         },
         indent = {
           enable = true
+        },
+        ensure_installed = {
+          "go",
+          "lua",
+          "c",
+          "vim",
+          "vimdoc",
+          "json",
+          "yaml",
+          "luadoc",
+          "markdown",
         },
       })
     end
