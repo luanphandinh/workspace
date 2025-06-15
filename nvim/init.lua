@@ -253,6 +253,7 @@ require("packer").startup(function(use)
     lazy = false,
     version = false,
     BUILD_FROM_SOURCE = true,
+    event = { "BufReadPre", "BufNewFile" }, -- lazy load when opening a file
     config = function()
       require("avante_lib").load()
       require("avante").setup({
@@ -302,6 +303,7 @@ require("packer").startup(function(use)
   -- Git plugins
   use {
     'lewis6991/gitsigns.nvim',
+    event = { "BufReadPre", "BufNewFile" }, -- lazy load when opening a file
     requires = { 'nvim-lua/plenary.nvim' },
     config = function()
       local gitsigns = require('gitsigns')
