@@ -46,3 +46,8 @@ end, { noremap = true, silent = true })
 vim.keymap.set("n", "<leader>d", function()
   vim.diagnostic.open_float(nil, { focus = false })
 end, { desc = "Show diagnostic at line" })
+
+vim.keymap.set("n", "<leader>gt", function()
+  local go = require("luanphan.plugins.go")
+  go.run_go_test_at_cursor()
+end)
