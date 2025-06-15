@@ -22,28 +22,25 @@ endif
 go_version := 1.20.4
 
 .PHONY: help nvim tmux go scripts
-help: ## Please use os=mac if you using mac
-	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t\t/'
+help:
+	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
-workspace:  ## Install nvim + tmux with configuration respectively.
+workspace:  ## Install nvim + tmux + alacritty with configuration respectively.
 workspace: setup nvim tmux alacritty cleanup
 
-workspace-config: ## install config for workspace
+workspace-config: ## Install config for workspace
 workspace-config:
 	chmod +x workspace.sh
 	./workspace.sh
 
-setup: ## Depend on the os params, os=mac will use brew, default is ubuntu apt-get
+setup: ## Setup deps
 	test -d ./tmp || mkdir -p ./tmp
 	@$(setup_script)
 	@yes Y | $(install) $(deps)
 
-cleanup: ## Clean up ./tmp folder
-	test -d ./tmp && rm -rf ./tmp
-
 nvim: ## Install neovim + all plugins
 nvim: setup nvim-install nvim-config cleanup
-nvim-install: ## Install neovim
+nvim-install: ## Install neovim only, no config
 	@$(install_nvim)
 	@$(install) ripgrep
 
@@ -56,7 +53,7 @@ nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 
 tmux: ## Install tmux + configurations + plugins
 tmux: setup tmux-install tmux-config cleanup
-tmux-install: ## Install tmux
+tmux-install: ## Install tmux only, no config nor plugins
 	@$(install) tmux
 	tmux new -d
 	test -d ~/.tmux/plugins/tpm || git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
@@ -65,6 +62,17 @@ tmux-config: ## Install tmux-config
 	cp ./tmux/.tmux.conf ~/.tmux.conf
 	tmux source ~/.tmux.conf
 	~/.tmux/plugins/tpm/scripts/install_plugins.sh
+
+alacritty: ## install alacritty and all config
+alacritty: alacritty-install alacritty-config
+
+alacritty-install: ## Install alacritty only, now config
+	@$(install) alacritty
+
+alacritty-config: ## Install alacritty + config + theme
+	test -d ~/.config/alacritty || mkdir -p ~/.config/alacritty
+	cp -r ./alacritty/. ~/.config/alacritty/
+	@$(fonts_install)
 
 go: ## Install go with version from go_verion, currently $(go_verion)
 go: setup go-install cleanup
@@ -84,13 +92,6 @@ aws-cli-install:
 scripts: ## chmod +x for all scripts
 	chmod -R +x ./scripts
 
-alacritty: ## install alacritty and all config
-alacritty: alacritty-install alacritty-config
+cleanup: ## Clean up ./tmp folder
+	test -d ./tmp && rm -rf ./tmp
 
-alacritty-install: ## install alacritty
-	@$(install) alacritty
-
-alacritty-config: ## install alacritty
-	test -d ~/.config/alacritty || mkdir -p ~/.config/alacritty
-	cp -r ./alacritty/. ~/.config/alacritty/
-	@$(fonts_install)

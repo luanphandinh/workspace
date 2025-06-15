@@ -3,7 +3,7 @@ return function(use)
     "nvim-tree/nvim-tree.lua",
     requires = { "nvim-tree/nvim-web-devicons" },
     config = function()
-      require("nvim-tree").setup()
+      require("nvim-tree").setup({})
 
       vim.keymap.set("n", "<leader>b", function()
         require("nvim-tree.api").tree.toggle(false, true)
