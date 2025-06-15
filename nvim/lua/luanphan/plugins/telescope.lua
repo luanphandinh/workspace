@@ -1,0 +1,29 @@
+return function(use)
+  use {
+    "nvim-telescope/telescope.nvim",
+    requires = { "nvim-lua/plenary.nvim" },
+    config = function()
+      require("telescope").setup({
+        defaults = {
+          sorting_strategy = "ascending",
+          layout_config = {
+            prompt_position = "top",
+            preview_cutoff = 1,
+          },
+          preview = {
+            treesitter = false,
+          },
+        },
+        extensions = {
+          fzf = {
+            fuzzy = true,                   -- enable fuzzy matching
+            override_generic_sorter = true, -- override the default sorter
+            override_file_sorter = true,
+          }
+        }
+      })
+      vim.keymap.set("n", "<leader>f", "<cmd>Telescope find_files<cr>")
+      vim.keymap.set("n", "g/", "<cmd>Telescope live_grep<cr>")
+    end,
+  }
+end
