@@ -49,6 +49,7 @@ nvim-install: ## Install neovim
 
 nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
+	rm -rf ~/.config/nvim/*
 	cp -r ./nvim/. ~/.config/nvim/
 	nvim --headless +"autocmd User PackerComplete quitall" +PackerSync
 	# nvim --headless +"autocmd User PackerComplete quitall" +PackerClean
