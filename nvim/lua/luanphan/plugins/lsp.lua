@@ -12,7 +12,10 @@ return function(use)
     after = "mason.nvim",
     config = function()
       require("mason-lspconfig").setup {
-        ensure_installed = { "gopls", "lua_ls" }, -- auto-install these LSPs
+        ensure_installed = {
+          "gopls",
+          "lua_ls",
+        }, -- auto-install these LSPs
         automatic_enable = true,
       }
     end,
