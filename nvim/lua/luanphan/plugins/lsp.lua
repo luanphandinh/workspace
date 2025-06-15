@@ -16,7 +16,7 @@ return function(use)
           "gopls",
           "lua_ls",
         }, -- auto-install these LSPs
-        automatic_enable = true,
+        automatic_enable = false,
       }
     end,
   }
