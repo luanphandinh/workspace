@@ -287,7 +287,7 @@ require("packer").startup(function(use)
 
       harpoon:setup()
 
-      vim.keymap.set("n", "<leader>ha", function() harpoon:list():append() end, { desc = "Harpoon Add File" })
+      vim.keymap.set("n", "<leader>ha", function() harpoon:list():add() end, { desc = "Harpoon Add File" })
       vim.keymap.set("n", "<leader>hh", function() harpoon.ui:toggle_quick_menu(harpoon:list()) end,
         { desc = "Harpoon Menu" })
       vim.keymap.set("n", "<leader>h1", function() harpoon:list():select(1) end, { desc = "Harpoon File 1" })

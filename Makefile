@@ -1,6 +1,7 @@
 UNAME := $(shell uname)
 ifneq (,$(findstring Linux,$(UNAME)))
 	install := sudo apt install
+	install_nvim := sudo apt install neovim
 	deps := fd-find python3-pip nodejs npm
 	os_name := linux
 	fonts_install := sudo apt install fonts-firacode
@@ -11,6 +12,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 									&& sudo apt update -y
 else
 	install := brew install
+	install_nvim := brew install neovim --HEAD
 	deps := fd python3 node
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
@@ -42,7 +44,7 @@ cleanup: ## Clean up ./tmp folder
 nvim: ## Install neovim + all plugins
 nvim: setup nvim-install nvim-config cleanup
 nvim-install: ## Install neovim
-	@$(install) neovim --HEAD
+	@$(install_nvim)
 	@$(install) ripgrep
 
 nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
