@@ -42,13 +42,14 @@ cleanup: ## Clean up ./tmp folder
 nvim: ## Install neovim + all plugins
 nvim: setup nvim-install nvim-config cleanup
 nvim-install: ## Install neovim
-	@$(install) neovim
+	@$(install) neovim --HEAD
 	@$(install) ripgrep
 
 nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	cp -r ./nvim/. ~/.config/nvim/
 	nvim --headless +"autocmd User PackerComplete quitall" +PackerSync
+	nvim --headless +"autocmd User PackerComplete quitall" +PackerClean
 
 tmux: ## Install tmux + configurations + plugins
 tmux: setup tmux-install tmux-config cleanup

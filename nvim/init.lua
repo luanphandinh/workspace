@@ -22,6 +22,7 @@ ensure_packer()
 -- Plugins
 require("packer").startup(function(use)
   use "wbthomason/packer.nvim"
+  use "nvim-lua/plenary.nvim"
 
   -- File explorer
   use {
@@ -75,15 +76,6 @@ require("packer").startup(function(use)
     end,
   }
 
-  -- use {
-  --   "nvim-telescope/telescope-fzf-native.nvim",
-  --   run = "make",
-  --   cond = vim.fn.executable("make") == 1,
-  --   config = function()
-  --     require("telescope").load_extension("fzf")
-  --   end,
-  -- }
-
   -- Gruvbox theme
   use {
     "ellisonleao/gruvbox.nvim",
@@ -114,16 +106,6 @@ require("packer").startup(function(use)
     end
   }
 
-  -- buffer line
-  use {
-    'akinsho/bufferline.nvim',
-    version = "*",
-    dependencies = 'nvim-tree/nvim-web-devicons',
-    config = function()
-      require("bufferline").setup()
-      vim.opt.termguicolors = true
-    end
-  }
 
   -- LSP Configs
   use {
@@ -306,7 +288,7 @@ require("packer").startup(function(use)
         auto_install = true,
         highlight = {
           enable = true,
-          additional_vim_regex_highlighting = false,
+          additional_vim_regex_highlighting = false
         },
         indent = {
           enable = true
@@ -331,9 +313,6 @@ vim.o.cursorline = true
 vim.o.scrolloff = 8
 vim.o.signcolumn = "yes" -- always show the signcolumn on the left side
 -- keymaps
-vim.keymap.set("n", "}", ":BufferLineCycleNext<CR>", { noremap = true, silent = true })
-vim.keymap.set("n", "{", ":BufferLineCyclePrev<CR>", { noremap = true, silent = true })
-
 vim.keymap.set("n", "n", "nzzzv", { noremap = true, silent = true })
 vim.keymap.set("n", "N", "nzzzv", { noremap = true, silent = true })
 
