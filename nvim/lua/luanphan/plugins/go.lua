@@ -29,7 +29,7 @@ function M.run_go_test_at_cursor()
   local test_dir = vim.fn.expand("%:p:h") -- directory of current file
   local cmd = string.format("cd %s && go test -v -run '^%s$'", test_dir, test_name)
 
-  vim.cmd("split | terminal " .. cmd)
+  vim.cmd("vsplit | terminal " .. cmd)
 end
 
 return M
