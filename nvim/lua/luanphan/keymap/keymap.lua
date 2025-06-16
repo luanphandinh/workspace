@@ -30,6 +30,12 @@ vim.keymap.set("v", "<leader>d", "\"_d")
 vim.keymap.set("x", "<leader>p", "\"_dP")
 
 vim.keymap.set("n", "<C-f>", "<cmd>slient !tmux neww tmux-sessionizer<CR>")
+vim.keymap.set("n", "<C-h>", "<C-w>h", { noremap = true, silent = true })
+vim.keymap.set("n", "<C-l>", "<C-w>l", { noremap = true, silent = true })
+
+vim.keymap.set("n", "<leader>t", function()
+  vim.cmd("vsplit | terminal")
+end, { noremap = true, silent = true })
 
 vim.keymap.set("n", "<leader>of", function()
   require("telescope.builtin").lsp_document_symbols({
