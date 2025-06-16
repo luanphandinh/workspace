@@ -69,6 +69,14 @@ return function(use)
         end
       end
 
+      vim.api.nvim_create_autocmd("VimLeavePre", {
+        callback = function()
+          for _, client in pairs(vim.lsp.get_clients()) do
+            client.stop()
+          end
+        end,
+      })
+
       -- Language servers
       local lspconfig = require("lspconfig")
       lspconfig.gopls.setup({
