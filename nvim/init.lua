@@ -34,33 +34,6 @@ require("packer").startup(function(use)
   require("luanphan.plugins.agent")(use)
 
   require("luanphan.keymap.keymap")
+  require("luanphan.file_configs.go")
+  require("luanphan.file_configs.lua")
 end)
-
--- Use 2 spaces for Lua files
-vim.api.nvim_create_autocmd("FileType", {
-  pattern = "lua",
-  callback = function()
-    vim.bo.shiftwidth = 2   -- indent size
-    vim.bo.tabstop = 2      -- tab width
-    vim.bo.softtabstop = 2  -- how many spaces a <Tab> feels like
-    vim.bo.expandtab = true -- use spaces instead of tabs
-  end,
-})
-
-vim.api.nvim_create_autocmd("FileType", {
-  pattern = "go",
-  callback = function()
-    vim.bo.shiftwidth = 4    -- indent size
-    vim.bo.tabstop = 4       -- tab width
-    vim.bo.softtabstop = 4   -- how many spaces a <Tab> feels like
-    vim.bo.expandtab = false -- use spaces instead of tabs
-  end,
-})
-
-vim.api.nvim_create_autocmd("VimLeavePre", {
-  callback = function()
-    for _, client in pairs(vim.lsp.get_clients()) do
-      client.stop()
-    end
-  end,
-})
