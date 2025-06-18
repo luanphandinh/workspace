@@ -134,6 +134,10 @@ return function(use)
             require("luasnip").lsp_expand(args.body)
           end,
         },
+        preselect = cmp.PreselectMode.Item,      -- Preselect the first item
+        completion = {
+          completeopt = "menu,menuone,noinsert", -- Recommended by nvim-cmp
+        },
         mapping = cmp.mapping.preset.insert({
           ["<C-Space>"] = cmp.mapping.complete(),
           ["<CR>"] = cmp.mapping.confirm({ select = true }),
