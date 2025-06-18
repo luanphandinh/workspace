@@ -1,7 +1,14 @@
 return function(use)
+  -- use {
+  --   'nvim-telescope/telescope-fzf-native.nvim',
+  --   run = 'cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release'
+  -- }
   use {
-    'nvim-telescope/telescope-fzf-native.nvim',
-    run = 'cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release'
+    'nvim-telescope/telescope-fzy-native.nvim',
+    run = 'make',
+    config = function()
+      require('telescope').load_extension('fzy_native')
+    end,
   }
 
   use {
@@ -18,6 +25,7 @@ return function(use)
           preview = {
             treesitter = false,
           },
+          file_sorter = require('telescope.sorters').get_fzy_sorter,
         },
         extensions = {
           fzf = {
@@ -28,7 +36,7 @@ return function(use)
           }
         }
       })
-      require('telescope').load_extension('fzf')
+      -- require('telescope').load_extension('fzf')
       vim.keymap.set("n", "<leader>f", "<cmd>Telescope find_files<cr>")
       vim.keymap.set("n", "g/", "<cmd>Telescope live_grep<cr>")
     end,
