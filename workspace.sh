@@ -5,7 +5,7 @@ function addGitignore() {
   added=$(grep $path ~/.gitignore | wc -l)
   if [ $added -eq 0 ]; then
     echo "adding $path to ~/.gitignore"
-    echo $path >> ~/.gitignore
+    echo $path >>~/.gitignore
     echo "added $path to ~/.gitignore"
   fi
 }
