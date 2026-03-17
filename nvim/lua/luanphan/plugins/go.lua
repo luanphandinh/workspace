@@ -55,6 +55,35 @@ function M.run_go_test_at_cursor()
   vim.cmd("vsplit | terminal " .. cmd)
 end
 
+---Run all tests in the current file.
+function M.run_go_test_file()
+  local mod_name = M.get_go_mod_name()
+  local rel_path = M.get_relative_path()
+  local file_name = vim.fn.expand('%:t'):gsub('_test%.go$', '')
+
+  local cmd = string.format(
+    "/usr/local/go/bin/go test -timeout 30s %s/%s -gcflags=all=-N -gcflags=all=-l -count=1 -v",
+    mod_name,
+    rel_path
+  )
+
+  vim.cmd("vsplit | terminal " .. cmd)
+end
+
+---Run all tests in the current package.
+function M.run_go_test_package()
+  local mod_name = M.get_go_mod_name()
+  local rel_path = M.get_relative_path()
+
+  local cmd = string.format(
+    "/usr/local/go/bin/go test -timeout 60s %s/%s -gcflags=all=-N -gcflags=all=-l -count=1 -v ./...",
+    mod_name,
+    rel_path
+  )
+
+  vim.cmd("vsplit | terminal " .. cmd)
+end
+
 -- lua/telescope_subtests.lua
 function M.go_subtests_picker()
   local bufnr = vim.api.nvim_get_current_buf()

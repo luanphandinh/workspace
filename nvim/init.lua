@@ -39,10 +39,24 @@ require("packer").startup(function(use)
   require("luanphan.file_configs.json")
   local actions = {
     {
-      name = "Run Go Test",
+      name = "Run Go Test (Cursor)",
       action = function()
         local go = require("luanphan.plugins.go")
         go.run_go_test_at_cursor()
+      end,
+    },
+    {
+      name = "Run Go Test (File)",
+      action = function()
+        local go = require("luanphan.plugins.go")
+        go.run_go_test_file()
+      end,
+    },
+    {
+      name = "Run Go Test (Package)",
+      action = function()
+        local go = require("luanphan.plugins.go")
+        go.run_go_test_package()
       end,
     },
     {

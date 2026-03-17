@@ -51,11 +51,6 @@ vim.keymap.set("n", "<leader>d", function()
   vim.diagnostic.open_float(nil, { focus = false })
 end, { desc = "Show diagnostic at line" })
 
-vim.keymap.set("n", "<leader>gt", function()
-  local go = require("luanphan.plugins.go")
-  go.run_go_test_at_cursor()
-end)
-
 -- Claude Code keymaps
 vim.keymap.set("n", "<leader>ac", "<cmd>ClaudeCode<cr>", { desc = "Toggle Claude" })
 vim.keymap.set("n", "<leader>af", "<cmd>ClaudeCodeFocus<cr>", { desc = "Focus Claude" })
@@ -92,3 +87,19 @@ vim.keymap.set("n", "gs", function()
     },
   })
 end, { desc = "List symbols in file" })
+
+-- Go test keymaps (only in Go files)
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "go",
+  callback = function()
+    vim.keymap.set("n", "<leader>gtc", function()
+      require("luanphan.plugins.go").run_go_test_at_cursor()
+    end, { buffer = true, desc = "Run Go test at cursor" })
+    vim.keymap.set("n", "<leader>gtf", function()
+      require("luanphan.plugins.go").run_go_test_file()
+    end, { buffer = true, desc = "Run Go test file" })
+    vim.keymap.set("n", "<leader>gtp", function()
+      require("luanphan.plugins.go").run_go_test_package()
+    end, { buffer = true, desc = "Run Go test package" })
+  end,
+})
