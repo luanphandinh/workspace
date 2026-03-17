@@ -47,18 +47,6 @@ vim.keymap.set("n", "<leader>t", function()
   vim.cmd("vsplit | terminal")
 end, { noremap = true, silent = true })
 
-vim.keymap.set("n", "<leader>of", function()
-  require("telescope.builtin").lsp_document_symbols({
-    symbols = { "Function", "Method" },
-    symbol_width = 80,
-    previewer = false,
-    layout_config = {
-      width = 0.5,
-      height = 0.5,
-    },
-  })
-end, { noremap = true, silent = true })
-
 vim.keymap.set("n", "<leader>d", function()
   vim.diagnostic.open_float(nil, { focus = false })
 end, { desc = "Show diagnostic at line" })
