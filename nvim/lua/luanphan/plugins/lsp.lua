@@ -24,65 +24,68 @@ return function(use)
   use {
     "neovim/nvim-lspconfig",
     config = function()
-      local on_attach_lsp = function(client, bufnr)
-        local opts = { noremap = true, silent = true, buffer = bufnr }
-        local builtin = require("telescope.builtin") -- Use telescope for nicer view of gd, gi, gr
+      -- LSP attach handler for keymaps and formatting
+      vim.api.nvim_create_autocmd("LspAttach", {
+        group = vim.api.nvim_create_augroup("UserLspConfig", {}),
+        callback = function(args)
+          local client = vim.lsp.get_client_by_id(args.data.client_id)
+          local bufnr = args.buf
+          local opts = { noremap = true, silent = true, buffer = bufnr }
+          local builtin = require("telescope.builtin")
 
-        local previewOpts = {
-          initial_mode = "normal",
-          layout_strategy = "vertical",
-        }
+          local previewOpts = {
+            initial_mode = "normal",
+            layout_strategy = "vertical",
+          }
 
-        vim.keymap.set("n", "gd", function()
-          builtin.lsp_definitions(previewOpts)
-        end, opts)
+          vim.keymap.set("n", "gd", function()
+            builtin.lsp_definitions(previewOpts)
+          end, opts)
 
-        vim.keymap.set("n", "gi", function()
-          builtin.lsp_implementations(previewOpts)
-        end, opts)
+          vim.keymap.set("n", "gi", function()
+            builtin.lsp_implementations(previewOpts)
+          end, opts)
 
-        vim.keymap.set("n", "gr", function()
-          builtin.lsp_references(previewOpts)
-        end, opts)
+          vim.keymap.set("n", "gr", function()
+            builtin.lsp_references(previewOpts)
+          end, opts)
 
-        vim.keymap.set("n", "gh", vim.lsp.buf.hover, opts)
-        vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename, opts)
-        vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, opts)
+          vim.keymap.set("n", "gh", vim.lsp.buf.hover, opts)
+          vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename, opts)
+          vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, opts)
 
-        -- Auto format on save
-        if client.supports_method("textDocument/formatting") then
-          vim.api.nvim_create_autocmd("BufWritePre", {
-            group = vim.api.nvim_create_augroup(
-              "LspFormat." .. bufnr,
-              { clear = true }),
-            buffer = bufnr,
-            callback = function()
-              vim.lsp.buf.format({
-                bufnr = bufnr,
-                async = false, -- set true if you prefer async
-                filter = function(format_client)
-                  return format_client.name == client.name
-                end,
-              })
-            end,
-          })
-        end
-      end
-
-      vim.api.nvim_create_autocmd("VimLeavePre", {
-        callback = function()
-          for _, client in pairs(vim.lsp.get_clients()) do
-            client.stop()
+          -- Auto format on save
+          if client:supports_method("textDocument/formatting") then
+            vim.api.nvim_create_autocmd("BufWritePre", {
+              group = vim.api.nvim_create_augroup("LspFormat." .. bufnr, { clear = true }),
+              buffer = bufnr,
+              callback = function()
+                vim.lsp.buf.format({
+                  bufnr = bufnr,
+                  async = false,
+                  filter = function(format_client)
+                    return format_client.name == client.name
+                  end,
+                })
+              end,
+            })
           end
         end,
       })
 
-      -- Use Neovim 0.11+ vim.lsp.config API (replaces deprecated lspconfig setup)
-      vim.lsp.config.gopls = {
-        cmd = { "gopls" },
+      vim.api.nvim_create_autocmd("VimLeavePre", {
+        callback = function()
+          for _, client in pairs(vim.lsp.get_clients()) do
+            client:stop()
+          end
+        end,
+      })
+
+      -- Use Neovim 0.11+ vim.lsp.config API
+      vim.lsp.config("gopls", {
+        cmd = { "trae-gopls" },
         root_markers = { "go.mod", ".git" },
         filetypes = { "go", "gomod", "gowork", "gotmpl" },
-        on_attach = on_attach_lsp,
         settings = {
           gopls = {
             analyses = {
@@ -95,18 +98,17 @@ return function(use)
             staticcheck = true,
           },
         },
-      }
+      })
 
-      vim.lsp.config.lua_ls = {
+      vim.lsp.config("lua_ls", {
         cmd = { "lua-language-server" },
         root_markers = { ".luarc.json", ".luarc.jsonc", ".git" },
         filetypes = { "lua" },
-        on_attach = on_attach_lsp,
         settings = {
           Lua = {
             runtime = { version = "LuaJIT" },
             diagnostics = {
-              globals = { "vim" }, -- Recognize the `vim` global
+              globals = { "vim" },
             },
             workspace = {
               library = vim.api.nvim_get_runtime_file("", true),
@@ -115,22 +117,11 @@ return function(use)
             telemetry = { enable = false },
           },
         },
-      }
-
-      -- Auto-start LSP servers when opening relevant file types
-      vim.api.nvim_create_autocmd("FileType", {
-        pattern = { "go", "gomod", "gowork", "gotmpl" },
-        callback = function()
-          vim.lsp.start({ name = "gopls" })
-        end,
       })
 
-      vim.api.nvim_create_autocmd("FileType", {
-        pattern = "lua",
-        callback = function()
-          vim.lsp.start({ name = "lua_ls" })
-        end,
-      })
+      -- Enable LSP servers (auto-starts based on filetypes)
+      vim.lsp.enable("gopls")
+      vim.lsp.enable("lua_ls")
     end,
   }
 
