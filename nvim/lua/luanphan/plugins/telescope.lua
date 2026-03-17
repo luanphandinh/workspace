@@ -26,6 +26,13 @@ return function(use)
             treesitter = false,
           },
           file_sorter = require('telescope.sorters').get_fzy_sorter,
+          -- Performance optimizations
+          cache_picker = {
+            num_pickers = 5,
+            limit_entries = 1000,
+          },
+          path_display = { "truncate" },  -- faster than full path
+          winblend = 0,  -- disable transparency for faster rendering
         },
         pickers = {
           find_files = {

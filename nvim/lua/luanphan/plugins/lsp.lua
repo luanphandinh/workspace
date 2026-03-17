@@ -82,8 +82,11 @@ return function(use)
       })
 
       -- Use Neovim 0.11+ vim.lsp.config API
+      -- Use custom gopls binary from env var, fallback to "gopls"
+      local gopls_cmd = vim.env.GOPLS_PATH or "gopls"
+
       vim.lsp.config("gopls", {
-        cmd = { "trae-gopls" },
+        cmd = { gopls_cmd },
         root_markers = { "go.mod", ".git" },
         filetypes = { "go", "gomod", "gowork", "gotmpl" },
         settings = {
