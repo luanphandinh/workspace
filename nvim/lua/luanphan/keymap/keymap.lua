@@ -63,7 +63,7 @@ vim.keymap.set("n", "<leader>aa", "<cmd>ClaudeCodeDiffAccept<cr>", { desc = "Acc
 vim.keymap.set("n", "<leader>ad", "<cmd>ClaudeCodeDiffDeny<cr>", { desc = "Deny diff" })
 
 -- Reload config
-vim.keymap.set("n", "<leader>r", function()
+vim.keymap.set("n", "<leader>rr", function()
   -- Clear loaded modules from cache
   for k in pairs(package.loaded) do
     if k:match("^luanphan") then
