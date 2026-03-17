@@ -80,7 +80,17 @@ vim.keymap.set("n", "<leader>aa", "<cmd>ClaudeCodeDiffAccept<cr>", { desc = "Acc
 vim.keymap.set("n", "<leader>ad", "<cmd>ClaudeCodeDiffDeny<cr>", { desc = "Deny diff" })
 
 -- Reload config
-vim.keymap.set("n", "<leader>r", "<cmd>source $MYVIMRC<cr>", { desc = "Reload config" })
+vim.keymap.set("n", "<leader>r", function()
+  -- Clear loaded modules from cache
+  for k in pairs(package.loaded) do
+    if k:match("^luanphan") then
+      package.loaded[k] = nil
+    end
+  end
+  -- Source the config
+  vim.cmd("source $MYVIMRC")
+  print("Config reloaded!")
+end, { desc = "Reload config" })
 
 -- List all symbols in current file
 vim.keymap.set("n", "gs", function()
