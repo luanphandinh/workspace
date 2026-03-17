@@ -36,6 +36,7 @@ require("packer").startup(function(use)
   require("luanphan.keymap.keymap")
   require("luanphan.file_configs.go")
   require("luanphan.file_configs.lua")
+  require("luanphan.file_configs.json")
   local actions = {
     {
       name = "Run Go Test",
