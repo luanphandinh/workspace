@@ -37,6 +37,19 @@ require("packer").startup(function(use)
   require("luanphan.file_configs.go")
   require("luanphan.file_configs.lua")
   require("luanphan.file_configs.json")
-
   require("luanphan.actions")
+
+  -- Custom private plugins (gitignored)
+  local internal_path = vim.fn.stdpath("config") .. "/lua/luanphan/internal"
+  if vim.fn.isdirectory(internal_path) == 1 then
+    for _, file in ipairs(vim.fn.glob(internal_path .. "/*.lua", false, true)) do
+      local module = file:match(".*/internal/(.+)%.lua$")
+      if module then
+        local ok, mod = pcall(require, "luanphan.internal." .. module)
+        if ok and type(mod) == "function" then
+          mod(use)
+        end
+      end
+    end
+  end
 end)
