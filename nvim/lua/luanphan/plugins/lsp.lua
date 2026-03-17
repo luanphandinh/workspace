@@ -77,12 +77,13 @@ return function(use)
         end,
       })
 
-      -- Language servers
-      local lspconfig = require("lspconfig")
-      lspconfig.gopls.setup({
+      -- Use Neovim 0.11+ vim.lsp.config API (replaces deprecated lspconfig setup)
+      vim.lsp.config.gopls = {
+        cmd = { "gopls" },
+        root_markers = { "go.mod", ".git" },
+        filetypes = { "go", "gomod", "gowork", "gotmpl" },
         on_attach = on_attach_lsp,
         settings = {
-          gofumt = true,
           gopls = {
             analyses = {
               unusedparams = true,
@@ -94,9 +95,12 @@ return function(use)
             staticcheck = true,
           },
         },
-      })
+      }
 
-      lspconfig.lua_ls.setup({
+      vim.lsp.config.lua_ls = {
+        cmd = { "lua-language-server" },
+        root_markers = { ".luarc.json", ".luarc.jsonc", ".git" },
+        filetypes = { "lua" },
         on_attach = on_attach_lsp,
         settings = {
           Lua = {
@@ -111,6 +115,21 @@ return function(use)
             telemetry = { enable = false },
           },
         },
+      }
+
+      -- Auto-start LSP servers when opening relevant file types
+      vim.api.nvim_create_autocmd("FileType", {
+        pattern = { "go", "gomod", "gowork", "gotmpl" },
+        callback = function()
+          vim.lsp.start({ name = "gopls" })
+        end,
+      })
+
+      vim.api.nvim_create_autocmd("FileType", {
+        pattern = "lua",
+        callback = function()
+          vim.lsp.start({ name = "lua_ls" })
+        end,
       })
     end,
   }
