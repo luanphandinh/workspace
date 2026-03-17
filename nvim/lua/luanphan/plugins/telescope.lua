@@ -27,6 +27,16 @@ return function(use)
           },
           file_sorter = require('telescope.sorters').get_fzy_sorter,
         },
+        pickers = {
+          find_files = {
+            hidden = true,  -- show dotfiles
+          },
+          live_grep = {
+            additional_args = function()
+              return { "--hidden" }  -- search hidden files in live_grep
+            end,
+          },
+        },
         extensions = {
           fzf = {
             fuzzy = true,                   -- enable fuzzy matching
