@@ -72,8 +72,15 @@ vim.keymap.set("n", "<leader>rr", function()
   end
   -- Source the config
   vim.cmd("source $MYVIMRC")
-  print("Config reloaded!")
-end, { desc = "Reload config" })
+
+  -- Restart LSP servers for current buffer
+  vim.lsp.stop_client(vim.lsp.get_clients({ bufnr = 0 }))
+  vim.defer_fn(function()
+    vim.cmd("edit")  -- Re-trigger LSP attach
+  end, 100)
+
+  print("Config reloaded! LSP restarted.")
+end, { desc = "Reload config & restart LSP" })
 
 -- List all symbols in current file
 vim.keymap.set("n", "gs", function()
