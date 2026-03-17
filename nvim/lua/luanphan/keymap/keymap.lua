@@ -2,7 +2,7 @@
 vim.g.mapleader = " "
 vim.g.maplocalleader = " "
 vim.o.timeout = true
-vim.o.timeoutlen = 500  -- time to wait for mapped sequence (ms)
+vim.o.timeoutlen = 500 -- time to wait for mapped sequence (ms)
 vim.o.number = true
 vim.o.relativenumber = true
 vim.o.swapfile = false
@@ -72,7 +72,7 @@ end)
 vim.keymap.set("n", "<leader>ac", "<cmd>ClaudeCode<cr>", { desc = "Toggle Claude" })
 vim.keymap.set("n", "<leader>af", "<cmd>ClaudeCodeFocus<cr>", { desc = "Focus Claude" })
 vim.keymap.set("n", "<leader>ar", "<cmd>ClaudeCode --resume<cr>", { desc = "Resume Claude" })
-vim.keymap.set("n", "<leader>aC", "<cmd>ClaudeCode --continue<cr>", { desc = "Continue Claude" })
+vim.keymap.set("n", "<leader>aC", "<cmd>ClaudeCode --continue<crj", { desc = "Continue Claude" })
 vim.keymap.set("n", "<leader>am", "<cmd>ClaudeCodeSelectModel<cr>", { desc = "Select Claude model" })
 vim.keymap.set("n", "<leader>ab", "<cmd>ClaudeCodeAdd %<cr>", { desc = "Add current buffer" })
 vim.keymap.set("v", "<leader>as", "<cmd>ClaudeCodeSend<cr>", { desc = "Send to Claude" })
@@ -80,4 +80,17 @@ vim.keymap.set("n", "<leader>aa", "<cmd>ClaudeCodeDiffAccept<cr>", { desc = "Acc
 vim.keymap.set("n", "<leader>ad", "<cmd>ClaudeCodeDiffDeny<cr>", { desc = "Deny diff" })
 
 -- Reload config
-vim.keymap.set("n", "<leader>sv", "<cmd>source $MYVIMRC<cr>", { desc = "Reload config" })
+vim.keymap.set("n", "<leader>r", "<cmd>source $MYVIMRC<cr>", { desc = "Reload config" })
+
+-- List all symbols in current file
+vim.keymap.set("n", "gs", function()
+  require("telescope.builtin").lsp_document_symbols({
+    previewer = false,
+    symbol_width = 80,
+    layout_strategy = "vertical",
+    layout_config = {
+      width = 0.5,
+      height = 0.6,
+    },
+  })
+end, { desc = "List symbols in file" })
