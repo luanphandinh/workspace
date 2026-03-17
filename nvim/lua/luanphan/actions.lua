@@ -1,5 +1,8 @@
 local M = {}
 
+-- State for gitignore visibility
+local show_gitignore = false
+
 -- Define available actions for the command palette
 local actions = {
   {
@@ -30,6 +33,39 @@ local actions = {
     name = "Git Status",
     action = function()
       vim.cmd("vertical Git")
+    end,
+  },
+  {
+    name = "Toggle Gitignore (Tree & Telescope)",
+    action = function()
+      show_gitignore = not show_gitignore
+
+      -- Reconfigure nvim-tree filters
+      require("nvim-tree").setup({
+        filters = {
+          git_ignored = not show_gitignore,
+        },
+      })
+      require("nvim-tree.api").tree.reload()
+
+      -- Update telescope to include/exclude gitignored files
+      require("telescope").setup({
+        defaults = {
+          vimgrep_arguments = show_gitignore
+              and { "rg", "--color=never", "--no-heading", "--with-filename", "--line-number", "--column", "--smart-case", "--hidden", "--no-ignore" }
+              or { "rg", "--color=never", "--no-heading", "--with-filename", "--line-number", "--column", "--smart-case", "--hidden" },
+        },
+        pickers = {
+          find_files = {
+            hidden = true,
+            find_command = show_gitignore
+                and { "rg", "--files", "--hidden", "--no-ignore" }
+                or { "rg", "--files", "--hidden" },
+          },
+        },
+      })
+
+      print("Gitignore visibility: " .. (show_gitignore and "ON" or "OFF"))
     end,
   },
 }
