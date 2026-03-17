@@ -3,6 +3,7 @@ vim.g.mapleader = " "
 vim.g.maplocalleader = " "
 vim.o.timeout = true
 vim.o.timeoutlen = 500 -- time to wait for mapped sequence (ms)
+vim.o.termguicolors = true  -- enable true color support
 vim.o.number = true
 vim.o.relativenumber = true
 vim.o.swapfile = false
