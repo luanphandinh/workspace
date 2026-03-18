@@ -14,7 +14,6 @@ return function(use)
       require("mason-lspconfig").setup {
         ensure_installed = {
           "gopls",
-          "lua_ls",
         }, -- auto-install these LSPs
         automatic_enable = false,
       }
@@ -103,28 +102,8 @@ return function(use)
         },
       })
 
-      vim.lsp.config("lua_ls", {
-        cmd = { "lua-language-server" },
-        root_markers = { ".luarc.json", ".luarc.jsonc", ".git" },
-        filetypes = { "lua" },
-        settings = {
-          Lua = {
-            runtime = { version = "LuaJIT" },
-            diagnostics = {
-              globals = { "vim" },
-            },
-            workspace = {
-              library = vim.api.nvim_get_runtime_file("", true),
-              checkThirdParty = false,
-            },
-            telemetry = { enable = false },
-          },
-        },
-      })
-
       -- Enable LSP servers (auto-starts based on filetypes)
       vim.lsp.enable("gopls")
-      vim.lsp.enable("lua_ls")
     end,
   }
 
