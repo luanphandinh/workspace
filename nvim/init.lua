@@ -31,6 +31,7 @@ require("packer").startup(function(use)
   require("luanphan.plugins.gitsigns")(use)
   require("luanphan.plugins.harpoon")(use)
   require("luanphan.plugins.editor")(use)
+  require("luanphan.plugins.terminal")(use)
   require("luanphan.plugins.claude-code")(use)
 
   require("luanphan.keymap.keymap")
