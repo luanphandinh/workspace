@@ -2,8 +2,8 @@
 vim.g.mapleader = " "
 vim.g.maplocalleader = " "
 vim.o.timeout = true
-vim.o.timeoutlen = 500 -- time to wait for mapped sequence (ms)
-vim.o.termguicolors = true  -- enable true color support
+vim.o.timeoutlen = 500     -- time to wait for mapped sequence (ms)
+vim.o.termguicolors = true -- enable true color support
 vim.o.number = true
 vim.o.relativenumber = true
 vim.o.swapfile = false
@@ -52,17 +52,6 @@ vim.keymap.set("n", "<leader>d", function()
   vim.diagnostic.open_float(nil, { focus = false })
 end, { desc = "Show diagnostic at line" })
 
--- Claude Code keymaps
-vim.keymap.set("n", "<leader>ac", "<cmd>ClaudeCode<cr>", { desc = "Toggle Claude" })
-vim.keymap.set("n", "<leader>af", "<cmd>ClaudeCodeFocus<cr>", { desc = "Focus Claude" })
-vim.keymap.set("n", "<leader>ar", "<cmd>ClaudeCode --resume<cr>", { desc = "Resume Claude" })
-vim.keymap.set("n", "<leader>aC", "<cmd>ClaudeCode --continue<crj", { desc = "Continue Claude" })
-vim.keymap.set("n", "<leader>am", "<cmd>ClaudeCodeSelectModel<cr>", { desc = "Select Claude model" })
-vim.keymap.set("n", "<leader>ab", "<cmd>ClaudeCodeAdd %<cr>", { desc = "Add current buffer" })
-vim.keymap.set("v", "<leader>as", "<cmd>ClaudeCodeSend<cr>", { desc = "Send to Claude" })
-vim.keymap.set("n", "<leader>aa", "<cmd>ClaudeCodeDiffAccept<cr>", { desc = "Accept diff" })
-vim.keymap.set("n", "<leader>ad", "<cmd>ClaudeCodeDiffDeny<cr>", { desc = "Deny diff" })
-
 -- Reload config
 vim.keymap.set("n", "<leader>rr", function()
   -- Clear loaded modules from cache
@@ -77,7 +66,7 @@ vim.keymap.set("n", "<leader>rr", function()
   -- Restart LSP servers for current buffer
   vim.lsp.stop_client(vim.lsp.get_clients({ bufnr = 0 }))
   vim.defer_fn(function()
-    vim.cmd("edit")  -- Re-trigger LSP attach
+    vim.cmd("edit") -- Re-trigger LSP attach
   end, 100)
 
   print("Config reloaded! LSP restarted.")
