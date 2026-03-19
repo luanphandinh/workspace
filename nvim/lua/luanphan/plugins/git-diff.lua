@@ -5,6 +5,8 @@ return function(use)
     event = "CmdlineEnter", -- lazy load when entering command mode
     requires = "nvim-lua/plenary.nvim",
     config = function()
+      local actions = require("diffview.actions")
+
       require("diffview").setup({
         view = {
           default = {
@@ -20,6 +22,38 @@ return function(use)
           diff_buf_read = function(bufnr)
             vim.opt_local.wrap = false
             vim.opt_local.list = false
+          end,
+          view_opened = function(view)
+            -- Set keymap to jump to original file
+            vim.keymap.set("n", "<leader>gf", function()
+              local lib = require("diffview.lib")
+              local cur_view = lib.get_current_view()
+              if not cur_view then return end
+
+              -- Get the current file entry
+              local entry = cur_view.panel:get_item_at_cursor()
+              if not entry then
+                -- Try to get from the current file in the view
+                local file = cur_view.cur_file
+                if file then
+                  local path = file.path
+                  vim.cmd("DiffviewClose")
+                  vim.cmd("edit " .. vim.fn.fnameescape(path))
+                end
+                return
+              end
+
+              -- Get the file path
+              local path = entry.path
+              if entry.right and entry.right.path then
+                path = entry.right.path
+              elseif entry.left and entry.left.path then
+                path = entry.left.path
+              end
+
+              vim.cmd("DiffviewClose")
+              vim.cmd("edit " .. vim.fn.fnameescape(path))
+            end, { buffer = true, desc = "Jump to original file" })
           end,
         },
       })
