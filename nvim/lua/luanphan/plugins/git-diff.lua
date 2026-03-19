@@ -2,15 +2,84 @@ return function(use)
   -- Global git diff viewer
   use {
     "sindrets/diffview.nvim",
-    event = "CmdlineEnter", -- lazy load when entering command mode
     requires = "nvim-lua/plenary.nvim",
     config = function()
       local actions = require("diffview.actions")
+      local diffview = require("diffview")
+
+      -- Find existing diffview tab
+      local function find_diffview_tab()
+        for _, tabid in ipairs(vim.api.nvim_list_tabpages()) do
+          local wins = vim.api.nvim_tabpage_list_wins(tabid)
+          for _, winid in ipairs(wins) do
+            local bufname = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(winid))
+            if bufname:match("^diffview://") then
+              return tabid
+            end
+          end
+        end
+        return nil
+      end
+
+      -- Toggle/focus diffview
+      local function toggle_diffview()
+        -- Check if current tab is diffview
+        local cur_buf = vim.api.nvim_buf_get_name(0)
+        if cur_buf:match("^diffview://") then
+          vim.cmd("DiffviewClose")
+          return
+        end
+
+        -- Check if diffview tab exists
+        local existing_tab = find_diffview_tab()
+        if existing_tab then
+          vim.api.nvim_set_current_tabpage(existing_tab)
+          return
+        end
+
+        -- Open new diffview
+        vim.cmd("DiffviewOpen")
+      end
+
+      -- Toggle file history for current file
+      local function toggle_file_history()
+        local cur_buf = vim.api.nvim_buf_get_name(0)
+        if cur_buf:match("^diffview://") then
+          vim.cmd("DiffviewClose")
+          return
+        end
+
+        local existing_tab = find_diffview_tab()
+        if existing_tab then
+          vim.api.nvim_set_current_tabpage(existing_tab)
+          return
+        end
+
+        vim.cmd("DiffviewFileHistory %")
+      end
+
+      -- Toggle file history for all files
+      local function toggle_all_file_history()
+        local cur_buf = vim.api.nvim_buf_get_name(0)
+        if cur_buf:match("^diffview://") then
+          vim.cmd("DiffviewClose")
+          return
+        end
+
+        local existing_tab = find_diffview_tab()
+        if existing_tab then
+          vim.api.nvim_set_current_tabpage(existing_tab)
+          return
+        end
+
+        vim.cmd("DiffviewFileHistory")
+      end
 
       require("diffview").setup({
         view = {
           default = {
             layout = "diff2_horizontal",
+            winbar_info = true,
           },
         },
         file_panel = {
@@ -24,6 +93,10 @@ return function(use)
             vim.opt_local.list = false
           end,
           view_opened = function(view)
+            -- Set simple tab name
+            vim.api.nvim_tabpage_set_var(0, "diffview_active", true)
+            vim.cmd("filetype detect")
+
             -- Set keymap to jump to original file
             vim.keymap.set("n", "<leader>gf", function()
               local lib = require("diffview.lib")
@@ -70,10 +143,9 @@ return function(use)
       })
 
       -- Git diff globally
-      vim.keymap.set("n", "<leader>gdo", "<cmd>DiffviewOpen<cr>", { desc = "Open git diff (all files)" })
-      vim.keymap.set("n", "<leader>gdc", "<cmd>DiffviewClose<cr>", { desc = "Close git diff" })
-      vim.keymap.set("n", "<leader>gdh", "<cmd>DiffviewFileHistory %<cr>", { desc = "File history (current)" })
-      vim.keymap.set("n", "<leader>gdH", "<cmd>DiffviewFileHistory<cr>", { desc = "File history (all)" })
+      vim.keymap.set("n", "<leader>gD", toggle_diffview, { desc = "Toggle git diff" })
+      vim.keymap.set("n", "<leader>gH", toggle_file_history, { desc = "Toggle file history (current)" })
+      vim.keymap.set("n", "<leader>gA", toggle_all_file_history, { desc = "Toggle file history (all)" })
     end,
   }
 
