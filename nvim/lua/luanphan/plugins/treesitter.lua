@@ -4,6 +4,11 @@ return function(use)
     "nvim-treesitter/nvim-treesitter",
     run = ":TSUpdate", -- or `run` if still using older packer
     config = function()
+      -- Enable folding with treesitter
+      vim.opt.foldmethod = "expr"
+      vim.opt.foldexpr = "nvim_treesitter#foldexpr()"
+      vim.opt.foldlevel = 99  -- Start with folds open
+
       require("nvim-treesitter.configs").setup({
         sync_install = false,
         auto_install = true,
