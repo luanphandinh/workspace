@@ -143,6 +143,34 @@ return function(use)
           { name = "path" },
         }),
       })
+
+      -- Command to restart cmp
+      vim.api.nvim_create_user_command("CmpRestart", function()
+        cmp.setup({
+          snippet = {
+            expand = function(args)
+              require("luasnip").lsp_expand(args.body)
+            end,
+          },
+          preselect = cmp.PreselectMode.Item,
+          completion = {
+            completeopt = "menu,menuone,noinsert",
+          },
+          mapping = cmp.mapping.preset.insert({
+            ["<C-Space>"] = cmp.mapping.complete(),
+            ["<CR>"] = cmp.mapping.confirm({ select = true }),
+            ["<C-n>"] = cmp.mapping.select_next_item(),
+            ["<C-p>"] = cmp.mapping.select_prev_item(),
+          }),
+          sources = cmp.config.sources({
+            { name = "nvim_lsp" },
+            { name = "luasnip" },
+            { name = "buffer" },
+            { name = "path" },
+          }),
+        })
+        print("nvim-cmp restarted")
+      end, {})
     end
   }
 end

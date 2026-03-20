@@ -52,7 +52,7 @@ function M.run_go_test_at_cursor()
     rel_path
   )
 
-  vim.cmd("vsplit | terminal " .. cmd)
+  vim.cmd("rightbelow vsplit | terminal " .. cmd)
 end
 
 ---Run all tests in the current file.
@@ -67,7 +67,7 @@ function M.run_go_test_file()
     rel_path
   )
 
-  vim.cmd("vsplit | terminal " .. cmd)
+  vim.cmd("rightbelow vsplit | terminal " .. cmd)
 end
 
 ---Run all tests in the current package.
@@ -81,7 +81,7 @@ function M.run_go_test_package()
     rel_path
   )
 
-  vim.cmd("vsplit | terminal " .. cmd)
+  vim.cmd("rightbelow vsplit | terminal " .. cmd)
 end
 
 -- lua/telescope_subtests.lua
