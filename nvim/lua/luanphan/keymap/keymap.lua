@@ -127,14 +127,29 @@ end, { desc = "Save file" })
 vim.keymap.set("n", "<leader>fS", "<cmd>wa<cr>", { desc = "Save all files" })
 
 vim.keymap.set("n", "<leader>ft", function()
-  vim.ui.select({ "json", "sql", "txt", "md", "go" }, {
-    prompt = "Set filetype:",
-    format_item = function(item)
-      return item
-    end,
-  }, function(choice)
-    if choice then
-      vim.bo.filetype = choice
-    end
-  end)
+  local pickers = require("telescope.pickers")
+  local finders = require("telescope.finders")
+  local conf = require("telescope.config").values
+  local actions = require("telescope.actions")
+  local action_state = require("telescope.actions.state")
+
+  local filetypes = { "json", "sql", "txt", "md", "go", "lua", "python", "javascript", "yaml", "html", "css" }
+
+  pickers
+    .new({}, {
+      prompt_title = "Set Filetype",
+      finder = finders.new_table({ results = filetypes }),
+      sorter = conf.generic_sorter({}),
+      attach_mappings = function(prompt_bufnr, map)
+        actions.select_default:replace(function()
+          local selection = action_state.get_selected_entry()
+          actions.close(prompt_bufnr)
+          if selection then
+            vim.bo.filetype = selection[1]
+          end
+        end)
+        return true
+      end,
+    })
+    :find()
 end, { desc = "Set filetype" })
