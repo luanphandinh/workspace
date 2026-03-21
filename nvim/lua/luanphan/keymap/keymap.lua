@@ -101,3 +101,40 @@ vim.api.nvim_create_autocmd("FileType", {
     end, { buffer = true, desc = "Run Go test package" })
   end,
 })
+
+-- Command to create empty buffer with filetype
+-- Usage: :New go, :New lua, :New json, etc.
+vim.api.nvim_create_user_command("New", function(opts)
+  vim.cmd("enew")
+  vim.bo.filetype = opts.args
+end, { nargs = 1, desc = "Create new buffer with filetype" })
+
+-- Keybindings for file/buffer management
+vim.keymap.set("n", "<leader>fn", "<cmd>enew<cr>", { desc = "New file" })
+
+vim.keymap.set("n", "<leader>fs", function()
+  if vim.fn.bufname() == "" then
+    -- New buffer without name - prompt for filename
+    local filename = vim.fn.input("Save as: ")
+    if filename ~= "" then
+      vim.cmd("w " .. vim.fn.fnameescape(filename))
+    end
+  else
+    vim.cmd("w")
+  end
+end, { desc = "Save file" })
+
+vim.keymap.set("n", "<leader>fS", "<cmd>wa<cr>", { desc = "Save all files" })
+
+vim.keymap.set("n", "<leader>ft", function()
+  vim.ui.select({ "json", "sql", "txt", "md", "go" }, {
+    prompt = "Set filetype:",
+    format_item = function(item)
+      return item
+    end,
+  }, function(choice)
+    if choice then
+      vim.bo.filetype = choice
+    end
+  end)
+end, { desc = "Set filetype" })
