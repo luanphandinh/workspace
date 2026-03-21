@@ -1,5 +1,5 @@
 return function(use)
-  -- mason, automatically install lsp deps
+  -- mason - load eagerly as it's a dependency for mason-lspconfig
   use {
     "williamboman/mason.nvim",
     config = function()
@@ -7,14 +7,15 @@ return function(use)
     end,
   }
 
+  -- mason-lspconfig - lazy load with lspconfig
   use {
     "williamboman/mason-lspconfig.nvim",
-    after = "mason.nvim",
+    event = "BufReadPre",
     config = function()
       require("mason-lspconfig").setup {
         ensure_installed = {
           "gopls",
-        }, -- auto-install these LSPs
+        },
         automatic_enable = false,
       }
     end,
@@ -22,6 +23,7 @@ return function(use)
 
   use {
     "neovim/nvim-lspconfig",
+    event = "BufReadPre",
     config = function()
       -- LSP attach handler for keymaps and formatting
       vim.api.nvim_create_autocmd("LspAttach", {
