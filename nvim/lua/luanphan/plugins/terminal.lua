@@ -8,9 +8,13 @@ return function(use)
         direction = "vertical", -- opens on the right
         shade_terminals = false,
         persist_size = true,
-        persist_mode = true,
+        persist_mode = false,   -- Don't persist mode, always start in insert
         close_on_exit = true,
         auto_scroll = true,
+        on_open = function(term)
+          -- Auto enter insert mode when terminal opens
+          vim.cmd("startinsert")
+        end,
       })
 
       -- Toggle terminal on the right
