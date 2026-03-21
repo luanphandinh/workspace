@@ -9,7 +9,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Setup
-    - run: make setup
+      run: make setup
 
     - name: Install gopls
       run: |
@@ -61,7 +61,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Setup
-    - run: make setup
+      run: make setup
 
     - name: Install gopls
       run: |
