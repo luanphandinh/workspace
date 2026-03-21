@@ -171,6 +171,9 @@ return function(use)
         })
         print("nvim-cmp restarted")
       end, {})
+
+      -- Keymap to restart cmp
+      vim.keymap.set("n", "<leader>rs", "<cmd>CmpRestart<cr>", { desc = "Restart completion" })
     end
   }
 end

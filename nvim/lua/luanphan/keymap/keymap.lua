@@ -49,7 +49,7 @@ vim.keymap.set("n", "<leader>d", function()
 end, { desc = "Show diagnostic at line" })
 
 -- Reload config
-vim.keymap.set("n", "<leader>rr", function()
+vim.keymap.set("n", "<leader>rc", function()
   -- Clear loaded modules from cache
   for k in pairs(package.loaded) do
     if k:match("^luanphan") then
@@ -59,14 +59,19 @@ vim.keymap.set("n", "<leader>rr", function()
   -- Source the config
   vim.cmd("source $MYVIMRC")
 
+  print("Config reloaded!")
+end, { desc = "Reload config" })
+
+-- Reload lsp
+vim.keymap.set("n", "<leader>rl", function()
   -- Restart LSP servers for current buffer
   vim.lsp.stop_client(vim.lsp.get_clients({ bufnr = 0 }))
   vim.defer_fn(function()
     vim.cmd("edit") -- Re-trigger LSP attach
   end, 100)
 
-  print("Config reloaded! LSP restarted.")
-end, { desc = "Reload config & restart LSP" })
+  print("LSP restarted!")
+end, { desc = "Restart LSP" })
 
 -- List all symbols in current file
 vim.keymap.set("n", "gs", function()
