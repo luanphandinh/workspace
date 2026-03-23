@@ -156,3 +156,9 @@ vim.keymap.set("n", "<leader>ft", function()
     })
     :find()
 end, { desc = "Set filetype" })
+
+-- Diff mode keybindings
+vim.keymap.set("n", "<leader>df", "<cmd>windo diffthis<cr>", { desc = "Diff compare (vertical split)" })
+vim.keymap.set("n", "<leader>dF", "<cmd>windo diffoff<cr>", { desc = "Diff off" })
+vim.keymap.set("n", "<leader>do", "<cmd>diffget<cr>", { desc = "Diff obtain (get from other)" })
+vim.keymap.set("n", "<leader>dp", "<cmd>diffput<cr>", { desc = "Diff put (send to other)" })
