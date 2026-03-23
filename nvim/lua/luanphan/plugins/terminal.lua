@@ -8,13 +8,9 @@ return function(use)
         direction = "vertical", -- opens on the right
         shade_terminals = false,
         persist_size = true,
-        persist_mode = false,   -- Don't persist mode, always start in insert
+        persist_mode = false,
         close_on_exit = true,
         auto_scroll = true,
-        on_open = function(term)
-          -- Auto enter insert mode when terminal opens
-          vim.cmd("startinsert")
-        end,
       })
 
       -- Toggle terminal on the right
@@ -25,6 +21,16 @@ return function(use)
         local opts = { buffer = 0 }
         vim.keymap.set("t", "<esc>", [[<c-\><c-n>]], opts)
       end
+
+      -- Auto enter insert mode when entering terminal buffer
+      vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter" }, {
+        pattern = "term://*",
+        callback = function()
+          vim.defer_fn(function()
+            vim.cmd("startinsert")
+          end, 10)
+        end,
+      })
 
       vim.cmd("autocmd! TermOpen * lua set_terminal_keymaps()")
     end,

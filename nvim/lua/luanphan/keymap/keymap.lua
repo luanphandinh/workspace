@@ -44,6 +44,9 @@ vim.keymap.set("t", "<C-j>", "<C-\\><C-n><C-w>j", { desc = "Exit terminal and go
 vim.keymap.set("t", "<C-k>", "<C-\\><C-n><C-w>k", { desc = "Exit terminal and go up" })
 vim.keymap.set("t", "<Esc>", "<C-\\><C-n>", { desc = "Exit terminal mode" })
 
+vim.keymap.set("n", "<leader>p", "<cmd>Telescope find_files<cr>")
+vim.keymap.set("n", "g/", "<cmd>Telescope live_grep<cr>")
+
 vim.keymap.set("n", "<leader>d", function()
   vim.diagnostic.open_float(nil, { focus = false })
 end, { desc = "Show diagnostic at line" })
