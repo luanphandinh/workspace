@@ -39,17 +39,28 @@ return function(use)
             layout_strategy = "vertical",
           }
 
-          vim.keymap.set("n", "gd", function()
+          -- Helper to check if LSP is ready
+          local function with_lsp(fn)
+            return function()
+              if #vim.lsp.get_clients({ bufnr = 0 }) == 0 then
+                vim.notify("No LSP client attached. Waiting for LSP...", vim.log.levels.WARN)
+                return
+              end
+              fn()
+            end
+          end
+
+          vim.keymap.set("n", "gd", with_lsp(function()
             builtin.lsp_definitions(previewOpts)
-          end, opts)
+          end), opts)
 
-          vim.keymap.set("n", "gi", function()
+          vim.keymap.set("n", "gi", with_lsp(function()
             builtin.lsp_implementations(previewOpts)
-          end, opts)
+          end), opts)
 
-          vim.keymap.set("n", "gr", function()
+          vim.keymap.set("n", "gr", with_lsp(function()
             builtin.lsp_references(previewOpts)
-          end, opts)
+          end), opts)
 
           vim.keymap.set("n", "gh", vim.lsp.buf.hover, opts)
           vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename, opts)

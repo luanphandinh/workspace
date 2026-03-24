@@ -75,6 +75,38 @@ return function(use)
         vim.cmd("DiffviewFileHistory")
       end
 
+      -- Diff current branch with base branch (main or master)
+      local function toggle_branch_diff()
+        local cur_buf = vim.api.nvim_buf_get_name(0)
+        if cur_buf:match("^diffview://") then
+          vim.cmd("DiffviewClose")
+          return
+        end
+
+        local existing_tab = find_diffview_tab()
+        if existing_tab then
+          vim.api.nvim_set_current_tabpage(existing_tab)
+          return
+        end
+
+        -- Find base branch (main, master, or develop)
+        local base_branch = "main"
+        local result = vim.fn.system("git rev-parse --verify main 2>/dev/null")
+        if vim.v.shell_error ~= 0 then
+          result = vim.fn.system("git rev-parse --verify master 2>/dev/null")
+          if vim.v.shell_error == 0 then
+            base_branch = "master"
+          else
+            result = vim.fn.system("git rev-parse --verify develop 2>/dev/null")
+            if vim.v.shell_error == 0 then
+              base_branch = "develop"
+            end
+          end
+        end
+
+        vim.cmd("DiffviewOpen " .. base_branch .. "...HEAD")
+      end
+
       require("diffview").setup({
         view = {
           default = {
@@ -143,9 +175,10 @@ return function(use)
       })
 
       -- Git diff globally
-      vim.keymap.set("n", "<leader>gD", toggle_diffview, { desc = "Toggle git diff" })
-      vim.keymap.set("n", "<leader>gH", toggle_file_history, { desc = "Toggle file history (current)" })
-      vim.keymap.set("n", "<leader>gA", toggle_all_file_history, { desc = "Toggle file history (all)" })
+      vim.keymap.set("n", "<leader>gd", toggle_diffview, { desc = "Git diff (current changes)" })
+      vim.keymap.set("n", "<leader>gD", toggle_branch_diff, { desc = "Git diff branch (vs base)" })
+      vim.keymap.set("n", "<leader>gH", toggle_file_history, { desc = "File history (current)" })
+      vim.keymap.set("n", "<leader>gA", toggle_all_file_history, { desc = "File history (all)" })
     end,
   }
 

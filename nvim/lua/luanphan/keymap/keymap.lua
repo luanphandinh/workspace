@@ -67,14 +67,29 @@ end, { desc = "Reload config" })
 
 -- Reload lsp
 vim.keymap.set("n", "<leader>rl", function()
-  -- Restart LSP servers for current buffer
-  vim.lsp.stop_client(vim.lsp.get_clients({ bufnr = 0 }))
-  vim.defer_fn(function()
-    vim.cmd("edit") -- Re-trigger LSP attach
-  end, 100)
+  -- Get all clients and stop them
+  local clients = vim.lsp.get_clients()
+  if #clients == 0 then
+    print("No LSP clients running")
+    return
+  end
 
-  print("LSP restarted!")
-end, { desc = "Restart LSP" })
+  -- Stop all LSP clients
+  vim.lsp.stop_client(clients)
+
+  -- Re-attach to all buffers after restart
+  vim.defer_fn(function()
+    -- Re-trigger LSP attach for all buffers
+    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_loaded(bufnr) then
+        local ft = vim.bo[bufnr].filetype
+        -- Trigger FileType event to re-attach LSP
+        vim.api.nvim_exec_autocmds("FileType", { buffer = bufnr })
+      end
+    end
+    print("LSP restarted and re-attached to all buffers!")
+  end, 200)
+end, { desc = "Restart LSP and re-attach all buffers" })
 
 -- List all symbols in current file
 vim.keymap.set("n", "gs", function()
