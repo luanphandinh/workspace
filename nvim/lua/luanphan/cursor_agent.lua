@@ -180,7 +180,8 @@ local function format_selection_payload(bufnr, lines, line_start, line_end)
 
   local header = string.format("@%s:%d-%d", path, line_start, line_end)
   if config.send_mode == "lines_only" then
-    return header .. "\n"
+    -- No trailing newline: terminal cursor stays on same line after @path:start-end.
+    return header
   end
 
   local body = table.concat(lines, "\n")
@@ -194,10 +195,15 @@ local function format_selection_payload(bufnr, lines, line_start, line_end)
   return header .. "\n\n" .. body .. "\n"
 end
 
+local function exit_visual_to_normal()
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
+end
+
 function M.send_selection()
   local bufnr = vim.api.nvim_get_current_buf()
   if vim.bo[bufnr].buftype ~= "" then
     vim.notify("cursor_agent: not supported in this buffer", vim.log.levels.WARN)
+    exit_visual_to_normal()
     return
   end
 
@@ -212,9 +218,12 @@ function M.send_selection()
     lines = vim.fn.getregion(start_pos, end_pos, { type = vmode })
     if not lines or #lines == 0 then
       vim.notify("cursor_agent: empty selection", vim.log.levels.INFO)
+      exit_visual_to_normal()
       return
     end
   end
+
+  exit_visual_to_normal()
 
   local payload = format_selection_payload(bufnr, lines, line_start, line_end)
   if not payload then
