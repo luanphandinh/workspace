@@ -1,4 +1,6 @@
 -- Basic keymaps and options
+local lsp_restart = require("luanphan.lsp_restart")
+
 vim.g.mapleader = " "
 vim.g.maplocalleader = " "
 vim.o.timeout = true
@@ -75,31 +77,14 @@ vim.keymap.set("n", "<leader>rc", function()
   print("Config reloaded!")
 end, { desc = "Reload config (full init.lua)" })
 
--- Reload lsp
+-- LSP: use vim.lsp.enable(false) then enable(true) — see :help lsp-restart
 vim.keymap.set("n", "<leader>rl", function()
-  -- Get all clients and stop them
-  local clients = vim.lsp.get_clients()
-  if #clients == 0 then
-    print("No LSP clients running")
-    return
-  end
+  lsp_restart.restart_all()
+end, { desc = "LspRestart: full LSP restart" })
 
-  -- Stop all LSP clients
-  vim.lsp.stop_client(clients)
-
-  -- Re-attach to all buffers after restart
-  vim.defer_fn(function()
-    -- Re-trigger LSP attach for all buffers
-    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-      if vim.api.nvim_buf_is_loaded(bufnr) then
-        local ft = vim.bo[bufnr].filetype
-        -- Trigger FileType event to re-attach LSP
-        vim.api.nvim_exec_autocmds("FileType", { buffer = bufnr })
-      end
-    end
-    print("LSP restarted and re-attached to all buffers!")
-  end, 200)
-end, { desc = "Restart LSP and re-attach all buffers" })
+vim.keymap.set("n", "<leader>rb", function()
+  lsp_restart.restart_buffer()
+end, { desc = "LspRestartBuffer: this buffer / recover attach" })
 
 -- List all symbols in current file
 vim.keymap.set("n", "gs", function()
