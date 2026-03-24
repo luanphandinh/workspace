@@ -38,6 +38,7 @@ require("packer").startup(function(use)
   require("luanphan.plugins.which-key")(use)
 
   require("luanphan.keymap.keymap")
+  require("luanphan.cursor_agent").setup()
   require("luanphan.file_configs.go")
   require("luanphan.file_configs.lua")
   require("luanphan.file_configs.json")
