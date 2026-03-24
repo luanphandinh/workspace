@@ -18,7 +18,7 @@ local DEFAULTS = {
   split = "vertical", -- "vertical" | "horizontal"
   width = nil, -- optional: columns (vertical) or use ratio
   height = nil, -- optional: rows (horizontal)
-  split_ratio = 0.38,
+  split_ratio = 0.45,
   max_send_chars = 256 * 1024,
   defer_send_ms = 200,
   --- "lines_only": @path:start-end only. "full": @path:start-end + selected text.
