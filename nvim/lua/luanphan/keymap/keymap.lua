@@ -51,19 +51,29 @@ vim.keymap.set("n", "<leader>d", function()
   vim.diagnostic.open_float(nil, { focus = false })
 end, { desc = "Show diagnostic at line" })
 
--- Reload config
+-- Full reload: luafile init (not :source — that is for Vimscript; init.lua needs :luafile).
+-- Note: re-running init.lua also re-enters Packer startup; some plugins cache state — restart Neovim if maps stay wrong.
 vim.keymap.set("n", "<leader>rc", function()
-  -- Clear loaded modules from cache
   for k in pairs(package.loaded) do
     if k:match("^luanphan") then
       package.loaded[k] = nil
     end
   end
-  -- Source the config
-  vim.cmd("source $MYVIMRC")
+
+  local init = vim.fn.expand("$MYVIMRC")
+  if init == "" then
+    vim.notify("$MYVIMRC is empty", vim.log.levels.ERROR)
+    return
+  end
+
+  if init:lower():match("%.lua$") then
+    vim.cmd("luafile " .. vim.fn.fnameescape(init))
+  else
+    vim.cmd("source " .. vim.fn.fnameescape(init))
+  end
 
   print("Config reloaded!")
-end, { desc = "Reload config" })
+end, { desc = "Reload config (full init.lua)" })
 
 -- Reload lsp
 vim.keymap.set("n", "<leader>rl", function()
