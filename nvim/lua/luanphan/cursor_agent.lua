@@ -207,14 +207,17 @@ function M.send_selection()
     return
   end
 
-  local line_start = vim.fn.line("'<")
-  local line_end = vim.fn.line("'>")
+  -- While still in Visual mode, '< and '> are the *previous* selection; use 'v' (visual start) and
+  -- '.' (cursor) for the active selection. See :help `v
+  local l1, l2 = vim.fn.line("v"), vim.fn.line(".")
+  local line_start = math.min(l1, l2)
+  local line_end = math.max(l1, l2)
 
   local lines = nil
   if config.send_mode == "full" then
     local vmode = vim.fn.visualmode()
-    local start_pos = vim.fn.getpos("'<")
-    local end_pos = vim.fn.getpos("'>")
+    local start_pos = vim.fn.getpos("v")
+    local end_pos = vim.fn.getpos(".")
     lines = vim.fn.getregion(start_pos, end_pos, { type = vmode })
     if not lines or #lines == 0 then
       vim.notify("cursor_agent: empty selection", vim.log.levels.INFO)
