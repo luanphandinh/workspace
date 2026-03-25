@@ -2,15 +2,29 @@
 -- Prerequisite: install Cursor CLI and ensure `agent` is on your PATH (verify with `which agent` in a shell).
 --   Install: https://cursor.com/docs/cli/overview — default command is `agent`; override via setup({ cmd = "/full/path/to/agent" }).
 --
+-- After <leader>rc the module reloads; state.bufnr is kept via vim.g.cursor_agent_bufnr so the same
+-- terminal buffer is reused instead of spawning a new agent.
+--
 -- Send format for selections:
 --   - lines_only (default): @relative/path:<start>-<end> e.g. @nvim/init.lua:22-36
 --   - full: same @path:start-end header, then full selected text (truncated by max_send_chars).
 
 local M = {}
 
+local G_BUFNR = "cursor_agent_bufnr"
+
 local state = {
   bufnr = nil,
 }
+
+local function set_agent_bufnr(bufnr)
+  state.bufnr = bufnr
+  if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+    vim.g[G_BUFNR] = bufnr
+  else
+    vim.g[G_BUFNR] = nil
+  end
+end
 
 local DEFAULTS = {
   cmd = "agent",
@@ -109,6 +123,29 @@ local function term_buffer_alive(bufnr)
   return ok and valid_job_id(job)
 end
 
+local function attach_term_close(buf)
+  local ag = vim.api.nvim_create_augroup("CursorAgentTermClose_" .. buf, { clear = true })
+  vim.api.nvim_create_autocmd("TermClose", {
+    group = ag,
+    buffer = buf,
+    once = true,
+    callback = function()
+      set_agent_bufnr(nil)
+    end,
+  })
+end
+
+--- After <leader>rc, reconnect to the same agent terminal buffer if it still exists.
+local function restore_agent_bufnr()
+  local nr = vim.g[G_BUFNR]
+  if type(nr) ~= "number" or not vim.api.nvim_buf_is_valid(nr) or not term_buffer_alive(nr) then
+    set_agent_bufnr(nil)
+    return
+  end
+  set_agent_bufnr(nr)
+  attach_term_close(nr)
+end
+
 local function open_terminal()
   if config.split == "vertical" then
     vsplit_right()
@@ -120,20 +157,11 @@ local function open_terminal()
   local buf = vim.api.nvim_get_current_buf()
   local cwd = vim.fn.getcwd()
   vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
-  state.bufnr = buf
+  set_agent_bufnr(buf)
+  attach_term_close(buf)
   vim.defer_fn(function()
     vim.cmd("startinsert")
   end, 10)
-
-  vim.api.nvim_create_autocmd("TermClose", {
-    buffer = buf,
-    once = true,
-    callback = function()
-      if state.bufnr == buf then
-        state.bufnr = nil
-      end
-    end,
-  })
 end
 
 local function show_terminal()
@@ -159,7 +187,7 @@ function M.toggle()
     show_terminal()
     return
   end
-  state.bufnr = nil
+  set_agent_bufnr(nil)
   open_terminal()
 end
 
@@ -274,7 +302,7 @@ function M.send_selection()
     local ok, err = pcall(vim.fn.chansend, job, payload)
     if not ok then
       vim.notify("cursor_agent: send failed: " .. tostring(err), vim.log.levels.ERROR)
-      state.bufnr = nil
+      set_agent_bufnr(nil)
       return
     end
 
@@ -282,7 +310,7 @@ function M.send_selection()
   end
 
   if not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) or not term_buffer_alive(state.bufnr) then
-    state.bufnr = nil
+    set_agent_bufnr(nil)
     open_terminal()
     vim.defer_fn(function()
       deliver(1)
@@ -295,6 +323,7 @@ end
 
 function M.setup(opts)
   config = merge(vim.deepcopy(DEFAULTS), opts or {})
+  restore_agent_bufnr()
 
   vim.keymap.set("n", "<leader>cc", function()
     M.toggle()
