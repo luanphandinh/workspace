@@ -5,6 +5,10 @@
 -- After <leader>rc the module reloads; state.bufnr is kept via vim.g.cursor_agent_bufnr so the same
 -- terminal buffer is reused instead of spawning a new agent.
 --
+-- Resize / zoom: the Cursor CLI redraws on PTY size (SIGWINCH); Neovim cannot disable that. lock_split
+-- reduces how often *other* splits steal space. resize_debounce_ms (if > 0) coalesces our resize sync
+-- after bursts of VimResized so we avoid redundant :resize when the ratio already matches.
+--
 -- Send format for selections:
 --   - lines_only (default): @relative/path:<start>-<end> e.g. @nvim/init.lua:22-36
 --   - full: same @path:start-end header, then full selected text (truncated by max_send_chars).
@@ -15,6 +19,7 @@ local G_BUFNR = "cursor_agent_bufnr"
 
 local state = {
   bufnr = nil,
+  resize_timer = nil, ---@type userdata|nil
 }
 
 local function set_agent_bufnr(bufnr)
@@ -33,6 +38,10 @@ local DEFAULTS = {
   width = nil, -- optional: columns (vertical) or use ratio
   height = nil, -- optional: rows (horizontal)
   split_ratio = 0.45,
+  --- Keep agent split from shrinking when other windows open/close (|:help winfixwidth|).
+  lock_split = true,
+  --- If > 0, coalesce VimResized handling after this many ms idle (0 = no VimResized handler).
+  resize_debounce_ms = 120,
   max_send_chars = 256 * 1024,
   defer_send_ms = 200,
   --- "lines_only": @path:start-end only. "full": @path:start-end + selected text.
@@ -86,25 +95,53 @@ local function vsplit_right()
   vim.o.splitright = saved
 end
 
-local function apply_split_size()
+--- @return integer|nil dim, string|nil axis "w"|"h"
+local function get_target_split_dims()
   if config.split == "vertical" then
     if config.width then
-      vim.cmd("vertical resize " .. tonumber(config.width))
+      local total = vim.o.columns
+      return math.max(20, math.min(tonumber(config.width) or 80, total - 10)), "w"
     elseif config.split_ratio then
       local total = vim.o.columns
       local w = math.floor(total * config.split_ratio)
-      w = math.max(20, math.min(w, total - 10))
-      vim.cmd("vertical resize " .. w)
+      return math.max(20, math.min(w, total - 10)), "w"
     end
   else
     if config.height then
-      vim.cmd("resize " .. tonumber(config.height))
+      local total = vim.o.lines - vim.o.cmdheight - 1
+      return math.max(8, math.min(tonumber(config.height) or 20, total - 2)), "h"
     elseif config.split_ratio then
       local total = vim.o.lines - vim.o.cmdheight - 1
       local h = math.floor(total * config.split_ratio)
-      h = math.max(8, math.min(h, total - 2))
-      vim.cmd("resize " .. h)
+      return math.max(8, math.min(h, total - 2)), "h"
     end
+  end
+  return nil, nil
+end
+
+local function apply_split_size()
+  local dim, axis = get_target_split_dims()
+  if not dim then
+    return
+  end
+  if axis == "w" then
+    vim.cmd("vertical resize " .. dim)
+  else
+    vim.cmd("resize " .. dim)
+  end
+end
+
+local function lock_cursor_window(win)
+  if not config.lock_split then
+    return
+  end
+  win = win or vim.api.nvim_get_current_win()
+  if config.split == "vertical" then
+    vim.wo[win].winfixwidth = true
+    vim.wo[win].winfixheight = false
+  else
+    vim.wo[win].winfixheight = true
+    vim.wo[win].winfixwidth = false
   end
 end
 
@@ -121,6 +158,58 @@ local function term_buffer_alive(bufnr)
   end
   local ok, job = pcall(vim.fn.getbufvar, bufnr, "terminal_job_id")
   return ok and valid_job_id(job)
+end
+
+--- After outer resize: re-apply ratio only if the agent window size drifted; always refresh winfix*.
+local function sync_agent_split_after_resize()
+  if not config.lock_split or not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) then
+    return
+  end
+  if not term_buffer_alive(state.bufnr) then
+    return
+  end
+  local win = win_for_buf(state.bufnr)
+  if not win then
+    return
+  end
+  local target, axis = get_target_split_dims()
+  if not target then
+    return
+  end
+  local cur = axis == "w" and vim.api.nvim_win_get_width(win) or vim.api.nvim_win_get_height(win)
+  local saved = vim.api.nvim_get_current_win()
+  if cur ~= target and vim.api.nvim_win_is_valid(saved) then
+    vim.api.nvim_set_current_win(win)
+    apply_split_size()
+    if vim.api.nvim_win_is_valid(saved) then
+      vim.api.nvim_set_current_win(saved)
+    end
+  end
+  if vim.api.nvim_win_is_valid(win) then
+    lock_cursor_window(win)
+  end
+end
+
+local function schedule_resize_sync()
+  local ms = config.resize_debounce_ms
+  if not ms or ms <= 0 then
+    return
+  end
+  if state.resize_timer then
+    state.resize_timer:stop()
+    state.resize_timer:close()
+    state.resize_timer = nil
+  end
+  local timer = vim.loop.new_timer()
+  state.resize_timer = timer
+  timer:start(ms, 0, function()
+    timer:stop()
+    timer:close()
+    if state.resize_timer == timer then
+      state.resize_timer = nil
+    end
+    vim.schedule(sync_agent_split_after_resize)
+  end)
 end
 
 local function attach_term_close(buf)
@@ -144,6 +233,10 @@ local function restore_agent_bufnr()
   end
   set_agent_bufnr(nr)
   attach_term_close(nr)
+  local rwin = win_for_buf(nr)
+  if rwin then
+    lock_cursor_window(rwin)
+  end
 end
 
 local function open_terminal()
@@ -154,6 +247,7 @@ local function open_terminal()
   end
   vim.cmd("enew")
   apply_split_size()
+  lock_cursor_window()
   local buf = vim.api.nvim_get_current_buf()
   local cwd = vim.fn.getcwd()
   vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
@@ -172,6 +266,7 @@ local function show_terminal()
   end
   vim.api.nvim_win_set_buf(0, state.bufnr)
   apply_split_size()
+  lock_cursor_window()
   vim.defer_fn(function()
     vim.cmd("startinsert")
   end, 10)
@@ -324,6 +419,13 @@ end
 function M.setup(opts)
   config = merge(vim.deepcopy(DEFAULTS), opts or {})
   restore_agent_bufnr()
+
+  if config.lock_split and config.resize_debounce_ms and config.resize_debounce_ms > 0 then
+    vim.api.nvim_create_autocmd("VimResized", {
+      group = vim.api.nvim_create_augroup("CursorAgentResize", { clear = true }),
+      callback = schedule_resize_sync,
+    })
+  end
 
   vim.keymap.set("n", "<leader>cc", function()
     M.toggle()
