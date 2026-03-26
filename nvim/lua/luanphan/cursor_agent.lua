@@ -444,6 +444,23 @@ function M.toggle()
   open_terminal()
 end
 
+--- Jump to the agent terminal (float or split). If the buffer is hidden, shows it again.
+function M.focus()
+  if not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) or not term_buffer_alive(state.bufnr) then
+    vim.notify("cursor_agent: no agent terminal — use <leader>cc to open", vim.log.levels.INFO)
+    return
+  end
+  local win = win_for_buf(state.bufnr)
+  if not win then
+    show_terminal()
+    return
+  end
+  vim.api.nvim_set_current_win(win)
+  vim.defer_fn(function()
+    vim.cmd("startinsert")
+  end, 10)
+end
+
 local function get_job_id(bufnr)
   local ok, job = pcall(vim.fn.getbufvar, bufnr, "terminal_job_id")
   if not ok or not valid_job_id(job) then
@@ -593,6 +610,10 @@ function M.setup(opts)
   vim.keymap.set("n", "<leader>cc", function()
     M.toggle()
   end, { desc = "Toggle Cursor agent terminal" })
+
+  vim.keymap.set("n", "<leader>cf", function()
+    M.focus()
+  end, { desc = "Focus Cursor agent terminal" })
 
   vim.keymap.set("x", "<leader>ca", function()
     M.send_selection()
