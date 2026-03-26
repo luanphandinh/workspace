@@ -5,9 +5,14 @@
 -- After <leader>rc the module reloads; state.bufnr is kept via vim.g.cursor_agent_bufnr so the same
 -- terminal buffer is reused instead of spawning a new agent.
 --
--- Resize / zoom: the Cursor CLI redraws on PTY size (SIGWINCH); Neovim cannot disable that. lock_split
--- reduces how often *other* splits steal space. resize_debounce_ms (if > 0) coalesces our resize sync
--- after bursts of VimResized so we avoid redundant :resize when the ratio already matches.
+-- Resize / zoom:
+--   - Splits: outer resize changes the terminal size immediately → many SIGWINCH → slow reflow (unlike
+--     reopening chat, which is one full draw).
+--   - window_mode = "float" (default): on each VimResized we restore the *last* float geometry so the
+--     PTY size stays fixed while you drag; after resize_debounce_ms idle we apply one new size → one
+--     SIGWINCH, similar to reopening. Tradeoff: the float may clip/overlap until you release the mouse.
+--   - window_mode = "split": lock_split + resize_debounce_ms coalesce :resize when the ratio matches.
+--   Optional scrollback caps terminal history (see :help 'scrollback').
 --
 -- Send format for selections:
 --   - lines_only (default): @relative/path:<start>-<end> e.g. @nvim/init.lua:22-36
@@ -20,10 +25,15 @@ local G_BUFNR = "cursor_agent_bufnr"
 local state = {
   bufnr = nil,
   resize_timer = nil, ---@type userdata|nil
+  --- Last applied nvim_win_set_config fields for float (relative/row/col/width/height); revert on drag.
+  float_geometry = nil, ---@type table|nil
 }
 
 local function set_agent_bufnr(bufnr)
   state.bufnr = bufnr
+  if not bufnr then
+    state.float_geometry = nil
+  end
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
     vim.g[G_BUFNR] = bufnr
   else
@@ -32,6 +42,8 @@ local function set_agent_bufnr(bufnr)
 end
 
 local DEFAULTS = {
+  --- "float": docked float (default) — debounced PTY resize, fast on window drag. "split": vsplit/split.
+  window_mode = "float",
   cmd = "agent",
   args = {},
   split = "vertical", -- "vertical" | "horizontal"
@@ -40,8 +52,13 @@ local DEFAULTS = {
   split_ratio = 0.45,
   --- Keep agent split from shrinking when other windows open/close (|:help winfixwidth|).
   lock_split = true,
-  --- If > 0, coalesce VimResized handling after this many ms idle (0 = no VimResized handler).
-  resize_debounce_ms = 120,
+  --- If > 0, coalesce VimResized handling after this many ms idle. Float mode requires > 0 (forced to 250 if unset).
+  resize_debounce_ms = 250,
+  --- Border for float window (|:help nvim_open_win()|).
+  float_border = "single",
+  --- If set, apply 'scrollback' on the agent terminal buffer (default Neovim terminal is 10000).
+  --- Lower values trim history but can reduce reflow work on resize. See :help 'scrollback'.
+  scrollback = nil,
   max_send_chars = 256 * 1024,
   defer_send_ms = 200,
   --- "lines_only": @path:start-end only. "full": @path:start-end + selected text.
@@ -119,6 +136,25 @@ local function get_target_split_dims()
   return nil, nil
 end
 
+--- @return { row: integer, col: integer, width: integer, height: integer }
+local function get_float_geometry()
+  local lines_avail = vim.o.lines - vim.o.cmdheight
+  if config.split == "vertical" then
+    local w = select(1, get_target_split_dims())
+    w = w or math.floor(vim.o.columns * (config.split_ratio or 0.45))
+    w = math.max(20, math.min(w, vim.o.columns - 2))
+    local h = math.max(8, lines_avail - 2)
+    local col = math.max(0, vim.o.columns - w - 2)
+    return { row = 0, col = col, width = w, height = h }
+  end
+  local h = select(1, get_target_split_dims())
+  h = h or math.floor(lines_avail * (config.split_ratio or 0.45))
+  h = math.max(8, math.min(h, lines_avail - 2))
+  local w = math.max(20, vim.o.columns - 2)
+  local row = math.max(0, lines_avail - h - 2)
+  return { row = row, col = 0, width = w, height = h }
+end
+
 local function apply_split_size()
   local dim, axis = get_target_split_dims()
   if not dim then
@@ -131,8 +167,15 @@ local function apply_split_size()
   end
 end
 
+local function apply_agent_scrollback(buf)
+  local n = config.scrollback
+  if type(n) == "number" and n >= 1 and n <= 100000 and vim.api.nvim_buf_is_valid(buf) then
+    vim.bo[buf].scrollback = n
+  end
+end
+
 local function lock_cursor_window(win)
-  if not config.lock_split then
+  if config.window_mode == "float" or not config.lock_split then
     return
   end
   win = win or vim.api.nvim_get_current_win()
@@ -158,6 +201,29 @@ local function term_buffer_alive(bufnr)
   end
   local ok, job = pcall(vim.fn.getbufvar, bufnr, "terminal_job_id")
   return ok and valid_job_id(job)
+end
+
+local function sync_float_after_resize()
+  if not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) then
+    return
+  end
+  if not term_buffer_alive(state.bufnr) then
+    return
+  end
+  local win = win_for_buf(state.bufnr)
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    return
+  end
+  local g = get_float_geometry()
+  local cfg = {
+    relative = "editor",
+    row = g.row,
+    col = g.col,
+    width = g.width,
+    height = g.height,
+  }
+  vim.api.nvim_win_set_config(win, cfg)
+  state.float_geometry = cfg
 end
 
 --- After outer resize: re-apply ratio only if the agent window size drifted; always refresh winfix*.
@@ -190,6 +256,14 @@ local function sync_agent_split_after_resize()
   end
 end
 
+local function sync_agent_after_resize()
+  if config.window_mode == "float" then
+    sync_float_after_resize()
+  else
+    sync_agent_split_after_resize()
+  end
+end
+
 local function schedule_resize_sync()
   local ms = config.resize_debounce_ms
   if not ms or ms <= 0 then
@@ -208,8 +282,20 @@ local function schedule_resize_sync()
     if state.resize_timer == timer then
       state.resize_timer = nil
     end
-    vim.schedule(sync_agent_split_after_resize)
+    vim.schedule(sync_agent_after_resize)
   end)
+end
+
+--- While the outer frame is resized, snap the float back to the last applied size so the PTY does not
+--- get a SIGWINCH per drag step; debounced sync_agent_after_resize applies the final size once idle.
+local function on_vim_resized()
+  if config.window_mode == "float" and state.float_geometry and state.bufnr then
+    local win = win_for_buf(state.bufnr)
+    if win and vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_set_config(win, state.float_geometry)
+    end
+  end
+  schedule_resize_sync()
 end
 
 local function attach_term_close(buf)
@@ -233,13 +319,14 @@ local function restore_agent_bufnr()
   end
   set_agent_bufnr(nr)
   attach_term_close(nr)
+  apply_agent_scrollback(nr)
   local rwin = win_for_buf(nr)
   if rwin then
     lock_cursor_window(rwin)
   end
 end
 
-local function open_terminal()
+local function open_terminal_split()
   if config.split == "vertical" then
     vsplit_right()
   else
@@ -251,6 +338,7 @@ local function open_terminal()
   local buf = vim.api.nvim_get_current_buf()
   local cwd = vim.fn.getcwd()
   vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
+  apply_agent_scrollback(buf)
   set_agent_bufnr(buf)
   attach_term_close(buf)
   vim.defer_fn(function()
@@ -258,18 +346,88 @@ local function open_terminal()
   end, 10)
 end
 
-local function show_terminal()
+local function open_terminal_float()
+  local buf = vim.api.nvim_create_buf(false, true)
+  local g = get_float_geometry()
+  vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    row = g.row,
+    col = g.col,
+    width = g.width,
+    height = g.height,
+    style = "minimal",
+    border = config.float_border or "single",
+  })
+  state.float_geometry = {
+    relative = "editor",
+    row = g.row,
+    col = g.col,
+    width = g.width,
+    height = g.height,
+  }
+  local cwd = vim.fn.getcwd()
+  vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
+  apply_agent_scrollback(buf)
+  set_agent_bufnr(buf)
+  attach_term_close(buf)
+  vim.defer_fn(function()
+    vim.cmd("startinsert")
+  end, 10)
+end
+
+local function open_terminal()
+  if config.window_mode == "float" then
+    open_terminal_float()
+  else
+    open_terminal_split()
+  end
+end
+
+local function show_terminal_split()
   if config.split == "vertical" then
     vsplit_right()
   else
     vim.cmd("split")
   end
   vim.api.nvim_win_set_buf(0, state.bufnr)
+  apply_agent_scrollback(state.bufnr)
   apply_split_size()
   lock_cursor_window()
   vim.defer_fn(function()
     vim.cmd("startinsert")
   end, 10)
+end
+
+local function show_terminal_float()
+  local g = get_float_geometry()
+  vim.api.nvim_open_win(state.bufnr, true, {
+    relative = "editor",
+    row = g.row,
+    col = g.col,
+    width = g.width,
+    height = g.height,
+    style = "minimal",
+    border = config.float_border or "single",
+  })
+  state.float_geometry = {
+    relative = "editor",
+    row = g.row,
+    col = g.col,
+    width = g.width,
+    height = g.height,
+  }
+  apply_agent_scrollback(state.bufnr)
+  vim.defer_fn(function()
+    vim.cmd("startinsert")
+  end, 10)
+end
+
+local function show_terminal()
+  if config.window_mode == "float" then
+    show_terminal_float()
+  else
+    show_terminal_split()
+  end
 end
 
 function M.toggle()
@@ -418,12 +576,17 @@ end
 
 function M.setup(opts)
   config = merge(vim.deepcopy(DEFAULTS), opts or {})
+  if config.window_mode == "float" and (not config.resize_debounce_ms or config.resize_debounce_ms <= 0) then
+    config.resize_debounce_ms = 250
+  end
   restore_agent_bufnr()
 
-  if config.lock_split and config.resize_debounce_ms and config.resize_debounce_ms > 0 then
+  local resize_ok = config.resize_debounce_ms and config.resize_debounce_ms > 0
+  local want_resize = resize_ok and (config.window_mode == "float" or config.lock_split)
+  if want_resize then
     vim.api.nvim_create_autocmd("VimResized", {
       group = vim.api.nvim_create_augroup("CursorAgentResize", { clear = true }),
-      callback = schedule_resize_sync,
+      callback = on_vim_resized,
     })
   end
 
