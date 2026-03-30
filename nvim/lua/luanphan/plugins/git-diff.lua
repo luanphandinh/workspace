@@ -188,7 +188,16 @@ return function(use)
     tag = "*",
     config = function()
       require("git-conflict").setup({
-        default_mappings = true,  -- co: ours, ct: theirs, cb: both, c0: none
+        -- Buffer-local only when conflict markers are present. Prefix <leader>gc + o/t/b/0 (none).
+        -- Next/prev conflict keep plugin defaults [x / ]x (no leader) to avoid clashing with g* maps.
+        default_mappings = {
+          ours = "<leader>gco",
+          theirs = "<leader>gct",
+          both = "<leader>gcb",
+          none = "<leader>gc0",
+          prev = "[x",
+          next = "]x",
+        },
         default_commands = true,
         highlights = {
           incoming = "DiffAdd",
