@@ -1,0 +1,638 @@
+-- Shared terminal agent (Cursor CLI, Claude CLI, etc.). Use |cursor_agent.lua| and |claude_agent.lua|
+-- thin wrappers around |terminal_agent.create()|.
+--
+-- Send format for selections:
+--   - lines_only (default): @relative/path:<start>-<end>
+--   - full: @path:start-end header, then full selected text (truncated by max_send_chars).
+
+local M = {}
+
+local BASE_DEFAULTS = {
+  window_mode = "float",
+  cmd = "agent",
+  args = {},
+  split = "vertical",
+  width = nil,
+  height = nil,
+  split_ratio = 0.45,
+  lock_split = true,
+  resize_debounce_ms = 250,
+  float_border = "single",
+  scrollback = nil,
+  max_send_chars = 256 * 1024,
+  defer_send_ms = 200,
+  send_mode = "lines_only",
+}
+
+---@param profile table
+---@field g_bufnr string vim.g key for buffer reuse after reload
+---@field notify_prefix string prefix for :vim.notify
+---@field augroup_prefix string prefix for autocmd groups (CursorAgent / ClaudeAgent)
+---@field hint_open string hint when no terminal (e.g. "<leader>cc")
+---@field defaults? table merged into BASE_DEFAULTS (cmd, args, …)
+---@field keymaps table keys: toggle, send, optional focus
+---@field map_desc? table optional desc.toggle, desc.send, desc.focus
+function M.create(profile)
+  profile = vim.tbl_extend("force", {
+    g_bufnr = "terminal_agent_bufnr",
+    notify_prefix = "terminal_agent",
+    augroup_prefix = "TerminalAgent",
+    hint_open = "<leader>xx",
+    defaults = {},
+    keymaps = {},
+    map_desc = {},
+  }, profile)
+
+  local function nx(msg, level)
+    vim.notify(profile.notify_prefix .. ": " .. msg, level or vim.log.levels.INFO)
+  end
+
+
+local state = {
+  bufnr = nil,
+  resize_timer = nil, ---@type userdata|nil
+  float_geometry = nil, ---@type table|nil
+}
+
+local G_BUFNR = profile.g_bufnr
+
+local DEFAULTS = vim.tbl_deep_extend("force", vim.deepcopy(BASE_DEFAULTS), profile.defaults or {})
+
+local config = vim.deepcopy(DEFAULTS)
+
+local function set_agent_bufnr(bufnr)
+  state.bufnr = bufnr
+  if not bufnr then
+    state.float_geometry = nil
+  end
+  if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+    vim.g[G_BUFNR] = bufnr
+  else
+    vim.g[G_BUFNR] = nil
+  end
+end
+
+local function merge(dst, src)
+  for k, v in pairs(src) do
+    dst[k] = v
+  end
+  return dst
+end
+
+local function argv_for_termopen()
+  local cmd = config.cmd
+  local args = config.args or {}
+  if type(cmd) == "table" then
+    local out = vim.deepcopy(cmd)
+    vim.list_extend(out, args)
+    return out
+  end
+  local out = { cmd }
+  vim.list_extend(out, args)
+  return out
+end
+
+local function buf_shortpath(bufnr)
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  if name == "" then
+    return "[No Name]"
+  end
+  return vim.fn.fnamemodify(name, ":.")
+end
+
+local function win_for_buf(bufnr)
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == bufnr then
+      return win
+    end
+  end
+  return nil
+end
+
+--- Vertical split with new window on the right (does not change global 'splitright' afterward).
+local function vsplit_right()
+  local saved = vim.o.splitright
+  vim.o.splitright = true
+  vim.cmd("vsplit")
+  vim.o.splitright = saved
+end
+
+--- @return integer|nil dim, string|nil axis "w"|"h"
+local function get_target_split_dims()
+  if config.split == "vertical" then
+    if config.width then
+      local total = vim.o.columns
+      return math.max(20, math.min(tonumber(config.width) or 80, total - 10)), "w"
+    elseif config.split_ratio then
+      local total = vim.o.columns
+      local w = math.floor(total * config.split_ratio)
+      return math.max(20, math.min(w, total - 10)), "w"
+    end
+  else
+    if config.height then
+      local total = vim.o.lines - vim.o.cmdheight - 1
+      return math.max(8, math.min(tonumber(config.height) or 20, total - 2)), "h"
+    elseif config.split_ratio then
+      local total = vim.o.lines - vim.o.cmdheight - 1
+      local h = math.floor(total * config.split_ratio)
+      return math.max(8, math.min(h, total - 2)), "h"
+    end
+  end
+  return nil, nil
+end
+
+--- @return { row: integer, col: integer, width: integer, height: integer }
+local function get_float_geometry()
+  local lines_avail = vim.o.lines - vim.o.cmdheight
+  if config.split == "vertical" then
+    local w = select(1, get_target_split_dims())
+    w = w or math.floor(vim.o.columns * (config.split_ratio or 0.45))
+    w = math.max(20, math.min(w, vim.o.columns - 2))
+    local h = math.max(8, lines_avail - 2)
+    local col = math.max(0, vim.o.columns - w - 2)
+    return { row = 0, col = col, width = w, height = h }
+  end
+  local h = select(1, get_target_split_dims())
+  h = h or math.floor(lines_avail * (config.split_ratio or 0.45))
+  h = math.max(8, math.min(h, lines_avail - 2))
+  local w = math.max(20, vim.o.columns - 2)
+  local row = math.max(0, lines_avail - h - 2)
+  return { row = row, col = 0, width = w, height = h }
+end
+
+local function apply_split_size()
+  local dim, axis = get_target_split_dims()
+  if not dim then
+    return
+  end
+  if axis == "w" then
+    vim.cmd("vertical resize " .. dim)
+  else
+    vim.cmd("resize " .. dim)
+  end
+end
+
+local function apply_agent_scrollback(buf)
+  local n = config.scrollback
+  if type(n) == "number" and n >= 1 and n <= 100000 and vim.api.nvim_buf_is_valid(buf) then
+    vim.bo[buf].scrollback = n
+  end
+end
+
+local function lock_cursor_window(win)
+  if config.window_mode == "float" or not config.lock_split then
+    return
+  end
+  win = win or vim.api.nvim_get_current_win()
+  if config.split == "vertical" then
+    vim.wo[win].winfixwidth = true
+    vim.wo[win].winfixheight = false
+  else
+    vim.wo[win].winfixheight = true
+    vim.wo[win].winfixwidth = false
+  end
+end
+
+local function valid_job_id(job)
+  return type(job) == "number" and job > 0
+end
+
+local function term_buffer_alive(bufnr)
+  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+    return false
+  end
+  if vim.bo[bufnr].buftype ~= "terminal" then
+    return false
+  end
+  local ok, job = pcall(vim.fn.getbufvar, bufnr, "terminal_job_id")
+  return ok and valid_job_id(job)
+end
+
+local function sync_float_after_resize()
+  if not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) then
+    return
+  end
+  if not term_buffer_alive(state.bufnr) then
+    return
+  end
+  local win = win_for_buf(state.bufnr)
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    return
+  end
+  local g = get_float_geometry()
+  local cfg = {
+    relative = "editor",
+    row = g.row,
+    col = g.col,
+    width = g.width,
+    height = g.height,
+  }
+  vim.api.nvim_win_set_config(win, cfg)
+  state.float_geometry = cfg
+end
+
+--- After outer resize: re-apply ratio only if the agent window size drifted; always refresh winfix*.
+local function sync_agent_split_after_resize()
+  if not config.lock_split or not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) then
+    return
+  end
+  if not term_buffer_alive(state.bufnr) then
+    return
+  end
+  local win = win_for_buf(state.bufnr)
+  if not win then
+    return
+  end
+  local target, axis = get_target_split_dims()
+  if not target then
+    return
+  end
+  local cur = axis == "w" and vim.api.nvim_win_get_width(win) or vim.api.nvim_win_get_height(win)
+  local saved = vim.api.nvim_get_current_win()
+  if cur ~= target and vim.api.nvim_win_is_valid(saved) then
+    vim.api.nvim_set_current_win(win)
+    apply_split_size()
+    if vim.api.nvim_win_is_valid(saved) then
+      vim.api.nvim_set_current_win(saved)
+    end
+  end
+  if vim.api.nvim_win_is_valid(win) then
+    lock_cursor_window(win)
+  end
+end
+
+local function sync_agent_after_resize()
+  if config.window_mode == "float" then
+    sync_float_after_resize()
+  else
+    sync_agent_split_after_resize()
+  end
+end
+
+local function schedule_resize_sync()
+  local ms = config.resize_debounce_ms
+  if not ms or ms <= 0 then
+    return
+  end
+  if state.resize_timer then
+    state.resize_timer:stop()
+    state.resize_timer:close()
+    state.resize_timer = nil
+  end
+  local timer = vim.loop.new_timer()
+  state.resize_timer = timer
+  timer:start(ms, 0, function()
+    timer:stop()
+    timer:close()
+    if state.resize_timer == timer then
+      state.resize_timer = nil
+    end
+    vim.schedule(sync_agent_after_resize)
+  end)
+end
+
+--- While the outer frame is resized, snap the float back to the last applied size so the PTY does not
+--- get a SIGWINCH per drag step; debounced sync_agent_after_resize applies the final size once idle.
+local function on_vim_resized()
+  if config.window_mode == "float" and state.float_geometry and state.bufnr then
+    local win = win_for_buf(state.bufnr)
+    if win and vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_set_config(win, state.float_geometry)
+    end
+  end
+  schedule_resize_sync()
+end
+
+local function attach_term_close(buf)
+  local ag = vim.api.nvim_create_augroup(profile.augroup_prefix .. "TermClose_" .. buf, { clear = true })
+  vim.api.nvim_create_autocmd("TermClose", {
+    group = ag,
+    buffer = buf,
+    once = true,
+    callback = function()
+      set_agent_bufnr(nil)
+    end,
+  })
+end
+
+--- After <leader>rc, reconnect to the same agent terminal buffer if it still exists.
+local function restore_agent_bufnr()
+  local nr = vim.g[G_BUFNR]
+  if type(nr) ~= "number" or not vim.api.nvim_buf_is_valid(nr) or not term_buffer_alive(nr) then
+    set_agent_bufnr(nil)
+    return
+  end
+  set_agent_bufnr(nr)
+  attach_term_close(nr)
+  apply_agent_scrollback(nr)
+  local rwin = win_for_buf(nr)
+  if rwin then
+    lock_cursor_window(rwin)
+  end
+end
+
+local function open_terminal_split()
+  if config.split == "vertical" then
+    vsplit_right()
+  else
+    vim.cmd("split")
+  end
+  vim.cmd("enew")
+  apply_split_size()
+  lock_cursor_window()
+  local buf = vim.api.nvim_get_current_buf()
+  local cwd = vim.fn.getcwd()
+  vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
+  apply_agent_scrollback(buf)
+  set_agent_bufnr(buf)
+  attach_term_close(buf)
+  vim.defer_fn(function()
+    vim.cmd("startinsert")
+  end, 10)
+end
+
+local function open_terminal_float()
+  local buf = vim.api.nvim_create_buf(false, true)
+  local g = get_float_geometry()
+  vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    row = g.row,
+    col = g.col,
+    width = g.width,
+    height = g.height,
+    style = "minimal",
+    border = config.float_border or "single",
+  })
+  state.float_geometry = {
+    relative = "editor",
+    row = g.row,
+    col = g.col,
+    width = g.width,
+    height = g.height,
+  }
+  local cwd = vim.fn.getcwd()
+  vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
+  apply_agent_scrollback(buf)
+  set_agent_bufnr(buf)
+  attach_term_close(buf)
+  vim.defer_fn(function()
+    vim.cmd("startinsert")
+  end, 10)
+end
+
+local function open_terminal()
+  if config.window_mode == "float" then
+    open_terminal_float()
+  else
+    open_terminal_split()
+  end
+end
+
+local function show_terminal_split()
+  if config.split == "vertical" then
+    vsplit_right()
+  else
+    vim.cmd("split")
+  end
+  vim.api.nvim_win_set_buf(0, state.bufnr)
+  apply_agent_scrollback(state.bufnr)
+  apply_split_size()
+  lock_cursor_window()
+  vim.defer_fn(function()
+    vim.cmd("startinsert")
+  end, 10)
+end
+
+local function show_terminal_float()
+  local g = get_float_geometry()
+  vim.api.nvim_open_win(state.bufnr, true, {
+    relative = "editor",
+    row = g.row,
+    col = g.col,
+    width = g.width,
+    height = g.height,
+    style = "minimal",
+    border = config.float_border or "single",
+  })
+  state.float_geometry = {
+    relative = "editor",
+    row = g.row,
+    col = g.col,
+    width = g.width,
+    height = g.height,
+  }
+  apply_agent_scrollback(state.bufnr)
+  vim.defer_fn(function()
+    vim.cmd("startinsert")
+  end, 10)
+end
+
+local function show_terminal()
+  if config.window_mode == "float" then
+    show_terminal_float()
+  else
+    show_terminal_split()
+  end
+end
+
+local API = {}
+
+function API.toggle()
+  if state.bufnr and vim.api.nvim_buf_is_valid(state.bufnr) and term_buffer_alive(state.bufnr) then
+    local win = win_for_buf(state.bufnr)
+    if win then
+      vim.api.nvim_win_close(win, false)
+      return
+    end
+    show_terminal()
+    return
+  end
+  set_agent_bufnr(nil)
+  open_terminal()
+end
+
+--- Jump to the agent terminal (float or split). If the buffer is hidden, shows it again.
+function API.focus()
+  if not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) or not term_buffer_alive(state.bufnr) then
+    nx("no agent terminal — use " .. profile.hint_open .. " to open", vim.log.levels.INFO)
+    return
+  end
+  local win = win_for_buf(state.bufnr)
+  if not win then
+    show_terminal()
+    return
+  end
+  vim.api.nvim_set_current_win(win)
+  vim.defer_fn(function()
+    vim.cmd("startinsert")
+  end, 10)
+end
+
+local function get_job_id(bufnr)
+  local ok, job = pcall(vim.fn.getbufvar, bufnr, "terminal_job_id")
+  if not ok or not valid_job_id(job) then
+    return nil
+  end
+  return job
+end
+
+local function format_selection_payload(bufnr, lines, line_start, line_end)
+  local path = buf_shortpath(bufnr)
+  if path == "[No Name]" then
+    nx("save the buffer to use @path:start-end", vim.log.levels.WARN)
+    return nil
+  end
+
+  local header = string.format("@%s:%d-%d", path, line_start, line_end)
+  if config.send_mode == "lines_only" then
+    -- No trailing newline: terminal cursor stays on same line after @path:start-end.
+    return header
+  end
+
+  local body = table.concat(lines, "\n")
+  if #body > config.max_send_chars then
+    body = body:sub(1, config.max_send_chars)
+      .. "\n... [truncated after "
+      .. config.max_send_chars
+      .. " chars]"
+    nx("selection truncated", vim.log.levels.WARN)
+  end
+  return header .. "\n\n" .. body .. "\n"
+end
+
+local function exit_visual_to_normal()
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
+end
+
+function API.send_selection()
+  local bufnr = vim.api.nvim_get_current_buf()
+  if vim.bo[bufnr].buftype ~= "" then
+    nx("not supported in this buffer", vim.log.levels.WARN)
+    exit_visual_to_normal()
+    return
+  end
+
+  -- While still in Visual mode, '< and '> are the *previous* selection; use 'v' (visual start) and
+  -- '.' (cursor) for the active selection. See :help `v
+  local l1, l2 = vim.fn.line("v"), vim.fn.line(".")
+  local line_start = math.min(l1, l2)
+  local line_end = math.max(l1, l2)
+
+  local lines = nil
+  if config.send_mode == "full" then
+    local vmode = vim.fn.visualmode()
+    local start_pos = vim.fn.getpos("v")
+    local end_pos = vim.fn.getpos(".")
+    lines = vim.fn.getregion(start_pos, end_pos, { type = vmode })
+    if not lines or #lines == 0 then
+      nx("empty selection", vim.log.levels.INFO)
+      exit_visual_to_normal()
+      return
+    end
+  end
+
+  exit_visual_to_normal()
+
+  local payload = format_selection_payload(bufnr, lines, line_start, line_end)
+  if not payload then
+    return
+  end
+
+  local function focus_term_win()
+    local w = win_for_buf(state.bufnr)
+    if w then
+      vim.api.nvim_set_current_win(w)
+      vim.cmd("startinsert")
+    end
+  end
+
+  local function deliver(attempt)
+    attempt = attempt or 1
+    if not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) or not term_buffer_alive(state.bufnr) then
+      if attempt < 3 then
+        vim.defer_fn(function()
+          deliver(attempt + 1)
+        end, config.defer_send_ms)
+        return
+      end
+      nx("terminal not ready", vim.log.levels.ERROR)
+      return
+    end
+
+    local win = win_for_buf(state.bufnr)
+    if not win then
+      show_terminal()
+    end
+
+    local job = get_job_id(state.bufnr)
+    if not job and attempt < 3 then
+      vim.defer_fn(function()
+        deliver(attempt + 1)
+      end, config.defer_send_ms)
+      return
+    end
+    if not job then
+      nx("no terminal job", vim.log.levels.ERROR)
+      return
+    end
+
+    local ok, err = pcall(vim.fn.chansend, job, payload)
+    if not ok then
+      nx("send failed: " .. tostring(err), vim.log.levels.ERROR)
+      set_agent_bufnr(nil)
+      return
+    end
+
+    focus_term_win()
+  end
+
+  if not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) or not term_buffer_alive(state.bufnr) then
+    set_agent_bufnr(nil)
+    open_terminal()
+    vim.defer_fn(function()
+      deliver(1)
+    end, config.defer_send_ms)
+    return
+  end
+
+  deliver(1)
+end
+
+function API.setup(opts)
+  config = merge(vim.deepcopy(DEFAULTS), opts or {})
+  if config.window_mode == "float" and (not config.resize_debounce_ms or config.resize_debounce_ms <= 0) then
+    config.resize_debounce_ms = 250
+  end
+  restore_agent_bufnr()
+
+  local resize_ok = config.resize_debounce_ms and config.resize_debounce_ms > 0
+  local want_resize = resize_ok and (config.window_mode == "float" or config.lock_split)
+  if want_resize then
+    vim.api.nvim_create_autocmd("VimResized", {
+      group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Resize", { clear = true }),
+      callback = on_vim_resized,
+    })
+  end
+
+  local km = profile.keymaps
+  local md = profile.map_desc or {}
+  vim.keymap.set("n", km.toggle, function()
+    API.toggle()
+  end, { desc = md.toggle or "Toggle agent terminal" })
+
+  if km.focus then
+    vim.keymap.set("n", km.focus, function()
+      API.focus()
+    end, { desc = md.focus or "Focus agent terminal" })
+  end
+
+  vim.keymap.set("x", km.send, function()
+    API.send_selection()
+  end, { desc = md.send or "Send selection to agent" })
+end
+
+  return API
+end
+
+return M
+
