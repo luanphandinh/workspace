@@ -43,6 +43,27 @@ local actions = {
     end,
   },
   {
+    name = "Git Commit",
+    action = function()
+      vim.ui.input({ prompt = "Commit message: " }, function(msg)
+        if not msg or msg == "" then return end
+        vim.fn.jobstart({ "git", "commit", "-m", msg }, {
+          stdout_buffered = true,
+          stderr_buffered = true,
+          on_exit = function(_, code)
+            vim.schedule(function()
+              if code == 0 then
+                vim.notify("Committed: " .. msg)
+              else
+                vim.notify("Commit failed (exit " .. code .. ")", vim.log.levels.ERROR)
+              end
+            end)
+          end,
+        })
+      end)
+    end,
+  },
+  {
     name = "Git Push (Current Branch)",
     action = function()
       vim.notify("Pushing...")
