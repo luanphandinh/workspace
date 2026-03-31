@@ -24,6 +24,25 @@ local actions = {
     end,
   },
   {
+    name = "Git Pull (Current Branch)",
+    action = function()
+      vim.notify("Pulling...")
+      vim.fn.jobstart({ "git", "pull" }, {
+        stdout_buffered = true,
+        stderr_buffered = true,
+        on_exit = function(_, code)
+          vim.schedule(function()
+            if code == 0 then
+              vim.notify("Pull successful")
+            else
+              vim.notify("Pull failed (exit " .. code .. ")", vim.log.levels.ERROR)
+            end
+          end)
+        end,
+      })
+    end,
+  },
+  {
     name = "Format Current File",
     action = function()
       vim.lsp.buf.format({ async = true })
