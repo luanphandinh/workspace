@@ -18,6 +18,44 @@ vim.o.incsearch = true
 vim.o.cursorline = true
 vim.o.scrolloff = 8
 vim.o.signcolumn = "yes" -- always show the signcolumn on the left side
+
+-- Statusline with LSP progress
+vim.o.laststatus = 2
+local lsp_progress_msg = ""
+
+vim.api.nvim_create_autocmd("LspProgress", {
+  callback = function(ev)
+    local data = ev.data
+    if not data or not data.params or not data.params.value then return end
+    local val = data.params.value
+    local client = vim.lsp.get_client_by_id(data.client_id)
+    local name = client and client.name or ""
+    if val.kind == "end" then
+      lsp_progress_msg = ""
+    else
+      local pct = val.percentage and (val.percentage .. "%%") or ""
+      local title = val.title or ""
+      local msg = val.message or ""
+      lsp_progress_msg = string.format("[%s] %s %s %s", name, title, msg, pct)
+    end
+    vim.cmd("redrawstatus")
+  end,
+})
+
+function _G.statusline()
+  local parts = {
+    " %f",                  -- filename
+    "%m",                   -- modified flag
+    "%r",                   -- readonly flag
+    "  %{&filetype}",       -- filetype
+    "%=",                   -- right align
+    lsp_progress_msg ~= "" and (lsp_progress_msg .. "  ") or "",
+    "%l:%c ",               -- line:col
+  }
+  return table.concat(parts)
+end
+
+vim.o.statusline = "%!v:lua.statusline()"
 -- keymaps
 vim.keymap.set("n", "n", "nzzzv", { noremap = true, silent = true })
 vim.keymap.set("n", "N", "nzzzv", { noremap = true, silent = true })
