@@ -43,6 +43,25 @@ local actions = {
     end,
   },
   {
+    name = "Git Push (Current Branch)",
+    action = function()
+      vim.notify("Pushing...")
+      vim.fn.jobstart({ "git", "push", "origin", "HEAD" }, {
+        stdout_buffered = true,
+        stderr_buffered = true,
+        on_exit = function(_, code)
+          vim.schedule(function()
+            if code == 0 then
+              vim.notify("Push successful")
+            else
+              vim.notify("Push failed (exit " .. code .. ")", vim.log.levels.ERROR)
+            end
+          end)
+        end,
+      })
+    end,
+  },
+  {
     name = "Format Current File",
     action = function()
       vim.lsp.buf.format({ async = true })
