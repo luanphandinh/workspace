@@ -39,14 +39,24 @@ return function(use)
             layout_strategy = "vertical",
           }
 
-          -- Helper to check if LSP is ready
+          -- Helper to check if LSP is ready and window is valid
           local function with_lsp(fn)
             return function()
+              if not vim.api.nvim_win_is_valid(vim.api.nvim_get_current_win()) then
+                return
+              end
               if #vim.lsp.get_clients({ bufnr = 0 }) == 0 then
                 vim.notify("No LSP client attached. Waiting for LSP...", vim.log.levels.WARN)
                 return
               end
-              fn()
+              local ok, err = pcall(fn)
+              if not ok then
+                if type(err) == "string" and err:find("Invalid window") then
+                  vim.notify("Window closed, try again", vim.log.levels.WARN)
+                else
+                  vim.notify(tostring(err), vim.log.levels.ERROR)
+                end
+              end
             end
           end
 
