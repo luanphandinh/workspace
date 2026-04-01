@@ -7,6 +7,12 @@ return function(use)
         view = {
           width = 45,
         },
+        actions = {
+          change_dir = {
+            enable = false,
+            restrict_above_cwd = true,
+          },
+        },
       })
 
       vim.keymap.set("n", "<leader>b", function()
