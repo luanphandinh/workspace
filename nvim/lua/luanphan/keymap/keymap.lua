@@ -21,7 +21,7 @@ vim.o.signcolumn = "yes" -- always show the signcolumn on the left side
 
 -- Statusline with LSP progress
 vim.o.laststatus = 2
-local lsp_progress_msg = ""
+local lsp_progress_tokens = {} -- track active progress tokens
 
 vim.api.nvim_create_autocmd("LspProgress", {
   callback = function(ev)
@@ -30,26 +30,37 @@ vim.api.nvim_create_autocmd("LspProgress", {
     local val = data.params.value
     local client = vim.lsp.get_client_by_id(data.client_id)
     local name = client and client.name or ""
+    local token = data.params.token
+    local key = name .. ":" .. tostring(token)
     if val.kind == "end" then
-      lsp_progress_msg = ""
+      lsp_progress_tokens[key] = nil
     else
       local pct = val.percentage and (val.percentage .. "%%") or ""
       local title = val.title or ""
       local msg = val.message or ""
-      lsp_progress_msg = string.format("[%s] %s %s %s", name, title, msg, pct)
+      lsp_progress_tokens[key] = string.format("[%s] %s %s %s", name, title, msg, pct)
     end
     vim.cmd("redrawstatus")
   end,
 })
 
 function _G.statusline()
+  local bt = vim.bo.buftype
+  if bt == "nofile" or bt == "prompt" or bt == "terminal" then
+    return " %f"
+  end
+  -- show the most recent active progress token
+  local progress = ""
+  for _, msg in pairs(lsp_progress_tokens) do
+    progress = msg
+  end
   local parts = {
     " %f",                  -- filename
     "%m",                   -- modified flag
     "%r",                   -- readonly flag
     "  %{&filetype}",       -- filetype
     "%=",                   -- right align
-    lsp_progress_msg ~= "" and (lsp_progress_msg .. "  ") or "",
+    progress ~= "" and (progress .. "  ") or "",
     "%l:%c ",               -- line:col
   }
   return table.concat(parts)
