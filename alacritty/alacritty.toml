@@ -2,6 +2,13 @@
 #     "~/.config/alacritty/gruvbox.toml"
 # ]
 
+# macOS default binds Command+W to Quit. Override so it does nothing (avoids
+# accidental quit; use None — see alacritty(5) keyboard.bindings).
+[keyboard]
+bindings = [
+  { key = "W", mods = "Command", action = "None" },
+]
+
 [font]
 offset = { x = 0, y = 0 }
 size = 12.0
