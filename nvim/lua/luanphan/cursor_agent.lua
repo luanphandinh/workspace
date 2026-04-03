@@ -10,7 +10,7 @@ return require("luanphan.terminal_agent").create({
   defaults = { cmd = "agent" },
   keymaps = {
     toggle = "<leader>cc",
-    send = "<leader>ca",
+    send = "<leader>cs",
     focus = "<leader>cf",
   },
   map_desc = {
