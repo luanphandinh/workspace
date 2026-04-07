@@ -20,18 +20,58 @@ local function client_names(bufnr)
   return out
 end
 
+--- True if |vim.lsp.config()| was used for this server (managed by |vim.lsp.enable()|).
+---@param name string
+local function has_registered_config(name)
+  return vim.lsp.config[name] ~= nil
+end
+
+--- Servers started with |vim.lsp.start()| only (e.g. github/copilot.vim) — no vim.lsp.config entry.
+--- Calling |vim.lsp.enable(name, true)| for them adds a bogus _enabled_configs slot and triggers
+--- "config not found" in :checkhealth; each enable(true) also runs doautoall (duplicate gopls).
+---@param name string
+local function restart_plugin_lsp(name)
+  if name == "GitHub Copilot" then
+    pcall(vim.cmd, "Copilot restart")
+  end
+end
+
 --- Disable then re-enable named configs (restarts those language servers project-wide).
 ---@param names string[]
 function M.restart_servers(names)
   if #names == 0 then
     return false
   end
+
+  local managed = {}
   for _, name in ipairs(names) do
-    vim.lsp.enable(name, false)
+    if has_registered_config(name) then
+      managed[#managed + 1] = name
+    end
   end
+
+  -- Stop unmanaged clients (e.g. Copilot) without vim.lsp.enable — avoids ghost enable slots.
+  for _, name in ipairs(names) do
+    if not has_registered_config(name) then
+      for _, client in ipairs(vim.lsp.get_clients({ name = name })) do
+        client:stop()
+      end
+    end
+  end
+
+  if #managed > 0 then
+    vim.lsp.enable(managed, false)
+  end
+
   vim.schedule(function()
+    if #managed > 0 then
+      -- Single |doautoall| for all managed servers (see :help vim.lsp.enable).
+      vim.lsp.enable(managed, true)
+    end
     for _, name in ipairs(names) do
-      vim.lsp.enable(name, true)
+      if not has_registered_config(name) then
+        restart_plugin_lsp(name)
+      end
     end
   end)
   return true
