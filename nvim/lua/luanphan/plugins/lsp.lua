@@ -108,6 +108,14 @@ return function(use)
         cmd = { gopls_cmd },
         root_markers = { "go.mod", ".git" },
         filetypes = { "go", "gomod", "gowork", "gotmpl" },
+        -- Default reuse matches workspace folders; subtle root path differences spawn a 2nd gopls.
+        -- Prefer one process per Nvim — gopls handles the module tree from the first workspace.
+        reuse_client = function(client, config)
+          if client.name ~= "gopls" or config.name ~= "gopls" or client:is_stopped() then
+            return false
+          end
+          return true
+        end,
         settings = {
           gopls = {
             analyses = {
@@ -140,33 +148,9 @@ return function(use)
     },
     config = function()
       local cmp = require("cmp")
-      cmp.setup({
-        snippet = {
-          expand = function(args)
-            require("luasnip").lsp_expand(args.body)
-          end,
-        },
-        preselect = cmp.PreselectMode.Item,      -- Preselect the first item
-        completion = {
-          completeopt = "menu,menuone,noinsert", -- Recommended by nvim-cmp
-        },
-        mapping = cmp.mapping.preset.insert({
-          ["<C-Space>"] = cmp.mapping.complete(),
-          ["<CR>"] = cmp.mapping.confirm({ select = true }),
-          ["<C-n>"] = cmp.mapping.select_next_item(),
-          ["<C-p>"] = cmp.mapping.select_prev_item(),
-        }),
-        sources = cmp.config.sources({
-          { name = "nvim_lsp" },
-          { name = "luasnip" },
-          { name = "buffer" },
-          { name = "path" },
-        }),
-      })
 
-      -- Command to restart cmp
-      vim.api.nvim_create_user_command("CmpRestart", function()
-        cmp.setup({
+      local function cmp_opts()
+        return {
           snippet = {
             expand = function(args)
               require("luasnip").lsp_expand(args.body)
@@ -188,7 +172,25 @@ return function(use)
             { name = "buffer" },
             { name = "path" },
           }),
-        })
+        }
+      end
+
+      cmp.setup(cmp_opts())
+
+      -- Command to restart cmp (clear cmp-nvim-lsp ↔ client registrations, then re-setup).
+      vim.api.nvim_create_user_command("CmpRestart", function()
+        local ok_lsp, cmp_nvim_lsp = pcall(require, "cmp_nvim_lsp")
+        if ok_lsp and cmp_nvim_lsp.client_source_map then
+          for _, source_id in pairs(cmp_nvim_lsp.client_source_map) do
+            pcall(cmp.unregister_source, source_id)
+          end
+          for k in pairs(cmp_nvim_lsp.client_source_map) do
+            cmp_nvim_lsp.client_source_map[k] = nil
+          end
+          cmp_nvim_lsp.setup()
+        end
+        cmp.core:reset()
+        cmp.setup(cmp_opts())
         print("nvim-cmp restarted")
       end, {})
 

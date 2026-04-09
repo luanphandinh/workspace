@@ -36,6 +36,20 @@ local function restart_plugin_lsp(name)
   end
 end
 
+--- Re-fire FileType on buffers so LSP attach runs again (recovers buffers left without a client).
+---@param bufnr integer|nil if set, only this buffer; otherwise all loaded normal buffers
+local function refire_filetype(bufnr)
+  if bufnr then
+    vim.api.nvim_exec_autocmds("FileType", { buffer = bufnr })
+    return
+  end
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(b) and vim.bo[b].buftype == "" then
+      vim.api.nvim_exec_autocmds("FileType", { buffer = b })
+    end
+  end
+end
+
 --- Disable then re-enable named configs (restarts those language servers project-wide).
 ---@param names string[]
 function M.restart_servers(names)
@@ -67,6 +81,10 @@ function M.restart_servers(names)
     if #managed > 0 then
       -- Single |doautoall| for all managed servers (see :help vim.lsp.enable).
       vim.lsp.enable(managed, true)
+      -- doautoall can miss or reorder attaches; re-fire FileType so every buffer re-runs LSP start.
+      vim.defer_fn(function()
+        refire_filetype(nil)
+      end, 0)
     end
     for _, name in ipairs(names) do
       if not has_registered_config(name) then
@@ -75,20 +93,6 @@ function M.restart_servers(names)
     end
   end)
   return true
-end
-
---- Re-fire FileType on buffers so |nvim.lsp.enable| FileType hook runs again.
----@param bufnr integer|nil if set, only this buffer; otherwise all loaded normal buffers
-local function refire_filetype(bufnr)
-  if bufnr then
-    vim.api.nvim_exec_autocmds("FileType", { buffer = bufnr })
-    return
-  end
-  for _, b in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(b) and vim.bo[b].buftype == "" then
-      vim.api.nvim_exec_autocmds("FileType", { buffer = b })
-    end
-  end
 end
 
 --- Restart every distinct LSP that is currently running.
