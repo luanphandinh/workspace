@@ -113,6 +113,11 @@ vim.keymap.set("n", "<leader>fp", function()
   require("luanphan.glow_preview").toggle()
 end, { desc = "Markdown: toggle glow preview (float)" })
 
+-- Close other file buffers only (keep NvimTree, terminals, AI agent terminals).
+vim.keymap.set("n", "<leader>kw", function()
+  require("luanphan.buffer_only").close_other_file_buffers()
+end, { desc = "Buffer: close other files (keep active buffer, tree, terminals, AI)" })
+
 -- Full reload: luafile init (not :source — that is for Vimscript; init.lua needs :luafile).
 -- Note: re-running init.lua also re-enters Packer startup; some plugins cache state — restart Neovim if maps stay wrong.
 vim.keymap.set("n", "<leader>rc", function()

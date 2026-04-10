@@ -64,7 +64,23 @@ function M.toggle()
 
   preview_win = vim.api.nvim_open_win(bufnr, true, win_opts)
 
-  vim.fn.termopen({ "glow", path }, { cwd = vim.fn.fnamemodify(path, ":h") })
+  -- Embedded terminals often get wrong $COLUMNS; glow then word-wraps too narrow.
+  -- Match glow's wrap width and env to this float so lines use the full window width.
+  local cols = vim.api.nvim_win_get_width(0)
+  local rows = vim.api.nvim_win_get_height(0)
+  local env = vim.tbl_extend("force", {}, vim.fn.environ())
+  env.COLUMNS = tostring(cols)
+  env.LINES = tostring(rows)
+
+  vim.fn.termopen({
+    "glow",
+    "-w",
+    tostring(cols),
+    path,
+  }, {
+    cwd = vim.fn.fnamemodify(path, ":h"),
+    env = env,
+  })
 
   vim.keymap.set("n", "<leader>fp", function()
     M.toggle()
