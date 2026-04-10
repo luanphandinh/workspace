@@ -39,7 +39,11 @@ local function is_closable_file_buffer(bufnr, protected)
   return true
 end
 
-function M.close_other_file_buffers()
+---@param opts? { force?: boolean } force=true discards unsaved changes in closed buffers (like :bd!).
+function M.close_other_file_buffers(opts)
+  opts = opts or {}
+  local force = opts.force == true
+
   -- Active buffer: never closed (same idea as IDE "close all other tabs").
   local cur = vim.api.nvim_get_current_buf()
   local protected = protected_bufnrs()
@@ -51,13 +55,13 @@ function M.close_other_file_buffers()
     end
   end
 
+  local delete_opts = force and { force = true } or {}
   local closed, failed = 0, 0
   for _, buf in ipairs(to_close) do
-    local ok = pcall(vim.api.nvim_buf_delete, buf, {})
+    local ok = pcall(vim.api.nvim_buf_delete, buf, delete_opts)
     if ok then
       closed = closed + 1
     else
-      -- Modified buffer: try without destroying unsaved work — user can save or use :bd!
       failed = failed + 1
     end
   end
@@ -67,9 +71,12 @@ function M.close_other_file_buffers()
     active_label = "[No Name]"
   end
 
+  local mode = force and " (!)" or ""
+
   if failed > 0 then
     vim.notify(
-      ("buffer_only: closed %d other buffer(s), %d skipped (modified/protected). Active kept: %s"):format(
+      ("buffer_only%s: closed %d other buffer(s), %d skipped (protected). Active kept: %s"):format(
+        mode,
         closed,
         failed,
         active_label
@@ -78,11 +85,11 @@ function M.close_other_file_buffers()
     )
   elseif closed > 0 then
     vim.notify(
-      ("buffer_only: closed %d other file buffer(s). Active buffer unchanged: %s"):format(closed, active_label),
+      ("buffer_only%s: closed %d other file buffer(s). Active buffer unchanged: %s"):format(mode, closed, active_label),
       vim.log.levels.INFO
     )
   else
-    vim.notify(("buffer_only: nothing to close (active: %s)"):format(active_label), vim.log.levels.INFO)
+    vim.notify(("buffer_only%s: nothing to close (active: %s)"):format(mode, active_label), vim.log.levels.INFO)
   end
 end
 

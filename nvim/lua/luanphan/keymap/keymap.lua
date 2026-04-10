@@ -117,6 +117,9 @@ end, { desc = "Markdown: toggle glow preview (float)" })
 vim.keymap.set("n", "<leader>kw", function()
   require("luanphan.buffer_only").close_other_file_buffers()
 end, { desc = "Buffer: close other files (keep active buffer, tree, terminals, AI)" })
+vim.keymap.set("n", "<leader>kW", function()
+  require("luanphan.buffer_only").close_other_file_buffers({ force = true })
+end, { desc = "Buffer: close other files (!) discard unsaved in closed buffers" })
 
 -- Full reload: luafile init (not :source — that is for Vimscript; init.lua needs :luafile).
 -- Note: re-running init.lua also re-enters Packer startup; some plugins cache state — restart Neovim if maps stay wrong.
