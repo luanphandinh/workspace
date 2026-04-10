@@ -103,6 +103,7 @@ end, { desc = "Send Esc to terminal process" })
 
 vim.keymap.set("n", "<leader>p", "<cmd>Telescope find_files<cr>")
 vim.keymap.set("n", "g/", "<cmd>Telescope live_grep<cr>")
+vim.keymap.set("n", "<leader>lf", "<cmd>Telescope buffers<cr>", { desc = "Telescope: buffers" })
 
 vim.keymap.set("n", "<leader>d", function()
   vim.diagnostic.open_float(nil, { focus = false })
