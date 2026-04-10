@@ -108,6 +108,11 @@ vim.keymap.set("n", "<leader>d", function()
   vim.diagnostic.open_float(nil, { focus = false })
 end, { desc = "Show diagnostic at line" })
 
+-- Markdown: floating `glow` preview (toggle). Requires `glow` on PATH.
+vim.keymap.set("n", "<leader>fp", function()
+  require("luanphan.glow_preview").toggle()
+end, { desc = "Markdown: toggle glow preview (float)" })
+
 -- Full reload: luafile init (not :source — that is for Vimscript; init.lua needs :luafile).
 -- Note: re-running init.lua also re-enters Packer startup; some plugins cache state — restart Neovim if maps stay wrong.
 vim.keymap.set("n", "<leader>rc", function()
