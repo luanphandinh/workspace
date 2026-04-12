@@ -21,7 +21,7 @@ endif
 
 go_version := 1.20.4
 
-.PHONY: help nvim tmux go scripts
+.PHONY: help nvim tmux go scripts skills-sync
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -91,6 +91,10 @@ aws-cli-install:
 
 scripts: ## chmod +x for all scripts
 	chmod -R +x ./scripts
+
+skills-sync: ## Copy ./skills to ~/.claude/skills, ~/.cursor/skills, ~/.agents/skills (Codex CLI)
+	chmod +x ./scripts/sync-skills.sh
+	./scripts/sync-skills.sh
 
 cleanup: ## Clean up ./tmp folder
 	test -d ./tmp && rm -rf ./tmp
