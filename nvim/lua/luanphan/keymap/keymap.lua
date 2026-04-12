@@ -151,6 +151,10 @@ vim.keymap.set("n", "<leader>rl", function()
   lsp_restart.restart_all()
 end, { desc = "LspRestart: full LSP restart" })
 
+vim.keymap.set("n", "<leader>rg", function()
+  lsp_restart.restart_gopls()
+end, { desc = "GoplsRestart: full gopls stop + re-attach all Go buffers" })
+
 vim.keymap.set("n", "<leader>rb", function()
   lsp_restart.restart_buffer()
 end, { desc = "LspRestartBuffer: this buffer / recover attach" })
