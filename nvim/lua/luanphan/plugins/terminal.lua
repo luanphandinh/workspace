@@ -14,7 +14,7 @@ return function(use)
       })
 
       -- Toggle terminal on the right
-      vim.keymap.set("n", "<leader>t", "<cmd>ToggleTerm<cr>", { desc = "Toggle terminal" })
+      vim.keymap.set("n", "<leader>tt", "<cmd>ToggleTerm<cr>", { desc = "Toggle terminal" })
 
       -- Terminal mode mappings
       function _G.set_terminal_keymaps()

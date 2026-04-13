@@ -159,6 +159,10 @@ vim.keymap.set("n", "<leader>rb", function()
   lsp_restart.restart_buffer()
 end, { desc = "LspRestartBuffer: this buffer / recover attach" })
 
+vim.keymap.set("n", "<leader>tc", function()
+  require("luanphan.copilot_toggle").toggle()
+end, { desc = "Copilot: load if needed, then toggle on/off" })
+
 -- List all symbols in current file
 vim.keymap.set("n", "gs", function()
   require("telescope.builtin").lsp_document_symbols({
