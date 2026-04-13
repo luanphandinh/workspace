@@ -4,9 +4,6 @@ return function(use)
   use {
     "github/copilot.vim",
     branch = "release",
-    opt = true, -- Lazy Load
-    config = function()
-      vim.g.copilot_enabled = true -- After load, turned on by default
-    end,
+    opt = true,
   }
 end
