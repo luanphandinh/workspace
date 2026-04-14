@@ -28,60 +28,101 @@ function M.get_go_mod_name()
 end
 
 function M.get_relative_path()
-  local cwd = vim.fn.getcwd()
   local file_path = vim.fn.expand('%:p:h')
   local rel_path = vim.fn.fnamemodify(file_path, ":."):gsub("^./", "")
   return rel_path
 end
 
+---@return string
+local function go_bin()
+  local p = vim.fn.exepath("go")
+  if p ~= "" then
+    return p
+  end
+  if vim.fn.executable("/usr/local/go/bin/go") == 1 then
+    return "/usr/local/go/bin/go"
+  end
+  return "go"
+end
+
+--- Open a vertical split and run {shell_cmd} in a |jobstart({ term = true })| terminal.
+--- |jobstart| with |term| attaches to the *current* buffer — after |:vsplit| that is still the editor
+--- buffer unless we use |:enew|, so without |enew| the Go file buffer would be replaced (looks "blank").
+---@param shell_cmd string full shell command (passed to &shell like |:terminal|)
+local function run_in_test_terminal(shell_cmd)
+  vim.cmd("rightbelow vsplit | enew")
+  local jid = vim.fn.jobstart(shell_cmd, { term = true })
+  if jid == 0 or jid == -1 then
+    vim.notify("Failed to start test in terminal", vim.log.levels.ERROR)
+    return
+  end
+  -- Insert mode is entered by the TermOpen autocommand in |terminal.lua|.
+end
+
 ---Run the Go test / example function name under (or above) the cursor.
 function M.run_go_test_at_cursor()
   local test_name = M.get_test_name()
-  local mod_name = M.get_go_mod_name()
-  local rel_path = M.get_relative_path()
-
-  if not test_name then
-    print("No test function found")
+  if test_name == "" then
+    vim.notify("No test function found near cursor", vim.log.levels.WARN)
+    return
   end
 
-  -- local test_dir = vim.fn.expand("%:p:h") -- directory of current file
+  local mod_name = M.get_go_mod_name()
+  if not mod_name or mod_name == "" then
+    vim.notify("Could not resolve module (is `go list -m` valid here?)", vim.log.levels.ERROR)
+    return
+  end
+
+  local rel_path = M.get_relative_path()
   local cmd = string.format(
-    "/usr/local/go/bin/go test -timeout 30s -run ^%s$ %s/%s -gcflags=all=-N -gcflags=all=-l -count=1 -v",
+    "%s test -timeout 30s -run ^%s$ %s/%s -gcflags=all=-N -gcflags=all=-l -count=1 -v",
+    vim.fn.shellescape(go_bin()),
     test_name,
     mod_name,
     rel_path
   )
 
-  vim.cmd("rightbelow vsplit | terminal " .. cmd)
+  run_in_test_terminal(cmd)
 end
 
 ---Run all tests in the current file.
 function M.run_go_test_file()
   local mod_name = M.get_go_mod_name()
+  if not mod_name or mod_name == "" then
+    vim.notify("Could not resolve module (is `go list -m` valid here?)", vim.log.levels.ERROR)
+    return
+  end
+
   local rel_path = M.get_relative_path()
-  local file_name = vim.fn.expand('%:t'):gsub('_test%.go$', '')
 
   local cmd = string.format(
-    "/usr/local/go/bin/go test -timeout 30s %s/%s -gcflags=all=-N -gcflags=all=-l -count=1 -v",
+    "%s test -timeout 30s %s/%s -gcflags=all=-N -gcflags=all=-l -count=1 -v",
+    vim.fn.shellescape(go_bin()),
     mod_name,
     rel_path
   )
 
-  vim.cmd("rightbelow vsplit | terminal " .. cmd)
+  run_in_test_terminal(cmd)
 end
 
 ---Run all tests in the current package.
 function M.run_go_test_package()
   local mod_name = M.get_go_mod_name()
+  if not mod_name or mod_name == "" then
+    vim.notify("Could not resolve module (is `go list -m` valid here?)", vim.log.levels.ERROR)
+    return
+  end
+
   local rel_path = M.get_relative_path()
 
   local cmd = string.format(
-    "/usr/local/go/bin/go test -timeout 60s %s/%s -gcflags=all=-N -gcflags=all=-l -count=1 -v ./...",
+    "%s test -timeout 60s %s/%s -gcflags=all=-N -gcflags=all=-l -count=1 -v ./...",
+    vim.fn.shellescape(go_bin()),
     mod_name,
     rel_path
   )
 
-  vim.cmd("rightbelow vsplit | terminal " .. cmd)
+  run_in_test_terminal(cmd)
 end
 
 -- lua/telescope_subtests.lua
