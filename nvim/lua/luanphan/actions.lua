@@ -108,8 +108,10 @@ local actions = {
       require("nvim-tree.api").tree.reload()
 
       -- Update telescope to include/exclude gitignored files
+      local ignore_dot_git = { "%.git[/\\]" }
       require("telescope").setup({
         defaults = {
+          file_ignore_patterns = ignore_dot_git,
           vimgrep_arguments = show_gitignore
               and { "rg", "--color=never", "--no-heading", "--with-filename", "--line-number", "--column", "--smart-case", "--hidden", "--no-ignore" }
               or { "rg", "--color=never", "--no-heading", "--with-filename", "--line-number", "--column", "--smart-case", "--hidden" },
@@ -117,6 +119,7 @@ local actions = {
         pickers = {
           find_files = {
             hidden = true,
+            file_ignore_patterns = ignore_dot_git,
             find_command = show_gitignore
                 and { "rg", "--files", "--hidden", "--no-ignore" }
                 or { "rg", "--files", "--hidden" },

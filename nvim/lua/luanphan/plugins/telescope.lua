@@ -15,8 +15,12 @@ return function(use)
     "nvim-telescope/telescope.nvim",
     requires = { "nvim-lua/plenary.nvim" },
     config = function()
+      -- Lua patterns for string.find on paths (see :help lua-patterns)
+      local ignore_dot_git = { "%.git[/\\]" }
+
       require("telescope").setup({
         defaults = {
+          file_ignore_patterns = ignore_dot_git,
           sorting_strategy = "ascending",
           layout_config = {
             prompt_position = "top",
@@ -36,7 +40,8 @@ return function(use)
         },
         pickers = {
           find_files = {
-            hidden = true,  -- show dotfiles
+            hidden = true, -- show dotfiles
+            file_ignore_patterns = ignore_dot_git,
           },
           live_grep = {
             additional_args = function()
