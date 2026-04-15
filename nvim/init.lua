@@ -44,6 +44,7 @@ require("packer").startup(function(use)
   require("luanphan.file_configs.lua")
   require("luanphan.file_configs.json")
   require("luanphan.actions")
+  require("luanphan.qf_replace").setup()
 
   -- Custom private plugins (gitignored)
   local internal_path = vim.fn.stdpath("config") .. "/lua/luanphan/internal"

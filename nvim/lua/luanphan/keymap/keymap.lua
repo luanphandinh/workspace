@@ -103,6 +103,9 @@ end, { desc = "Send Esc to terminal process" })
 
 vim.keymap.set("n", "<leader>p", "<cmd>Telescope find_files<cr>")
 vim.keymap.set("n", "g/", "<cmd>Telescope live_grep<cr>")
+vim.keymap.set("n", "<leader>sr", function()
+  require("luanphan.qf_replace").prompt_cfdo_substitute()
+end, { desc = "Quickfix: replace in all listed files (use g/ then <C-q> first)" })
 vim.keymap.set("n", "<leader>lf", "<cmd>Telescope buffers<cr>", { desc = "Telescope: buffers" })
 
 vim.keymap.set("n", "<leader>d", function()
