@@ -95,6 +95,12 @@ local actions = {
     end,
   },
   {
+    name = "Git Branches (Telescope)",
+    action = function()
+      require("telescope.builtin").git_branches()
+    end,
+  },
+  {
     name = "Toggle Gitignore (Tree & Telescope)",
     action = function()
       show_gitignore = not show_gitignore

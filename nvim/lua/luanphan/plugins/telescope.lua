@@ -17,6 +17,7 @@ return function(use)
     config = function()
       -- Lua patterns for string.find on paths (see :help lua-patterns)
       local ignore_dot_git = { "%.git[/\\]" }
+      local grep_opts = require("luanphan.telescope_grep_opts")
 
       require("telescope").setup({
         defaults = {
@@ -44,9 +45,8 @@ return function(use)
             file_ignore_patterns = ignore_dot_git,
           },
           live_grep = {
-            additional_args = function()
-              return { "--hidden" }  -- search hidden files in live_grep
-            end,
+            -- Used by |luanphan.telescope_grep_opts.live_grep()| (|g/|). Not applied by :Telescope live_grep alone.
+            additional_args = grep_opts.additional_args,
           },
         },
         extensions = {
