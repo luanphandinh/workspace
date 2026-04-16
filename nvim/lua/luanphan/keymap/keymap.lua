@@ -88,6 +88,13 @@ vim.keymap.set("n", "<C-f>", "<cmd>slient !tmux neww tmux-sessionizer<CR>")
 vim.keymap.set("n", "<C-h>", "<C-w>h", { noremap = true, silent = true })
 vim.keymap.set("n", "<C-l>", "<C-w>l", { noremap = true, silent = true })
 
+-- |CTRL-W_o| like |:only| but keep nvim-tree / NERDTree sidebar if open
+local function only_keep_tree()
+  require("luanphan.win_only_tree").only_keep_tree()
+end
+vim.keymap.set("n", "<C-w>o", only_keep_tree, { desc = "Close other windows (keep NvimTree + current)" })
+vim.keymap.set("n", "<C-w><C-o>", only_keep_tree, { desc = "Close other windows (keep NvimTree + current)" })
+
 -- Terminal mode: escape terminal and switch windows
 vim.keymap.set("t", "<C-h>", "<C-\\><C-n><C-w>h", { desc = "Exit terminal and go left" })
 vim.keymap.set("t", "<C-l>", "<C-\\><C-n><C-w>l", { desc = "Exit terminal and go right" })

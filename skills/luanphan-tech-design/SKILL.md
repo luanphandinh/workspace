@@ -25,8 +25,8 @@ description: "Tech Design Genius"
 - Even after getting approval, if there is any new information or change in the requirement, you should start the feedback loop again and update the design accordingly, the design is never final until the feature or system is implemented and working as expected in production
 - IMPORTANT: the first round of design requires you to do everything, from the second design loop onward, only drill in which part need to be changed based on the feedback, don't redo the whole design unless necessary, this is to save time and also to make sure the design is efficient and not over engineered
 ### Identify independent microservices
-- For each microservices that is involved, create FOCUSED AGENT TASk
-- Then dispatch those FOCUSED AGENT TASK in PARRALLLEL to explore the codebase and make design changes accordingly, then report back to main agent with the design changes and the reason behind it.
+- For each microservices that is involved, create FOCUSED AGENT TASK
+- Then dispatch those FOCUSED AGENT TASK in PARRALLEL to explore the codebase and make design changes accordingly, then report back to main agent with the design changes and the reason behind it.
 #### External client design
 - If the tech design requires external client, create another section called "External Client" and provide detail of related changes to that client
 - For new API (doens't matter the protocol), provide full detail of request and response format
