@@ -48,10 +48,13 @@ end
 --- Open a vertical split and run {shell_cmd} in a |jobstart({ term = true })| terminal.
 --- |jobstart| with |term| attaches to the *current* buffer — after |:vsplit| that is still the editor
 --- buffer unless we use |:enew|, so without |enew| the Go file buffer would be replaced (looks "blank").
+--- Prints the exact command in the terminal first, then runs it.
 ---@param shell_cmd string full shell command (passed to &shell like |:terminal|)
 local function run_in_test_terminal(shell_cmd)
   vim.cmd("rightbelow vsplit | enew")
-  local jid = vim.fn.jobstart(shell_cmd, { term = true })
+  local line = "$ " .. shell_cmd
+  local full = string.format("printf '%%s\\n\\n' %s && %s", vim.fn.shellescape(line), shell_cmd)
+  local jid = vim.fn.jobstart(full, { term = true })
   if jid == 0 or jid == -1 then
     vim.notify("Failed to start test in terminal", vim.log.levels.ERROR)
     return
@@ -75,7 +78,7 @@ function M.run_go_test_at_cursor()
 
   local rel_path = M.get_relative_path()
   local cmd = string.format(
-    "%s test -timeout 30s -run ^%s$ %s/%s -gcflags=all=-N -gcflags=all=-l -count=1 -v",
+    "%s test -timeout 30s -run ^%s$ %s/%s -count=1 -v",
     vim.fn.shellescape(go_bin()),
     test_name,
     mod_name,
@@ -96,7 +99,7 @@ function M.run_go_test_file()
   local rel_path = M.get_relative_path()
 
   local cmd = string.format(
-    "%s test -timeout 30s %s/%s -gcflags=all=-N -gcflags=all=-l -count=1 -v",
+    "%s test -timeout 30s %s/%s -count=1 -v",
     vim.fn.shellescape(go_bin()),
     mod_name,
     rel_path
@@ -116,7 +119,7 @@ function M.run_go_test_package()
   local rel_path = M.get_relative_path()
 
   local cmd = string.format(
-    "%s test -timeout 60s %s/%s -gcflags=all=-N -gcflags=all=-l -count=1 -v ./...",
+    "%s test -timeout 60s %s/%s -count=1 -v ./...",
     vim.fn.shellescape(go_bin()),
     mod_name,
     rel_path

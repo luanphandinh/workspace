@@ -19,7 +19,7 @@ else
 	fonts_install := brew install --cask font-fira-code
 endif
 
-go_version := 1.20.4
+go_version := 1.25.9
 
 .PHONY: help nvim tmux go scripts skills-sync
 help:
