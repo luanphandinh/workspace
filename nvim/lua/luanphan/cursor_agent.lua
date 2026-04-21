@@ -9,9 +9,9 @@ return require("luanphan.terminal_agent").create({
   hint_open = "<leader>cc",
   defaults = { cmd = "agent" },
   keymaps = {
-    toggle = "<leader>cc",
-    send = "<leader>cs",
-    focus = "<leader>cf",
+    toggle = "<leader>ac",
+    send = "<leader>as",
+    focus = "<leader>af",
   },
   map_desc = {
     toggle = "Toggle Cursor agent terminal",

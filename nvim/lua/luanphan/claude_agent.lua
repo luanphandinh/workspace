@@ -1,7 +1,3 @@
--- Claude Code CLI — thin wrapper over |terminal_agent.lua|.
--- Prerequisite: `claude` on PATH.
--- Maps: <leader>ac toggle, <leader>as send selection.
-
 return require("luanphan.terminal_agent").create({
   g_bufnr = "claude_agent_bufnr",
   notify_prefix = "claude_agent",
@@ -9,9 +5,9 @@ return require("luanphan.terminal_agent").create({
   hint_open = "<leader>ac",
   defaults = { cmd = "claude" },
   keymaps = {
-    toggle = "<leader>ac",
-    send = "<leader>as",
-    focus = "<leader>af",
+    toggle = "<leader>cc",
+    send = "<leader>cs",
+    focus = "<leader>cf",
   },
   map_desc = {
     toggle = "Toggle Claude Code terminal",
