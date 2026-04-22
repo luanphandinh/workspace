@@ -8,14 +8,17 @@ Fields:
   7d-sonnet    last-7-day Sonnet-only token usage (computed from ~/.claude/projects)
 
 Input:  Claude Code pipes a JSON blob on stdin. Everything except the weekly
-        sonnet figure comes directly from it — no hardcoded model/limit lookups.
-Output: one line to stdout. Weekly sonnet is cached 60s at
-        /tmp/claude-code-statusline-cache.json so the script stays snappy.
+        sonnet figure comes directly from it.
+Output: one line to stdout. Weekly sonnet uses a serve-stale-while-revalidate
+        cache at /tmp/claude-code-statusline-cache.json — the glob over the
+        projects dir is otherwise slow enough to trip Claude Code's statusline
+        timeout and blank the bar.
 """
 
 import glob
 import json
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -23,7 +26,20 @@ from pathlib import Path
 
 PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 CACHE_FILE = Path("/tmp/claude-code-statusline-cache.json")
+ERR_LOG = Path("/tmp/claude-code-statusline.err.log")
 CACHE_TTL_SEC = 60
+
+
+def _num(v):
+    """float(v) if numeric, else None. Tolerates str, int, float, None, and
+    anything else (dict/list → None) so one surprising field type can't blank
+    the whole statusline."""
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def read_stdin_json() -> dict:
@@ -57,18 +73,21 @@ def usage_sum(u: dict) -> int:
     )
 
 
-def weekly_sonnet_tokens() -> int:
-    """Cumulative sonnet-only tokens over the last 7 days. Cached 60s."""
-    now = time.time()
-    if CACHE_FILE.exists() and now - CACHE_FILE.stat().st_mtime < CACHE_TTL_SEC:
-        try:
-            return int(json.loads(CACHE_FILE.read_text()).get("sonnet", 0))
-        except Exception:
-            pass
+def _read_cache():
+    if not CACHE_FILE.exists():
+        return None, None
+    try:
+        val = int(json.loads(CACHE_FILE.read_text()).get("sonnet", 0))
+        age = time.time() - CACHE_FILE.stat().st_mtime
+        return val, age
+    except Exception:
+        return None, None
 
+
+def _compute_weekly_sonnet() -> int:
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     cutoff_ts = cutoff.timestamp()
-    sonnet_t = 0
+    total = 0
     for path in glob.iglob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
         try:
             if os.path.getmtime(path) < cutoff_ts:
@@ -89,13 +108,41 @@ def weekly_sonnet_tokens() -> int:
                     pass
             u = msg.get("usage") or {}
             if u:
-                sonnet_t += usage_sum(u)
-
+                total += usage_sum(u)
     try:
-        CACHE_FILE.write_text(json.dumps({"sonnet": sonnet_t}))
+        CACHE_FILE.write_text(json.dumps({"sonnet": total}))
     except OSError:
         pass
-    return sonnet_t
+    return total
+
+
+def _spawn_refresh():
+    """Detached background refresh — never blocks the foreground render."""
+    try:
+        subprocess.Popen(
+            [sys.executable, __file__, "--refresh-cache"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception:
+        pass
+
+
+def weekly_sonnet_tokens() -> int:
+    """Serve cached value immediately; refresh in background when stale.
+
+    First-ever run has no cache and must compute synchronously. After that,
+    every call returns instantly — even when the cache is stale, we serve it
+    and spawn a detached refresh for the next call.
+    """
+    cached, age = _read_cache()
+    if cached is None:
+        return _compute_weekly_sonnet()
+    if age is not None and age >= CACHE_TTL_SEC:
+        _spawn_refresh()
+    return cached
 
 
 def fmt_k(n: int) -> str:
@@ -107,65 +154,100 @@ def fmt_k(n: int) -> str:
 
 
 def fmt_resets_at(resets_at) -> str:
-    """Format `resets_at` (ISO8601) as local time + offset, e.g. '3 PM (UTC+7)'."""
-    if not resets_at:
+    """Format `resets_at` as local time, e.g. '3 PM' or '3:45 PM'.
+
+    Claude Code sends Unix epoch seconds (int/float), but we also accept
+    ISO8601 strings in case the format ever changes.
+    """
+    if resets_at is None or isinstance(resets_at, bool):
         return ""
+    t = None
     try:
-        t = datetime.fromisoformat(str(resets_at).replace("Z", "+00:00"))
-    except Exception:
-        return ""
-    local = t.astimezone()  # system local timezone
+        t = datetime.fromtimestamp(float(resets_at), tz=timezone.utc)
+    except (TypeError, ValueError):
+        try:
+            t = datetime.fromisoformat(str(resets_at).replace("Z", "+00:00"))
+        except Exception:
+            return ""
+    local = t.astimezone()
     if local.minute == 0:
-        hour_str = local.strftime("%I %p").lstrip("0")
-    else:
-        hour_str = local.strftime("%I:%M %p").lstrip("0")
-    off = local.utcoffset()
-    if off is None:
-        tz = "UTC"
-    else:
-        total = int(off.total_seconds())
-        sign = "+" if total >= 0 else "-"
-        hours = abs(total) // 3600
-        mins = (abs(total) % 3600) // 60
-        tz = f"UTC{sign}{hours}" if mins == 0 else f"UTC{sign}{hours}:{mins:02d}"
-    return f"{hour_str} ({tz})"
+        return local.strftime("%I %p").lstrip("0")
+    return local.strftime("%I:%M %p").lstrip("0")
 
 
-def main():
-    data = read_stdin_json()
+def render(data: dict) -> str:
+    model = data.get("model")
+    if not isinstance(model, dict):
+        model = {}
+    model_name = str(model.get("display_name") or model.get("id") or "?")
 
-    cw = data.get("context_window") or {}
-    ctx = int(cw.get("current_usage") or 0)
-    ctx_limit = int(cw.get("context_window_size") or 0)
-    ctx_pct_raw = cw.get("used_percentage")
-    if ctx_pct_raw is None:
+    cw = data.get("context_window")
+    if not isinstance(cw, dict):
+        cw = {}
+    ctx = int(_num(cw.get("current_usage")) or 0)
+    ctx_limit = int(_num(cw.get("context_window_size")) or 0)
+    ctx_pct_val = _num(cw.get("used_percentage"))
+    if ctx_pct_val is None:
         ctx_pct = (ctx / ctx_limit * 100) if ctx_limit else 0.0
     else:
-        ctx_pct = float(ctx_pct_raw)
+        ctx_pct = ctx_pct_val
 
-    rate_limits = data.get("rate_limits") or {}
+    rate_limits = data.get("rate_limits")
+    if not isinstance(rate_limits, dict):
+        rate_limits = {}
 
     def pct_field(label: str, rl_key: str, with_reset: bool = False) -> str:
-        rl = rate_limits.get(rl_key) or {}
-        raw = rl.get("used_percentage")
-        if raw is None:
+        rl = rate_limits.get(rl_key)
+        if not isinstance(rl, dict):
+            return f"{label} n/a"
+        val = _num(rl.get("used_percentage"))
+        if val is None:
             return f"{label} n/a"
         suffix = ""
         if with_reset:
             resets = fmt_resets_at(rl.get("resets_at"))
             if resets:
-                suffix = f" Reset {resets}"
-        return f"{label} {float(raw):.0f}%{suffix}"
+                suffix = f" (Reset {resets})"
+        return f"{label} {val:.0f}%{suffix}"
 
-    week_sonnet = weekly_sonnet_tokens()
+    try:
+        week_sonnet = weekly_sonnet_tokens()
+    except Exception:
+        week_sonnet = 0
 
     parts = [
+        model_name,
         f"ctx {fmt_k(ctx)}/{fmt_k(ctx_limit) if ctx_limit else '?'} ({ctx_pct:.0f}%)",
         pct_field("session", "five_hour", with_reset=True),
         pct_field("7d-all", "seven_day"),
         f"7d-sonnet {fmt_k(week_sonnet)}",
     ]
-    sys.stdout.write(" │ ".join(parts))
+    return " │ ".join(parts)
+
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--refresh-cache":
+        try:
+            _compute_weekly_sonnet()
+        except Exception:
+            pass
+        return
+    try:
+        data = read_stdin_json()
+        sys.stdout.write(render(data))
+    except Exception as e:
+        # Log full traceback so we can diagnose; print a short note so the bar
+        # stays visible.
+        try:
+            import traceback
+            with open(ERR_LOG, "a") as f:
+                f.write(f"--- {datetime.now().isoformat()} ---\n")
+                f.write(traceback.format_exc())
+                f.write("\n")
+        except Exception:
+            pass
+        msg = str(e)[:60]
+        sys.stdout.write(f"statusline err: {type(e).__name__}: {msg}")
 
 
 if __name__ == "__main__":
