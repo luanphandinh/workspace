@@ -100,6 +100,12 @@ return function(use)
         end,
       })
 
+      -- :LspInfo was removed from nvim-lspconfig with the vim.lsp.config
+      -- migration. Shim to the supported equivalent.
+      vim.api.nvim_create_user_command("LspInfo", function()
+        vim.cmd("checkhealth vim.lsp")
+      end, { desc = "Show LSP client info (alias for :checkhealth vim.lsp)" })
+
       -- Use Neovim 0.11+ vim.lsp.config API
       -- Use custom gopls binary from env var, fallback to "gopls"
       local gopls_cmd = vim.env.GOPLS_PATH or "gopls"
