@@ -46,11 +46,19 @@ return function(_use)
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       if vim.api.nvim_buf_is_loaded(buf) then
         local name = vim.api.nvim_buf_get_name(buf)
-        local modified = vim.bo[buf].modified
-        if name ~= "" and not modified and not vim.startswith(name, cwd) then
+        local buftype = vim.bo[buf].buftype
+        if buftype == "terminal" and not vim.startswith(name, "term://" .. cwd) then
+          -- Terminals are always "modified" (live process); force-close.
+          pcall(vim.api.nvim_buf_delete, buf, { force = true })
+        elseif buftype == "" and name ~= "" and not vim.bo[buf].modified and not vim.startswith(name, cwd) then
           pcall(vim.api.nvim_buf_delete, buf, { force = false })
         end
       end
+    end
+
+    local ok_tree, tree_api = pcall(require, "nvim-tree.api")
+    if ok_tree then
+      pcall(tree_api.tree.change_root, cwd)
     end
 
     vim.notify("Switched to worktree: " .. path, vim.log.levels.INFO)
