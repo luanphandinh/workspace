@@ -37,6 +37,12 @@ return function(_use)
       return
     end
 
+    -- Explicitly toggle off the <leader>tt terminal first via a User event, so
+    -- terminal.lua records visibility and closes the window BEFORE the cd. This
+    -- makes the worktree switch visually clean (no flicker) and deterministic,
+    -- while still preserving auto-restore on return via the saved visibility.
+    pcall(vim.api.nvim_exec_autocmds, "User", { pattern = "LuanphanWorktreeSwitchPre" })
+
     -- `:cd` fires DirChangedPre/DirChanged, which each persistent-terminal module
     -- (terminal_agent, toggleterm) listens for. They snapshot per-cwd visibility
     -- before the cd and auto-restore it after — no window bookkeeping here.

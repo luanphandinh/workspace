@@ -17,8 +17,7 @@ return function(use)
       })
 
       local Terminal = require("toggleterm.terminal").Terminal
-      local terms = {}      -- cwd -> Terminal
-      local visibility = {} -- cwd -> last-known visibility
+      local terms = {} -- cwd -> Terminal (per-worktree persistent buffer)
 
       local function get_term()
         local cwd = vim.fn.getcwd()
@@ -42,30 +41,26 @@ return function(use)
         get_term():toggle()
       end, { desc = "Toggle terminal" })
 
-      -- Per-worktree visibility: remember whether the terminal was visible in the old cwd;
-      -- auto-restore when returning to a cwd where it was visible last.
-      vim.api.nvim_create_autocmd("DirChangedPre", {
-        group = vim.api.nvim_create_augroup("LuanphanToggletermDirPre", { clear = true }),
-        callback = function()
-          local old = vim.fn.getcwd()
-          local t = terms[old]
-          if t and t.bufnr and vim.api.nvim_buf_is_valid(t.bufnr) and t:is_open() then
-            visibility[old] = true
-            t:close()
-          else
-            visibility[old] = false
-          end
-        end,
+      -- On any cwd change, just hide the current worktree's terminal window.
+      -- The buffer is preserved in `terms[cwd]` so toggling back on return
+      -- resumes the same shell; we do NOT auto-reopen — user toggles manually.
+      local function hide_current()
+        local cwd = vim.fn.getcwd()
+        local t = terms[cwd]
+        if t and t.bufnr and vim.api.nvim_buf_is_valid(t.bufnr) and t:is_open() then
+          t:close()
+        end
+      end
+
+      vim.api.nvim_create_autocmd("User", {
+        pattern = "LuanphanWorktreeSwitchPre",
+        group = vim.api.nvim_create_augroup("LuanphanToggletermWorktreePre", { clear = true }),
+        callback = hide_current,
       })
 
-      vim.api.nvim_create_autocmd("DirChanged", {
-        group = vim.api.nvim_create_augroup("LuanphanToggletermDir", { clear = true }),
-        callback = function()
-          local new = vim.fn.getcwd()
-          if not visibility[new] then return end
-          local t = get_term()
-          if not t:is_open() then t:open() end
-        end,
+      vim.api.nvim_create_autocmd("DirChangedPre", {
+        group = vim.api.nvim_create_augroup("LuanphanToggletermDirPre", { clear = true }),
+        callback = hide_current,
       })
 
       -- Terminal mode mappings

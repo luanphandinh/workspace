@@ -24,7 +24,7 @@ description: "extremely efficient coder"
    - **Exists** → workspace is already set up; confirm the branch in the yml matches, then `cd` into it. If new repos from the mapping are missing from the yml, extend with `mkws --add <repo>...` (no `--branch`).
    - **Does not exist** → invoke the `luanphan-workspace` skill to run `mkws --name <workspace-name> --branch <branch> --add <repo1> <repo2> ...` using every repo from the mapping file. `mkws` places the workspace at `<root>/lpworkspaces/<workspace-name>/`.
 4. `cd` into `<root>/lpworkspaces/<workspace-name>/` before any edits. All subsequent coding, builds, and tests run from there.
-5. If the user mentions Go modules, run `mkws sync` inside the workspace (regenerates `go.work` and runs `go work sync`).
+5. **DO NOT RUN** `mkws sync` inside the workspace
 
 ### During coding
 - Treat `<root>/lpworkspaces/<workspace-name>/<repo>/` as the canonical path for each repo's source — never edit the original sibling repo outside the workspace.
