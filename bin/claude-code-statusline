@@ -192,6 +192,13 @@ def render(data: dict) -> str:
     else:
         ctx_pct = ctx_pct_val
 
+    # Claude Code doesn't always populate `current_usage`, but `used_percentage`
+    # and `context_window_size` are reliable. If the token count is zero while
+    # the percentage is not, back-fill ctx so both halves of "0/1.0M (34%)"
+    # stay consistent.
+    if ctx == 0 and ctx_pct > 0 and ctx_limit > 0:
+        ctx = int(ctx_limit * ctx_pct / 100)
+
     rate_limits = data.get("rate_limits")
     if not isinstance(rate_limits, dict):
         rate_limits = {}
