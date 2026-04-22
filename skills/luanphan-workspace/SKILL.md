@@ -13,12 +13,12 @@ Drives `mkws` (installed on `$PATH`) to manage multi-repo git-worktree workspace
 # Command interface
 ```
 mkws [--name <name>] [--branch <branch>] [--add <repo>...]
-mkws sync [--name <name>]
+mkws sync [<folder>]
 ```
 - `--name` — workspace folder name. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). `/` in the name becomes `_` in the folder.
 - `--branch` — required on first invocation (when no `workspace.yml` yet). Optional on later invocations; if passed, must match the yml exactly.
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
-- `sync` — subcommand. Regenerates `go.work` from the yml and runs `go work sync`. Rejects `--add` and `--branch`.
+- `sync` — subcommand. Regenerates `go.work` from the yml and runs `go work sync`. Takes an optional positional **folder path** (relative or absolute); defaults to `$PWD`. The folder must contain a `workspace.yml`. Rejects `--add`, `--branch`, and `--name` — sync is purely path-based.
 
 ## Layout — all workspaces live under `lpworkspaces/`
 Every workspace is placed at `<root>/lpworkspaces/<name>/` instead of directly under the root. This keeps the root folder clean even when many workspaces accumulate. `mkws` creates the `lpworkspaces/` container on demand.
@@ -69,12 +69,17 @@ mkws --add C
 Either way, do NOT pass `--branch` — it's read from the yml.
 
 ## Sync Go deps
-User intent: "sync deps", "run go work sync", "pull module deps into the workspace". Run from inside the workspace:
+User intent: "sync deps", "run go work sync", "pull module deps into the workspace". `mkws sync` is path-based:
 ```
+# sync the workspace at $PWD (must be a workspace folder):
 cd <root>/lpworkspaces/<name>
 mkws sync
+
+# sync a specific folder from anywhere (relative or absolute path):
+mkws sync ./lpworkspaces/<name>
+mkws sync /abs/path/to/<root>/lpworkspaces/<name>
 ```
-This regenerates `go.work` from the yml and runs `go work sync`. Requires `go` on PATH.
+All forms regenerate `go.work` from the yml and run `go work sync`. The target folder must contain a `workspace.yml`. Requires `go` on PATH.
 
 ## Inspect a workspace
 Read `<root>/lpworkspaces/<name>/workspace.yml` directly. Report `name`, `branch_name`, and `repos`.

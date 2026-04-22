@@ -16,13 +16,18 @@ usage() {
   cat <<'EOF'
 Usage:
   mkws [--name <name>] [--branch <branch>] [--add <repo>...]
-  mkws sync [--name <name>]
+  mkws sync [<folder>]
 
 Modes:
   (default)  Create or extend a workspace. Run from the root folder that
              contains the source repos, or from inside a workspace dir.
-  sync       Regenerate go.work and run `go work sync` to sync Go deps.
-             Must resolve to an existing workspace (via PWD or --name).
+  sync       Regenerate go.work and run `go work sync` for a workspace folder.
+             Targets the given folder (relative or absolute). If omitted,
+             defaults to $PWD. The folder must contain a workspace.yml.
+             Examples:
+               mkws sync                     # sync $PWD
+               mkws sync ./lpworkspaces/myws # sync a relative path
+               mkws sync /abs/path/to/ws     # sync an absolute path
 
 Flags:
   --name <name>       workspace name. Required when creating a new workspace
@@ -62,12 +67,21 @@ MODE="default"
 NAME=""
 BRANCH=""
 REPOS=()
+SYNC_PATH=""
 
 if [[ $# -gt 0 && "$1" != -* ]]; then
   case "$1" in
     sync)
       MODE="sync"
       shift
+      # Optional positional: a path to the workspace folder. Defaults to $PWD.
+      # Accepts relative, absolute, or ./foo paths — resolved as a directory.
+      if [[ $# -gt 0 && "$1" != -* ]]; then
+        SYNC_PATH="$1"
+        shift
+      else
+        SYNC_PATH="$PWD"
+      fi
       ;;
     *)
       echo "error: unknown subcommand: $1" >&2
@@ -109,38 +123,43 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$MODE" == "sync" ]]; then
-  if [[ ${#REPOS[@]} -gt 0 || -n "$BRANCH" ]]; then
-    echo "error: 'sync' does not accept --add or --branch" >&2
+  if [[ ${#REPOS[@]} -gt 0 || -n "$BRANCH" || -n "$NAME" ]]; then
+    echo "error: 'sync' takes a folder path only; --add/--branch/--name are not accepted" >&2
     exit 1
   fi
-fi
-
-# Context: inside a workspace (PWD has yml) → root is grandparent. At the
-# lpworkspaces container → root is parent. Otherwise PWD itself is the root.
-if [[ -f "$PWD/workspace.yml" ]]; then
-  WORKSPACE_DIR="$PWD"
-  REPO_ROOT="$(dirname "$(dirname "$PWD")")"
+  # Sync resolves its target directly from the positional folder path (or $PWD).
+  # No name lookups, no container traversal — whatever folder you point at must
+  # contain workspace.yml.
+  [[ -d "$SYNC_PATH" ]] || { echo "error: not a directory: $SYNC_PATH" >&2; exit 1; }
+  WORKSPACE_DIR="$(cd "$SYNC_PATH" && pwd)"
   YML="$WORKSPACE_DIR/workspace.yml"
-  NAME_FROM_YML=$(awk -F': *' '/^name:/{print $2; exit}' "$YML")
-  if [[ -n "$NAME" && "$NAME" != "$NAME_FROM_YML" ]]; then
-    echo "error: --name '$NAME' does not match workspace.yml name '$NAME_FROM_YML'" >&2
-    exit 1
-  fi
-  NAME="$NAME_FROM_YML"
+  [[ -f "$YML" ]] || { echo "error: no workspace.yml at $WORKSPACE_DIR (not a workspace)" >&2; exit 1; }
+  NAME=$(awk -F': *' '/^name:/{print $2; exit}' "$YML")
+  REPO_ROOT="$(dirname "$(dirname "$WORKSPACE_DIR")")"
 else
-  [[ -n "$NAME" ]] || { echo "error: --name required (or run from inside a workspace dir)" >&2; exit 1; }
-  if [[ "$(basename "$PWD")" == "$WS_CONTAINER" ]]; then
-    REPO_ROOT="$(dirname "$PWD")"
+  # Default mode: inside a workspace (PWD has yml) → root is grandparent.
+  # At the lpworkspaces container → root is parent. Otherwise PWD is the root.
+  if [[ -f "$PWD/workspace.yml" ]]; then
+    WORKSPACE_DIR="$PWD"
+    REPO_ROOT="$(dirname "$(dirname "$PWD")")"
+    YML="$WORKSPACE_DIR/workspace.yml"
+    NAME_FROM_YML=$(awk -F': *' '/^name:/{print $2; exit}' "$YML")
+    if [[ -n "$NAME" && "$NAME" != "$NAME_FROM_YML" ]]; then
+      echo "error: --name '$NAME' does not match workspace.yml name '$NAME_FROM_YML'" >&2
+      exit 1
+    fi
+    NAME="$NAME_FROM_YML"
   else
-    REPO_ROOT="$PWD"
+    [[ -n "$NAME" ]] || { echo "error: --name required (or run from inside a workspace dir)" >&2; exit 1; }
+    if [[ "$(basename "$PWD")" == "$WS_CONTAINER" ]]; then
+      REPO_ROOT="$(dirname "$PWD")"
+    else
+      REPO_ROOT="$PWD"
+    fi
+    WORKSPACE_NAME="${NAME//\//_}"
+    WORKSPACE_DIR="$REPO_ROOT/$WS_CONTAINER/$WORKSPACE_NAME"
+    YML="$WORKSPACE_DIR/workspace.yml"
   fi
-  WORKSPACE_NAME="${NAME//\//_}"
-  WORKSPACE_DIR="$REPO_ROOT/$WS_CONTAINER/$WORKSPACE_NAME"
-  YML="$WORKSPACE_DIR/workspace.yml"
-fi
-
-if [[ "$MODE" == "sync" ]]; then
-  [[ -f "$YML" ]] || { echo "error: workspace.yml not found at $YML" >&2; exit 1; }
 fi
 
 if [[ -f "$YML" ]]; then
