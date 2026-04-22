@@ -14,11 +14,13 @@ Drives `mkws` (installed on `$PATH`) to manage multi-repo git-worktree workspace
 ```
 mkws [--name <name>] [--branch <branch>] [--add <repo>...]
 mkws sync [<folder>]
+mkws drop <folder>
 ```
 - `--name` — workspace folder name. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). `/` in the name becomes `_` in the folder.
 - `--branch` — required on first invocation (when no `workspace.yml` yet). Optional on later invocations; if passed, must match the yml exactly.
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
 - `sync` — subcommand. Regenerates `go.work` from the yml and runs `go work sync`. Takes an optional positional **folder path** (relative or absolute); defaults to `$PWD`. The folder must contain a `workspace.yml`. Rejects `--add`, `--branch`, and `--name` — sync is purely path-based.
+- `drop` — subcommand. **Destructive.** Removes every worktree listed in the manifest via `git worktree remove --force`, prunes the source repos, and deletes the workspace folder (and the empty `lpworkspaces/` container if nothing else is left). Uncommitted work in the worktrees is lost. No confirmation prompt. Takes a required positional **folder path** (relative or absolute). Rejects `--add`, `--branch`, and `--name`.
 
 ## Layout — all workspaces live under `lpworkspaces/`
 Every workspace is placed at `<root>/lpworkspaces/<name>/` instead of directly under the root. This keeps the root folder clean even when many workspaces accumulate. `mkws` creates the `lpworkspaces/` container on demand.
@@ -80,6 +82,14 @@ mkws sync ./lpworkspaces/<name>
 mkws sync /abs/path/to/<root>/lpworkspaces/<name>
 ```
 All forms regenerate `go.work` from the yml and run `go work sync`. The target folder must contain a `workspace.yml`. Requires `go` on PATH.
+
+## Drop a workspace
+User intent: "drop workspace X", "delete the workspace", "clean up the worktrees for X", "we're done with this feature branch, wipe it". This is **destructive** — `mkws drop` removes every worktree in the manifest, prunes the source repos, and deletes the workspace folder.
+```
+mkws drop <root>/lpworkspaces/<name>
+mkws drop ./lpworkspaces/<name>    # relative from the root
+```
+**Warn the user** before running if there may be uncommitted changes in the worktrees — `mkws drop` runs `git worktree remove --force` without a confirmation prompt, so local edits are lost. If unsure, ask the user to commit/push first (or inspect with `git -C <root>/<repo> worktree list`).
 
 ## Inspect a workspace
 Read `<root>/lpworkspaces/<name>/workspace.yml` directly. Report `name`, `branch_name`, and `repos`.
