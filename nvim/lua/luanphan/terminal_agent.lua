@@ -179,15 +179,34 @@ local function get_target_split_dims()
   return nil, nil
 end
 
---- Centered float that takes ~90% of the screen. The `split` config no longer
---- influences float placement — it's used only for real splits.
+--- Float placement per `config.float_position`:
+---   "full"  — centered, fills the screen minus a 1-col/row border margin
+---   "left"  — full-height, 45% width, anchored to the left edge
+---   "right" — full-height, 45% width, anchored to the right edge
+--- The `split` config no longer influences float placement.
+---
+--- Note on border math: `width`/`height` in nvim_open_win describe the
+--- interior size; "single" border takes 1 extra col/row on each side.
+--- A window of width=(cols-2), col=1 therefore fills the screen exactly,
+--- border included. Using `cols - 2` (not `cols * 0.9`) is what lets the
+--- PTY's COLUMNS match the visible area so long lines from the agent CLI
+--- don't get truncated on the right.
 --- @return { row: integer, col: integer, width: integer, height: integer }
 local function get_float_geometry()
   local cols = vim.o.columns
-  local lines_avail = math.max(1, vim.o.lines - vim.o.cmdheight - 1)
-  local ratio = config.float_ratio or 0.9
-  local w = math.max(40, math.min(math.floor(cols * ratio), cols - 2))
-  local h = math.max(10, math.min(math.floor(lines_avail * ratio), lines_avail - 1))
+  local lines_avail = math.max(1, vim.o.lines - vim.o.cmdheight)
+  local pos = config.float_position or "full"
+
+  if pos == "left" or pos == "right" then
+    local w = math.max(30, math.min(math.floor(cols * 0.45), cols - 2))
+    local h = math.max(10, lines_avail - 2)
+    local col = (pos == "left") and 0 or math.max(0, cols - w - 2)
+    return { row = 0, col = col, width = w, height = h }
+  end
+
+  -- full: centered, 80% width × 95% height of the editor area
+  local w = math.max(40, math.min(math.floor(cols * 0.80), cols - 2))
+  local h = math.max(10, math.min(math.floor(lines_avail * 0.95), lines_avail - 2))
   local col = math.max(0, math.floor((cols - w) / 2))
   local row = math.max(0, math.floor((lines_avail - h) / 2))
   return { row = row, col = col, width = w, height = h }
@@ -530,6 +549,20 @@ function API.toggle()
   -- Stale or missing entry for this cwd; open a fresh one.
   set_agent_bufnr(nil)
   open_terminal()
+end
+
+--- Change the float placement for this agent. Valid values: "full", "left",
+--- "right". If a float is currently visible, its geometry is re-applied
+--- immediately; otherwise the change takes effect on the next toggle.
+function API.set_float_position(pos)
+  if pos ~= "full" and pos ~= "left" and pos ~= "right" then
+    nx("invalid position: " .. tostring(pos), vim.log.levels.WARN)
+    return
+  end
+  config.float_position = pos
+  if config.window_mode == "float" then
+    sync_float_after_resize()
+  end
 end
 
 --- Jump to the agent terminal (float or split) for the current cwd. If the buffer is hidden, shows it again.

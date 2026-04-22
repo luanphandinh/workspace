@@ -101,6 +101,54 @@ local actions = {
     end,
   },
   {
+    name = "Change Agent Terminal Position",
+    action = function()
+      local pickers = require("telescope.pickers")
+      local finders = require("telescope.finders")
+      local conf = require("telescope.config").values
+      local actions_telescope = require("telescope.actions")
+      local action_state = require("telescope.actions.state")
+      local themes = require("telescope.themes")
+
+      local options = { "full", "left", "right" }
+
+      local opts = themes.get_dropdown({
+        winblend = 10,
+        prompt_title = "Agent Terminal Position",
+        previewer = false,
+        borderchars = { "─", "│", "─", "│", "╭", "╮", "╯", "╰" },
+        layout_strategy = "center",
+        layout_config = { width = 0.3, height = 0.3 },
+      })
+
+      pickers.new(opts, {
+        finder = finders.new_table({
+          results = options,
+          entry_maker = function(pos)
+            return { value = pos, display = pos, ordinal = pos }
+          end,
+        }),
+        sorter = conf.generic_sorter({}),
+        attach_mappings = function(prompt_bufnr, _)
+          actions_telescope.select_default:replace(function()
+            local sel = action_state.get_selected_entry()
+            actions_telescope.close(prompt_bufnr)
+            if not sel then return end
+            -- Apply to every known agent flavor so position stays consistent.
+            for _, mod in ipairs({ "luanphan.claude_agent", "luanphan.cursor_agent" }) do
+              local ok, agent = pcall(require, mod)
+              if ok and type(agent.set_float_position) == "function" then
+                agent.set_float_position(sel.value)
+              end
+            end
+            vim.notify("Agent terminal position: " .. sel.value)
+          end)
+          return true
+        end,
+      }):find()
+    end,
+  },
+  {
     name = "Toggle Gitignore (Tree & Telescope)",
     action = function()
       show_gitignore = not show_gitignore
