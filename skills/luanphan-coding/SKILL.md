@@ -9,8 +9,51 @@ description: "extremely efficient coder"
 
 # About the work that you do
 - You reading the tech design document and understand the design changes that need to be made to the codebase.
-- You explore the codebase and checkout for code for all service to master branch
-- Then you ask the user for the branch that they want to use
-- If the branch is not exist in local or remote, you create new branch with that name
-- If the branch already exist, you checkout to that branch and make sure to pull the latest code from remote, if there is any conflict during pull, you need to resolve the conflict and make sure the code is up to date with remote
 - Using skill superpower to plan and excute
+
+## Working folder — always use a workspace
+- All coding for a tech design happens inside a **multi-repo git-worktree workspace**, NOT directly in the sibling source repos. This keeps master clean, isolates feature branches, and lets you build/test across repos together via `go.work`.
+- The workspace is built by the `luanphan-workspace` skill (via the `mkws` command). **Delegate to that skill** — do not reimplement the worktree/branch setup here.
+
+### Before writing any code
+1. Read the tech design document AND the `<tech_doc_name>_mapping.md` file written by the `luanphan-tech-design` skill — the mapping lists every microservice → source-repo folder involved.
+2. Ask the user for:
+   - **workspace name** (suggested default: the tech design's name, with `/` replaced by `_`)
+   - **branch name** (the feature branch for this tech design)
+3. Check whether `<root>/<workspace-name>/workspace.yml` already exists:
+   - **Exists** → workspace is already set up; confirm the branch in the yml matches, then `cd` into it. If new repos from the mapping are missing from the yml, extend with `mkws --add <repo>...` (no `--branch`).
+   - **Does not exist** → invoke the `luanphan-workspace` skill to run `mkws --name <workspace-name> --branch <branch> --add <repo1> <repo2> ...` using every repo from the mapping file.
+4. `cd` into `<root>/<workspace-name>/` before any edits. All subsequent coding, builds, and tests run from there.
+5. If the user mentions Go modules, run `mkws sync` inside the workspace (regenerates `go.work` and runs `go work sync`).
+
+### During coding
+- Treat `<root>/<workspace-name>/<repo>/` as the canonical path for each repo's source — never edit the original sibling repo outside the workspace.
+- Commits happen on the shared branch inside each worktree. `git status` / `git commit` from inside `<workspace>/<repo>/` operates on that repo's worktree correctly — no special flags needed.
+
+## Testing — one sub-agent per repo, in parallel
+After changes land on a repo (unit tests, build, lint, whatever that repo uses), **dispatch one sub-agent per affected repo** to run its test suite. Do NOT run tests for all repos serially from the main agent — it wastes time and bloats the main context with test output.
+
+### Rules
+- One sub-agent per repo. The main agent stays out of per-repo test output.
+- Dispatch all sub-agents in a **single message** (multiple Agent tool calls in the same turn) so they run concurrently. See `superpowers:dispatching-parallel-agents`.
+- Each sub-agent's prompt must be self-contained: absolute path to the repo's worktree, exactly which test command(s) to run, and what to report back.
+- Ask each sub-agent for a **short** report (under ~200 words): pass/fail summary, failing test names, first error line. Raw logs belong in the subagent's transcript, not the main agent's context.
+
+### Prompt template for the sub-agent
+```
+Run the test suite for repo <repo-name> at <absolute-path>/<workspace-name>/<repo-name>.
+
+Command(s) to run (in order, stop on first failure):
+  1. <repo-specific build cmd, e.g. `go build ./...`>
+  2. <repo-specific test cmd, e.g. `go test ./... -count=1`>
+  3. <repo-specific lint cmd if applicable>
+
+Report back in under 200 words:
+  - overall: PASS or FAIL
+  - if FAIL: which step failed, failing test names, first error line
+  - do NOT paste full logs
+```
+
+### After the sub-agents return
+- If all pass → confirm with user, proceed to next step (commit / PR / post-coding-verify).
+- If any fail → summarize which repos failed and the specific failures; ask the user whether to fix inline, or dispatch a fix sub-agent per failing repo.
