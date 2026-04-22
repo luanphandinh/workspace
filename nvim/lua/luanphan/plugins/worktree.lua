@@ -36,6 +36,15 @@ return function(_use)
       vim.notify("worktree path not found: " .. path, vim.log.levels.ERROR)
       return
     end
+
+    -- Hide agent terminal windows (buffers stay alive, scoped per cwd).
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local b = vim.api.nvim_win_get_buf(win)
+      if vim.b[b].luanphan_agent then
+        pcall(vim.api.nvim_win_close, win, false)
+      end
+    end
+
     vim.cmd("cd " .. vim.fn.fnameescape(path))
 
     for _, client in pairs(vim.lsp.get_clients()) do
@@ -44,11 +53,11 @@ return function(_use)
 
     local cwd = vim.fn.getcwd()
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-      if vim.api.nvim_buf_is_loaded(buf) then
+      if vim.api.nvim_buf_is_loaded(buf) and not vim.b[buf].luanphan_agent then
         local name = vim.api.nvim_buf_get_name(buf)
         local buftype = vim.bo[buf].buftype
         if buftype == "terminal" and not vim.startswith(name, "term://" .. cwd) then
-          -- Terminals are always "modified" (live process); force-close.
+          -- Non-agent terminals are always "modified" (live process); force-close.
           pcall(vim.api.nvim_buf_delete, buf, { force = true })
         elseif buftype == "" and name ~= "" and not vim.bo[buf].modified and not vim.startswith(name, cwd) then
           pcall(vim.api.nvim_buf_delete, buf, { force = false })

@@ -1,6 +1,9 @@
 -- Shared terminal agent (Cursor CLI, Claude CLI, etc.). Use |cursor_agent.lua| and |claude_agent.lua|
 -- thin wrappers around |terminal_agent.create()|.
 --
+-- Agent terminals are scoped per-worktree: each cwd owns its own agent buffer.
+-- Switching worktree (|worktree.lua|) hides but does not kill these buffers.
+--
 -- Send format for selections:
 --   - lines_only (default): @relative/path:<start>-<end>
 --   - full: @path:start-end header, then full selected text (truncated by max_send_chars).
@@ -49,7 +52,7 @@ function M.create(profile)
 
 
 local state = {
-  bufnr = nil,
+  bufnrs = {},        ---@type table<string, integer>  cwd -> bufnr
   resize_timer = nil, ---@type userdata|nil
   float_geometry = nil, ---@type table|nil
 }
@@ -60,16 +63,50 @@ local DEFAULTS = vim.tbl_deep_extend("force", vim.deepcopy(BASE_DEFAULTS), profi
 
 local config = vim.deepcopy(DEFAULTS)
 
-local function set_agent_bufnr(bufnr)
-  state.bufnr = bufnr
-  if not bufnr then
+local function cwd_key()
+  return vim.fn.getcwd()
+end
+
+local function current_bufnr()
+  local nr = state.bufnrs[cwd_key()]
+  if type(nr) == "number" and vim.api.nvim_buf_is_valid(nr) then
+    return nr
+  end
+  return nil
+end
+
+local function persist_map()
+  -- vim.g accepts Lua tables; they're round-tripped as vim dicts. Only store valid bufnrs.
+  local snap = {}
+  for cwd, nr in pairs(state.bufnrs) do
+    if type(nr) == "number" and vim.api.nvim_buf_is_valid(nr) then
+      snap[cwd] = nr
+    end
+  end
+  vim.g[G_BUFNR] = snap
+end
+
+local function set_agent_bufnr(bufnr, cwd)
+  cwd = cwd or cwd_key()
+  if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+    state.bufnrs[cwd] = bufnr
+    pcall(function() vim.b[bufnr].luanphan_agent = true end)
+  else
+    state.bufnrs[cwd] = nil
     state.float_geometry = nil
   end
-  if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
-    vim.g[G_BUFNR] = bufnr
-  else
-    vim.g[G_BUFNR] = nil
+  persist_map()
+end
+
+local function clear_bufnr_for_buf(bufnr)
+  for cwd, b in pairs(state.bufnrs) do
+    if b == bufnr then
+      state.bufnrs[cwd] = nil
+      persist_map()
+      return cwd
+    end
   end
+  return nil
 end
 
 local function merge(dst, src)
@@ -209,13 +246,11 @@ local function term_buffer_alive(bufnr)
 end
 
 local function sync_float_after_resize()
-  if not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) then
+  local cur = current_bufnr()
+  if not cur or not term_buffer_alive(cur) then
     return
   end
-  if not term_buffer_alive(state.bufnr) then
-    return
-  end
-  local win = win_for_buf(state.bufnr)
+  local win = win_for_buf(cur)
   if not win or not vim.api.nvim_win_is_valid(win) then
     return
   end
@@ -233,13 +268,14 @@ end
 
 --- After outer resize: re-apply ratio only if the agent window size drifted; always refresh winfix*.
 local function sync_agent_split_after_resize()
-  if not config.lock_split or not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) then
+  if not config.lock_split then
     return
   end
-  if not term_buffer_alive(state.bufnr) then
+  local cur = current_bufnr()
+  if not cur or not term_buffer_alive(cur) then
     return
   end
-  local win = win_for_buf(state.bufnr)
+  local win = win_for_buf(cur)
   if not win then
     return
   end
@@ -247,9 +283,9 @@ local function sync_agent_split_after_resize()
   if not target then
     return
   end
-  local cur = axis == "w" and vim.api.nvim_win_get_width(win) or vim.api.nvim_win_get_height(win)
+  local cur_dim = axis == "w" and vim.api.nvim_win_get_width(win) or vim.api.nvim_win_get_height(win)
   local saved = vim.api.nvim_get_current_win()
-  if cur ~= target and vim.api.nvim_win_is_valid(saved) then
+  if cur_dim ~= target and vim.api.nvim_win_is_valid(saved) then
     vim.api.nvim_set_current_win(win)
     apply_split_size()
     if vim.api.nvim_win_is_valid(saved) then
@@ -294,10 +330,13 @@ end
 --- While the outer frame is resized, snap the float back to the last applied size so the PTY does not
 --- get a SIGWINCH per drag step; debounced sync_agent_after_resize applies the final size once idle.
 local function on_vim_resized()
-  if config.window_mode == "float" and state.float_geometry and state.bufnr then
-    local win = win_for_buf(state.bufnr)
-    if win and vim.api.nvim_win_is_valid(win) then
-      vim.api.nvim_win_set_config(win, state.float_geometry)
+  if config.window_mode == "float" and state.float_geometry then
+    local cur = current_bufnr()
+    if cur then
+      local win = win_for_buf(cur)
+      if win and vim.api.nvim_win_is_valid(win) then
+        vim.api.nvim_win_set_config(win, state.float_geometry)
+      end
     end
   end
   schedule_resize_sync()
@@ -310,24 +349,32 @@ local function attach_term_close(buf)
     buffer = buf,
     once = true,
     callback = function()
-      set_agent_bufnr(nil)
+      clear_bufnr_for_buf(buf)
     end,
   })
 end
 
---- After <leader>rc, reconnect to the same agent terminal buffer if it still exists.
+--- After <leader>rc, reconnect to any surviving agent terminal buffers.
 local function restore_agent_bufnr()
-  local nr = vim.g[G_BUFNR]
-  if type(nr) ~= "number" or not vim.api.nvim_buf_is_valid(nr) or not term_buffer_alive(nr) then
-    set_agent_bufnr(nil)
-    return
+  local stored = vim.g[G_BUFNR]
+  state.bufnrs = {}
+  if type(stored) == "table" then
+    for cwd, nr in pairs(stored) do
+      if type(cwd) == "string" and type(nr) == "number" and term_buffer_alive(nr) then
+        state.bufnrs[cwd] = nr
+        pcall(function() vim.b[nr].luanphan_agent = true end)
+        attach_term_close(nr)
+        apply_agent_scrollback(nr)
+      end
+    end
   end
-  set_agent_bufnr(nr)
-  attach_term_close(nr)
-  apply_agent_scrollback(nr)
-  local rwin = win_for_buf(nr)
-  if rwin then
-    lock_cursor_window(rwin)
+  persist_map()
+  local cur = current_bufnr()
+  if cur then
+    local rwin = win_for_buf(cur)
+    if rwin then
+      lock_cursor_window(rwin)
+    end
   end
 end
 
@@ -341,10 +388,10 @@ local function open_terminal_split()
   apply_split_size()
   lock_cursor_window()
   local buf = vim.api.nvim_get_current_buf()
-  local cwd = vim.fn.getcwd()
+  local cwd = cwd_key()
   vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
   apply_agent_scrollback(buf)
-  set_agent_bufnr(buf)
+  set_agent_bufnr(buf, cwd)
   attach_term_close(buf)
   vim.defer_fn(function()
     vim.cmd("startinsert")
@@ -370,10 +417,10 @@ local function open_terminal_float()
     width = g.width,
     height = g.height,
   }
-  local cwd = vim.fn.getcwd()
+  local cwd = cwd_key()
   vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
   apply_agent_scrollback(buf)
-  set_agent_bufnr(buf)
+  set_agent_bufnr(buf, cwd)
   attach_term_close(buf)
   vim.defer_fn(function()
     vim.cmd("startinsert")
@@ -389,13 +436,15 @@ local function open_terminal()
 end
 
 local function show_terminal_split()
+  local cur = current_bufnr()
+  if not cur then return end
   if config.split == "vertical" then
     vsplit_right()
   else
     vim.cmd("split")
   end
-  vim.api.nvim_win_set_buf(0, state.bufnr)
-  apply_agent_scrollback(state.bufnr)
+  vim.api.nvim_win_set_buf(0, cur)
+  apply_agent_scrollback(cur)
   apply_split_size()
   lock_cursor_window()
   vim.defer_fn(function()
@@ -404,8 +453,10 @@ local function show_terminal_split()
 end
 
 local function show_terminal_float()
+  local cur = current_bufnr()
+  if not cur then return end
   local g = get_float_geometry()
-  vim.api.nvim_open_win(state.bufnr, true, {
+  vim.api.nvim_open_win(cur, true, {
     relative = "editor",
     row = g.row,
     col = g.col,
@@ -421,7 +472,7 @@ local function show_terminal_float()
     width = g.width,
     height = g.height,
   }
-  apply_agent_scrollback(state.bufnr)
+  apply_agent_scrollback(cur)
   vim.defer_fn(function()
     vim.cmd("startinsert")
   end, 10)
@@ -438,8 +489,9 @@ end
 local API = {}
 
 function API.toggle()
-  if state.bufnr and vim.api.nvim_buf_is_valid(state.bufnr) and term_buffer_alive(state.bufnr) then
-    local win = win_for_buf(state.bufnr)
+  local cur = current_bufnr()
+  if cur and term_buffer_alive(cur) then
+    local win = win_for_buf(cur)
     if win then
       vim.api.nvim_win_close(win, false)
       return
@@ -447,17 +499,19 @@ function API.toggle()
     show_terminal()
     return
   end
+  -- Stale or missing entry for this cwd; open a fresh one.
   set_agent_bufnr(nil)
   open_terminal()
 end
 
---- Jump to the agent terminal (float or split). If the buffer is hidden, shows it again.
+--- Jump to the agent terminal (float or split) for the current cwd. If the buffer is hidden, shows it again.
 function API.focus()
-  if not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) or not term_buffer_alive(state.bufnr) then
+  local cur = current_bufnr()
+  if not cur or not term_buffer_alive(cur) then
     nx("no agent terminal — use " .. profile.hint_open .. " to open", vim.log.levels.INFO)
     return
   end
-  local win = win_for_buf(state.bufnr)
+  local win = win_for_buf(cur)
   if not win then
     show_terminal()
     return
@@ -539,7 +593,9 @@ function API.send_selection()
   end
 
   local function focus_term_win()
-    local w = win_for_buf(state.bufnr)
+    local cur = current_bufnr()
+    if not cur then return end
+    local w = win_for_buf(cur)
     if w then
       vim.api.nvim_set_current_win(w)
       vim.cmd("startinsert")
@@ -548,7 +604,8 @@ function API.send_selection()
 
   local function deliver(attempt)
     attempt = attempt or 1
-    if not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) or not term_buffer_alive(state.bufnr) then
+    local cur = current_bufnr()
+    if not cur or not term_buffer_alive(cur) then
       if attempt < 3 then
         vim.defer_fn(function()
           deliver(attempt + 1)
@@ -559,12 +616,12 @@ function API.send_selection()
       return
     end
 
-    local win = win_for_buf(state.bufnr)
+    local win = win_for_buf(cur)
     if not win then
       show_terminal()
     end
 
-    local job = get_job_id(state.bufnr)
+    local job = get_job_id(cur)
     if not job and attempt < 3 then
       vim.defer_fn(function()
         deliver(attempt + 1)
@@ -586,7 +643,8 @@ function API.send_selection()
     focus_term_win()
   end
 
-  if not state.bufnr or not vim.api.nvim_buf_is_valid(state.bufnr) or not term_buffer_alive(state.bufnr) then
+  local cur = current_bufnr()
+  if not cur or not term_buffer_alive(cur) then
     set_agent_bufnr(nil)
     open_terminal()
     vim.defer_fn(function()
@@ -635,4 +693,3 @@ end
 end
 
 return M
-
