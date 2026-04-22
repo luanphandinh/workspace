@@ -20,15 +20,19 @@ mkws sync [--name <name>]
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
 - `sync` — subcommand. Regenerates `go.work` from the yml and runs `go work sync`. Rejects `--add` and `--branch`.
 
+## Layout — all workspaces live under `lpworkspaces/`
+Every workspace is placed at `<root>/lpworkspaces/<name>/` instead of directly under the root. This keeps the root folder clean even when many workspaces accumulate. `mkws` creates the `lpworkspaces/` container on demand.
+
 ## Context detection (important!)
 `mkws` detects its context from `$PWD`:
-- If `$PWD/workspace.yml` exists → `$PWD` **is** the workspace dir; root is its parent. `--name` is optional.
-- Otherwise → `$PWD` is the **root**; workspace lives at `$PWD/<name>/`. `--name` is required.
+- If `$PWD/workspace.yml` exists → `$PWD` **is** the workspace dir; root is its **grandparent** (because the workspace lives at `<root>/lpworkspaces/<name>/`). `--name` is optional.
+- If `$PWD`'s basename is `lpworkspaces` → root is its parent. `--name` is required.
+- Otherwise → `$PWD` is the **root**; workspace goes to `$PWD/lpworkspaces/<name>/`. `--name` is required.
 
-This means `--add` can be run **either** from the root (sibling repos are candidates) **or** from inside the workspace (parent's sibling repos are candidates) — `mkws` figures it out.
+This means `--add` can be run from the root, from the `lpworkspaces/` container, or from inside the workspace — `mkws` figures it out.
 
 # Manifest format (workspace.yml)
-At `<root>/<workspace-folder>/workspace.yml`:
+At `<root>/lpworkspaces/<name>/workspace.yml`:
 ```yaml
 name: <workspace-name>
 branch_name: <branch>
@@ -58,7 +62,7 @@ mkws --name X --add C
 
 From inside the workspace (preferred if the user is already there):
 ```
-cd <root>/X
+cd <root>/lpworkspaces/X
 mkws --add C
 ```
 
@@ -67,13 +71,13 @@ Either way, do NOT pass `--branch` — it's read from the yml.
 ## Sync Go deps
 User intent: "sync deps", "run go work sync", "pull module deps into the workspace". Run from inside the workspace:
 ```
-cd <root>/<name>
+cd <root>/lpworkspaces/<name>
 mkws sync
 ```
 This regenerates `go.work` from the yml and runs `go work sync`. Requires `go` on PATH.
 
 ## Inspect a workspace
-Read `<root>/<name>/workspace.yml` directly. Report `name`, `branch_name`, and `repos`.
+Read `<root>/lpworkspaces/<name>/workspace.yml` directly. Report `name`, `branch_name`, and `repos`.
 
 ## List candidate repos
 Source repos are siblings of the root and have `.git` as a **directory** (worktrees have `.git` as a file). Use Glob `*/.git` filtered to directories. Don't guess repo names.
@@ -90,13 +94,13 @@ Source repos are siblings of the root and have `.git` as a **directory** (worktr
 Gather these from the user if unclear — don't guess:
 1. **Root directory** — which folder contains the repos? Confirm `$PWD` is that folder.
 2. **Workspace name** — what should it be called?
-3. **Creating vs. extending?** Check whether `<root>/<name>/workspace.yml` exists.
+3. **Creating vs. extending?** Check whether `<root>/lpworkspaces/<name>/workspace.yml` exists.
    - Exists → extending. No `--branch` needed; read it from the yml.
    - Doesn't exist → creating. `--branch` required; ask if not given.
 4. **Repos** — which ones? If vague ("the usual", "all of them"), ask and offer a glob listing of candidates.
 
 # After you run
-Report the workspace path, the branch, and the added/skipped/failed summary. If the user will work in Go, point out that `go.work` is at `<root>/<name>/go.work`.
+Report the workspace path, the branch, and the added/skipped/failed summary. If the user will work in Go, point out that `go.work` is at `<root>/lpworkspaces/<name>/go.work`.
 
 # Troubleshooting
 - `mkws: command not found` — run `make install-workspace-path` from the workspace repo root, then start a new shell (or `source ~/.zshrc`).

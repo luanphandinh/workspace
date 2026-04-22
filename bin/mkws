@@ -8,6 +8,10 @@ set -uo pipefail
 
 command -v git >/dev/null 2>&1 || { echo "error: git not installed" >&2; exit 1; }
 
+# All workspaces live under this container folder inside the repo root. Keeps
+# the root uncluttered when many workspaces accumulate over time.
+WS_CONTAINER="lpworkspaces"
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -23,7 +27,8 @@ Modes:
 Flags:
   --name <name>       workspace name. Required when creating a new workspace
                       or when invoked from the root. When invoked from inside
-                      a workspace dir, read from workspace.yml.
+                      a workspace dir, read from workspace.yml. `/` in the
+                      name becomes `_` in the folder.
   --branch <branch>   branch name. Required on first create. Optional on
                       re-add; must match workspace.yml if provided.
   --add <repo>...     one or more repos to add. Each entry can be:
@@ -34,12 +39,17 @@ Flags:
                       Variadic: --add a b c  or  --add a --add b
   -h, --help          show this message
 
-Context:
-  If $PWD contains workspace.yml, that folder is treated as the workspace and
-  its parent as the root. Otherwise $PWD is the root and the workspace lives
-  at $PWD/<name>/.
+Layout:
+  All workspaces live inside `$PWD/lpworkspaces/<name>/` so the repo root
+  stays uncluttered. The container folder is created on demand.
 
-Manifest (<workspace>/workspace.yml):
+Context:
+  If $PWD contains workspace.yml, that folder is treated as the workspace;
+  root is two levels up (grandparent of PWD). If $PWD's basename is
+  `lpworkspaces`, root is its parent. Otherwise $PWD is the root and the
+  workspace is placed at $PWD/lpworkspaces/<name>/.
+
+Manifest (<root>/lpworkspaces/<name>/workspace.yml):
   name: <workspace-name>
   branch_name: <branch>
   repos:
@@ -105,10 +115,11 @@ if [[ "$MODE" == "sync" ]]; then
   fi
 fi
 
-# Context: inside workspace (PWD has yml) vs at root (yml at $PWD/$name/).
+# Context: inside a workspace (PWD has yml) → root is grandparent. At the
+# lpworkspaces container → root is parent. Otherwise PWD itself is the root.
 if [[ -f "$PWD/workspace.yml" ]]; then
   WORKSPACE_DIR="$PWD"
-  REPO_ROOT="$(dirname "$PWD")"
+  REPO_ROOT="$(dirname "$(dirname "$PWD")")"
   YML="$WORKSPACE_DIR/workspace.yml"
   NAME_FROM_YML=$(awk -F': *' '/^name:/{print $2; exit}' "$YML")
   if [[ -n "$NAME" && "$NAME" != "$NAME_FROM_YML" ]]; then
@@ -118,9 +129,13 @@ if [[ -f "$PWD/workspace.yml" ]]; then
   NAME="$NAME_FROM_YML"
 else
   [[ -n "$NAME" ]] || { echo "error: --name required (or run from inside a workspace dir)" >&2; exit 1; }
-  REPO_ROOT="$PWD"
+  if [[ "$(basename "$PWD")" == "$WS_CONTAINER" ]]; then
+    REPO_ROOT="$(dirname "$PWD")"
+  else
+    REPO_ROOT="$PWD"
+  fi
   WORKSPACE_NAME="${NAME//\//_}"
-  WORKSPACE_DIR="$REPO_ROOT/$WORKSPACE_NAME"
+  WORKSPACE_DIR="$REPO_ROOT/$WS_CONTAINER/$WORKSPACE_NAME"
   YML="$WORKSPACE_DIR/workspace.yml"
 fi
 
