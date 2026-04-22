@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Claude Code statusline.
+
+Fields:
+  ctx          current context tokens / model window (from stdin context_window)
+  session      5-hour rate-limit usage %, with reset time
+  7d-all       7-day rate-limit usage %
+  7d-sonnet    last-7-day Sonnet-only token usage (computed from ~/.claude/projects)
+
+Input:  Claude Code pipes a JSON blob on stdin. Everything except the weekly
+        sonnet figure comes directly from it — no hardcoded model/limit lookups.
+Output: one line to stdout. Weekly sonnet is cached 60s at
+        /tmp/claude-code-statusline-cache.json so the script stays snappy.
+"""
+
+import glob
+import json
+import os
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
+CACHE_FILE = Path("/tmp/claude-code-statusline-cache.json")
+CACHE_TTL_SEC = 60
+
+
+def read_stdin_json() -> dict:
+    try:
+        return json.loads(sys.stdin.read() or "{}")
+    except Exception:
+        return {}
+
+
+def iter_jsonl(path: str):
+    try:
+        with open(path, "r", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except Exception:
+                    continue
+    except OSError:
+        return
+
+
+def usage_sum(u: dict) -> int:
+    return (
+        (u.get("input_tokens") or 0)
+        + (u.get("output_tokens") or 0)
+        + (u.get("cache_creation_input_tokens") or 0)
+        + (u.get("cache_read_input_tokens") or 0)
+    )
+
+
+def weekly_sonnet_tokens() -> int:
+    """Cumulative sonnet-only tokens over the last 7 days. Cached 60s."""
+    now = time.time()
+    if CACHE_FILE.exists() and now - CACHE_FILE.stat().st_mtime < CACHE_TTL_SEC:
+        try:
+            return int(json.loads(CACHE_FILE.read_text()).get("sonnet", 0))
+        except Exception:
+            pass
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    cutoff_ts = cutoff.timestamp()
+    sonnet_t = 0
+    for path in glob.iglob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+        try:
+            if os.path.getmtime(path) < cutoff_ts:
+                continue
+        except OSError:
+            continue
+        for obj in iter_jsonl(path):
+            msg = obj.get("message") or {}
+            if "sonnet" not in str(msg.get("model") or "").lower():
+                continue
+            ts = obj.get("timestamp")
+            if ts:
+                try:
+                    t = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                    if t < cutoff:
+                        continue
+                except Exception:
+                    pass
+            u = msg.get("usage") or {}
+            if u:
+                sonnet_t += usage_sum(u)
+
+    try:
+        CACHE_FILE.write_text(json.dumps({"sonnet": sonnet_t}))
+    except OSError:
+        pass
+    return sonnet_t
+
+
+def fmt_k(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(int(n))
+
+
+def fmt_resets_at(resets_at) -> str:
+    """Format `resets_at` (ISO8601) as local time + offset, e.g. '3 PM (UTC+7)'."""
+    if not resets_at:
+        return ""
+    try:
+        t = datetime.fromisoformat(str(resets_at).replace("Z", "+00:00"))
+    except Exception:
+        return ""
+    local = t.astimezone()  # system local timezone
+    if local.minute == 0:
+        hour_str = local.strftime("%I %p").lstrip("0")
+    else:
+        hour_str = local.strftime("%I:%M %p").lstrip("0")
+    off = local.utcoffset()
+    if off is None:
+        tz = "UTC"
+    else:
+        total = int(off.total_seconds())
+        sign = "+" if total >= 0 else "-"
+        hours = abs(total) // 3600
+        mins = (abs(total) % 3600) // 60
+        tz = f"UTC{sign}{hours}" if mins == 0 else f"UTC{sign}{hours}:{mins:02d}"
+    return f"{hour_str} ({tz})"
+
+
+def main():
+    data = read_stdin_json()
+
+    cw = data.get("context_window") or {}
+    ctx = int(cw.get("current_usage") or 0)
+    ctx_limit = int(cw.get("context_window_size") or 0)
+    ctx_pct_raw = cw.get("used_percentage")
+    if ctx_pct_raw is None:
+        ctx_pct = (ctx / ctx_limit * 100) if ctx_limit else 0.0
+    else:
+        ctx_pct = float(ctx_pct_raw)
+
+    rate_limits = data.get("rate_limits") or {}
+
+    def pct_field(label: str, rl_key: str, with_reset: bool = False) -> str:
+        rl = rate_limits.get(rl_key) or {}
+        raw = rl.get("used_percentage")
+        if raw is None:
+            return f"{label} n/a"
+        suffix = ""
+        if with_reset:
+            resets = fmt_resets_at(rl.get("resets_at"))
+            if resets:
+                suffix = f" Reset {resets}"
+        return f"{label} {float(raw):.0f}%{suffix}"
+
+    week_sonnet = weekly_sonnet_tokens()
+
+    parts = [
+        f"ctx {fmt_k(ctx)}/{fmt_k(ctx_limit) if ctx_limit else '?'} ({ctx_pct:.0f}%)",
+        pct_field("session", "five_hour", with_reset=True),
+        pct_field("7d-all", "seven_day"),
+        f"7d-sonnet {fmt_k(week_sonnet)}",
+    ]
+    sys.stdout.write(" │ ".join(parts))
+
+
+if __name__ == "__main__":
+    main()
