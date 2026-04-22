@@ -153,8 +153,10 @@ def fmt_k(n: int) -> str:
     return str(int(n))
 
 
-def fmt_resets_at(resets_at) -> str:
-    """Format `resets_at` as local time, e.g. '3 PM' or '3:45 PM'.
+def fmt_resets_at(resets_at, with_date: bool = False) -> str:
+    """Format `resets_at` as local time, e.g. '3 PM' or '3:45 PM'. When
+    `with_date` is True, prepend the date — e.g. 'Apr 29 3 PM' — useful for
+    the 7-day window where the reset is days away.
 
     Claude Code sends Unix epoch seconds (int/float), but we also accept
     ISO8601 strings in case the format ever changes.
@@ -171,8 +173,14 @@ def fmt_resets_at(resets_at) -> str:
             return ""
     local = t.astimezone()
     if local.minute == 0:
-        return local.strftime("%I %p").lstrip("0")
-    return local.strftime("%I:%M %p").lstrip("0")
+        time_str = local.strftime("%I %p").lstrip("0")
+    else:
+        time_str = local.strftime("%I:%M %p").lstrip("0")
+    if with_date:
+        # %-d (no leading zero) is glibc-ism; use int conversion instead for portability.
+        date_str = f"{local.strftime('%b')} {local.day}"
+        return f"{date_str} {time_str}"
+    return time_str
 
 
 def render(data: dict) -> str:
@@ -203,7 +211,8 @@ def render(data: dict) -> str:
     if not isinstance(rate_limits, dict):
         rate_limits = {}
 
-    def pct_field(label: str, rl_key: str, with_reset: bool = False) -> str:
+    def pct_field(label: str, rl_key: str, with_reset: bool = False,
+                  with_date: bool = False) -> str:
         rl = rate_limits.get(rl_key)
         if not isinstance(rl, dict):
             return f"{label} n/a"
@@ -212,7 +221,7 @@ def render(data: dict) -> str:
             return f"{label} n/a"
         suffix = ""
         if with_reset:
-            resets = fmt_resets_at(rl.get("resets_at"))
+            resets = fmt_resets_at(rl.get("resets_at"), with_date=with_date)
             if resets:
                 suffix = f" (Reset {resets})"
         return f"{label} {val:.0f}%{suffix}"
@@ -226,7 +235,7 @@ def render(data: dict) -> str:
         model_name,
         f"ctx {fmt_k(ctx)}/{fmt_k(ctx_limit) if ctx_limit else '?'} ({ctx_pct:.0f}%)",
         pct_field("session", "five_hour", with_reset=True),
-        pct_field("7d-all", "seven_day"),
+        pct_field("7d-all", "seven_day", with_reset=True, with_date=True),
         f"7d-sonnet {fmt_k(week_sonnet)}",
     ]
     return " │ ".join(parts)
