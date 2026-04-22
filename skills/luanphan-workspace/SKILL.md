@@ -14,12 +14,18 @@ Drives `mkws` (installed on `$PATH`) to manage multi-repo git-worktree workspace
 ```
 mkws [--name <name>] [--branch <branch>] [--add <repo>...]
 mkws sync [<folder>]
+mkws pull [<folder>...]
+mkws master [<folder>...]
 mkws drop <folder>
 ```
 - `--name` — workspace folder name. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). `/` in the name becomes `_` in the folder.
 - `--branch` — required on first invocation (when no `workspace.yml` yet). Optional on later invocations; if passed, must match the yml exactly.
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
 - `sync` — subcommand. Regenerates `go.work` from the yml and runs `go work sync`. Takes an optional positional **folder path** (relative or absolute); defaults to `$PWD`. The folder must contain a `workspace.yml`. Rejects `--add`, `--branch`, and `--name` — sync is purely path-based.
+- `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders. Rejects `--add`, `--branch`, `--name`.
+  Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull ./lpworkspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
+- `master` — subcommand. For every matching repo: `git clean -d -f`, optional `git checkout -- .` to discard local changes (only runs when dirty), switch to master (fallback main), and `git pull --ff-only`. **Destructive** to uncommitted work. Accepts the same folder-args form as `pull`. **BLOCKED when any target folder itself contains a `workspace.yml`** — running it in a workspace would wipe feature-branch state across the worktrees. Rejects `--add`, `--branch`, `--name`.
+  Examples: `mkws master`, `mkws master repo-a repo-b`, `mkws master /abs/path/to/root`.
 - `drop` — subcommand. **Destructive.** Removes every worktree listed in the manifest via `git worktree remove --force`, prunes the source repos, and deletes the workspace folder (and the empty `lpworkspaces/` container if nothing else is left). Uncommitted work in the worktrees is lost. No confirmation prompt. Takes a required positional **folder path** (relative or absolute). Rejects `--add`, `--branch`, and `--name`.
 
 ## Layout — all workspaces live under `lpworkspaces/`
@@ -82,6 +88,30 @@ mkws sync ./lpworkspaces/<name>
 mkws sync /abs/path/to/<root>/lpworkspaces/<name>
 ```
 All forms regenerate `go.work` from the yml and run `go work sync`. The target folder must contain a `workspace.yml`. Requires `go` on PATH.
+
+## Pull latest
+User intent: "refresh the repos", "pull latest", "bring all worktrees up to date", "update all source repos to master". `mkws pull` walks the immediate subfolders and runs `git pull --ff-only` on each git repo it finds, using that repo's own currently checked-out branch.
+```
+# from the root: pulls every source repo on its branch
+cd <root>
+mkws pull
+
+# inside a workspace: pulls every worktree on the shared feature branch
+cd <root>/lpworkspaces/<name>
+mkws pull
+
+# target any folder explicitly
+mkws pull /abs/path/to/folder
+```
+Detached-HEAD repos are skipped with a warning. `--ff-only` means a diverged branch fails rather than silently merging.
+
+## Reset source repos to master
+User intent: "reset all repos to master", "clean everything and pull master", "fresh master state across the root". `mkws master` runs `git clean -d -f` + discard-local + `git checkout master` + `git pull --ff-only` on every git subfolder. **Destructive** — uncommitted work is lost.
+```
+cd <root>
+mkws master
+```
+**Refuse** if the user asks to run this inside a workspace folder — the command is blocked and will error. Explain that workspaces hold feature-branch state per worktree, and they should `cd <root>` first (or use `mkws pull` which is branch-agnostic and safe inside a workspace).
 
 ## Drop a workspace
 User intent: "drop workspace X", "delete the workspace", "clean up the worktrees for X", "we're done with this feature branch, wipe it". This is **destructive** — `mkws drop` removes every worktree in the manifest, prunes the source repos, and deletes the workspace folder.

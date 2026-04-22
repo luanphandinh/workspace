@@ -10,6 +10,7 @@ worktrees (one per source repo) all on the same feature branch, glued together
 by a small `workspace.yml` manifest and a generated `go.work`.
 """
 
+import concurrent.futures
 import os
 import shutil
 import subprocess
@@ -69,6 +70,95 @@ def die(text: str, code: int = 1) -> None:
 
 def has_cmd(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+# ---------------------------------------------------------------------------
+# Parallel per-repo runner. Each worker writes to its own RepoLog instead of
+# stdout; once all workers finish, logs are printed in submission order so
+# output reads like the serial version — no interleaving, no flickering.
+# ---------------------------------------------------------------------------
+class RepoLog:
+    """A buffered logger. Same methods as the top-level log helpers but
+    accumulates lines so they can be flushed together at the end."""
+
+    def __init__(self) -> None:
+        self._lines: list = []
+
+    def heading(self, t: str) -> None: self._lines.append(("heading", t))
+    def info(self, t: str) -> None: self._lines.append(("info", t))
+    def ok(self, t: str) -> None: self._lines.append(("ok", t))
+    def warn(self, t: str) -> None: self._lines.append(("warn", t))
+    def fail(self, t: str) -> None: self._lines.append(("fail", t))
+    def raw(self, t: str) -> None: self._lines.append(("raw", t))
+
+    def render(self) -> None:
+        for kind, text in self._lines:
+            if kind == "heading": heading(text)
+            elif kind == "info": info(text)
+            elif kind == "ok": ok(text)
+            elif kind == "warn": warn(text)
+            elif kind == "fail": fail(text)
+            elif kind == "raw":
+                if text:
+                    print(text, flush=True)
+
+
+def _draw_progress_bar(done: int, total: int) -> None:
+    """Draw/redraw a single-line progress bar in place using \r. Caller is
+    responsible for clearing the line when done."""
+    bar_width = 30
+    filled = int(bar_width * done / total) if total else bar_width
+    bar = "█" * filled + "░" * (bar_width - filled)
+    pct = int(done / total * 100) if total else 100
+    sys.stdout.write(f"\r  [{CYAN}{bar}{RESET}] {done}/{total} ({pct}%)")
+    sys.stdout.flush()
+
+
+def _clear_progress_line() -> None:
+    # 60 spaces clears a 30-char bar plus the "N/M (P%)" counter safely.
+    sys.stdout.write("\r" + " " * 60 + "\r")
+    sys.stdout.flush()
+
+
+def run_in_parallel(items, worker, max_workers: int = 8) -> list:
+    """Call worker(item, log) for each item in a thread pool, then flush each
+    RepoLog in submission order. Returns the list of worker return values,
+    one per item in the same order.
+
+    Shows a live progress bar while workers run, as long as stdout is a TTY
+    and there are enough items to make it worthwhile (>=2). The bar is drawn
+    in-place with \\r and cleared before the buffered logs are rendered, so
+    the final output still reads cleanly."""
+    if not items:
+        return []
+    n = min(max_workers, len(items))
+    logs = [RepoLog() for _ in items]
+    results: list = [None] * len(items)
+
+    show_bar = sys.stdout.isatty() and len(items) >= 2
+    if show_bar:
+        _draw_progress_bar(0, len(items))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n) as ex:
+        futs = {ex.submit(worker, item, logs[i]): i for i, item in enumerate(items)}
+        done = 0
+        for fut in concurrent.futures.as_completed(futs):
+            i = futs[fut]
+            try:
+                results[i] = fut.result()
+            except Exception as e:
+                results[i] = None
+                logs[i].fail(f"worker crashed: {e}")
+            done += 1
+            if show_bar:
+                _draw_progress_bar(done, len(items))
+
+    if show_bar:
+        _clear_progress_line()
+
+    for log in logs:
+        log.render()
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +246,57 @@ def resolve_source(raw: str, repo_root: Path):
 
 
 # ---------------------------------------------------------------------------
+# Target expansion for pull/master: take a list of user-provided folder args
+# and flatten into a deduped list of git-repo paths.
+#
+# Per arg:
+#   - absolute path → used as-is
+#   - path with a slash → resolved against $PWD
+#   - bare name → $PWD/<name>
+# If the resulting folder has .git, it's treated as a single repo. Otherwise
+# its immediate subfolders are scanned and each one with .git is included.
+# Empty input → default to [$PWD].
+# ---------------------------------------------------------------------------
+def expand_targets(folders: list, block_workspace: bool = False) -> list:
+    if not folders:
+        folders = [os.getcwd()]
+
+    repos: list = []
+    seen: set = set()
+
+    for raw in folders:
+        p = Path(raw)
+        if not p.is_absolute():
+            p = Path.cwd() / p
+        p = p.resolve()
+
+        if not p.is_dir():
+            die(f"not a directory: {raw}")
+
+        if block_workspace and (p / "workspace.yml").is_file():
+            die(
+                f"'master' is blocked inside a workspace ({p} contains "
+                f"workspace.yml). Use `mkws pull` there instead, or run "
+                f"`mkws master` on the repo root."
+            )
+
+        if (p / ".git").exists():
+            candidates = [p]
+        else:
+            candidates = sorted(
+                s for s in p.iterdir() if s.is_dir() and (s / ".git").exists()
+            )
+
+        for c in candidates:
+            key = str(c)
+            if key not in seen:
+                seen.add(key)
+                repos.append(c)
+
+    return repos
+
+
+# ---------------------------------------------------------------------------
 # go.work regeneration
 # ---------------------------------------------------------------------------
 def regen_go_work(workspace_dir: Path, repos: list) -> None:
@@ -225,6 +366,132 @@ def cmd_sync(folder: str) -> int:
     info(f"workspace: {BOLD}{workspace_dir}{RESET}")
     info(f"branch:    {BOLD}{branch}{RESET}")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# pull mode: iterate every immediate subfolder of the target; for each one
+# that's a git repo (source repo or worktree — `.git` can be a dir or a file),
+# run `git pull` on the currently checked-out branch.
+# ---------------------------------------------------------------------------
+def cmd_pull(folders: list) -> int:
+    repos = expand_targets(folders)
+
+    if not repos:
+        heading("summary")
+        info("no git repos found")
+        return 0
+
+    info(f"pulling {len(repos)} repo(s) in parallel...")
+
+    def worker(sub: Path, log: RepoLog) -> str:
+        log.heading(sub.name)
+        proc = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
+        branch = proc.stdout.strip() if proc.returncode == 0 else ""
+        if not branch:
+            log.warn("could not determine current branch, skipping")
+            return "skipped"
+        if branch == "HEAD":
+            log.warn("detached HEAD, skipping")
+            return "skipped"
+        log.info(f"pull latest data from {BOLD}{branch}{RESET}")
+        proc = run(["git", "-C", str(sub), "pull", "--ff-only"])
+        log.raw((proc.stdout or "").rstrip())
+        log.raw((proc.stderr or "").rstrip())
+        if proc.returncode == 0:
+            log.ok(f"updated {sub.name}")
+            return "pulled"
+        log.fail(f"pull failed for {sub.name}")
+        return "failed"
+
+    results = run_in_parallel(repos, worker)
+    pulled = sum(1 for r in results if r == "pulled")
+    skipped = sum(1 for r in results if r == "skipped")
+    failed_repos = [repos[i].name for i, r in enumerate(results) if r == "failed"]
+    failed = len(failed_repos)
+
+    heading("summary")
+    color = GREEN if failed == 0 else YELLOW
+    info(f"pulled: {color}{pulled}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
+    if failed_repos:
+        info(f"failed: {RED}{', '.join(failed_repos)}{RESET}")
+    return 0 if failed == 0 else 1
+
+
+# ---------------------------------------------------------------------------
+# master mode: for every git repo in the immediate subfolders, nuke untracked
+# files, discard local changes on the current branch, switch to master
+# (falling back to main), and fast-forward pull. Explicitly BLOCKED inside
+# workspace folders — worktrees live on feature branches and this would
+# clobber the feature work.
+# ---------------------------------------------------------------------------
+def cmd_master(folders: list) -> int:
+    repos = expand_targets(folders, block_workspace=True)
+
+    if not repos:
+        heading("summary")
+        info("no git repos found")
+        return 0
+
+    info(f"resetting {len(repos)} repo(s) to master in parallel...")
+
+    def worker(sub: Path, log: RepoLog) -> str:
+        log.heading(sub.name)
+        base = detect_base(sub)
+        if base is None:
+            log.warn("no master/main branch, skipping")
+            return "skipped"
+
+        cur = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
+        cur_branch = cur.stdout.strip() if cur.returncode == 0 else ""
+
+        log.info("git clean -d -f")
+        p = run(["git", "-C", str(sub), "clean", "-d", "-f"])
+        log.raw((p.stdout or "").rstrip())
+        log.raw((p.stderr or "").rstrip())
+
+        # Discard local changes to tracked files before anything else so the
+        # branch switch below can't fail with "would be overwritten". Only run
+        # when the tree is actually dirty — `git checkout -- .` on a clean
+        # tree prints a noisy "pathspec '.' did not match" error.
+        status = run(["git", "-C", str(sub), "status", "--porcelain"])
+        if status.stdout.strip():
+            log.info("git checkout -- . (discard local changes)")
+            p = run(["git", "-C", str(sub), "checkout", "--", "."])
+            log.raw((p.stdout or "").rstrip())
+            log.raw((p.stderr or "").rstrip())
+
+        if cur_branch != base:
+            log.info(f"git checkout {base} (was on {cur_branch or 'unknown'})")
+            p = run(["git", "-C", str(sub), "checkout", base])
+            log.raw((p.stdout or "").rstrip())
+            log.raw((p.stderr or "").rstrip())
+            if p.returncode != 0:
+                log.fail(f"failed to checkout {base}")
+                return "failed"
+
+        log.info(f"pull latest from {BOLD}{base}{RESET}")
+        p = run(["git", "-C", str(sub), "pull", "--ff-only"])
+        log.raw((p.stdout or "").rstrip())
+        log.raw((p.stderr or "").rstrip())
+        if p.returncode != 0:
+            log.fail("pull failed")
+            return "failed"
+
+        log.ok(f"on {base} and updated")
+        return "reset"
+
+    results = run_in_parallel(repos, worker)
+    reset = sum(1 for r in results if r == "reset")
+    skipped = sum(1 for r in results if r == "skipped")
+    failed_repos = [repos[i].name for i, r in enumerate(results) if r == "failed"]
+    failed = len(failed_repos)
+
+    heading("summary")
+    color = GREEN if failed == 0 else YELLOW
+    info(f"reset: {color}{reset}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
+    if failed_repos:
+        info(f"failed: {RED}{', '.join(failed_repos)}{RESET}")
+    return 0 if failed == 0 else 1
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +686,8 @@ USAGE = """\
 Usage:
   mkws [--name <name>] [--branch <branch>] [--add <repo>...]
   mkws sync [<folder>]
+  mkws pull [<folder>...]
+  mkws master [<folder>...]
   mkws drop <folder>
 
 Modes:
@@ -431,6 +700,27 @@ Modes:
                mkws sync                     # sync $PWD
                mkws sync ./lpworkspaces/myws # sync a relative path
                mkws sync /abs/path/to/ws     # sync an absolute path
+  pull       `git pull --ff-only` on the currently checked-out branch of every
+             matching repo. Takes any number of folder args (absolute, relative,
+             or a bare name under $PWD). Each arg is either a git repo (pulled
+             directly) or a directory whose immediate git-repo subfolders are
+             pulled. No args → iterate $PWD's subfolders.
+             Examples:
+               mkws pull                        # every repo under $PWD
+               mkws pull repo-a                 # just one repo in $PWD
+               mkws pull repo-a repo-b          # two repos
+               mkws pull ./lpworkspaces/myws    # every worktree in a workspace
+               mkws pull /abs/repo-a ./repo-b   # mix absolute and relative
+  master     For every matching repo: `git clean -d -f`, optional
+             `git checkout -- .` to discard local changes, switch to master
+             (fallback main), and `git pull --ff-only`. DESTRUCTIVE to
+             uncommitted work. Takes the same folder-args form as `pull`.
+             BLOCKED when any target folder itself contains a workspace.yml —
+             running it in a workspace would wipe feature-branch state.
+             Examples:
+               mkws master                      # all source repos under $PWD
+               mkws master repo-a repo-b        # two specific repos
+               mkws master /abs/path/to/root
   drop       Remove every worktree listed in the workspace, prune the source
              repos, and delete the workspace folder itself. DESTRUCTIVE —
              uncommitted work in the worktrees is lost (runs `git worktree
@@ -467,6 +757,7 @@ def parse_args(argv):
     branch = ""
     repos: list = []
     target_path = ""
+    target_paths: list = []
 
     argv = list(argv)
 
@@ -479,6 +770,16 @@ def parse_args(argv):
                 target_path = argv.pop(0)
             else:
                 target_path = os.getcwd()
+        elif sub == "pull":
+            mode = "pull"
+            argv.pop(0)
+            while argv and not argv[0].startswith("-"):
+                target_paths.append(argv.pop(0))
+        elif sub == "master":
+            mode = "master"
+            argv.pop(0)
+            while argv and not argv[0].startswith("-"):
+                target_paths.append(argv.pop(0))
         elif sub == "drop":
             mode = "drop"
             argv.pop(0)
@@ -513,19 +814,27 @@ def parse_args(argv):
         else:
             die(f"unknown flag: {a}\n\n{USAGE}")
 
-    return mode, name, branch, repos, target_path
+    return mode, name, branch, repos, target_path, target_paths
 
 
 def main() -> None:
     if not has_cmd("git"):
         die("git not installed")
 
-    mode, name, branch, repos, target_path = parse_args(sys.argv[1:])
+    mode, name, branch, repos, target_path, target_paths = parse_args(sys.argv[1:])
 
     if mode == "sync":
         if repos or branch or name:
             die("'sync' takes a folder path only; --add/--branch/--name are not accepted")
         sys.exit(cmd_sync(target_path))
+    if mode == "pull":
+        if repos or branch or name:
+            die("'pull' takes folder path(s) only; --add/--branch/--name are not accepted")
+        sys.exit(cmd_pull(target_paths))
+    if mode == "master":
+        if repos or branch or name:
+            die("'master' takes folder path(s) only; --add/--branch/--name are not accepted")
+        sys.exit(cmd_master(target_paths))
     if mode == "drop":
         if repos or branch or name:
             die("'drop' takes a folder path only; --add/--branch/--name are not accepted")
