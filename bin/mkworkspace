@@ -28,7 +28,7 @@ Each workspace has a manifest at <workspace>/workspace.yml:
 EOF
 }
 
-WALLET_ROOT="$PWD"
+PROJECT_ROOT="$PWD"
 NAME=""
 BRANCH=""
 REPOS=()
@@ -67,7 +67,7 @@ done
 [[ -n "$NAME" ]] || { echo "error: --name required" >&2; exit 1; }
 
 WORKSPACE_NAME="${NAME//\//_}"
-WORKSPACE_DIR="$WALLET_ROOT/$WORKSPACE_NAME"
+WORKSPACE_DIR="$PROJECT_ROOT/$WORKSPACE_NAME"
 YML="$WORKSPACE_DIR/workspace.yml"
 
 if [[ -f "$YML" ]]; then
@@ -123,8 +123,8 @@ if [[ ${#REPOS[@]} -gt 0 ]]; then
   for repo in "${REPOS[@]}"; do
     printf '\n=== %s ===\n' "$repo"
 
-    if [[ ! -d "$WALLET_ROOT/$repo/.git" ]]; then
-      echo "  ! not a git repo at $WALLET_ROOT/$repo"
+    if [[ ! -d "$PROJECT_ROOT/$repo/.git" ]]; then
+      echo "  ! not a git repo at $PROJECT_ROOT/$repo"
       failed=$((failed + 1))
       continue
     fi

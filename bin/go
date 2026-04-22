@@ -1,25 +1,25 @@
 #!/bin/sh
-  # ~/bin/go — inject -toolexec=init-patcher and debug gcflags into `go test`.
+# ~/bin/go — inject -toolexec=init-patcher and debug gcflags into `go test`.
 
-  REAL_GO="/usr/local/go/bin/go"
-  PATCHER="init-patcher"
-  GCFLAGS="all=-N -l"
+REAL_GO="/usr/local/go/bin/go"
+PATCHER="init-patcher"
+GCFLAGS="all=-N -l"
 
-  log() {
-    printf 'go wrapper execute "%s"\n' "$*" >&2
-  }
+log() {
+	printf 'go wrapper execute "%s"\n' "$*" >&2
+}
 
-  if [ "$1" = "test" ]; then
-    shift
+if [ "$1" = "test" ]; then
+	shift
 
     # Detect existing flags to avoid double-injection.
     have_toolexec=0
     have_gcflags=0
     for arg in "$@"; do
-      case "$arg" in
-        -toolexec=*|--toolexec=*) have_toolexec=1 ;;
-        -gcflags=*|--gcflags=*)   have_gcflags=1 ;;
-      esac
+	    case "$arg" in
+		    -toolexec=*|--toolexec=*) have_toolexec=1 ;;
+		    -gcflags=*|--gcflags=*)   have_gcflags=1 ;;
+	    esac
     done
 
     set -- "$@"
@@ -28,7 +28,7 @@
 
     log "$REAL_GO test $*"
     exec "$REAL_GO" test "$@"
-  fi
+fi
 
-  log "$REAL_GO $*"
-  exec "$REAL_GO" "$@"
+log "$REAL_GO $*"
+exec "$REAL_GO" "$@"

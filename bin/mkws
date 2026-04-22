@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Create or extend a multi-repo git-worktree workspace under $PWD.
-# Usage: mkws --name <name> [--branch <branch>] [--add <repo>...]
+# Create, extend, or sync a multi-repo git-worktree workspace.
+# Usage:
+#   mkws [--name <name>] [--branch <branch>] [--add <repo>...]
+#   mkws sync [--name <name>]
 
 set -uo pipefail
 
@@ -8,18 +10,36 @@ command -v git >/dev/null 2>&1 || { echo "error: git not installed" >&2; exit 1;
 
 usage() {
   cat <<'EOF'
-Usage: mkws --name <name> [--branch <branch>] [--add <repo>...]
+Usage:
+  mkws [--name <name>] [--branch <branch>] [--add <repo>...]
+  mkws sync [--name <name>]
 
-Creates or extends a multi-repo git-worktree workspace under $PWD.
+Modes:
+  (default)  Create or extend a workspace. Run from the root folder that
+             contains the source repos, or from inside a workspace dir.
+  sync       Regenerate go.work and run `go work sync` to sync Go deps.
+             Must resolve to an existing workspace (via PWD or --name).
 
-  --name <name>       workspace name (also the folder name; '/' becomes '_')
-  --branch <branch>   branch name; required on first create, optional after
-                      (must match workspace.yml if provided on re-add)
-  --add <repo>...     one or more repo directory names to add; variadic,
-                      e.g. --add a b c  or  --add a --add b
+Flags:
+  --name <name>       workspace name. Required when creating a new workspace
+                      or when invoked from the root. When invoked from inside
+                      a workspace dir, read from workspace.yml.
+  --branch <branch>   branch name. Required on first create. Optional on
+                      re-add; must match workspace.yml if provided.
+  --add <repo>...     one or more repos to add. Each entry can be:
+                        - a bare name (looked up under the root)
+                        - a relative path (resolved against $PWD, e.g. ../repo)
+                        - an absolute path
+                      The basename is used for the workspace folder and yml.
+                      Variadic: --add a b c  or  --add a --add b
   -h, --help          show this message
 
-Each workspace has a manifest at <workspace>/workspace.yml:
+Context:
+  If $PWD contains workspace.yml, that folder is treated as the workspace and
+  its parent as the root. Otherwise $PWD is the root and the workspace lives
+  at $PWD/<name>/.
+
+Manifest (<workspace>/workspace.yml):
   name: <workspace-name>
   branch_name: <branch>
   repos:
@@ -28,10 +48,24 @@ Each workspace has a manifest at <workspace>/workspace.yml:
 EOF
 }
 
-WALLET_ROOT="$PWD"
+MODE="default"
 NAME=""
 BRANCH=""
 REPOS=()
+
+if [[ $# -gt 0 && "$1" != -* ]]; then
+  case "$1" in
+    sync)
+      MODE="sync"
+      shift
+      ;;
+    *)
+      echo "error: unknown subcommand: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -64,24 +98,45 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$NAME" ]] || { echo "error: --name required" >&2; exit 1; }
+if [[ "$MODE" == "sync" ]]; then
+  if [[ ${#REPOS[@]} -gt 0 || -n "$BRANCH" ]]; then
+    echo "error: 'sync' does not accept --add or --branch" >&2
+    exit 1
+  fi
+fi
 
-WORKSPACE_NAME="${NAME//\//_}"
-WORKSPACE_DIR="$WALLET_ROOT/$WORKSPACE_NAME"
-YML="$WORKSPACE_DIR/workspace.yml"
+# Context: inside workspace (PWD has yml) vs at root (yml at $PWD/$name/).
+if [[ -f "$PWD/workspace.yml" ]]; then
+  WORKSPACE_DIR="$PWD"
+  REPO_ROOT="$(dirname "$PWD")"
+  YML="$WORKSPACE_DIR/workspace.yml"
+  NAME_FROM_YML=$(awk -F': *' '/^name:/{print $2; exit}' "$YML")
+  if [[ -n "$NAME" && "$NAME" != "$NAME_FROM_YML" ]]; then
+    echo "error: --name '$NAME' does not match workspace.yml name '$NAME_FROM_YML'" >&2
+    exit 1
+  fi
+  NAME="$NAME_FROM_YML"
+else
+  [[ -n "$NAME" ]] || { echo "error: --name required (or run from inside a workspace dir)" >&2; exit 1; }
+  REPO_ROOT="$PWD"
+  WORKSPACE_NAME="${NAME//\//_}"
+  WORKSPACE_DIR="$REPO_ROOT/$WORKSPACE_NAME"
+  YML="$WORKSPACE_DIR/workspace.yml"
+fi
+
+if [[ "$MODE" == "sync" ]]; then
+  [[ -f "$YML" ]] || { echo "error: workspace.yml not found at $YML" >&2; exit 1; }
+fi
 
 if [[ -f "$YML" ]]; then
   EXISTING_BRANCH=$(awk -F': *' '/^branch_name:/{print $2; exit}' "$YML")
-  if [[ -z "$EXISTING_BRANCH" ]]; then
-    echo "error: workspace.yml at $YML is missing branch_name" >&2
-    exit 1
-  fi
+  [[ -n "$EXISTING_BRANCH" ]] || { echo "error: workspace.yml at $YML is missing branch_name" >&2; exit 1; }
   if [[ -n "$BRANCH" && "$BRANCH" != "$EXISTING_BRANCH" ]]; then
     echo "error: --branch '$BRANCH' does not match workspace.yml branch '$EXISTING_BRANCH'" >&2
     exit 1
   fi
   BRANCH="$EXISTING_BRANCH"
-else
+elif [[ "$MODE" != "sync" ]]; then
   [[ -n "$BRANCH" ]] || { echo "error: --branch required when creating a new workspace" >&2; exit 1; }
   mkdir -p "$WORKSPACE_DIR"
   {
@@ -104,16 +159,71 @@ repo_in_yml() {
 }
 
 detect_base() {
-  local repo="$1"
+  local repo_path="$1"
   for b in master main; do
-    if git -C "$repo" show-ref --verify --quiet "refs/heads/$b" \
-       || git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$b"; then
+    if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$b" \
+       || git -C "$repo_path" show-ref --verify --quiet "refs/remotes/origin/$b"; then
       echo "$b"
       return 0
     fi
   done
   return 1
 }
+
+# Resolve a --add argument to an absolute path pointing at a git repo.
+# Accepts: bare names (looked up under REPO_ROOT), relative paths (resolved
+# against PWD), and absolute paths. Prints the absolute path on success.
+resolve_source() {
+  local raw="$1" resolved
+  if [[ "$raw" = /* ]]; then
+    resolved="$raw"
+  elif [[ "$raw" == */* ]]; then
+    resolved=$(cd "$raw" 2>/dev/null && pwd) || return 1
+  else
+    resolved="$REPO_ROOT/$raw"
+  fi
+  [[ -d "$resolved/.git" ]] || return 1
+  (cd "$resolved" && pwd)
+}
+
+regen_go_work() {
+  if ! command -v go >/dev/null 2>&1; then
+    echo "  go not installed, skipping go.work"
+    return 0
+  fi
+  (
+    cd "$WORKSPACE_DIR"
+    [[ -f go.work ]] || go work init 2>/dev/null || true
+    while IFS= read -r repo; do
+      if [[ -f "$WORKSPACE_DIR/$repo/go.mod" ]]; then
+        go work use "./$repo"
+      fi
+    done < <(existing_repos)
+  )
+  echo "  go.work at $WORKSPACE_DIR/go.work"
+}
+
+if [[ "$MODE" == "sync" ]]; then
+  printf '=== go.work ===\n'
+  regen_go_work
+
+  printf '\n=== go work sync ===\n'
+  if ! command -v go >/dev/null 2>&1; then
+    echo "  ! go not installed, cannot sync"
+    exit 1
+  fi
+  if (cd "$WORKSPACE_DIR" && go work sync); then
+    echo "  synced"
+  else
+    echo "  ! go work sync failed"
+    exit 1
+  fi
+
+  printf '\n=== summary ===\n'
+  echo "  workspace: $WORKSPACE_DIR"
+  echo "  branch:    $BRANCH"
+  exit 0
+fi
 
 added=0
 skipped=0
@@ -123,51 +233,56 @@ if [[ ${#REPOS[@]} -gt 0 ]]; then
   for repo in "${REPOS[@]}"; do
     printf '\n=== %s ===\n' "$repo"
 
-    if [[ ! -d "$WALLET_ROOT/$repo/.git" ]]; then
-      echo "  ! not a git repo at $WALLET_ROOT/$repo"
+    REPO_PATH=$(resolve_source "$repo") || {
+      echo "  ! not a git repo: $repo"
       failed=$((failed + 1))
       continue
+    }
+    LEAF=$(basename "$REPO_PATH")
+
+    if [[ "$LEAF" != "$repo" ]]; then
+      echo "  source: $REPO_PATH (recorded as '$LEAF')"
     fi
 
-    if repo_in_yml "$repo"; then
-      echo "  already in workspace, skipping"
+    if repo_in_yml "$LEAF"; then
+      echo "  '$LEAF' already in workspace, skipping"
       skipped=$((skipped + 1))
       continue
     fi
 
-    WT_PATH="$WORKSPACE_DIR/$repo"
+    WT_PATH="$WORKSPACE_DIR/$LEAF"
     if [[ -e "$WT_PATH" ]]; then
       echo "  worktree path already exists, recording in yml"
-      echo "  - $repo" >> "$YML"
+      echo "  - $LEAF" >> "$YML"
       skipped=$((skipped + 1))
       continue
     fi
 
-    if git -C "$repo" worktree add "$WT_PATH" "$BRANCH" 2>/dev/null; then
+    if git -C "$REPO_PATH" worktree add "$WT_PATH" "$BRANCH" 2>/dev/null; then
       echo "  checked out existing branch $BRANCH"
-      echo "  - $repo" >> "$YML"
+      echo "  - $LEAF" >> "$YML"
       added=$((added + 1))
       continue
     fi
 
     echo "  fetching latest from origin"
-    git -C "$repo" fetch origin --quiet 2>/dev/null || echo "  ! fetch failed, falling back to local refs"
+    git -C "$REPO_PATH" fetch origin --quiet 2>/dev/null || echo "  ! fetch failed, falling back to local refs"
 
-    base=$(detect_base "$repo") || {
+    base=$(detect_base "$REPO_PATH") || {
       echo "  ! could not detect base branch (master/main)"
       failed=$((failed + 1))
       continue
     }
 
-    if git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$base"; then
+    if git -C "$REPO_PATH" show-ref --verify --quiet "refs/remotes/origin/$base"; then
       start_ref="origin/$base"
     else
       start_ref="$base"
     fi
 
     echo "  creating new branch $BRANCH from $start_ref"
-    if git -C "$repo" worktree add -b "$BRANCH" "$WT_PATH" "$start_ref"; then
-      echo "  - $repo" >> "$YML"
+    if git -C "$REPO_PATH" worktree add -b "$BRANCH" "$WT_PATH" "$start_ref"; then
+      echo "  - $LEAF" >> "$YML"
       added=$((added + 1))
     else
       echo "  ! worktree add failed"
@@ -177,18 +292,7 @@ if [[ ${#REPOS[@]} -gt 0 ]]; then
 fi
 
 printf '\n=== go.work ===\n'
-if command -v go >/dev/null 2>&1; then
-  cd "$WORKSPACE_DIR"
-  [[ -f go.work ]] || go work init 2>/dev/null || true
-  while IFS= read -r repo; do
-    if [[ -f "$WORKSPACE_DIR/$repo/go.mod" ]]; then
-      go work use "./$repo"
-    fi
-  done < <(existing_repos)
-  echo "  go.work at $WORKSPACE_DIR/go.work"
-else
-  echo "  go not installed, skipping go.work"
-fi
+regen_go_work
 
 printf '\n=== summary ===\n'
 echo "  workspace: $WORKSPACE_DIR"
