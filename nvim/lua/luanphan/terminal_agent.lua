@@ -179,23 +179,18 @@ local function get_target_split_dims()
   return nil, nil
 end
 
+--- Centered float that takes ~90% of the screen. The `split` config no longer
+--- influences float placement — it's used only for real splits.
 --- @return { row: integer, col: integer, width: integer, height: integer }
 local function get_float_geometry()
-  local lines_avail = vim.o.lines - vim.o.cmdheight
-  if config.split == "vertical" then
-    local w = select(1, get_target_split_dims())
-    w = w or math.floor(vim.o.columns * (config.split_ratio or 0.45))
-    w = math.max(20, math.min(w, vim.o.columns - 2))
-    local h = math.max(8, lines_avail - 2)
-    local col = math.max(0, vim.o.columns - w - 2)
-    return { row = 0, col = col, width = w, height = h }
-  end
-  local h = select(1, get_target_split_dims())
-  h = h or math.floor(lines_avail * (config.split_ratio or 0.45))
-  h = math.max(8, math.min(h, lines_avail - 2))
-  local w = math.max(20, vim.o.columns - 2)
-  local row = math.max(0, lines_avail - h - 2)
-  return { row = row, col = 0, width = w, height = h }
+  local cols = vim.o.columns
+  local lines_avail = math.max(1, vim.o.lines - vim.o.cmdheight - 1)
+  local ratio = config.float_ratio or 0.9
+  local w = math.max(40, math.min(math.floor(cols * ratio), cols - 2))
+  local h = math.max(10, math.min(math.floor(lines_avail * ratio), lines_avail - 1))
+  local col = math.max(0, math.floor((cols - w) / 2))
+  local row = math.max(0, math.floor((lines_avail - h) / 2))
+  return { row = row, col = col, width = w, height = h }
 end
 
 local function apply_split_size()
@@ -343,6 +338,35 @@ local function on_vim_resized()
   schedule_resize_sync()
 end
 
+--- Bind <C-h/j/k/l> inside the agent's float buffer to close the float. One
+--- muscle-memory "move window" stroke dismisses the overlay. No-op in split
+--- mode — those are useful window-nav keys when the agent is a real split.
+local function set_float_close_keymaps(bufnr)
+  if config.window_mode ~= "float" then return end
+  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
+  local opts = { buffer = bufnr, noremap = true, silent = true, nowait = true }
+  local function close_float()
+    local cur = current_bufnr()
+    if not cur then return end
+    local w = win_for_buf(cur)
+    if w and vim.api.nvim_win_is_valid(w) then
+      pcall(vim.api.nvim_win_close, w, false)
+    end
+  end
+  for _, key in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
+    -- Terminal mode: leave the PTY first, then close on the next tick so the
+    -- mode switch finishes before we rip the window out.
+    vim.keymap.set("t", key, function()
+      vim.api.nvim_feedkeys(
+        vim.api.nvim_replace_termcodes("<C-\\><C-n>", true, false, true),
+        "n", false
+      )
+      vim.schedule(close_float)
+    end, opts)
+    vim.keymap.set("n", key, close_float, opts)
+  end
+end
+
 local function attach_term_close(buf)
   local ag = vim.api.nvim_create_augroup(profile.augroup_prefix .. "TermClose_" .. buf, { clear = true })
   vim.api.nvim_create_autocmd("TermClose", {
@@ -366,6 +390,7 @@ local function restore_agent_bufnr()
         pcall(function() vim.b[nr].luanphan_persist_term = true end)
         attach_term_close(nr)
         apply_agent_scrollback(nr)
+        set_float_close_keymaps(nr)
       end
     end
   end
@@ -423,6 +448,7 @@ local function open_terminal_float()
   apply_agent_scrollback(buf)
   set_agent_bufnr(buf, cwd)
   attach_term_close(buf)
+  set_float_close_keymaps(buf)
   vim.defer_fn(function()
     vim.cmd("startinsert")
   end, 10)
@@ -474,6 +500,7 @@ local function show_terminal_float()
     height = g.height,
   }
   apply_agent_scrollback(cur)
+  set_float_close_keymaps(cur)
   vim.defer_fn(function()
     vim.cmd("startinsert")
   end, 10)
