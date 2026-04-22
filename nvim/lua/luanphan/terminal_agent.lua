@@ -53,6 +53,7 @@ function M.create(profile)
 
 local state = {
   bufnrs = {},        ---@type table<string, integer>  cwd -> bufnr
+  visibility = {},    ---@type table<string, boolean>  cwd -> last-known visibility
   resize_timer = nil, ---@type userdata|nil
   float_geometry = nil, ---@type table|nil
 }
@@ -90,7 +91,7 @@ local function set_agent_bufnr(bufnr, cwd)
   cwd = cwd or cwd_key()
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
     state.bufnrs[cwd] = bufnr
-    pcall(function() vim.b[bufnr].luanphan_agent = true end)
+    pcall(function() vim.b[bufnr].luanphan_persist_term = true end)
   else
     state.bufnrs[cwd] = nil
     state.float_geometry = nil
@@ -362,7 +363,7 @@ local function restore_agent_bufnr()
     for cwd, nr in pairs(stored) do
       if type(cwd) == "string" and type(nr) == "number" and term_buffer_alive(nr) then
         state.bufnrs[cwd] = nr
-        pcall(function() vim.b[nr].luanphan_agent = true end)
+        pcall(function() vim.b[nr].luanphan_persist_term = true end)
         attach_term_close(nr)
         apply_agent_scrollback(nr)
       end
@@ -671,6 +672,39 @@ function API.setup(opts)
       callback = on_vim_resized,
     })
   end
+
+  -- Per-worktree visibility: remember whether the agent was visible in the old cwd;
+  -- auto-restore when returning to a cwd where it was visible last.
+  vim.api.nvim_create_autocmd("DirChangedPre", {
+    group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "DirPre", { clear = true }),
+    callback = function()
+      local old = cwd_key()
+      local cur = state.bufnrs[old]
+      if not cur or not term_buffer_alive(cur) then
+        state.visibility[old] = false
+        return
+      end
+      local win = win_for_buf(cur)
+      if win then
+        state.visibility[old] = true
+        pcall(vim.api.nvim_win_close, win, false)
+      else
+        state.visibility[old] = false
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("DirChanged", {
+    group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Dir", { clear = true }),
+    callback = function()
+      local new = cwd_key()
+      if not state.visibility[new] then return end
+      local cur = state.bufnrs[new]
+      if not cur or not term_buffer_alive(cur) then return end
+      if win_for_buf(cur) then return end
+      show_terminal()
+    end,
+  })
 
   local km = profile.keymaps
   local md = profile.map_desc or {}

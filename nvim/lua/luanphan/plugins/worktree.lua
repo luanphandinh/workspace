@@ -37,14 +37,9 @@ return function(_use)
       return
     end
 
-    -- Hide agent terminal windows (buffers stay alive, scoped per cwd).
-    for _, win in ipairs(vim.api.nvim_list_wins()) do
-      local b = vim.api.nvim_win_get_buf(win)
-      if vim.b[b].luanphan_agent then
-        pcall(vim.api.nvim_win_close, win, false)
-      end
-    end
-
+    -- `:cd` fires DirChangedPre/DirChanged, which each persistent-terminal module
+    -- (terminal_agent, toggleterm) listens for. They snapshot per-cwd visibility
+    -- before the cd and auto-restore it after — no window bookkeeping here.
     vim.cmd("cd " .. vim.fn.fnameescape(path))
 
     for _, client in pairs(vim.lsp.get_clients()) do
@@ -53,7 +48,7 @@ return function(_use)
 
     local cwd = vim.fn.getcwd()
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-      if vim.api.nvim_buf_is_loaded(buf) and not vim.b[buf].luanphan_agent then
+      if vim.api.nvim_buf_is_loaded(buf) and not vim.b[buf].luanphan_persist_term then
         local name = vim.api.nvim_buf_get_name(buf)
         local buftype = vim.bo[buf].buftype
         if buftype == "terminal" and not vim.startswith(name, "term://" .. cwd) then
