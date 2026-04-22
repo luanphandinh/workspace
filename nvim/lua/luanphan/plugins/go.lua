@@ -19,18 +19,26 @@ function M.get_test_name()
   return name
 end
 
-function M.get_go_mod_name()
-  local handle = io.popen("go list -m")
+---Resolve the full Go import path for the current buffer's package.
+---Runs `go list -f '{{.ImportPath}}'` from the file's directory so it works
+---correctly inside a `go.work` workspace. (Previously we used `go list -m`,
+---which returns EVERY module in the workspace one per line — those lines
+---then got splatted into the test command as multiple package args.)
+---@return string|nil import_path e.g. "code.byted.org/team/repo/pkg/subpkg", or nil on failure
+function M.get_current_import_path()
+  local file_dir = vim.fn.expand('%:p:h')
+  if file_dir == "" then return nil end
+  local cmd = string.format(
+    "cd %s && go list -f '{{.ImportPath}}' . 2>/dev/null",
+    vim.fn.shellescape(file_dir)
+  )
+  local handle = io.popen(cmd)
   if not handle then return nil end
   local result = handle:read("*a"):gsub("%s+$", "")
   handle:close()
-  return result
-end
-
-function M.get_relative_path()
-  local file_path = vim.fn.expand('%:p:h')
-  local rel_path = vim.fn.fnamemodify(file_path, ":."):gsub("^./", "")
-  return rel_path
+  if result == "" then return nil end
+  -- Defensive: if somehow multiple lines slipped through, take the first.
+  return vim.split(result, "\n", { plain = true })[1]
 end
 
 ---@return string
@@ -70,59 +78,51 @@ function M.run_go_test_at_cursor()
     return
   end
 
-  local mod_name = M.get_go_mod_name()
-  if not mod_name or mod_name == "" then
-    vim.notify("Could not resolve module (is `go list -m` valid here?)", vim.log.levels.ERROR)
+  local import_path = M.get_current_import_path()
+  if not import_path then
+    vim.notify("Could not resolve import path (is `go list` valid here?)", vim.log.levels.ERROR)
     return
   end
 
-  local rel_path = M.get_relative_path()
   local cmd = string.format(
-    "%s test -timeout 30s -run ^%s$ %s/%s -count=1 -v",
+    "%s test -timeout 30s -run ^%s$ %s -count=1 -v",
     vim.fn.shellescape(go_bin()),
     test_name,
-    mod_name,
-    rel_path
-  )
-
-  run_in_test_terminal(cmd)
-end
-
----Run all tests in the current file.
-function M.run_go_test_file()
-  local mod_name = M.get_go_mod_name()
-  if not mod_name or mod_name == "" then
-    vim.notify("Could not resolve module (is `go list -m` valid here?)", vim.log.levels.ERROR)
-    return
-  end
-
-  local rel_path = M.get_relative_path()
-
-  local cmd = string.format(
-    "%s test -timeout 30s %s/%s -count=1 -v",
-    vim.fn.shellescape(go_bin()),
-    mod_name,
-    rel_path
+    import_path
   )
 
   run_in_test_terminal(cmd)
 end
 
 ---Run all tests in the current package.
-function M.run_go_test_package()
-  local mod_name = M.get_go_mod_name()
-  if not mod_name or mod_name == "" then
-    vim.notify("Could not resolve module (is `go list -m` valid here?)", vim.log.levels.ERROR)
+function M.run_go_test_file()
+  local import_path = M.get_current_import_path()
+  if not import_path then
+    vim.notify("Could not resolve import path (is `go list` valid here?)", vim.log.levels.ERROR)
     return
   end
 
-  local rel_path = M.get_relative_path()
+  local cmd = string.format(
+    "%s test -timeout 30s %s -count=1 -v",
+    vim.fn.shellescape(go_bin()),
+    import_path
+  )
+
+  run_in_test_terminal(cmd)
+end
+
+---Run all tests in the current package and its subpackages.
+function M.run_go_test_package()
+  local import_path = M.get_current_import_path()
+  if not import_path then
+    vim.notify("Could not resolve import path (is `go list` valid here?)", vim.log.levels.ERROR)
+    return
+  end
 
   local cmd = string.format(
-    "%s test -timeout 60s %s/%s -count=1 -v ./...",
+    "%s test -timeout 60s %s/... -count=1 -v",
     vim.fn.shellescape(go_bin()),
-    mod_name,
-    rel_path
+    import_path
   )
 
   run_in_test_terminal(cmd)
