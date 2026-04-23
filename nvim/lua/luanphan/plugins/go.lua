@@ -24,7 +24,7 @@ end
 ---correctly inside a `go.work` workspace. (Previously we used `go list -m`,
 ---which returns EVERY module in the workspace one per line — those lines
 ---then got splatted into the test command as multiple package args.)
----@return string|nil import_path e.g. "code.byted.org/team/repo/pkg/subpkg", or nil on failure
+---@return string|nil
 function M.get_current_import_path()
   local file_dir = vim.fn.expand('%:p:h')
   if file_dir == "" then return nil end
