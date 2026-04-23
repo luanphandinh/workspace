@@ -179,35 +179,54 @@ local function get_target_split_dims()
   return nil, nil
 end
 
+--- Columns to pad on the left so a float doesn't overlap an open nvim-tree.
+--- Returns `tree_width + 1` (extra cell for the split separator) only when
+--- BOTH the tree is open AND at least one normal-buffer editor window is
+--- visible. If the tree is alone (no editing buffer), we let the float take
+--- the full screen and cover it.
+local function tree_padding()
+  local tree_w = 0
+  local has_editor = false
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local buf = vim.api.nvim_win_get_buf(win)
+    local bt = vim.bo[buf].buftype
+    local ft = vim.bo[buf].filetype
+    if ft == "NvimTree" then
+      tree_w = math.max(tree_w, vim.api.nvim_win_get_width(win))
+    elseif bt == "" then
+      has_editor = true
+    end
+  end
+  if tree_w == 0 or not has_editor then return 0 end
+  return tree_w + 1
+end
+
 --- Float placement per `config.float_position`:
----   "full"  — centered, fills the screen minus a 1-col/row border margin
----   "left"  — full-height, 45% width, anchored to the left edge
----   "right" — full-height, 45% width, anchored to the right edge
---- The `split` config no longer influences float placement.
----
---- Note on border math: `width`/`height` in nvim_open_win describe the
---- interior size; "single" border takes 1 extra col/row on each side.
---- A window of width=(cols-2), col=1 therefore fills the screen exactly,
---- border included. Using `cols - 2` (not `cols * 0.9`) is what lets the
---- PTY's COLUMNS match the visible area so long lines from the agent CLI
---- don't get truncated on the right.
+---   "full"  — centered in the editor area, 80% width × 95% height.
+---             Padded right of the tree when tree is open AND an editor
+---             window is also visible (see `tree_padding`).
+---   "left"  — full-height, 45% width, anchored at col 0 (tree-padding is
+---             intentionally ignored — the dock covers the tree).
+---   "right" — full-height, 45% width, anchored at the right edge.
 --- @return { row: integer, col: integer, width: integer, height: integer }
 local function get_float_geometry()
-  local cols = vim.o.columns
-  local lines_avail = math.max(1, vim.o.lines - vim.o.cmdheight)
   local pos = config.float_position or "full"
+  local lines_avail = math.max(1, vim.o.lines - vim.o.cmdheight)
 
   if pos == "left" or pos == "right" then
+    local cols = vim.o.columns
     local w = math.max(30, math.min(math.floor(cols * 0.45), cols - 2))
     local h = math.max(10, lines_avail - 2)
     local col = (pos == "left") and 0 or math.max(0, cols - w - 2)
     return { row = 0, col = col, width = w, height = h }
   end
 
-  -- full: centered, 80% width × 95% height of the editor area
+  -- full: centered inside (vim.o.columns - tree_pad), 80% × 95%
+  local pad = tree_padding()
+  local cols = vim.o.columns - pad
   local w = math.max(40, math.min(math.floor(cols * 0.80), cols - 2))
   local h = math.max(10, math.min(math.floor(lines_avail * 0.95), lines_avail - 2))
-  local col = math.max(0, math.floor((cols - w) / 2))
+  local col = math.max(pad, pad + math.floor((cols - w) / 2))
   local row = math.max(0, math.floor((lines_avail - h) / 2))
   return { row = row, col = col, width = w, height = h }
 end
@@ -730,6 +749,17 @@ function API.setup(opts)
     vim.api.nvim_create_autocmd("VimResized", {
       group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Resize", { clear = true }),
       callback = on_vim_resized,
+    })
+  end
+
+  -- Nvim-tree toggle doesn't fire VimResized (total editor columns don't
+  -- change), so the "full" float's tree-padding stays stale. Listen for
+  -- WinNew / WinClosed and run the same debounced resync — the geometry
+  -- recomputes tree_padding() and nudges the float into the new area.
+  if resize_ok and config.window_mode == "float" then
+    vim.api.nvim_create_autocmd({ "WinNew", "WinClosed" }, {
+      group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "TreeResize", { clear = true }),
+      callback = schedule_resize_sync,
     })
   end
 

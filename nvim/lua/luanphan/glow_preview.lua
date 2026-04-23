@@ -42,11 +42,34 @@ function M.toggle()
     return
   end
 
+  -- Pad around any visible nvim-tree on the left so the preview doesn't
+  -- overlap it; ratio applies to the remaining width. Skipped if the tree
+  -- is the only non-float window (no editing buffer to protect).
+  local pad = 0
+  do
+    local tree_w = 0
+    local has_editor = false
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local b = vim.api.nvim_win_get_buf(win)
+      local bt = vim.bo[b].buftype
+      local ft = vim.bo[b].filetype
+      if ft == "NvimTree" then
+        tree_w = math.max(tree_w, vim.api.nvim_win_get_width(win))
+      elseif bt == "" then
+        has_editor = true
+      end
+    end
+    if tree_w > 0 and has_editor then
+      pad = tree_w + 1 -- +1 = split separator
+    end
+  end
+
   local bufnr = vim.api.nvim_create_buf(false, true)
-  local w = math.max(40, math.floor(vim.o.columns * 0.88))
+  local avail_cols = vim.o.columns - pad
+  local w = math.max(40, math.floor(avail_cols * 0.88))
   local h = math.max(12, math.floor(vim.o.lines * 0.88))
   local row = math.max(0, math.floor((vim.o.lines - h) / 2))
-  local col = math.max(0, math.floor((vim.o.columns - w) / 2))
+  local col = math.max(pad, pad + math.floor((avail_cols - w) / 2))
 
   local win_opts = {
     relative = "editor",
