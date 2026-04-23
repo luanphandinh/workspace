@@ -495,6 +495,122 @@ def cmd_master(folders: list) -> int:
 
 
 # ---------------------------------------------------------------------------
+# rebase mode: for every matching repo on a feature branch, bring in the
+# latest master/main via merge. Runs SERIAL (unlike pull/master) because a
+# merge conflict needs the user's attention — parallel output would hide it.
+#
+# Flow per repo:
+#   1. If working tree is dirty, `git stash push` (tracked so we can pop).
+#   2. `git fetch origin <base>`  (non-zero → pop stash, halt)
+#   3. `git merge origin/<base>`
+#        - clean merge   → pop stash, continue to next repo
+#        - conflict      → STOP entirely. Do NOT auto-abort. Leave the
+#                          conflict + stash so the user can resolve; print
+#                          the exact resolve-and-finish instructions.
+#        - other failure → `git merge --abort`, pop stash, halt.
+# Already-on-base branches are skipped (no-op).
+# ---------------------------------------------------------------------------
+def cmd_rebase(folders: list) -> int:
+    repos = expand_targets(folders)
+    if not repos:
+        heading("summary")
+        info("no git repos found")
+        return 0
+
+    info(f"rebasing {len(repos)} repo(s) onto master (serial)...")
+    rebased = skipped = failed = 0
+
+    for sub in repos:
+        heading(sub.name)
+
+        base = detect_base(sub)
+        if base is None:
+            warn("no master/main branch, skipping")
+            skipped += 1
+            continue
+
+        cur = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
+        cur_branch = cur.stdout.strip() if cur.returncode == 0 else ""
+        if not cur_branch or cur_branch == "HEAD":
+            warn("detached HEAD, skipping")
+            skipped += 1
+            continue
+        if cur_branch == base:
+            info(f"already on {base}, skipping")
+            skipped += 1
+            continue
+
+        # Stash if dirty so the merge sees a clean tree. Use -u so untracked
+        # files are saved too — the default `git stash push` ignores them
+        # and we'd end up with nothing in the stash for a pop to restore.
+        stashed = False
+        status = run(["git", "-C", str(sub), "status", "--porcelain"])
+        if status.stdout.strip():
+            info("git stash push -u (autosaving local changes)")
+            sp = run(["git", "-C", str(sub), "stash", "push", "-u", "-m", "mkws rebase autostash"])
+            if sp.returncode != 0:
+                fail("stash failed")
+                failed += 1
+                return 1
+            stashed = True
+
+        def pop_stash():
+            if not stashed:
+                return True
+            info("git stash pop")
+            pp = run(["git", "-C", str(sub), "stash", "pop"])
+            if pp.returncode == 0:
+                return True
+            warn("stash pop had conflicts — resolve manually")
+            return False
+
+        info(f"git fetch origin {base}")
+        fp = run(["git", "-C", str(sub), "fetch", "origin", base])
+        if fp.returncode != 0:
+            fail("fetch failed")
+            pop_stash()
+            failed += 1
+            return 1
+
+        info(f"git merge origin/{base} (into {cur_branch})")
+        mp = run(["git", "-C", str(sub), "merge", "--no-edit", f"origin/{base}"], capture=False)
+        if mp.returncode == 0:
+            ok(f"merged origin/{base} into {cur_branch}")
+            pop_stash()
+            rebased += 1
+            continue
+
+        # Merge failed. Conflict or other?
+        unmerged = run(["git", "-C", str(sub), "ls-files", "--unmerged"])
+        if unmerged.stdout.strip():
+            # Conflict path — leave everything in place for the user.
+            heading(f"CONFLICT in {sub.name}")
+            warn(f"merge conflict — resolve manually in {sub}")
+            info("  1. fix conflicted files")
+            info("  2. git add <files> && git commit")
+            if stashed:
+                info(f"  3. {BOLD}git stash pop{RESET} (your pre-rebase changes are in the stash)")
+            info("")
+            info("halted; other repos not processed")
+            heading("summary")
+            info(f"rebased: {rebased}, skipped: {skipped}, conflict: 1")
+            info(f"halted at: {BOLD}{sub.name}{RESET}")
+            return 1
+
+        # Non-conflict failure (shouldn't normally happen) — revert cleanly.
+        fail("merge failed (non-conflict)")
+        run(["git", "-C", str(sub), "merge", "--abort"])
+        pop_stash()
+        failed += 1
+        return 1
+
+    heading("summary")
+    color = GREEN if failed == 0 else YELLOW
+    info(f"rebased: {color}{rebased}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
+    return 0 if failed == 0 else 1
+
+
+# ---------------------------------------------------------------------------
 # drop mode: remove every worktree listed in the manifest, prune the source
 # repos, then delete the workspace folder itself. Destructive by design —
 # uncommitted work inside the worktrees is lost (mirrors `git worktree remove
@@ -688,6 +804,7 @@ Usage:
   mkws sync [<folder>]
   mkws pull [<folder>...]
   mkws master [<folder>...]
+  mkws rebase [<folder>...]
   mkws drop <folder>
 
 Modes:
@@ -721,6 +838,18 @@ Modes:
                mkws master                      # all source repos under $PWD
                mkws master repo-a repo-b        # two specific repos
                mkws master /abs/path/to/root
+  rebase     For every matching repo on a feature branch: stash dirty edits,
+             `git fetch origin <base>`, `git merge origin/<base>` into the
+             current branch, then pop the stash. Runs serial (conflicts need
+             attention). On conflict: HALTS — leaves the merge + stash in
+             place for you to resolve, prints resolve-and-finish instructions,
+             and does NOT process remaining repos. Non-conflict failures
+             trigger `git merge --abort` + stash-pop to restore state.
+             Takes the same folder-args form as pull/master.
+             Examples:
+               mkws rebase                   # merge master into every feature
+                                             #   branch in $PWD's repos
+               mkws rebase diamond_filter
   drop       Remove every worktree listed in the workspace, prune the source
              repos, and delete the workspace folder itself. DESTRUCTIVE —
              uncommitted work in the worktrees is lost (runs `git worktree
@@ -780,6 +909,11 @@ def parse_args(argv):
             argv.pop(0)
             while argv and not argv[0].startswith("-"):
                 target_paths.append(argv.pop(0))
+        elif sub == "rebase":
+            mode = "rebase"
+            argv.pop(0)
+            while argv and not argv[0].startswith("-"):
+                target_paths.append(argv.pop(0))
         elif sub == "drop":
             mode = "drop"
             argv.pop(0)
@@ -835,6 +969,10 @@ def main() -> None:
         if repos or branch or name:
             die("'master' takes folder path(s) only; --add/--branch/--name are not accepted")
         sys.exit(cmd_master(target_paths))
+    if mode == "rebase":
+        if repos or branch or name:
+            die("'rebase' takes folder path(s) only; --add/--branch/--name are not accepted")
+        sys.exit(cmd_rebase(target_paths))
     if mode == "drop":
         if repos or branch or name:
             die("'drop' takes a folder path only; --add/--branch/--name are not accepted")
