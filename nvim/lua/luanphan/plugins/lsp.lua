@@ -15,6 +15,7 @@ return function(use)
       require("mason-lspconfig").setup {
         ensure_installed = {
           "gopls",
+          "rust_analyzer",
         },
         automatic_enable = false,
       }
@@ -136,8 +137,42 @@ return function(use)
         },
       })
 
+      -- rust-analyzer: Rust LSP. Installed by Mason (package: rust-analyzer).
+      -- Override the binary via RUST_ANALYZER_PATH if you want a system install
+      -- or a nightly, same pattern as GOPLS_PATH above.
+      local rust_analyzer_cmd = vim.env.RUST_ANALYZER_PATH or "rust-analyzer"
+
+      vim.lsp.config("rust_analyzer", {
+        cmd = { rust_analyzer_cmd },
+        root_markers = { "Cargo.toml", "rust-project.json", ".git" },
+        filetypes = { "rust" },
+        settings = {
+          ["rust-analyzer"] = {
+            cargo = {
+              allFeatures = true,
+              loadOutDirsFromCheck = true,
+              runBuildScripts = true,
+            },
+            -- Use `cargo clippy` instead of `cargo check` for diagnostics.
+            checkOnSave = {
+              command = "clippy",
+              extraArgs = { "--no-deps" },
+            },
+            procMacro = { enable = true },
+            inlayHints = {
+              bindingModeHints = { enable = false },
+              chainingHints = { enable = true },
+              closingBraceHints = { enable = true, minLines = 25 },
+              parameterHints = { enable = true },
+              typeHints = { enable = true },
+            },
+          },
+        },
+      })
+
       -- Enable LSP servers (auto-starts based on filetypes)
       vim.lsp.enable("gopls")
+      vim.lsp.enable("rust_analyzer")
     end,
   }
 
