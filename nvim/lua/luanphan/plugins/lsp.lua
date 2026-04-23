@@ -153,8 +153,10 @@ return function(use)
               loadOutDirsFromCheck = true,
               runBuildScripts = true,
             },
-            -- Use `cargo clippy` instead of `cargo check` for diagnostics.
-            checkOnSave = {
+            -- rust-analyzer split the old `checkOnSave = { command = ... }`
+            -- config into a boolean toggle + a separate `check` section.
+            checkOnSave = true,
+            check = {
               command = "clippy",
               extraArgs = { "--no-deps" },
             },

@@ -26,8 +26,8 @@ if [ "$1" = "test" ]; then
     [ "$have_toolexec" = "0" ] && set -- "-toolexec=$PATCHER" "$@"
     [ "$have_gcflags"  = "0" ] && set -- "-gcflags=$GCFLAGS"  "$@"
 
-    log "$REAL_GO test $*"
-    exec "$REAL_GO" test "$@"
+    log "GOWORK=off $REAL_GO test $*"
+    exec env GOWORK=off "$REAL_GO" test "$@"
 fi
 
 log "$REAL_GO $*"
