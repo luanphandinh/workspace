@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """mkws — multi-repo git-worktree workspace manager.
 
-Usage:
-  mkws [--name <name>] [--branch <branch>] [--add <repo>...]
-  mkws sync [<folder>]
-
 Every workspace lives at `<root>/lpworkspaces/<name>/` and is a set of git
 worktrees (one per source repo) all on the same feature branch, glued together
-by a small `workspace.yml` manifest and a generated `go.work`.
+by a small `workspace.yml` manifest. Go workspaces (`go.work`) are intentionally
+NOT created — per-module semantics (GOWORK=off everywhere) is the standard here;
+cross-module navigation happens via `<leader>gw` worktree switching instead.
 """
 
 import concurrent.futures
@@ -297,21 +295,6 @@ def expand_targets(folders: list, block_workspace: bool = False) -> list:
 
 
 # ---------------------------------------------------------------------------
-# go.work regeneration
-# ---------------------------------------------------------------------------
-def regen_go_work(workspace_dir: Path, repos: list) -> None:
-    if not has_cmd("go"):
-        info("go not installed, skipping go.work")
-        return
-    if not (workspace_dir / "go.work").exists():
-        run(["go", "work", "init"], cwd=workspace_dir)
-    for repo in repos:
-        if (workspace_dir / repo / "go.mod").is_file():
-            run(["go", "work", "use", f"./{repo}"], cwd=workspace_dir)
-    info(f"go.work at {workspace_dir}/go.work")
-
-
-# ---------------------------------------------------------------------------
 # Default-mode context detection:
 #   PWD has workspace.yml → PWD is the workspace dir; root is grandparent.
 #   PWD's basename is lpworkspaces → root is its parent.
@@ -332,40 +315,6 @@ def resolve_default_context(pwd: Path, name_flag: str):
     repo_root = pwd.parent if pwd.name == WS_CONTAINER else pwd
     workspace_folder = name_flag.replace("/", "_")
     return repo_root / WS_CONTAINER / workspace_folder, repo_root, name_flag
-
-
-# ---------------------------------------------------------------------------
-# sync mode: purely path-based.
-# ---------------------------------------------------------------------------
-def cmd_sync(folder: str) -> int:
-    path = Path(folder)
-    if not path.is_dir():
-        die(f"not a directory: {folder}")
-    workspace_dir = path.resolve()
-    yml = workspace_dir / "workspace.yml"
-    if not yml.is_file():
-        die(f"no workspace.yml at {workspace_dir} (not a workspace)")
-
-    data = read_manifest(yml)
-    branch = data["branch_name"] or "(unknown)"
-
-    heading("go.work")
-    regen_go_work(workspace_dir, data["repos"])
-
-    heading("go work sync")
-    if not has_cmd("go"):
-        fail("go not installed, cannot sync")
-        return 1
-    proc = run(["go", "work", "sync"], cwd=workspace_dir, capture=False)
-    if proc.returncode != 0:
-        fail("go work sync failed")
-        return 1
-    ok("synced")
-
-    heading("summary")
-    info(f"workspace: {BOLD}{workspace_dir}{RESET}")
-    info(f"branch:    {BOLD}{branch}{RESET}")
-    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -783,9 +732,6 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             fail("worktree add failed")
             failed += 1
 
-    heading("go.work")
-    regen_go_work(workspace_dir, read_manifest(yml)["repos"])
-
     heading("summary")
     info(f"workspace: {BOLD}{workspace_dir}{RESET}")
     info(f"branch:    {BOLD}{branch}{RESET}")
@@ -801,7 +747,6 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
 USAGE = """\
 Usage:
   mkws [--name <name>] [--branch <branch>] [--add <repo>...]
-  mkws sync [<folder>]
   mkws pull [<folder>...]
   mkws master [<folder>...]
   mkws rebase [<folder>...]
@@ -810,13 +755,6 @@ Usage:
 Modes:
   (default)  Create or extend a workspace. Run from the root folder that
              contains the source repos, or from inside a workspace dir.
-  sync       Regenerate go.work and run `go work sync` for a workspace folder.
-             Takes an optional folder path (relative or absolute); defaults
-             to $PWD. The folder must contain a workspace.yml.
-             Examples:
-               mkws sync                     # sync $PWD
-               mkws sync ./lpworkspaces/myws # sync a relative path
-               mkws sync /abs/path/to/ws     # sync an absolute path
   pull       `git pull --ff-only` on the currently checked-out branch of every
              matching repo. Takes any number of folder args (absolute, relative,
              or a bare name under $PWD). Each arg is either a git repo (pulled
@@ -892,14 +830,7 @@ def parse_args(argv):
 
     if argv and not argv[0].startswith("-"):
         sub = argv[0]
-        if sub == "sync":
-            mode = "sync"
-            argv.pop(0)
-            if argv and not argv[0].startswith("-"):
-                target_path = argv.pop(0)
-            else:
-                target_path = os.getcwd()
-        elif sub == "pull":
+        if sub == "pull":
             mode = "pull"
             argv.pop(0)
             while argv and not argv[0].startswith("-"):
@@ -957,10 +888,6 @@ def main() -> None:
 
     mode, name, branch, repos, target_path, target_paths = parse_args(sys.argv[1:])
 
-    if mode == "sync":
-        if repos or branch or name:
-            die("'sync' takes a folder path only; --add/--branch/--name are not accepted")
-        sys.exit(cmd_sync(target_path))
     if mode == "pull":
         if repos or branch or name:
             die("'pull' takes folder path(s) only; --add/--branch/--name are not accepted")

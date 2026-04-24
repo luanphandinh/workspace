@@ -1,6 +1,6 @@
 ---
 name: "luanphan-workspace"
-description: "Use when the user wants to create, extend, sync, or inspect a multi-repo git-worktree workspace. Drives the `mkws` command to bootstrap a new workspace with a shared branch, add repos to an existing workspace (from either the root or from inside the workspace), run `go work sync` to sync Go module deps, or read a workspace manifest (workspace.yml). Works in any folder containing multiple git repos as siblings."
+description: "Use when the user wants to create, extend, or inspect a multi-repo git-worktree workspace. Drives the `mkws` command to bootstrap a new workspace with a shared branch, add repos to an existing workspace (from either the root or from inside the workspace), or read a workspace manifest (workspace.yml). Works in any folder containing multiple git repos as siblings. Does not touch go.work — per-module semantics (GOWORK=off) is the default here; cross-module navigation uses `<leader>gw` worktree switching instead."
 ---
 
 # About you
@@ -8,20 +8,21 @@ description: "Use when the user wants to create, extend, sync, or inspect a mult
 - You are a very cost efficient engineer, you don't want to waste too much tokens, so your response is extremely concise.
 
 # What this skill does
-Drives `mkws` (installed on `$PATH`) to manage multi-repo git-worktree workspaces. The command always operates on `$PWD` — whichever folder you run it from is the "root", and its sibling git repos are the pool of candidates. A workspace is a subfolder of that root containing one worktree per repo, all on the same branch, plus a `workspace.yml` manifest and a generated `go.work`.
+Drives `mkws` (installed on `$PATH`) to manage multi-repo git-worktree workspaces. The command always operates on `$PWD` — whichever folder you run it from is the "root", and its sibling git repos are the pool of candidates. A workspace is a subfolder of that root containing one worktree per repo, all on the same branch, plus a `workspace.yml` manifest.
+
+**Go note:** `mkws` does NOT create a `go.work`. Per-module semantics (`GOWORK=off`) is the standard; the `bin/go` wrapper and gopls `cmd_env` both force `GOWORK=off` so tests/diagnostics run against each module's own deps. For cross-module navigation, use `<leader>gw` to switch worktrees instead of stitching modules with `go.work`.
 
 # Command interface
 ```
 mkws [--name <name>] [--branch <branch>] [--add <repo>...]
-mkws sync [<folder>]
 mkws pull [<folder>...]
 mkws master [<folder>...]
+mkws rebase [<folder>...]
 mkws drop <folder>
 ```
 - `--name` — workspace folder name. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). `/` in the name becomes `_` in the folder.
 - `--branch` — required on first invocation (when no `workspace.yml` yet). Optional on later invocations; if passed, must match the yml exactly.
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
-- `sync` — subcommand. Regenerates `go.work` from the yml and runs `go work sync`. Takes an optional positional **folder path** (relative or absolute); defaults to `$PWD`. The folder must contain a `workspace.yml`. Rejects `--add`, `--branch`, and `--name` — sync is purely path-based.
 - `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders. Rejects `--add`, `--branch`, `--name`.
   Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull ./lpworkspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
 - `master` — subcommand. For every matching repo: `git clean -d -f`, optional `git checkout -- .` to discard local changes (only runs when dirty), switch to master (fallback main), and `git pull --ff-only`. **Destructive** to uncommitted work. Accepts the same folder-args form as `pull`. **BLOCKED when any target folder itself contains a `workspace.yml`** — running it in a workspace would wipe feature-branch state across the worktrees. Rejects `--add`, `--branch`, `--name`.
@@ -76,19 +77,6 @@ mkws --add C
 
 Either way, do NOT pass `--branch` — it's read from the yml.
 
-## Sync Go deps
-User intent: "sync deps", "run go work sync", "pull module deps into the workspace". `mkws sync` is path-based:
-```
-# sync the workspace at $PWD (must be a workspace folder):
-cd <root>/lpworkspaces/<name>
-mkws sync
-
-# sync a specific folder from anywhere (relative or absolute path):
-mkws sync ./lpworkspaces/<name>
-mkws sync /abs/path/to/<root>/lpworkspaces/<name>
-```
-All forms regenerate `go.work` from the yml and run `go work sync`. The target folder must contain a `workspace.yml`. Requires `go` on PATH.
-
 ## Pull latest
 User intent: "refresh the repos", "pull latest", "bring all worktrees up to date", "update all source repos to master". `mkws pull` walks the immediate subfolders and runs `git pull --ff-only` on each git repo it finds, using that repo's own currently checked-out branch.
 ```
@@ -131,9 +119,8 @@ Source repos are siblings of the root and have `.git` as a **directory** (worktr
 - Repos already in the yml are reported and skipped — not an error.
 - Missing repos print an error but the run continues.
 - Per-repo branch resolution: check out the existing branch; if absent, `git fetch origin` then create the new branch from `origin/master` (fallback `origin/main`, then local `master`/`main` if no remote).
-- `go.work` is regenerated from the yml on every run. Safe to re-run.
 - If a worktree path exists on disk but isn't in the yml, it's recorded in the yml and skipped (no re-clone).
-- `sync` and `--add` are separate operations. Adding repos does **not** auto-run `go work sync`; the user must call `mkws sync` explicitly when they want deps synced.
+- `mkws` does NOT create a `go.work`. Per-module semantics is the norm (tests and gopls run with `GOWORK=off`); cross-module navigation happens via `<leader>gw` worktree switching.
 
 # Before you run
 Gather these from the user if unclear — don't guess:
@@ -145,7 +132,7 @@ Gather these from the user if unclear — don't guess:
 4. **Repos** — which ones? If vague ("the usual", "all of them"), ask and offer a glob listing of candidates.
 
 # After you run
-Report the workspace path, the branch, and the added/skipped/failed summary. If the user will work in Go, point out that `go.work` is at `<root>/lpworkspaces/<name>/go.work`.
+Report the workspace path, the branch, and the added/skipped/failed summary.
 
 # Troubleshooting
 - `mkws: command not found` — run `make install-workspace-path` from the workspace repo root, then start a new shell (or `source ~/.zshrc`).
