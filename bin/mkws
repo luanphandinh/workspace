@@ -444,20 +444,92 @@ def cmd_master(folders: list) -> int:
 
 
 # ---------------------------------------------------------------------------
-# rebase mode: for every matching repo on a feature branch, bring in the
-# latest master/main via merge. Runs SERIAL (unlike pull/master) because a
-# merge conflict needs the user's attention — parallel output would hide it.
+# Shared rebase helper used by both `mkws rebase` and `mkws sync`.
 #
-# Flow per repo:
-#   1. If working tree is dirty, `git stash push` (tracked so we can pop).
-#   2. `git fetch origin <base>`  (non-zero → pop stash, halt)
-#   3. `git merge origin/<base>`
-#        - clean merge   → pop stash, continue to next repo
-#        - conflict      → STOP entirely. Do NOT auto-abort. Leave the
-#                          conflict + stash so the user can resolve; print
-#                          the exact resolve-and-finish instructions.
-#        - other failure → `git merge --abort`, pop stash, halt.
-# Already-on-base branches are skipped (no-op).
+# Flow:
+#   1. Detect base (master/main) and current branch. Skip repos on base,
+#      detached, or without a base branch.
+#   2. If working tree is dirty, `git stash push -u` (untracked included).
+#   3. `git fetch origin <base>` (non-zero → pop stash, return "failed")
+#   4. `git merge --no-edit origin/<base>`
+#        - clean merge   → pop stash, return "rebased"
+#        - conflict      → leave the merge + stash in place, print resolve
+#                          instructions, return "conflict"
+#        - other failure → `git merge --abort`, pop stash, return "failed"
+#
+# Returns one of:
+#   "rebased"  — merge succeeded
+#   "already"  — already on base, nothing to do (informational; not a failure)
+#   "skipped"  — no base branch or detached HEAD
+#   "failed"   — non-conflict failure; state restored; caller should halt
+#   "conflict" — merge conflict; state left in place; caller MUST halt
+# ---------------------------------------------------------------------------
+def _rebase_one(sub: Path) -> str:
+    base = detect_base(sub)
+    if base is None:
+        warn("no master/main branch, skipping rebase")
+        return "skipped"
+
+    cur = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
+    cur_branch = cur.stdout.strip() if cur.returncode == 0 else ""
+    if not cur_branch or cur_branch == "HEAD":
+        warn("detached HEAD, skipping rebase")
+        return "skipped"
+    if cur_branch == base:
+        info(f"already on {base}, skipping rebase")
+        return "already"
+
+    stashed = False
+    status = run(["git", "-C", str(sub), "status", "--porcelain"])
+    if status.stdout.strip():
+        info("git stash push -u (autosaving local changes)")
+        sp = run(["git", "-C", str(sub), "stash", "push", "-u", "-m", "mkws rebase autostash"])
+        if sp.returncode != 0:
+            fail("stash failed")
+            return "failed"
+        stashed = True
+
+    def pop_stash():
+        if not stashed:
+            return
+        info("git stash pop")
+        pp = run(["git", "-C", str(sub), "stash", "pop"])
+        if pp.returncode != 0:
+            warn("stash pop had conflicts — resolve manually")
+
+    info(f"git fetch origin {base}")
+    fp = run(["git", "-C", str(sub), "fetch", "origin", base])
+    if fp.returncode != 0:
+        fail("fetch failed")
+        pop_stash()
+        return "failed"
+
+    info(f"git merge origin/{base} (into {cur_branch})")
+    mp = run(["git", "-C", str(sub), "merge", "--no-edit", f"origin/{base}"], capture=False)
+    if mp.returncode == 0:
+        ok(f"merged origin/{base} into {cur_branch}")
+        pop_stash()
+        return "rebased"
+
+    unmerged = run(["git", "-C", str(sub), "ls-files", "--unmerged"])
+    if unmerged.stdout.strip():
+        heading(f"CONFLICT in {sub.name}")
+        warn(f"merge conflict — resolve manually in {sub}")
+        info("  1. fix conflicted files")
+        info("  2. git add <files> && git commit")
+        if stashed:
+            info(f"  3. {BOLD}git stash pop{RESET} (your pre-rebase changes are in the stash)")
+        return "conflict"
+
+    fail("merge failed (non-conflict)")
+    run(["git", "-C", str(sub), "merge", "--abort"])
+    pop_stash()
+    return "failed"
+
+
+# ---------------------------------------------------------------------------
+# rebase mode: bring every matching repo's feature branch up to master/main
+# via merge. Serial, halts on conflict. Uses `_rebase_one` above.
 # ---------------------------------------------------------------------------
 def cmd_rebase(folders: list) -> int:
     repos = expand_targets(folders)
@@ -471,74 +543,18 @@ def cmd_rebase(folders: list) -> int:
 
     for sub in repos:
         heading(sub.name)
-
-        base = detect_base(sub)
-        if base is None:
-            warn("no master/main branch, skipping")
-            skipped += 1
-            continue
-
-        cur = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
-        cur_branch = cur.stdout.strip() if cur.returncode == 0 else ""
-        if not cur_branch or cur_branch == "HEAD":
-            warn("detached HEAD, skipping")
-            skipped += 1
-            continue
-        if cur_branch == base:
-            info(f"already on {base}, skipping")
-            skipped += 1
-            continue
-
-        # Stash if dirty so the merge sees a clean tree. Use -u so untracked
-        # files are saved too — the default `git stash push` ignores them
-        # and we'd end up with nothing in the stash for a pop to restore.
-        stashed = False
-        status = run(["git", "-C", str(sub), "status", "--porcelain"])
-        if status.stdout.strip():
-            info("git stash push -u (autosaving local changes)")
-            sp = run(["git", "-C", str(sub), "stash", "push", "-u", "-m", "mkws rebase autostash"])
-            if sp.returncode != 0:
-                fail("stash failed")
-                failed += 1
-                return 1
-            stashed = True
-
-        def pop_stash():
-            if not stashed:
-                return True
-            info("git stash pop")
-            pp = run(["git", "-C", str(sub), "stash", "pop"])
-            if pp.returncode == 0:
-                return True
-            warn("stash pop had conflicts — resolve manually")
-            return False
-
-        info(f"git fetch origin {base}")
-        fp = run(["git", "-C", str(sub), "fetch", "origin", base])
-        if fp.returncode != 0:
-            fail("fetch failed")
-            pop_stash()
-            failed += 1
-            return 1
-
-        info(f"git merge origin/{base} (into {cur_branch})")
-        mp = run(["git", "-C", str(sub), "merge", "--no-edit", f"origin/{base}"], capture=False)
-        if mp.returncode == 0:
-            ok(f"merged origin/{base} into {cur_branch}")
-            pop_stash()
+        status = _rebase_one(sub)
+        if status == "rebased":
             rebased += 1
-            continue
-
-        # Merge failed. Conflict or other?
-        unmerged = run(["git", "-C", str(sub), "ls-files", "--unmerged"])
-        if unmerged.stdout.strip():
-            # Conflict path — leave everything in place for the user.
-            heading(f"CONFLICT in {sub.name}")
-            warn(f"merge conflict — resolve manually in {sub}")
-            info("  1. fix conflicted files")
-            info("  2. git add <files> && git commit")
-            if stashed:
-                info(f"  3. {BOLD}git stash pop{RESET} (your pre-rebase changes are in the stash)")
+        elif status in ("already", "skipped"):
+            skipped += 1
+        elif status == "failed":
+            failed += 1
+            heading("summary")
+            info(f"rebased: {rebased}, skipped: {skipped}, failed: 1")
+            info(f"halted at: {BOLD}{sub.name}{RESET}")
+            return 1
+        elif status == "conflict":
             info("")
             info("halted; other repos not processed")
             heading("summary")
@@ -546,17 +562,147 @@ def cmd_rebase(folders: list) -> int:
             info(f"halted at: {BOLD}{sub.name}{RESET}")
             return 1
 
-        # Non-conflict failure (shouldn't normally happen) — revert cleanly.
-        fail("merge failed (non-conflict)")
-        run(["git", "-C", str(sub), "merge", "--abort"])
-        pop_stash()
-        failed += 1
-        return 1
-
     heading("summary")
     color = GREEN if failed == 0 else YELLOW
     info(f"rebased: {color}{rebased}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
     return 0 if failed == 0 else 1
+
+
+# ---------------------------------------------------------------------------
+# push mode: `git push origin HEAD` for every matching repo, in parallel.
+# Detached HEAD is skipped. Non-ff / auth failures are reported as failures
+# but don't halt — user can inspect the list and retry individually.
+# ---------------------------------------------------------------------------
+def cmd_push(folders: list) -> int:
+    repos = expand_targets(folders)
+    if not repos:
+        heading("summary")
+        info("no git repos found")
+        return 0
+
+    info(f"pushing {len(repos)} repo(s) in parallel...")
+
+    def worker(sub: Path, log: RepoLog) -> str:
+        log.heading(sub.name)
+        cur = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
+        branch = cur.stdout.strip() if cur.returncode == 0 else ""
+        if not branch or branch == "HEAD":
+            log.warn("detached HEAD, skipping")
+            return "skipped"
+        log.info(f"git push origin HEAD ({BOLD}{branch}{RESET})")
+        proc = run(["git", "-C", str(sub), "push", "origin", "HEAD"])
+        log.raw((proc.stdout or "").rstrip())
+        log.raw((proc.stderr or "").rstrip())
+        if proc.returncode == 0:
+            log.ok(f"pushed {branch}")
+            return "pushed"
+        log.fail(f"push failed for {sub.name}")
+        return "failed"
+
+    results = run_in_parallel(repos, worker)
+    pushed = sum(1 for r in results if r == "pushed")
+    skipped = sum(1 for r in results if r == "skipped")
+    failed_repos = [repos[i].name for i, r in enumerate(results) if r == "failed"]
+    failed = len(failed_repos)
+
+    heading("summary")
+    color = GREEN if failed == 0 else YELLOW
+    info(f"pushed: {color}{pushed}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
+    if failed_repos:
+        info(f"failed: {RED}{', '.join(failed_repos)}{RESET}")
+    return 0 if failed == 0 else 1
+
+
+# ---------------------------------------------------------------------------
+# sync mode: pull → rebase → push, per repo, serial. Halts on rebase
+# conflict (like `mkws rebase`). Pull/push failures are recorded but the
+# command continues to the next repo — only rebase halts the batch.
+#
+# Why serial: a conflict during rebase needs the user's attention. Parallel
+# pulls + parallel pushes would also work but would obscure which repo
+# halted.
+# ---------------------------------------------------------------------------
+def cmd_sync(folders: list) -> int:
+    repos = expand_targets(folders)
+    if not repos:
+        heading("summary")
+        info("no git repos found")
+        return 0
+
+    info(f"syncing {len(repos)} repo(s) — pull → rebase → push (serial)...")
+    synced = skipped = 0
+    pull_fails: list = []
+    push_fails: list = []
+    rebase_fails: list = []
+
+    for sub in repos:
+        heading(sub.name)
+
+        cur = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
+        cur_branch = cur.stdout.strip() if cur.returncode == 0 else ""
+        if not cur_branch or cur_branch == "HEAD":
+            warn("detached HEAD, skipping repo")
+            skipped += 1
+            continue
+
+        # 1. pull current branch (explicit `origin <branch>` — not `HEAD`, which
+        #    on the remote side resolves to the default branch, not the same-
+        #    named one). If `origin/<branch>` doesn't exist yet (brand-new
+        #    local branch), that's not a failure — we just skip straight to
+        #    the rebase+push steps so the first push creates the remote ref.
+        has_remote = run(
+            ["git", "-C", str(sub), "ls-remote", "--exit-code",
+             "--heads", "origin", cur_branch]
+        ).returncode == 0
+        if not has_remote:
+            info(f"no origin/{cur_branch} yet — skipping pull (will be created on push)")
+        else:
+            info(f"git pull --ff-only origin {BOLD}{cur_branch}{RESET}")
+            pp = run(
+                ["git", "-C", str(sub), "pull", "--ff-only", "origin", cur_branch],
+                capture=False,
+            )
+            if pp.returncode != 0:
+                fail("pull failed — skipping rebase/push for this repo")
+                pull_fails.append(sub.name)
+                continue
+
+        # 2. rebase (unless already on base)
+        status = _rebase_one(sub)
+        if status == "conflict":
+            info("")
+            info("halted; remaining repos not processed")
+            heading("summary")
+            info(f"synced: {synced}, skipped: {skipped}, halted at: {BOLD}{sub.name}{RESET} (rebase conflict)")
+            if pull_fails:
+                info(f"pull failed before halt: {RED}{', '.join(pull_fails)}{RESET}")
+            return 1
+        if status == "failed":
+            rebase_fails.append(sub.name)
+            heading("summary")
+            info(f"synced: {synced}, skipped: {skipped}, halted at: {BOLD}{sub.name}{RESET} (rebase failed)")
+            return 1
+        # "rebased", "already", "skipped" — continue to push
+
+        # 3. push
+        info(f"git push origin HEAD")
+        pushp = run(["git", "-C", str(sub), "push", "origin", "HEAD"], capture=False)
+        if pushp.returncode != 0:
+            fail("push failed")
+            push_fails.append(sub.name)
+            continue
+        ok(f"synced {cur_branch}")
+        synced += 1
+
+    heading("summary")
+    total_fail = len(pull_fails) + len(push_fails) + len(rebase_fails)
+    color = GREEN if total_fail == 0 else YELLOW
+    info(f"synced: {color}{synced}{RESET}, skipped: {skipped}, failed: {color}{total_fail}{RESET}")
+    if pull_fails:
+        info(f"pull failed: {RED}{', '.join(pull_fails)}{RESET}")
+    if push_fails:
+        info(f"push failed: {RED}{', '.join(push_fails)}{RESET}")
+    return 0 if total_fail == 0 else 1
 
 
 # ---------------------------------------------------------------------------
@@ -748,8 +894,10 @@ USAGE = """\
 Usage:
   mkws [--name <name>] [--branch <branch>] [--add <repo>...]
   mkws pull [<folder>...]
+  mkws push [<folder>...]
   mkws master [<folder>...]
   mkws rebase [<folder>...]
+  mkws sync [<folder>...]
   mkws drop <folder>
 
 Modes:
@@ -776,6 +924,12 @@ Modes:
                mkws master                      # all source repos under $PWD
                mkws master repo-a repo-b        # two specific repos
                mkws master /abs/path/to/root
+  push       `git push origin HEAD` on the current branch of every matching
+             repo. Parallel. Detached HEAD is skipped. Non-ff / auth failures
+             are reported at the end; the batch does not halt.
+             Examples:
+               mkws push                     # push every repo under $PWD
+               mkws push repo-a repo-b       # two specific repos
   rebase     For every matching repo on a feature branch: stash dirty edits,
              `git fetch origin <base>`, `git merge origin/<base>` into the
              current branch, then pop the stash. Runs serial (conflicts need
@@ -788,6 +942,14 @@ Modes:
                mkws rebase                   # merge master into every feature
                                              #   branch in $PWD's repos
                mkws rebase diamond_filter
+  sync       Composite: for every matching repo, pull the current branch,
+             rebase onto master (skipped if already on master/main), then
+             push. Serial. Rebase conflicts halt the whole run with the same
+             instructions as `mkws rebase`. Pull/push failures for one repo
+             don't halt — they're recorded and the run continues.
+             Examples:
+               mkws sync                     # pull+rebase+push every repo
+               mkws sync diamond_filter      # just one repo
   drop       Remove every worktree listed in the workspace, prune the source
              repos, and delete the workspace folder itself. DESTRUCTIVE —
              uncommitted work in the worktrees is lost (runs `git worktree
@@ -832,6 +994,16 @@ def parse_args(argv):
         sub = argv[0]
         if sub == "pull":
             mode = "pull"
+            argv.pop(0)
+            while argv and not argv[0].startswith("-"):
+                target_paths.append(argv.pop(0))
+        elif sub == "push":
+            mode = "push"
+            argv.pop(0)
+            while argv and not argv[0].startswith("-"):
+                target_paths.append(argv.pop(0))
+        elif sub == "sync":
+            mode = "sync"
             argv.pop(0)
             while argv and not argv[0].startswith("-"):
                 target_paths.append(argv.pop(0))
@@ -892,6 +1064,14 @@ def main() -> None:
         if repos or branch or name:
             die("'pull' takes folder path(s) only; --add/--branch/--name are not accepted")
         sys.exit(cmd_pull(target_paths))
+    if mode == "push":
+        if repos or branch or name:
+            die("'push' takes folder path(s) only; --add/--branch/--name are not accepted")
+        sys.exit(cmd_push(target_paths))
+    if mode == "sync":
+        if repos or branch or name:
+            die("'sync' takes folder path(s) only; --add/--branch/--name are not accepted")
+        sys.exit(cmd_sync(target_paths))
     if mode == "master":
         if repos or branch or name:
             die("'master' takes folder path(s) only; --add/--branch/--name are not accepted")
