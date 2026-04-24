@@ -48,9 +48,21 @@ return function(_use)
     -- before the cd and auto-restore it after — no window bookkeeping here.
     vim.cmd("cd " .. vim.fn.fnameescape(path))
 
+    -- Stop every LSP client AND wipe the diagnostics each one published.
+    -- `client:stop()` alone leaves stale diagnostics painted on any buffer
+    -- that survives the cd (same path prefix) — then the new-worktree LSP
+    -- layers fresh diagnostics on top, so lines that are clean in the new
+    -- code still show warnings/errors from the old client's extmarks.
     for _, client in pairs(vim.lsp.get_clients()) do
+      local ok_ns, ns = pcall(vim.lsp.diagnostic.get_namespace, client.id)
+      if ok_ns and ns then
+        pcall(vim.diagnostic.reset, ns)
+      end
       client:stop()
     end
+    -- Belt-and-suspenders: non-LSP diagnostic sources (linters, etc.) scoped
+    -- to the old workspace should also go.
+    pcall(vim.diagnostic.reset)
 
     local cwd = vim.fn.getcwd()
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
