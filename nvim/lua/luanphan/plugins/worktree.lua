@@ -147,6 +147,64 @@ return function(_use)
     return nil
   end
 
+  -- Visible agent float (claude_agent / cursor_agent) for the current cwd.
+  -- Identified by: floating window + buffer carries the
+  -- `luanphan_persist_term` marker (toggleterm splits also set this marker
+  -- but they're not floating, so the relative-config check excludes them).
+  local function find_agent_float()
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local cfg = vim.api.nvim_win_get_config(win)
+      if cfg.relative and cfg.relative ~= "" then
+        local buf = vim.api.nvim_win_get_buf(win)
+        if vim.b[buf].luanphan_persist_term then
+          return win
+        end
+      end
+    end
+    return nil
+  end
+
+  local function find_tree_window()
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local buf = vim.api.nvim_win_get_buf(win)
+      if vim.bo[buf].filetype == "NvimTree" then
+        return win
+      end
+    end
+    return nil
+  end
+
+  -- Focus priority after a switch:
+  --   1. visible agent float (<leader>cc / <leader>ac), enter terminal mode
+  --   2. window showing the file we just re-opened
+  --   3. nvim-tree
+  -- If none match, focus stays wherever the last step left it.
+  local function focus_after_switch(reopened_path)
+    local agent = find_agent_float()
+    if agent then
+      pcall(vim.api.nvim_set_current_win, agent)
+      vim.defer_fn(function()
+        if vim.api.nvim_get_current_win() == agent and vim.bo.buftype == "terminal" then
+          vim.cmd("startinsert")
+        end
+      end, 10)
+      return
+    end
+    if reopened_path then
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        local buf = vim.api.nvim_win_get_buf(win)
+        if vim.api.nvim_buf_get_name(buf) == reopened_path then
+          pcall(vim.api.nvim_set_current_win, win)
+          return
+        end
+      end
+    end
+    local tree = find_tree_window()
+    if tree then
+      pcall(vim.api.nvim_set_current_win, tree)
+    end
+  end
+
   local function restore_buffers(cwd)
     local store = vim.g[BUFSTORE_KEY] or {}
     local entry = store[cwd]
@@ -360,6 +418,11 @@ return function(_use)
       end
       pcall(tree_api.tree.change_root, cwd)
     end
+
+    -- 9. Focus priority: agent float > reopened active file > nvim-tree.
+    --    The terminal_agent's DirChanged hook may have already opened the
+    --    agent float for this cwd; if so we want focus to land there.
+    focus_after_switch(reopened)
 
     local msg = "Switched to worktree: " .. path
     if restored > 0 then
