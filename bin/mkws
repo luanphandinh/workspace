@@ -682,9 +682,17 @@ def cmd_sync(folders: list) -> int:
             heading("summary")
             info(f"synced: {synced}, skipped: {skipped}, halted at: {BOLD}{sub.name}{RESET} (rebase failed)")
             return 1
-        # "rebased", "already", "skipped" — continue to push
 
-        # 3. push
+        # 3. push — but NOT when we're on master/main. Pushing master from a
+        # dev machine is almost never what you want; the feature-branch sync
+        # flow is what this command is really for. `_rebase_one` returns
+        # "already" exactly when cur_branch equals the base branch.
+        if status == "already":
+            info(f"on {BOLD}{cur_branch}{RESET}, skipping push")
+            ok(f"synced {cur_branch} (pull only)")
+            synced += 1
+            continue
+
         info(f"git push origin HEAD")
         pushp = run(["git", "-C", str(sub), "push", "origin", "HEAD"], capture=False)
         if pushp.returncode != 0:
