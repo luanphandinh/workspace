@@ -201,34 +201,34 @@ local function tree_padding()
   return tree_w + 1
 end
 
---- Float placement per `config.float_position`:
----   "full"  — centered in the editor area, 80% width × 95% height.
----             Padded right of the tree when tree is open AND an editor
----             window is also visible (see `tree_padding`).
----   "left"  — full-height, 45% width, anchored at col 0 (tree-padding is
----             intentionally ignored — the dock covers the tree).
----   "right" — full-height, 45% width, anchored at the right edge.
+--- Float placement per `config.float_position`. ALL positions now use the
+--- full available height (no top/bottom padding) — the only thing that
+--- varies is horizontal placement and width.
+---   "full"  — 80% width centered inside (cols - tree_pad). Padded right
+---             of nvim-tree when tree is open AND an editor window is
+---             visible (see `tree_padding`).
+---   "left"  — 45% width anchored at col 0 (tree-padding intentionally
+---             ignored — the dock covers the tree).
+---   "right" — 45% width anchored at the right edge.
 --- @return { row: integer, col: integer, width: integer, height: integer }
 local function get_float_geometry()
   local pos = config.float_position or "full"
   local lines_avail = math.max(1, vim.o.lines - vim.o.cmdheight)
+  local h = math.max(10, lines_avail - 2)  -- full height; -2 for borders
 
   if pos == "left" or pos == "right" then
     local cols = vim.o.columns
     local w = math.max(30, math.min(math.floor(cols * 0.45), cols - 2))
-    local h = math.max(10, lines_avail - 2)
     local col = (pos == "left") and 0 or math.max(0, cols - w - 2)
     return { row = 0, col = col, width = w, height = h }
   end
 
-  -- full: centered inside (vim.o.columns - tree_pad), 80% × 95%
+  -- full: width 80% of (cols - tree_pad), centered horizontally; full height
   local pad = tree_padding()
   local cols = vim.o.columns - pad
   local w = math.max(40, math.min(math.floor(cols * 0.80), cols - 2))
-  local h = math.max(10, math.min(math.floor(lines_avail * 0.95), lines_avail - 2))
   local col = math.max(pad, pad + math.floor((cols - w) / 2))
-  local row = math.max(0, math.floor((lines_avail - h) / 2))
-  return { row = row, col = col, width = w, height = h }
+  return { row = 0, col = col, width = w, height = h }
 end
 
 local function apply_split_size()
