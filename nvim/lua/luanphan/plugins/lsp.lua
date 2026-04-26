@@ -178,7 +178,7 @@ return function(use)
     end,
   }
 
-  -- Autocompletion and suggestion
+  -- Autocompletion and suggestion.
   use {
     "hrsh7th/nvim-cmp",
     requires = {

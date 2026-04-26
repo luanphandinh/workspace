@@ -1,7 +1,3 @@
--- Cursor CLI agent — thin wrapper over |terminal_agent.lua|.
--- Prerequisite: `agent` on PATH (https://cursor.com/docs/cli/overview).
--- Maps: <leader>cc toggle, <leader>cf focus, <leader>ca send selection.
-
 return require("luanphan.terminal_agent").create({
   g_bufnr = "cursor_agent_bufnr",
   notify_prefix = "cursor_agent",
