@@ -1,9 +1,15 @@
 #!/bin/sh
-# ~/bin/go — inject -toolexec=init-patcher and debug gcflags into `go test`.
-
+# ~/bin/go — wrapper around the real `go` binary. For `go test`:
+#   * always runs with GOWORK=off (per-module deps; see workspace notes)
+#   * optionally injects -toolexec / -gcflags read from env
+#
+# Both flags are env-driven only — no hardcoded defaults — so a clean shell
+# gives a transparent `go test` (still GOWORK=off). Set the LP_GO_* vars in
+# your shell rc / direnv to opt in. The LP_ prefix keeps these out of Go's
+# own GO* namespace (GOFLAGS / GOWORK / GOTOOLCHAIN / etc.).
 REAL_GO="/usr/local/go/bin/go"
-PATCHER="init-patcher"
-GCFLAGS="all=-N -l"
+PATCHER="${LP_GO_PATCHER}"
+GCFLAGS="${LP_GO_GCFLAGS}"
 
 log() {
 	printf 'go wrapper execute "%s"\n' "$*" >&2
@@ -23,8 +29,10 @@ if [ "$1" = "test" ]; then
     done
 
     set -- "$@"
-    [ "$have_toolexec" = "0" ] && set -- "-toolexec=$PATCHER" "$@"
-    [ "$have_gcflags"  = "0" ] && set -- "-gcflags=$GCFLAGS"  "$@"
+    # Inject only when (a) the user didn't already pass the flag AND
+    # (b) the override isn't an explicit empty string (which means "off").
+    [ "$have_toolexec" = "0" ] && [ -n "$PATCHER" ] && set -- "-toolexec=$PATCHER" "$@"
+    [ "$have_gcflags"  = "0" ] && [ -n "$GCFLAGS" ] && set -- "-gcflags=$GCFLAGS"  "$@"
 
     log "GOWORK=off $REAL_GO test $*"
     exec env GOWORK=off "$REAL_GO" test "$@"
