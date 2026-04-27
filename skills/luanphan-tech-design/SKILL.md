@@ -20,35 +20,113 @@ description: "Tech Design Genius"
 - Then you ask user to create a new file under the "tech_doc" folder for mapping the microservices and their codebase, and save the mapping in that file, so that you can refer to it later when you need to make design changes to the microservices
 - Naming can be "<tech_doc_name>_mapping.md", and the content should be in table format, with two columns, one for microservices name and one for codebase folder name, and each row is a mapping between a microservice and its codebase folder
 - Mapping information should NOT BE INCLUDED in the tech design document
-## Solution exploration (BEFORE the deep-dive design)
-- This phase runs **once**, right after the mapping is confirmed and **before** the per-microservice deep-dive in the design loop below.
-- Goal: surface 2–4 **genuinely different** candidate solutions to the problem (not minor variations), let the user choose, and only then commit a deep-dive to the picked one. Saves wasted exploration when the user has a strong preference, and forces you to compare architectural shapes instead of jumping at the first idea.
-- For each candidate, summarise in **one or two sentences** what the approach is. Keep it shape-only (e.g. "denormalise into the X service vs. read-through cache via Y vs. async replication via CDC") — leave IDL/code details for the deep-dive.
-- Present the candidates as a **single Markdown table** with columns:
-  | # | Approach | Key idea | Pros | Cons | Risk / unknowns |
-  Each row should be terse — bullets allowed inside cells but keep them tight. Pros/Cons should focus on the dimensions that matter for THIS problem (latency, blast radius, migration cost, ops burden, vendor lock-in, etc.) rather than generic platitudes.
-- Save the candidates section into the tech design doc under a heading `## Candidate solutions` so the rejected options stay in the doc as a record of what was considered.
-- Then **stop and ask the user to pick** by number (e.g. "Pick 1, 2, or 3 to deep-dive — or tell me what's missing and I'll add another candidate").
-- If the user requests a new candidate, edit the table (add a row, never silently drop existing rows) and re-confirm.
-- Only after the user picks a number do you proceed to the design loop. Add a `## Chosen solution` heading capturing which candidate was picked and a one-line "why".
-## Design loop
-- This is **important** as the system design can be complex
-- Keep asking for feedback until getting approval from the engineer
-- Even after getting approval, if there is any new information or change in the requirement, you should start the feedback loop again and update the design accordingly, the design is never final until the feature or system is implemented and working as expected in production
-- IMPORTANT: the first round of design requires you to do everything, from the second design loop onward, only drill in which part need to be changed based on the feedback, don't redo the whole design unless necessary, this is to save time and also to make sure the design is efficient and not over engineered
-### Identify independent microservices
-- Scope: only the **chosen** candidate from the Solution exploration phase. Don't deep-dive rejected candidates.
-- For each microservices that is involved, create FOCUSED AGENT TASK
-- Then dispatch those FOCUSED AGENT TASK in PARRALLEL to explore the codebase and make design changes accordingly, then report back to main agent with the design changes and the reason behind it.
-#### External client design
-- If the tech design requires external client, create another section called "External Client" and provide detail of related changes to that client
-- For new API (doens't matter the protocol), provide full detail of request and response format
-- For existing API (doesn't matter the protocol), only provide the diff field of request and response format
-#### Internal technical design
-- Each mircoservices design change should be under its own section
-- For each microservices design change, provide the following details:
-  - IDL changes, provide the diff only
-  - Logic change, provide simple logic change explaination, don't over do it, just provide the main point of the logic change, create bullet point list format if necessary
-  - Code change should be short and only include the diff part, focus on the main cases and not all the edge cases
-  - Any potential impact on other parts of the system and how to mitigate it
+## Required document structure (mandatory — 8 numbered sections, in order)
+The tech doc MUST follow this exact section structure. Do not reorder, do not skip; if a section doesn't apply, leave it with a one-line "N/A — <why>" rather than removing it.
+
+### 1. Overview & Background
+- 2–6 sentences: what the problem is, why we're solving it now, what the success criterion is.
+- Include any existing-system context the reader needs to understand the rest of the doc.
+
+### 2. Links
+Placeholder block — the user fills in URLs later. Pre-populate with empty bullets:
+```
+- Tracking ticket:
+- PRD / requirement doc:
+- Related MRs:
+- Monitoring / dashboards:
+- Other:
+```
+
+### 3. Design Decisions
+This is **plural — many small decisions**, not one big A/B/C fork. Each decision answers ONE concrete question that came up while designing. Surface every non-trivial decision the work touches (caching strategy, data sync, schema shape, error semantics, rollout strategy, etc.).
+
+For EACH decision:
+- A short heading phrased as the question or the resolution (e.g. `### 3.4 Cache invalidation strategy` or `### 3.4 Use TTL-based invalidation for the price cache`).
+- 1–2 sentences of context on why this decision needs to be made.
+- A small Markdown table of options considered:
+  | # | Option | Pros | Cons | Risk / unknowns |
+  Keep it tight — bullets allowed inside cells, focus on the dimensions that matter for THIS decision (latency, blast radius, migration cost, ops burden, etc.).
+- A `**Decision:** <chosen option>` line followed by a one-sentence "why".
+
+The point: "Design Decisions" is a record of **what we resolved and why**, not a single architecture-wide pick. Each decision is independent — you may pick option 1 in §3.1 and option 3 in §3.2.
+
+Surface decisions as you discover them; if more come up during the per-microservice deep-dive (§6), add them here, not inline in §6.
+
+### 4. Preferred Solution Overview
+- A coherent picture of the design that **stitches together every "Decision" picked in §3** into one architecture.
+- Required: at least one mermaid diagram (chosen solution overview — `flowchart` of services + primary data flow). Add `sequenceDiagram` blocks for non-trivial cross-service interactions (≥2 hops, async, retries).
+- Then a short prose summary: how requests flow, what each microservice's role is, where data lives, how failures are handled. 5–15 lines.
+
+### 5. External Technical Design
+- Changes affecting external clients (mobile apps, web frontends, partner integrations, public APIs).
+- For NEW APIs: full request/response schema.
+- For existing APIs: ONLY the diff fields.
+- If no external changes: write `N/A — internal-only change` and move on.
+
+### 6. Internal Technical Design
+- One sub-section per microservice that needs changes. Use the codebase mapping from the `<tech_doc_name>_mapping.md` file as the canonical service list.
+- For each microservice section:
+  - **IDL changes** — diff only.
+  - **Logic change** — bullet points, just the main points (not every edge case).
+  - **Code change** — short diff focused on the main paths.
+  - **Impact + mitigation** — what other parts of the system this could affect, and how to mitigate.
+
+### 7. Effort & Estimation
+A small Markdown table:
+| Microservice / task | Owner | Effort (d) | Notes |
+- Effort in person-days. Round to halves.
+- Owner can be `TBD` if unassigned.
+
+### 8. Release Checklist
+A bullet list of pre-release / post-release gates. Default starter set (trim/expand to fit):
+```
+- [ ] All MRs merged to feature branch
+- [ ] Code reviewed (≥1 approval per service)
+- [ ] Unit + integration tests green
+- [ ] Testing env deployment + verification
+- [ ] Monitoring dashboards / alerts updated
+- [ ] Feature flag / Dynamic config rollout plan documented
+- [ ] Rollback plan documented
+- [ ] Production deployment
+- [ ] Post-deploy verification (logs / metrics)
+```
+
+## Diagrams — ASCII in chat, mermaid in tech doc
+- Every non-trivial design needs a diagram. Required at two points:
+  1. **§4 Preferred Solution Overview** — a top-level service map + primary data flow that reflects EVERY decision picked in §3. This is the single most important diagram in the doc.
+  2. **§6 Internal Technical Design** — a sequence diagram for each non-trivial cross-service interaction (≥2 hops, async edges, retries). Trivial single-RPC calls don't need one.
+- **In the terminal chat**: render the diagram as **plain ASCII art** — boxes drawn with `+--+` / `|`, arrows with `-->`, `<--`, `==>` (sync vs async), labels next to arrows. Sequence diagrams as left-to-right swim lanes with time flowing top-to-bottom. The chat client doesn't render mermaid, so source code is harder to scan than ASCII; the ASCII IS the readable overview.
+- **In the tech doc**: save the same diagram as a fenced ```mermaid``` block (`flowchart` / `sequenceDiagram` / `classDiagram` as appropriate). Mermaid-aware viewers (Lark, GitHub markdown, VS Code preview, Obsidian, etc.) render it inline.
+- **Keep both representations in sync**: ASCII and mermaid encode the same nodes/edges/labels. If you change one, change the other.
+- **Keep diagrams concise**: 5–10 nodes max per diagram. If you need more, split into multiple smaller diagrams (one per concern) rather than one mega-diagram.
+- **Update on revisions**: when the design changes, update the mermaid in the tech doc AND re-emit the updated ASCII in chat. Stale diagrams are worse than no diagram.
+
+ASCII style example (chat):
+```
++----------+    request     +-------------+
+| Service X| -------------> |  Service Y  |
++----------+                +------+------+
+                                   |
+                             cache hit?
+                                   |
+                         +---------+---------+
+                         v                   v
+                   +-----+-----+       +-----+-----+
+                   |   Redis   |       |   MySQL   |
+                   +-----------+       +-----------+
+```
+
+Mermaid equivalent (tech doc):
+```mermaid
+flowchart LR
+  ServiceX -->|request| ServiceY
+  ServiceY -->|cache hit| Redis
+  ServiceY -->|miss| MySQL
+```
+## Design loop (workflow — how to fill the 8 sections)
+- The doc is **never final** until the feature is in production. Keep asking for feedback after every revision.
+- **First round**: produce a draft of all 8 sections in order. §3 (Design Decisions) typically has the most back-and-forth — surface every non-trivial decision you can think of, with options and a recommendation, and let the user steer.
+- **Subsequent rounds**: only revise the sections that actually changed. Don't rewrite §1/§2/§7/§8 unless the requirement itself shifted. New questions that arise during §6 deep-dive get added to §3 (not inline in §6).
+- **For §6 (Internal Technical Design)**: dispatch one FOCUSED AGENT TASK per microservice IN PARALLEL — each agent explores its repo, computes the IDL/logic/code diff, and reports back. The main agent stitches the results into §6.
+- Use the codebase mapping from `<tech_doc_name>_mapping.md` as the canonical microservice list — never guess service boundaries.
 
