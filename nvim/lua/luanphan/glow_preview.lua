@@ -64,11 +64,15 @@ function M.toggle()
     end
   end
 
+  -- Geometry mirrors `terminal_agent.lua`'s "full" mode: full height (no
+  -- top/bottom padding), 80% width centered inside `cols - pad` so the
+  -- float scales/shifts when nvim-tree is open without overlapping it.
   local bufnr = vim.api.nvim_create_buf(false, true)
+  local lines_avail = math.max(1, vim.o.lines - vim.o.cmdheight)
   local avail_cols = vim.o.columns - pad
-  local w = math.max(40, math.floor(avail_cols * 0.88))
-  local h = math.max(12, math.floor(vim.o.lines * 0.88))
-  local row = math.max(0, math.floor((vim.o.lines - h) / 2))
+  local w = math.max(40, math.min(math.floor(avail_cols * 0.80), avail_cols - 2))
+  local h = math.max(10, lines_avail - 2)  -- full height; -2 for borders
+  local row = 0
   local col = math.max(pad, pad + math.floor((avail_cols - w) / 2))
 
   local win_opts = {
@@ -105,14 +109,36 @@ function M.toggle()
     env = env,
   })
 
-  vim.keymap.set("n", "<leader>fp", function()
-    M.toggle()
-  end, { buffer = bufnr, silent = true, desc = "Close glow preview" })
+  -- glow renders the doc and exits — the PTY is then dead. The repo's
+  -- TermOpen autocmd (terminal.lua) put us in terminal mode while the float
+  -- was opening, and any key sent to a dead PTY causes nvim to wipe the
+  -- defunct terminal buffer. Drop to normal mode the moment glow exits so
+  -- j/k/g-g/G/etc. work as scroll commands and the preview persists until
+  -- the user closes it explicitly.
+  vim.api.nvim_create_autocmd("TermClose", {
+    buffer = bufnr,
+    once = true,
+    callback = function()
+      vim.schedule(function()
+        if vim.api.nvim_buf_is_valid(bufnr) then
+          local cur = vim.api.nvim_get_current_buf()
+          if cur == bufnr then
+            pcall(vim.cmd, "stopinsert")
+          end
+        end
+      end)
+    end,
+  })
+
+  -- Close keymaps: <leader>fp toggles, q is a fast normal-mode close.
+  local close_opts = { buffer = bufnr, silent = true, desc = "Close glow preview" }
+  vim.keymap.set("n", "<leader>fp", function() M.toggle() end, close_opts)
+  vim.keymap.set("n", "q", function() M.toggle() end, close_opts)
   vim.keymap.set(
     "t",
     "<leader>fp",
     "<C-\\><C-n><cmd>lua require('luanphan.glow_preview').toggle()<cr>",
-    { buffer = bufnr, silent = true, desc = "Close glow preview" }
+    close_opts
   )
 end
 
