@@ -239,6 +239,11 @@ end, { desc = "Save file" })
 
 vim.keymap.set("n", "<leader>fS", "<cmd>wa<cr>", { desc = "Save all files" })
 
+-- Force-reload the current buffer from disk. `:edit!` re-reads the file and
+-- discards any unsaved in-buffer changes — useful when an external tool
+-- (formatter, codegen, git checkout) has rewritten the file on disk.
+vim.keymap.set("n", "<leader>fl", "<cmd>edit!<cr>", { desc = "Reload File Content From Disk" })
+
 vim.keymap.set("n", "<leader>ft", function()
   local pickers = require("telescope.pickers")
   local finders = require("telescope.finders")

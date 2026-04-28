@@ -39,18 +39,52 @@ Placeholder block — the user fills in URLs later. Pre-populate with empty bull
 
 ### 3. Design Decisions
 This is **plural — many small decisions**, not one big A/B/C fork. Each decision answers ONE concrete question that came up while designing. Surface every non-trivial decision the work touches (caching strategy, data sync, schema shape, error semantics, rollout strategy, etc.).
-
-For EACH decision:
-- A short heading phrased as the question or the resolution (e.g. `### 3.4 Cache invalidation strategy` or `### 3.4 Use TTL-based invalidation for the price cache`).
-- 1–2 sentences of context on why this decision needs to be made.
-- A small Markdown table of options considered:
-  | # | Option | Pros | Cons | Risk / unknowns |
-  Keep it tight — bullets allowed inside cells, focus on the dimensions that matter for THIS decision (latency, blast radius, migration cost, ops burden, etc.).
-- A `**Decision:** <chosen option>` line followed by a one-sentence "why".
-
-The point: "Design Decisions" is a record of **what we resolved and why**, not a single architecture-wide pick. Each decision is independent — you may pick option 1 in §3.1 and option 3 in §3.2.
-
+The point: "Design Decisions" is a record of **what we resolved and why**, not a single architecture-wide pick. Each decision is independent — you may pick Option 1 in §3.1 and Option 3 in §3.2.
 Surface decisions as you discover them; if more come up during the per-microservice deep-dive (§6), add them here, not inline in §6.
+#### 3.0 Summary
+A single Markdown table listing every decision in §3 with its picked option. At-a-glance follow-up reference — readers should grok the full set of choices without scrolling through every sub-section. Per-section `**Decision:**` lines are **NOT** repeated; they live only here.
+```
+| #   | Decision                    | Picked option             | Why                                       |
+| --- | --------------------------- | ------------------------- | ----------------------------------------- |
+| 3.1 | Cache invalidation strategy | Option 1 — TTL-based      | Simple, ops already understand the knob   |
+| 3.2 | Hot-path read storage       | Option 2 — Denormalised   | Avoids cross-service join on hot path     |
+| 3.3 | Rollout strategy            | Option 1 — Shadow→cutover | Lets us catch parity bugs before flipping |
+```
+Single-line cells only — no `<br>`, no nested bullets. "Picked option" is `Option <N> — <short name>` matching the per-section numbering. "Why" is one short sentence; if it can't fit on one line, split the decision.
+#### 3.1 .. 3.N — per decision
+For EACH decision after the summary:
+- A short heading phrased as the question or the resolution (e.g. `### 3.4 Cache invalidation strategy`).
+- 1–2 sentences of context on why this decision needs to be made.
+- **Strict numbered options**: every alternative is `**Option <N> — <short name>**`, starting at 1, contiguous, no gaps. No other naming scheme (no "Variant A", no bare bold names). The picked one is suffixed with **`(Preferred)`**.
+- **Per-option layout**, in this exact order: `- Logic:` (bullet list summarising the behaviour — what it does, where, when, in what order — 2–5 bullets), then `- Pros:`, then `- Cons:`, then `- Risk / unknowns:`. Logic is mandatory; if a Pros/Cons/Risk line is empty, drop it rather than leaving it blank.
+- **No `**Decision:**` line at the bottom** — that info lives in §3.0's summary table. Don't duplicate.
+Example:
+```
+### 3.4 Cache invalidation strategy
+Context: read traffic on the hot endpoint is high; we need to keep the cache fresh after upstream writes without exploding ops.
+**Option 1 — TTL-based (Preferred)**
+- Logic:
+  - Reads hit cache; on miss, fetch from origin and store with a fixed TTL
+  - Writers do nothing extra — they only update the source of truth
+  - Entries expire on age; next read after expiry repopulates
+- Pros:
+  - Simple, ops already understand the knob
+  - No coordination between writers and cache
+- Cons:
+  - Stale window of up to TTL after a write
+- Risk / unknowns: stale-window severity for critical updates
+**Option 2 — Pub/sub invalidation**
+- Logic:
+  - Writers publish an invalidation event on the source-of-truth update
+  - Cache subscribers consume the event and evict the affected key
+  - Reads after eviction repopulate from origin
+- Pros:
+  - Near-zero staleness
+- Cons:
+  - New broker dependency
+  - Lost-message handling adds complexity
+- Risk / unknowns: failure mode when subscriber lags
+```
 
 ### 4. Preferred Solution Overview
 - A coherent picture of the design that **stitches together every "Decision" picked in §3** into one architecture.
