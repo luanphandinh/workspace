@@ -89,6 +89,7 @@ Context: read traffic on the hot endpoint is high; we need to keep the cache fre
 ### 4. Preferred Solution Overview
 - A coherent picture of the design that **stitches together every "Decision" picked in §3** into one architecture.
 - Required: at least one mermaid diagram (chosen solution overview — `flowchart` of services + primary data flow). Add `sequenceDiagram` blocks for non-trivial cross-service interactions (≥2 hops, async, retries).
+- **Mark NEW parts in green** in the §4 flowchart — every new node (service, store, queue, table) and every new edge introduced by this design must be styled green so reviewers see the delta against today's architecture at a glance. See the "Highlight what's NEW" rule under "Diagrams" for the exact mermaid `classDef`/`linkStyle` snippet.
 - Then a short prose summary: how requests flow, what each microservice's role is, where data lives, how failures are handled. 5–15 lines.
 
 ### 5. External Technical Design
@@ -134,7 +135,7 @@ A bullet list of pre-release / post-release gates. Default starter set (trim/exp
 - **Keep both representations in sync**: ASCII and mermaid encode the same nodes/edges/labels. If you change one, change the other.
 - **Keep diagrams concise**: 5–10 nodes max per diagram. If you need more, split into multiple smaller diagrams (one per concern) rather than one mega-diagram.
 - **Update on revisions**: when the design changes, update the mermaid in the tech doc AND re-emit the updated ASCII in chat. Stale diagrams are worse than no diagram.
-
+- **Highlight what's NEW**: every diagram MUST visually distinguish new pieces (new services, new tables, new edges, new fields) from existing ones. Mermaid: green fill + green text via a `new` class (`classDef new fill:#bbf7d0,stroke:#16a34a,color:#16a34a,font-weight:bold`) applied to new nodes — this also colors any `(NEW)` marker inside the node label green; new edges styled with `linkStyle <idx> stroke:#16a34a,stroke-width:2px,color:#16a34a` (the trailing `color:` greens the edge-label text including its `(NEW)` tag). Tag new nodes/edges with a trailing `(NEW)` marker in BOTH ASCII and mermaid (use parentheses, never `[NEW]` — `[...]` is mermaid node syntax and breaks the parser inside edge labels). The `(NEW)` text must render green wherever it appears. Existing pieces stay default-styled — the contrast is the point.
 ASCII style example (chat):
 ```
 +----------+    request     +-------------+
@@ -146,16 +147,18 @@ ASCII style example (chat):
                          +---------+---------+
                          v                   v
                    +-----+-----+       +-----+-----+
-                   |   Redis   |       |   MySQL   |
+                   |Redis (NEW)|       |   MySQL   |
                    +-----------+       +-----------+
 ```
-
 Mermaid equivalent (tech doc):
 ```mermaid
 flowchart LR
   ServiceX -->|request| ServiceY
   ServiceY -->|cache hit| Redis
   ServiceY -->|miss| MySQL
+  classDef new fill:#bbf7d0,stroke:#16a34a,color:#16a34a,font-weight:bold
+  class Redis new
+  linkStyle 1 stroke:#16a34a,stroke-width:2px,color:#16a34a
 ```
 ## Design loop (workflow — how to fill the 8 sections)
 - The doc is **never final** until the feature is in production. Keep asking for feedback after every revision.
