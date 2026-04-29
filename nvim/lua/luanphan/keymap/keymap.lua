@@ -18,6 +18,8 @@ vim.o.incsearch = true
 vim.o.cursorline = true
 vim.o.scrolloff = 8
 vim.o.signcolumn = "yes" -- always show the signcolumn on the left side
+vim.o.wrap = false       -- no soft-wrap by default; toggle with <leader>tw
+vim.o.linebreak = true   -- when wrap is on, break at word boundaries, not mid-word
 
 -- Statusline with LSP progress
 vim.o.laststatus = 2
@@ -243,6 +245,11 @@ vim.keymap.set("n", "<leader>fS", "<cmd>wa<cr>", { desc = "Save all files" })
 -- discards any unsaved in-buffer changes — useful when an external tool
 -- (formatter, codegen, git checkout) has rewritten the file on disk.
 vim.keymap.set("n", "<leader>fl", "<cmd>edit!<cr>", { desc = "Reload File Content From Disk" })
+
+vim.keymap.set("n", "<leader>tw", function()
+  vim.wo.wrap = not vim.wo.wrap
+  vim.notify("wrap: " .. (vim.wo.wrap and "on" or "off"), vim.log.levels.INFO)
+end, { desc = "Toggle word wrap (window-local)" })
 
 vim.keymap.set("n", "<leader>ft", function()
   local pickers = require("telescope.pickers")
