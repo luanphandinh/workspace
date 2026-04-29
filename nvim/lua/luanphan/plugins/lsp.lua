@@ -102,10 +102,50 @@ return function(use)
       })
 
       -- :LspInfo was removed from nvim-lspconfig with the vim.lsp.config
-      -- migration. Shim to the supported equivalent.
+      -- migration. Shim to `:checkhealth vim.lsp`, but render it in a
+      -- centered floating panel (q to close) instead of a new tab — the
+      -- default tab disrupts window layout and pollutes the buffer list.
       vim.api.nvim_create_user_command("LspInfo", function()
+        local prev_tab = vim.api.nvim_get_current_tabpage()
         vim.cmd("checkhealth vim.lsp")
-      end, { desc = "Show LSP client info (alias for :checkhealth vim.lsp)" })
+        local src_buf = vim.api.nvim_get_current_buf()
+        local lines = vim.api.nvim_buf_get_lines(src_buf, 0, -1, false)
+        if vim.api.nvim_get_current_tabpage() ~= prev_tab then
+          pcall(vim.cmd, "tabclose")
+        else
+          pcall(vim.cmd, "close")
+        end
+
+        local buf = vim.api.nvim_create_buf(false, true)
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+        vim.bo[buf].filetype = "checkhealth"
+        vim.bo[buf].modifiable = false
+        vim.bo[buf].bufhidden = "wipe"
+
+        local w = math.floor(vim.o.columns * 0.8)
+        local h = math.max(10, vim.o.lines - vim.o.cmdheight - 4)
+        local row = math.floor(((vim.o.lines - vim.o.cmdheight) - h) / 2)
+        local col = math.floor((vim.o.columns - w) / 2)
+        local win = vim.api.nvim_open_win(buf, true, {
+          relative = "editor",
+          width = w,
+          height = h,
+          row = row,
+          col = col,
+          style = "minimal",
+          border = "rounded",
+          title = " LSP Info ",
+          title_pos = "center",
+        })
+
+        local function close()
+          if vim.api.nvim_win_is_valid(win) then
+            vim.api.nvim_win_close(win, true)
+          end
+        end
+        vim.keymap.set("n", "q", close, { buffer = buf, silent = true, desc = "Close LspInfo float" })
+        vim.keymap.set("n", "<Esc>", close, { buffer = buf, silent = true, desc = "Close LspInfo float" })
+      end, { desc = "Show LSP client info in a floating panel (q to close)" })
 
       -- Use Neovim 0.11+ vim.lsp.config API
       -- Use custom gopls binary from env var, fallback to "gopls"
