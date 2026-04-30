@@ -4,12 +4,55 @@
 #   * optionally injects -toolexec / -gcflags read from env
 #
 # Both flags are env-driven only — no hardcoded defaults — so a clean shell
-# gives a transparent `go test` (still GOWORK=off). Set the LP_GO_* vars in
+# gives a transparent `go test` (still GOWORK=off). Set the LOCAL_GO_* vars in
 # your shell rc / direnv to opt in. The LOCAL_ prefix keeps these out of Go's
 # own GO* namespace (GOFLAGS / GOWORK / GOTOOLCHAIN / etc.).
-REAL_GO="/usr/local/go/bin/go"
+#
+# Real-go discovery: behave exactly like the shell would resolve `go` if this
+# wrapper didn't exist. We do that by removing the wrapper's own directory
+# from $PATH and running `command -v go` against the scrubbed PATH — same
+# precedence rules as a normal lookup, skip-self only.
+# $LOCAL_REAL_GO still takes precedence as an explicit override.
+
 PATCHER="${LOCAL_GO_PATCHER}"
 GCFLAGS="${LOCAL_GO_GCFLAGS}"
+
+# Canonicalise the wrapper's own directory once so the PATH scrubbing below
+# matches whether $PATH lists a symlink or the real path.
+WRAPPER_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+
+scrub_self_from_path() {
+	# Echo $PATH minus any entry that resolves to $WRAPPER_DIR.
+	OLD_IFS="$IFS"
+	IFS=:
+	out=""
+	for dir in $PATH; do
+		[ -z "$dir" ] && continue
+		resolved="$(cd "$dir" 2>/dev/null && pwd -P)" || resolved="$dir"
+		[ "$resolved" = "$WRAPPER_DIR" ] && continue
+		if [ -z "$out" ]; then
+			out="$dir"
+		else
+			out="$out:$dir"
+		fi
+	done
+	IFS="$OLD_IFS"
+	printf '%s\n' "$out"
+}
+
+find_real_go() {
+	if [ -n "$LOCAL_REAL_GO" ] && [ -x "$LOCAL_REAL_GO" ]; then
+		printf '%s\n' "$LOCAL_REAL_GO"
+		return 0
+	fi
+	PATH="$(scrub_self_from_path)" command -v go 2>/dev/null
+}
+
+REAL_GO="$(find_real_go)"
+if [ -z "$REAL_GO" ]; then
+	echo "go wrapper: real go not found. Set LOCAL_REAL_GO=/path/to/go or install go on PATH." >&2
+	exit 127
+fi
 
 log() {
 	printf 'go wrapper execute "%s"\n' "$*" >&2
