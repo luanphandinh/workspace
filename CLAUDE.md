@@ -22,11 +22,11 @@ make skills-sync
 
 ## Shared scripts (bin)
 
-- CLI helpers live under `bin/` (e.g. `mkws`). The `install-workspace-path` target copies `./bin/.` into `~/bin/` and ensures `export PATH="$HOME/bin:$PATH"` is in `~/.zshrc`.
+- CLI helpers live under `bin/` (e.g. `mkws`). The `install-workspace` target copies `./bin/.` into `~/bin/` and ensures `export PATH="$HOME/bin:$PATH"` is in `~/.zshrc`.
 - After adding or editing anything under `bin/**`, run:
 
 ```bash
-make install-workspace-path
+make install-workspace
 ```
 
 ## Tmux / Alacritty

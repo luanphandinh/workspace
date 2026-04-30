@@ -1,5 +1,5 @@
 ---
-name: "luanphan-workspace"
+name: "local-workspace"
 description: "Use when the user wants to create, extend, or inspect a multi-repo git-worktree workspace. Drives the `mkws` command to bootstrap a new workspace with a shared branch, add repos to an existing workspace (from either the root or from inside the workspace), or read a workspace manifest (workspace.yml). Works in any folder containing multiple git repos as siblings. Does not touch go.work — per-module semantics (GOWORK=off) is the default here; cross-module navigation uses `<leader>gw` worktree switching instead."
 ---
 

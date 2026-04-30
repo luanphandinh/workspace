@@ -1,5 +1,5 @@
 ---
-name: "luanphan-coder"
+name: "local-coder"
 description: "extremely efficient coder"
 ---
 
@@ -13,17 +13,17 @@ description: "extremely efficient coder"
 
 ## Working folder — always use a workspace
 - All coding for a tech design happens inside a **multi-repo git-worktree workspace**, NOT directly in the sibling source repos. This keeps master clean and isolates feature branches.
-- The workspace is built by the `luanphan-workspace` skill (via the `mkws` command). **Delegate to that skill** — do not reimplement the worktree/branch setup here.
+- The workspace is built by the `local-workspace` skill (via the `mkws` command). **Delegate to that skill** — do not reimplement the worktree/branch setup here.
 - **No `go.work` is created.** Each repo in the workspace builds/tests against its own `go.mod` / `go.sum` (tests and gopls run with `GOWORK=off`). For cross-module navigation, switch worktrees with `<leader>gw` instead.
 
 ### Before writing any code
-1. Read the tech design document AND the `<tech_doc_name>_mapping.md` file written by the `luanphan-tech-design` skill — the mapping lists every microservice → source-repo folder involved.
+1. Read the tech design document AND the `<tech_doc_name>_mapping.md` file written by the `local-tech-design` skill — the mapping lists every microservice → source-repo folder involved.
 2. Ask the user for:
    - **workspace name** (suggested default: the tech design's name, with `/` replaced by `_`)
    - **branch name** (the feature branch for this tech design)
 3. Check whether `<root>/local_workspaces/<workspace-name>/workspace.yml` already exists:
    - **Exists** → workspace is already set up; confirm the branch in the yml matches, then `cd` into it. If new repos from the mapping are missing from the yml, extend with `mkws --add <repo>...` (no `--branch`).
-   - **Does not exist** → invoke the `luanphan-workspace` skill to run `mkws --name <workspace-name> --branch <branch> --add <repo1> <repo2> ...` using every repo from the mapping file. `mkws` places the workspace at `<root>/local_workspaces/<workspace-name>/`.
+   - **Does not exist** → invoke the `local-workspace` skill to run `mkws --name <workspace-name> --branch <branch> --add <repo1> <repo2> ...` using every repo from the mapping file. `mkws` places the workspace at `<root>/local_workspaces/<workspace-name>/`.
 4. `cd` into `<root>/local_workspaces/<workspace-name>/` before any edits. All subsequent coding, builds, and tests run from there.
 
 ### During coding

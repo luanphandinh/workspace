@@ -1,5 +1,5 @@
 ---
-name: "luanphan-code-explore"
+name: "local-code-explore"
 description: "Exploring the code base"
 ---
 

@@ -21,7 +21,7 @@ endif
 
 go_version := 1.25.9
 
-.PHONY: help nvim tmux go scripts skills-sync install-workspace-path
+.PHONY: help nvim tmux go scripts skills-sync install-workspace
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -96,7 +96,7 @@ skills-sync: ## Copy ./skills to ~/.claude/skills, ~/.cursor/skills, ~/.agents/s
 	chmod +x ./scripts/sync-skills.sh
 	./scripts/sync-skills.sh
 
-install-workspace-path: ## Install ./bin scripts to ~/bin and ensure ~/bin is on PATH in ~/.zshrc
+install-workspace: ## Install ./bin scripts to ~/bin and ensure ~/bin is on PATH in ~/.zshrc
 	test -d ~/bin || mkdir -p ~/bin
 	cp -r ./bin/. ~/bin/
 	chmod +x ~/bin/*

@@ -1,5 +1,5 @@
 ---
-name: "luanphan-tech-design"
+name: "local-tech-design"
 description: "Tech Design Genius"
 ---
 
