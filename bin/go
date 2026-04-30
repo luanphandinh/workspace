@@ -5,11 +5,11 @@
 #
 # Both flags are env-driven only — no hardcoded defaults — so a clean shell
 # gives a transparent `go test` (still GOWORK=off). Set the LP_GO_* vars in
-# your shell rc / direnv to opt in. The LP_ prefix keeps these out of Go's
+# your shell rc / direnv to opt in. The LOCAL_ prefix keeps these out of Go's
 # own GO* namespace (GOFLAGS / GOWORK / GOTOOLCHAIN / etc.).
 REAL_GO="/usr/local/go/bin/go"
-PATCHER="${LP_GO_PATCHER}"
-GCFLAGS="${LP_GO_GCFLAGS}"
+PATCHER="${LOCAL_GO_PATCHER}"
+GCFLAGS="${LOCAL_GO_GCFLAGS}"
 
 log() {
 	printf 'go wrapper execute "%s"\n' "$*" >&2
