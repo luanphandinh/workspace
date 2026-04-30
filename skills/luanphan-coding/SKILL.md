@@ -21,14 +21,14 @@ description: "extremely efficient coder"
 2. Ask the user for:
    - **workspace name** (suggested default: the tech design's name, with `/` replaced by `_`)
    - **branch name** (the feature branch for this tech design)
-3. Check whether `<root>/lpworkspaces/<workspace-name>/workspace.yml` already exists:
+3. Check whether `<root>/local_workspaces/<workspace-name>/workspace.yml` already exists:
    - **Exists** → workspace is already set up; confirm the branch in the yml matches, then `cd` into it. If new repos from the mapping are missing from the yml, extend with `mkws --add <repo>...` (no `--branch`).
-   - **Does not exist** → invoke the `luanphan-workspace` skill to run `mkws --name <workspace-name> --branch <branch> --add <repo1> <repo2> ...` using every repo from the mapping file. `mkws` places the workspace at `<root>/lpworkspaces/<workspace-name>/`.
-4. `cd` into `<root>/lpworkspaces/<workspace-name>/` before any edits. All subsequent coding, builds, and tests run from there.
+   - **Does not exist** → invoke the `luanphan-workspace` skill to run `mkws --name <workspace-name> --branch <branch> --add <repo1> <repo2> ...` using every repo from the mapping file. `mkws` places the workspace at `<root>/local_workspaces/<workspace-name>/`.
+4. `cd` into `<root>/local_workspaces/<workspace-name>/` before any edits. All subsequent coding, builds, and tests run from there.
 
 ### During coding
-- Treat `<root>/lpworkspaces/<workspace-name>/<repo>/` as the canonical path for each repo's source — never edit the original sibling repo outside the workspace.
-- Commits happen on the shared branch inside each worktree. `git status` / `git commit` from inside `<root>/lpworkspaces/<workspace-name>/<repo>/` operates on that repo's worktree correctly — no special flags needed.
+- Treat `<root>/local_workspaces/<workspace-name>/<repo>/` as the canonical path for each repo's source — never edit the original sibling repo outside the workspace.
+- Commits happen on the shared branch inside each worktree. `git status` / `git commit` from inside `<root>/local_workspaces/<workspace-name>/<repo>/` operates on that repo's worktree correctly — no special flags needed.
 
 ## Testing — one sub-agent per repo, in parallel
 After changes land on a repo (unit tests, build, lint, whatever that repo uses), **dispatch one sub-agent per affected repo** to run its test suite. Do NOT run tests for all repos serially from the main agent — it wastes time and bloats the main context with test output.
@@ -41,7 +41,7 @@ After changes land on a repo (unit tests, build, lint, whatever that repo uses),
 
 ### Prompt template for the sub-agent
 ```
-Run the test suite for repo <repo-name> at <absolute-path>/lpworkspaces/<workspace-name>/<repo-name>.
+Run the test suite for repo <repo-name> at <absolute-path>/local_workspaces/<workspace-name>/<repo-name>.
 
 Command(s) to run (in order, stop on first failure):
   1. <repo-specific build cmd, e.g. `go build ./...`>

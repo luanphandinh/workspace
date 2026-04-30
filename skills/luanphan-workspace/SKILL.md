@@ -26,27 +26,27 @@ mkws drop <folder>
 - `--branch` — required on first invocation (when no `workspace.yml` yet). Optional on later invocations; if passed, must match the yml exactly.
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
 - `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders. Rejects `--add`, `--branch`, `--name`.
-  Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull ./lpworkspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
+  Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull ./local_workspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
 - `push` — subcommand. `git push origin HEAD` on the current branch of every matching repo. Parallel. Detached HEAD is skipped. Non-ff / auth failures are reported in the summary but do not halt the batch. Same folder-args form as `pull`. Rejects `--add`, `--branch`, `--name`.
 - `master` — subcommand. For every matching repo: `git clean -d -f`, optional `git checkout -- .` to discard local changes (only runs when dirty), switch to master (fallback main), and `git pull --ff-only`. **Destructive** to uncommitted work. Accepts the same folder-args form as `pull`. **BLOCKED when any target folder itself contains a `workspace.yml`** — running it in a workspace would wipe feature-branch state across the worktrees. Rejects `--add`, `--branch`, `--name`.
   Examples: `mkws master`, `mkws master repo-a repo-b`, `mkws master /abs/path/to/root`.
 - `rebase` — subcommand. For every matching repo on a feature branch: stash dirty edits (`git stash push -u`), `git fetch origin <base>`, `git merge origin/<base>` into the current branch, pop the stash. Serial — conflicts need attention. On conflict: **HALTS** — leaves the merge + stash in place, prints resolve-and-finish instructions, skips remaining repos. Non-conflict failures trigger `git merge --abort` + stash-pop. Already-on-base / detached HEAD repos are skipped. Same folder-args form as `pull`.
 - `sync` — subcommand. Composite: for every matching repo, `pull` the current branch → `rebase` onto master (skipped if already on `master`/`main`) → `push`. Serial. **Halts on rebase conflict** (same behavior as `mkws rebase`). Pull/push failures for one repo are recorded but don't halt — the run continues to the next repo. Same folder-args form as `pull`.
-- `drop` — subcommand. **Destructive.** Removes every worktree listed in the manifest via `git worktree remove --force`, prunes the source repos, and deletes the workspace folder (and the empty `lpworkspaces/` container if nothing else is left). Uncommitted work in the worktrees is lost. No confirmation prompt. Takes a required positional **folder path** (relative or absolute). Rejects `--add`, `--branch`, and `--name`.
+- `drop` — subcommand. **Destructive.** Removes every worktree listed in the manifest via `git worktree remove --force`, prunes the source repos, and deletes the workspace folder (and the empty `local_workspaces/` container if nothing else is left). Uncommitted work in the worktrees is lost. No confirmation prompt. Takes a required positional **folder path** (relative or absolute). Rejects `--add`, `--branch`, and `--name`.
 
-## Layout — all workspaces live under `lpworkspaces/`
-Every workspace is placed at `<root>/lpworkspaces/<name>/` instead of directly under the root. This keeps the root folder clean even when many workspaces accumulate. `mkws` creates the `lpworkspaces/` container on demand.
+## Layout — all workspaces live under `local_workspaces/`
+Every workspace is placed at `<root>/local_workspaces/<name>/` instead of directly under the root. This keeps the root folder clean even when many workspaces accumulate. `mkws` creates the `local_workspaces/` container on demand.
 
 ## Context detection (important!)
 `mkws` detects its context from `$PWD`:
-- If `$PWD/workspace.yml` exists → `$PWD` **is** the workspace dir; root is its **grandparent** (because the workspace lives at `<root>/lpworkspaces/<name>/`). `--name` is optional.
-- If `$PWD`'s basename is `lpworkspaces` → root is its parent. `--name` is required.
-- Otherwise → `$PWD` is the **root**; workspace goes to `$PWD/lpworkspaces/<name>/`. `--name` is required.
+- If `$PWD/workspace.yml` exists → `$PWD` **is** the workspace dir; root is its **grandparent** (because the workspace lives at `<root>/local_workspaces/<name>/`). `--name` is optional.
+- If `$PWD`'s basename is `local_workspaces` → root is its parent. `--name` is required.
+- Otherwise → `$PWD` is the **root**; workspace goes to `$PWD/local_workspaces/<name>/`. `--name` is required.
 
-This means `--add` can be run from the root, from the `lpworkspaces/` container, or from inside the workspace — `mkws` figures it out.
+This means `--add` can be run from the root, from the `local_workspaces/` container, or from inside the workspace — `mkws` figures it out.
 
 # Manifest format (workspace.yml)
-At `<root>/lpworkspaces/<name>/workspace.yml`:
+At `<root>/local_workspaces/<name>/workspace.yml`:
 ```yaml
 name: <workspace-name>
 branch_name: <branch>
@@ -76,7 +76,7 @@ mkws --name X --add C
 
 From inside the workspace (preferred if the user is already there):
 ```
-cd <root>/lpworkspaces/X
+cd <root>/local_workspaces/X
 mkws --add C
 ```
 
@@ -90,7 +90,7 @@ cd <root>
 mkws pull
 
 # inside a workspace: pulls every worktree on the shared feature branch
-cd <root>/lpworkspaces/<name>
+cd <root>/local_workspaces/<name>
 mkws pull
 
 # target any folder explicitly
@@ -109,13 +109,13 @@ mkws master
 ## Drop a workspace
 User intent: "drop workspace X", "delete the workspace", "clean up the worktrees for X", "we're done with this feature branch, wipe it". This is **destructive** — `mkws drop` removes every worktree in the manifest, prunes the source repos, and deletes the workspace folder.
 ```
-mkws drop <root>/lpworkspaces/<name>
-mkws drop ./lpworkspaces/<name>    # relative from the root
+mkws drop <root>/local_workspaces/<name>
+mkws drop ./local_workspaces/<name>    # relative from the root
 ```
 **Warn the user** before running if there may be uncommitted changes in the worktrees — `mkws drop` runs `git worktree remove --force` without a confirmation prompt, so local edits are lost. If unsure, ask the user to commit/push first (or inspect with `git -C <root>/<repo> worktree list`).
 
 ## Inspect a workspace
-Read `<root>/lpworkspaces/<name>/workspace.yml` directly. Report `name`, `branch_name`, and `repos`.
+Read `<root>/local_workspaces/<name>/workspace.yml` directly. Report `name`, `branch_name`, and `repos`.
 
 ## List candidate repos
 Source repos are siblings of the root and have `.git` as a **directory** (worktrees have `.git` as a file). Use Glob `*/.git` filtered to directories. Don't guess repo names.
@@ -131,7 +131,7 @@ Source repos are siblings of the root and have `.git` as a **directory** (worktr
 Gather these from the user if unclear — don't guess:
 1. **Root directory** — which folder contains the repos? Confirm `$PWD` is that folder.
 2. **Workspace name** — what should it be called?
-3. **Creating vs. extending?** Check whether `<root>/lpworkspaces/<name>/workspace.yml` exists.
+3. **Creating vs. extending?** Check whether `<root>/local_workspaces/<name>/workspace.yml` exists.
    - Exists → extending. No `--branch` needed; read it from the yml.
    - Doesn't exist → creating. `--branch` required; ask if not given.
 4. **Repos** — which ones? If vague ("the usual", "all of them"), ask and offer a glob listing of candidates.

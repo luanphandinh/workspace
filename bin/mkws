@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """mkws — multi-repo git-worktree workspace manager.
 
-Every workspace lives at `<root>/lpworkspaces/<name>/` and is a set of git
+Every workspace lives at `<root>/local_workspaces/<name>/` and is a set of git
 worktrees (one per source repo) all on the same feature branch, glued together
 by a small `workspace.yml` manifest. Go workspaces (`go.work`) are intentionally
 NOT created — per-module semantics (GOWORK=off everywhere) is the standard here;
@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-WS_CONTAINER = "lpworkspaces"
+WS_CONTAINER = "local_workspaces"
 
 # ---------------------------------------------------------------------------
 # Colored logging. Disabled when stdout isn't a TTY or NO_COLOR is set, so pipes
@@ -297,8 +297,8 @@ def expand_targets(folders: list, block_workspace: bool = False) -> list:
 # ---------------------------------------------------------------------------
 # Default-mode context detection:
 #   PWD has workspace.yml → PWD is the workspace dir; root is grandparent.
-#   PWD's basename is lpworkspaces → root is its parent.
-#   Otherwise → PWD is the root; workspace goes to PWD/lpworkspaces/<name>/.
+#   PWD's basename is local_workspaces → root is its parent.
+#   Otherwise → PWD is the root; workspace goes to PWD/local_workspaces/<name>/.
 # ---------------------------------------------------------------------------
 def resolve_default_context(pwd: Path, name_flag: str):
     yml = pwd / "workspace.yml"
@@ -788,7 +788,7 @@ def cmd_drop(folder: str) -> int:
     except OSError as e:
         fail(f"failed to remove {workspace_dir}: {e}")
 
-    # If the lpworkspaces container is now empty, drop it too. Best-effort —
+    # If the local_workspaces container is now empty, drop it too. Best-effort —
     # any failure is fine (container still holds other workspaces).
     container = workspace_dir.parent
     if container.is_dir() and container.name == WS_CONTAINER:
@@ -920,7 +920,7 @@ Modes:
                mkws pull                        # every repo under $PWD
                mkws pull repo-a                 # just one repo in $PWD
                mkws pull repo-a repo-b          # two repos
-               mkws pull ./lpworkspaces/myws    # every worktree in a workspace
+               mkws pull ./local_workspaces/myws    # every worktree in a workspace
                mkws pull /abs/repo-a ./repo-b   # mix absolute and relative
   master     For every matching repo: `git clean -d -f`, optional
              `git checkout -- .` to discard local changes, switch to master
@@ -963,7 +963,7 @@ Modes:
              uncommitted work in the worktrees is lost (runs `git worktree
              remove --force`). No confirmation prompt.
              Examples:
-               mkws drop ./lpworkspaces/myws
+               mkws drop ./local_workspaces/myws
                mkws drop /abs/path/to/ws
 
 Flags:
@@ -981,7 +981,7 @@ Flags:
   -h, --help          show this message
 
 Layout:
-  All workspaces live inside `$PWD/lpworkspaces/<name>/`.
+  All workspaces live inside `$PWD/local_workspaces/<name>/`.
 
 Environment:
   NO_COLOR      set to any value to disable colored output.
