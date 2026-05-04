@@ -452,13 +452,23 @@ return function(_use)
     end
     local cur = vim.fn.getcwd()
 
+    local cur_root_lines = vim.fn.systemlist({ "git", "-C", cur, "rev-parse", "--show-toplevel" })
+    local cur_root = cur
+    if vim.v.shell_error == 0 and cur_root_lines and cur_root_lines[1] then
+      cur_root = cur_root_lines[1]
+    end
+    local rel = ""
+    if cur ~= cur_root and vim.startswith(cur, cur_root .. "/") then
+      rel = cur:sub(#cur_root + 2)
+    end
+
     pickers.new({}, {
       prompt_title = "Git Worktrees",
       finder = finders.new_table({
         results = trees,
         entry_maker = function(tree)
           local ref = tree.branch or (tree.head and ("@" .. tree.head)) or "detached"
-          local marker = (tree.path == cur) and "* " or "  "
+          local marker = (tree.path == cur_root) and "* " or "  "
           local display = string.format("%s%-30s %s", marker, ref, tree.path)
           return {
             value = tree,
@@ -477,13 +487,23 @@ return function(_use)
             return
           end
           local target = sel.value.path
-          if target == cur then
+          if target == cur_root then
             vim.notify("already in this worktree", vim.log.levels.INFO)
             return
           end
+          -- Mirror the sub-path into the new worktree if it exists. Falls back
+          -- to the worktree root if the equivalent folder is missing in the
+          -- target (e.g. the nested module hasn't been added there yet).
+          local final_target = target
+          if rel ~= "" then
+            local nested = target .. "/" .. rel
+            if vim.fn.isdirectory(nested) == 1 then
+              final_target = nested
+            end
+          end
           -- Defer the switch so telescope has fully closed its float/window.
           vim.schedule(function()
-            switch_to(target)
+            switch_to(final_target)
           end)
         end)
         return true
