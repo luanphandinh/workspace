@@ -1,0 +1,27 @@
+#!/bin/sh
+# Idempotently open a pinned-sessions sidebar pane in a single window. Used
+# by tmux-pin-sidebar-toggle and by the new-window hook so sessions that
+# get new windows after the sidebar is "on" still get one automatically.
+# Usage: tmux-pin-sidebar-attach <window-id>
+set -e
+
+win="${1:-}"
+[ -z "$win" ] && exit 0
+
+# Skip if we don't currently want sidebars open.
+state="$(tmux show-options -gqv '@pin_sidebar_open' 2>/dev/null || :)"
+[ "$state" = "1" ] || exit 0
+
+# Skip if a sidebar is already tracked AND its pane still exists.
+existing="$(tmux show-options -wqv -t "$win" '@pin_sidebar_pane' 2>/dev/null || :)"
+if [ -n "$existing" ] \
+	&& tmux list-panes -t "$win" -F '#{pane_id}' 2>/dev/null | grep -Fxq "$existing"; then
+	exit 0
+fi
+
+# -hbdf : horizontal split, place to the LEFT ('b'), don't focus ('d'),
+#         FULL window-height anchored to the window edge ('f').
+# -l 22 : fixed 22-column width.
+new_pane="$(tmux split-window -hbdf -l 22 -t "$win" -P -F '#{pane_id}' \
+	"$HOME/bin/tmux-pin-sidebar")"
+tmux set-option -wt "$win" '@pin_sidebar_pane' "$new_pane"

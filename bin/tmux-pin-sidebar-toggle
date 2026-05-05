@@ -1,15 +1,16 @@
 #!/bin/sh
-# Open or close the pinned-sessions sidebar in EVERY active session's
-# currently-active window at once. State:
+# Open or close the pinned-sessions sidebar in EVERY window of EVERY
+# session. State:
 #   - server-option @pin_sidebar_open  : "1" while open, unset otherwise
 #   - window-option @pin_sidebar_pane  : tracks the sidebar pane id per window
-# Sidebar pane: 22-col fixed-width left split running ~/bin/tmux-pin-sidebar.
+# Sidebar pane: 22-col fixed-width left split, full window height (-f),
+# running ~/bin/tmux-pin-sidebar.
 set -e
 
 state="$(tmux show-options -gqv '@pin_sidebar_open' 2>/dev/null || :)"
 
 if [ "$state" = "1" ]; then
-	# --- closing: kill every sidebar pane we have on record ----------------
+	# --- closing: kill every sidebar pane we have on record ---------------
 	tmux list-windows -aF '#{window_id} #{@pin_sidebar_pane}' 2>/dev/null \
 		| awk '$2 != "" { print $1, $2 }' \
 		| while IFS= read -r line; do
@@ -25,25 +26,11 @@ if [ "$state" = "1" ]; then
 	exit 0
 fi
 
-# --- opening: split a sidebar into each session's active window ----------
-tmux list-sessions -F '#{session_id}' | while IFS= read -r sess; do
-	win="$(tmux list-windows -t "$sess" -F '#{window_id} #{window_active}' \
-		| awk '$2 == 1 { print $1; exit }')"
-	[ -z "$win" ] && continue
-	# Skip windows that already have a tracked sidebar (re-open is idempotent).
-	existing="$(tmux show-options -wqv -t "$win" '@pin_sidebar_pane' 2>/dev/null || :)"
-	if [ -n "$existing" ] \
-		&& tmux list-panes -t "$win" -F '#{pane_id}' 2>/dev/null | grep -Fxq "$existing"; then
-		continue
-	fi
-	# -hbdf : horizontal split, place to the left ('b'), don't focus ('d'),
-	#         and FULL-height anchored to the window edge ('f') so the
-	#         sidebar always lives on the far-left of the WINDOW regardless
-	#         of which pane was focused at toggle time.
-	# -l 22: fixed 22-column width
-	new_pane="$(tmux split-window -hbdf -l 22 -t "$win" -P -F '#{pane_id}' \
-		"$HOME/bin/tmux-pin-sidebar")"
-	tmux set-option -wt "$win" '@pin_sidebar_pane' "$new_pane"
-done
-
+# --- opening: split a sidebar into every window of every session ---------
+# Set the global flag FIRST so tmux-pin-sidebar-attach (which gates on it)
+# actually creates panes when we call it below.
 tmux set-option -g '@pin_sidebar_open' '1'
+
+tmux list-windows -aF '#{window_id}' 2>/dev/null | while IFS= read -r win; do
+	"$HOME/bin/tmux-pin-sidebar-attach" "$win" >/dev/null 2>&1 || :
+done
