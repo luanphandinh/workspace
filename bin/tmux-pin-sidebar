@@ -14,7 +14,7 @@ render() {
 	# Atomic flush by emitting all bytes back-to-back via a single subshell.
 	{
 		printf '\033[H\033[2J\033[3J'
-		printf '── pinned sessions ──\n\n'
+		printf '── pinned ──\n\n'
 
 		if [ -s "$PIN_FILE" ]; then
 			current="$(tmux display-message -p '#{session_id}' 2>/dev/null)"
@@ -45,7 +45,7 @@ render() {
 			printf '(none — prefix+a to pin)\n'
 		fi
 
-		printf '\n──\nprefix+a pin/unpin\nprefix+A toggle sidebar\nprefix+e clear all\n⌥⌘↑/↓ cycle\n⌥⌘←/→ window\n'
+		printf '\n──\nprefix+a pin/unpin\nprefix+A toggle\nprefix+e clear all\n⌥⌘↑/↓ cycle\n⌥⌘←/→ window\n'
 	}
 }
 
