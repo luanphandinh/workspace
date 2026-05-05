@@ -17,6 +17,26 @@ RESET="$(printf '\033[0m')"
 # previous (longer) render is wiped without blanking the whole pane.
 EOL="$(printf '\033[K')"
 
+# Sidebar geometry. Keep in sync with `-l 22` in tmux-pin-sidebar-attach.
+WIDTH=22
+# A 22-col `─` rule used as section divider. Generated once at startup.
+RULE="$(awk -v w="$WIDTH" 'BEGIN { for (i=0; i<w; i++) printf "─"; print "" }')"
+# Header line: `─── pinned ───` centered to WIDTH. " pinned " = 8 visible
+# cols → side count = (WIDTH - 8) / 2 each. WIDTH must be even for clean
+# centering; if odd, the right side gets the extra dash.
+HEADER="$(awk -v w="$WIDTH" '
+	BEGIN {
+		label = " pinned "
+		side  = int((w - length(label)) / 2)
+		extra = (w - length(label)) - 2 * side
+		out   = ""
+		for (i=0; i<side;        i++) out = out "─"
+		out = out label
+		for (i=0; i<side+extra;  i++) out = out "─"
+		print out
+	}
+')"
+
 render() {
 	{
 		# Hide cursor + go home. NO full-screen clear — that's the source
@@ -25,13 +45,17 @@ render() {
 		# trailing lines from a previous longer render.
 		printf '\033[?25l\033[H'
 
-		printf '── pinned ──%s\n%s\n' "$EOL" "$EOL"
+		# Centered header rule + blank spacer.
+		printf '%s%s\n%s\n' "$HEADER" "$EOL" "$EOL"
 
 		if [ ! -s "$PIN_FILE" ]; then
 			printf '(none — prefix+a to pin)%s\n' "$EOL"
 		else
 			current="$(tmux display-message -p '#{session_id}' 2>/dev/null)"
 			mapping="$(tmux list-sessions -F '#{session_id}|#{session_name}' 2>/dev/null || :)"
+
+			# Top rule for the first session block.
+			printf '%s%s\n' "$RULE" "$EOL"
 
 			while IFS= read -r entry; do
 				[ -z "$entry" ] && continue
@@ -51,21 +75,28 @@ render() {
 
 				if [ -z "$id" ] || [ -z "$name" ]; then
 					printf "${DIM}✗ %s (dead)${RESET}%s\n" "${name:-$entry}" "$EOL"
+					printf '%s%s\n' "$RULE" "$EOL"
 					continue
 				fi
 
 				# Session header — green if this is THIS sidebar's session.
 				if [ "$id" = "$current" ]; then
 					printf "${GREEN}▸ %s${RESET}%s\n" "$name" "$EOL"
+					is_current=1
 				else
 					printf '  %s%s\n' "$name" "$EOL"
+					is_current=0
 				fi
 
 				# Children — windows in that session. 4-col indent. Last
-				# entry uses `└`, others use `├`. The active window in each
-				# session gets a green ▸ in place of the tree char.
+				# entry uses `└`, others use `├`. The active window uses
+				# `▸` regardless of session. GREEN colour is reserved for
+				# the active window of the CURRENT session (i.e. parent is
+				# green AND window is focused) — every other line is white.
 				tmux list-windows -t "$id" -F '#{window_active}|#{window_name}' 2>/dev/null \
-					| awk -F'|' -v g="$GREEN" -v r="$RESET" -v eol="$EOL" '
+					| awk -F'|' \
+						-v g="$GREEN" -v r="$RESET" -v eol="$EOL" \
+						-v cur="$is_current" '
 						{ lines[NR] = $0 }
 						END {
 							n = NR
@@ -74,13 +105,18 @@ render() {
 								active = p[1]
 								wname  = p[2]
 								tree   = (i == n) ? "└" : "├"
-								if (active == 1)
+								if (active == 1 && cur == 1)
 									printf "    %s▸ %s%s%s\n", g, wname, r, eol
+								else if (active == 1)
+									printf "    ▸ %s%s\n", wname, eol
 								else
 									printf "    %s %s%s\n", tree, wname, eol
 							}
 						}
 					'
+
+				# Bottom rule for this session = top rule for the next.
+				printf '%s%s\n' "$RULE" "$EOL"
 			done < "$PIN_FILE"
 		fi
 
