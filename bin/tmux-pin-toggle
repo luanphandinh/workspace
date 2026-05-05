@@ -1,26 +1,48 @@
 #!/bin/sh
 # Toggle pin status of the current tmux session.
-# Pin list lives at $HOME/.config/tmux/pinned-sessions, one session per line.
+# Pin file stores session IDs ($1, $2 …) — stable across rename. Display
+# names are looked up dynamically by the sidebar / cycle scripts.
 set -e
 
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
 mkdir -p "$(dirname "$PIN_FILE")"
 [ -f "$PIN_FILE" ] || : > "$PIN_FILE"
 
-session="$(tmux display-message -p '#S')"
-
-if grep -Fxq -- "$session" "$PIN_FILE" 2>/dev/null; then
+# --- one-shot migration: any legacy name-based entries → ids -------------
+# Older versions of this script stored session names. Walk the file once;
+# rewrite each non-`$N` line to the matching session id (or drop it if no
+# live session has that name).
+if [ -s "$PIN_FILE" ] && grep -qv '^\$[0-9]\+' "$PIN_FILE"; then
+	mapping="$(tmux list-sessions -F '#{session_name}|#{session_id}' 2>/dev/null || :)"
 	tmp="$(mktemp)"
-	grep -Fxv -- "$session" "$PIN_FILE" > "$tmp" 2>/dev/null || :
+	while IFS= read -r line; do
+		[ -z "$line" ] && continue
+		case "$line" in
+			'$'[0-9]*) printf '%s\n' "$line" >> "$tmp" ;;
+			*)
+				id="$(printf '%s\n' "$mapping" \
+					| awk -F'|' -v n="$line" '$1==n{print $2; exit}')"
+				[ -n "$id" ] && printf '%s\n' "$id" >> "$tmp"
+				;;
+		esac
+	done < "$PIN_FILE"
 	mv "$tmp" "$PIN_FILE"
-	tmux display-message "unpinned: $session"
-else
-	printf '%s\n' "$session" >> "$PIN_FILE"
-	tmux display-message "pinned: $session"
 fi
 
-# If a sidebar pane is open in any window, force-redraw it so the pin/unpin
-# is reflected immediately (otherwise the user waits for the next refresh).
+id="$(tmux display-message -p '#{session_id}')"
+name="$(tmux display-message -p '#S')"
+
+if grep -Fxq -- "$id" "$PIN_FILE" 2>/dev/null; then
+	tmp="$(mktemp)"
+	grep -Fxv -- "$id" "$PIN_FILE" > "$tmp" 2>/dev/null || :
+	mv "$tmp" "$PIN_FILE"
+	tmux display-message "unpinned: $name"
+else
+	printf '%s\n' "$id" >> "$PIN_FILE"
+	tmux display-message "pinned: $name"
+fi
+
+# Force any open sidebar pane(s) to redraw immediately.
 tmux list-windows -aF '#{window_id} #{@pin_sidebar_pane}' 2>/dev/null \
 	| awk '$2 != "" { print $2 }' \
 	| while IFS= read -r p; do

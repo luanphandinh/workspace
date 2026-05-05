@@ -1,42 +1,64 @@
 #!/bin/sh
 # Switch the attached client to the next/previous pinned session (wraps).
 # Usage: tmux-pin-cycle [next|prev]   (default: next)
-# If the current session isn't pinned, jumps to the first pinned entry.
+# Pin file holds session IDs; legacy name entries are still resolved against
+# live sessions before cycling. Dead pins are skipped.
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
 DIR="${1:-next}"
 
 if [ ! -s "$PIN_FILE" ]; then
-	tmux display-message "no pinned sessions (prefix+h to pin)"
+	tmux display-message "no pinned sessions (prefix+a to pin)"
 	exit 0
 fi
 
-current="$(tmux display-message -p '#S')"
+# Materialise the live id|name map to a tempfile — BSD awk on macOS rejects
+# multi-line strings passed via `-v`, so we read it as a real input file.
+mapfile="$(mktemp -t pinmap.XXXXXX)"
+trap 'rm -f "$mapfile"' EXIT
+tmux list-sessions -F '#{session_id}|#{session_name}' > "$mapfile" 2>/dev/null
 
-target="$(awk -v cur="$current" -v dir="$DIR" '
+# Build an ordered list of live session ids that match each pin entry.
+ordered="$(awk -F'|' '
+	NR == FNR {
+		if ($1 != "") {
+			live_id[$1] = $1
+			name_to_id[$2] = $1
+		}
+		next
+	}
+	NF == 0 { next }
+	{
+		if ($0 in live_id)         print live_id[$0]
+		else if ($0 in name_to_id) print name_to_id[$0]
+	}
+' "$mapfile" "$PIN_FILE")"
+
+if [ -z "$ordered" ]; then
+	tmux display-message "no pinned sessions are alive"
+	exit 0
+fi
+
+cur="$(tmux display-message -p '#{session_id}')"
+
+target="$(printf '%s\n' "$ordered" | awk -v cur="$cur" -v dir="$DIR" '
 	{ lines[NR] = $0 }
 	END {
 		n = NR
-		if (n == 0) exit
 		for (i = 1; i <= n; i++) if (lines[i] == cur) { idx = i; break }
 		if (!idx) { print lines[1]; exit }
-		if (dir == "prev") {
-			j = idx - 1
-			if (j < 1) j = n
-		} else {
-			j = (idx % n) + 1
-		}
+		if (dir == "prev") { j = idx - 1; if (j < 1) j = n }
+		else               { j = (idx % n) + 1 }
 		print lines[j]
 	}
-' "$PIN_FILE")"
+')"
 
-if [ -n "$target" ] && [ "$target" != "$current" ]; then
+if [ -n "$target" ] && [ "$target" != "$cur" ]; then
 	tmux switch-client -t "$target"
 elif [ -n "$target" ]; then
-	tmux display-message "only one pinned session"
+	tmux display-message "only one pinned session alive"
 fi
 
-# Force any open sidebar pane(s) to redraw — switch-client just changed the
-# current session, so the green ▸ marker has to move.
+# Refresh any open sidebar(s) so the green ▸ marker moves.
 tmux list-windows -aF '#{window_id} #{@pin_sidebar_pane}' 2>/dev/null \
 	| awk '$2 != "" { print $2 }' \
 	| while IFS= read -r p; do

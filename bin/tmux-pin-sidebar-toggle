@@ -1,21 +1,49 @@
 #!/bin/sh
-# Open or close a thin (22-col) left sidebar listing pinned tmux sessions, in
-# the current window. Pane id is tracked in window-option @pin_sidebar_pane;
-# closing kills that pane and clears the option.
+# Open or close the pinned-sessions sidebar in EVERY active session's
+# currently-active window at once. State:
+#   - server-option @pin_sidebar_open  : "1" while open, unset otherwise
+#   - window-option @pin_sidebar_pane  : tracks the sidebar pane id per window
+# Sidebar pane: 22-col fixed-width left split running ~/bin/tmux-pin-sidebar.
 set -e
 
-WIN="$(tmux display-message -p '#{window_id}')"
-existing="$(tmux show-options -wqv -t "$WIN" '@pin_sidebar_pane' 2>/dev/null || :)"
+state="$(tmux show-options -gqv '@pin_sidebar_open' 2>/dev/null || :)"
 
-if [ -n "$existing" ] \
-	&& tmux list-panes -t "$WIN" -F '#{pane_id}' 2>/dev/null | grep -Fxq "$existing"; then
-	tmux kill-pane -t "$existing"
-	tmux set-option -wu -t "$WIN" '@pin_sidebar_pane' >/dev/null 2>&1 || :
+if [ "$state" = "1" ]; then
+	# --- closing: kill every sidebar pane we have on record ----------------
+	tmux list-windows -aF '#{window_id} #{@pin_sidebar_pane}' 2>/dev/null \
+		| awk '$2 != "" { print $1, $2 }' \
+		| while IFS= read -r line; do
+			win="${line%% *}"
+			pane="${line##* }"
+			if tmux list-panes -t "$win" -F '#{pane_id}' 2>/dev/null \
+				| grep -Fxq "$pane"; then
+				tmux kill-pane -t "$pane" >/dev/null 2>&1 || :
+			fi
+			tmux set-option -wu -t "$win" '@pin_sidebar_pane' >/dev/null 2>&1 || :
+		done
+	tmux set-option -gu '@pin_sidebar_open' >/dev/null 2>&1 || :
 	exit 0
 fi
 
-# -hb : split horizontally, place the new pane to the left (b = before)
-# -l 22: fixed 22-column width
-# -d  : keep focus on the original pane
-new_pane="$(tmux split-window -hbd -l 22 -t "$WIN" -P -F '#{pane_id}' "$HOME/bin/tmux-pin-sidebar")"
-tmux set-option -wt "$WIN" '@pin_sidebar_pane' "$new_pane"
+# --- opening: split a sidebar into each session's active window ----------
+tmux list-sessions -F '#{session_id}' | while IFS= read -r sess; do
+	win="$(tmux list-windows -t "$sess" -F '#{window_id} #{window_active}' \
+		| awk '$2 == 1 { print $1; exit }')"
+	[ -z "$win" ] && continue
+	# Skip windows that already have a tracked sidebar (re-open is idempotent).
+	existing="$(tmux show-options -wqv -t "$win" '@pin_sidebar_pane' 2>/dev/null || :)"
+	if [ -n "$existing" ] \
+		&& tmux list-panes -t "$win" -F '#{pane_id}' 2>/dev/null | grep -Fxq "$existing"; then
+		continue
+	fi
+	# -hbdf : horizontal split, place to the left ('b'), don't focus ('d'),
+	#         and FULL-height anchored to the window edge ('f') so the
+	#         sidebar always lives on the far-left of the WINDOW regardless
+	#         of which pane was focused at toggle time.
+	# -l 22: fixed 22-column width
+	new_pane="$(tmux split-window -hbdf -l 22 -t "$win" -P -F '#{pane_id}' \
+		"$HOME/bin/tmux-pin-sidebar")"
+	tmux set-option -wt "$win" '@pin_sidebar_pane' "$new_pane"
+done
+
+tmux set-option -g '@pin_sidebar_open' '1'
