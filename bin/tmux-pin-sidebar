@@ -45,7 +45,14 @@ render() {
 			printf '(none — prefix+a to pin)\n'
 		fi
 
-		printf '\n──\nprefix+a pin/unpin\nprefix+A toggle\nprefix+e clear all\n⌥⌘↑/↓ cycle\n⌥⌘←/→ window\n'
+		# Aligned help: 8-col key field + 1 space + description.
+		# `⌥⌘↑/↓` and `⌥⌘←/→` are 5 visible cols, padded to 8 with 3 spaces.
+		printf '\n──\n'
+		printf 'prefix+a pin/unpin\n'
+		printf 'prefix+A toggle\n'
+		printf 'prefix+e clear all\n'
+		printf '⌥⌘↑/↓    cycle\n'
+		printf '⌥⌘←/→    window\n'
 	}
 }
 
