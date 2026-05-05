@@ -1,0 +1,30 @@
+#!/bin/sh
+# Drop any entries in the pin file whose session no longer exists. Legacy
+# name-only entries that still match a live session are migrated to the
+# matching session id at the same time.
+PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
+[ -s "$PIN_FILE" ] || exit 0
+
+mapfile="$(mktemp -t pinmap.XXXXXX)"
+trap 'rm -f "$mapfile"' EXIT
+tmux list-sessions -F '#{session_id}|#{session_name}' > "$mapfile" 2>/dev/null
+
+tmpout="$(mktemp -t pinout.XXXXXX)"
+trap 'rm -f "$mapfile" "$tmpout"' EXIT
+
+awk -F'|' '
+	NR == FNR {
+		if ($1 != "") {
+			live_id[$1] = 1
+			name_to_id[$2] = $1
+		}
+		next
+	}
+	NF == 0 { next }
+	{
+		if ($0 in live_id)         print $0
+		else if ($0 in name_to_id) print name_to_id[$0]
+	}
+' "$mapfile" "$PIN_FILE" > "$tmpout"
+
+mv "$tmpout" "$PIN_FILE"

@@ -27,6 +27,11 @@ if [ "$state" = "1" ]; then
 fi
 
 # --- opening: split a sidebar into every window of every session ---------
+# Prune the pin file first so any pins for now-dead sessions don't show up
+# as "✗ dead" placeholders the moment we render. Legacy name-only entries
+# also get migrated to ids during the prune.
+"$HOME/bin/tmux-pin-prune" >/dev/null 2>&1 || :
+
 # Set the global flag FIRST so tmux-pin-sidebar-attach (which gates on it)
 # actually creates panes when we call it below.
 tmux set-option -g '@pin_sidebar_open' '1'
