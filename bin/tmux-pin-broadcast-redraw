@@ -1,0 +1,10 @@
+#!/bin/sh
+# Trigger an in-place redraw of every running pinned-sessions sidebar pane
+# across the whole tmux server. Sends `Enter` to each pane via tmux's
+# send-keys; the sidebar's `read` loop unblocks and re-renders. No
+# respawn-pane = no flicker.
+tmux list-windows -aF '#{window_id} #{@pin_sidebar_pane}' 2>/dev/null \
+	| awk '$2 != "" { print $2 }' \
+	| while IFS= read -r pane; do
+		tmux send-keys -t "$pane" Enter 2>/dev/null || :
+	done

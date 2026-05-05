@@ -42,9 +42,5 @@ else
 	tmux display-message "pinned: $name"
 fi
 
-# Force any open sidebar pane(s) to redraw immediately.
-tmux list-windows -aF '#{window_id} #{@pin_sidebar_pane}' 2>/dev/null \
-	| awk '$2 != "" { print $2 }' \
-	| while IFS= read -r p; do
-		tmux respawn-pane -k -t "$p" "$HOME/bin/tmux-pin-sidebar" >/dev/null 2>&1 || :
-	done
+# Trigger an in-place redraw of every open sidebar (no respawn = no flicker).
+"$HOME/bin/tmux-pin-broadcast-redraw" >/dev/null 2>&1 || :

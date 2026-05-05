@@ -1,47 +1,59 @@
 #!/bin/sh
-# Body of the pinned-sessions sidebar. Renders ONCE then idles. The toggle
-# / cycle scripts respawn this pane to force a redraw.
-# Pin file stores session IDs; names are looked up live so renames are
-# reflected on the next redraw. Legacy name-only entries are still handled.
+# Body of the pinned-sessions sidebar. Stays alive; redraws on every line
+# received on stdin. Triggers send Enter via `tmux send-keys` so the redraw
+# happens in-place — no respawn-pane, no flicker.
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
 
-clear
-printf '── pinned sessions ──\n\n'
+# Suppress terminal echo so trigger keystrokes don't appear in the rendered
+# output. -icanon would let `read` see each byte, but line mode + suppressed
+# echo is enough — `read` consumes the newline cleanly.
+stty -echo 2>/dev/null || :
 
-if [ -s "$PIN_FILE" ]; then
-	current="$(tmux display-message -p '#{session_id}' 2>/dev/null)"
-	mapping="$(tmux list-sessions -F '#{session_id}|#{session_name}' 2>/dev/null || :)"
-	while IFS= read -r entry; do
-		[ -z "$entry" ] && continue
-		# Resolve the entry to (id, name).
-		case "$entry" in
-			'$'[0-9]*)
-				id="$entry"
-				name="$(printf '%s\n' "$mapping" \
-					| awk -F'|' -v id="$id" '$1==id{print $2; exit}')"
-				;;
-			*)
-				# Legacy name entry — try to find a live session by name.
-				name="$entry"
-				id="$(printf '%s\n' "$mapping" \
-					| awk -F'|' -v n="$name" '$2==n{print $1; exit}')"
-				;;
-		esac
+render() {
+	# \033[H = cursor home, \033[2J = clear screen, \033[3J = clear scrollback.
+	# Atomic flush by emitting all bytes back-to-back via a single subshell.
+	{
+		printf '\033[H\033[2J\033[3J'
+		printf '── pinned sessions ──\n\n'
 
-		if [ -z "$id" ] || [ -z "$name" ]; then
-			# Pin is dead — show dimmed.
-			printf '\033[2m  ✗ %s (dead)\033[0m\n' "${name:-$entry}"
-		elif [ "$id" = "$current" ]; then
-			printf '\033[1;32m▸ %s\033[0m\n' "$name"
+		if [ -s "$PIN_FILE" ]; then
+			current="$(tmux display-message -p '#{session_id}' 2>/dev/null)"
+			mapping="$(tmux list-sessions -F '#{session_id}|#{session_name}' 2>/dev/null || :)"
+			while IFS= read -r entry; do
+				[ -z "$entry" ] && continue
+				case "$entry" in
+					'$'[0-9]*)
+						id="$entry"
+						name="$(printf '%s\n' "$mapping" \
+							| awk -F'|' -v id="$id" '$1==id{print $2; exit}')"
+						;;
+					*)
+						name="$entry"
+						id="$(printf '%s\n' "$mapping" \
+							| awk -F'|' -v n="$name" '$2==n{print $1; exit}')"
+						;;
+				esac
+				if [ -z "$id" ] || [ -z "$name" ]; then
+					printf '\033[2m  ✗ %s (dead)\033[0m\n' "${name:-$entry}"
+				elif [ "$id" = "$current" ]; then
+					printf '\033[1;32m▸ %s\033[0m\n' "$name"
+				else
+					printf '  %s\n' "$name"
+				fi
+			done < "$PIN_FILE"
 		else
-			printf '  %s\n' "$name"
+			printf '(none — prefix+a to pin)\n'
 		fi
-	done < "$PIN_FILE"
-else
-	printf '(none — prefix+a to pin)\n'
-fi
 
-printf '\n──\nprefix+a pin/unpin\nprefix+A toggle sidebar\nprefix+e clear all\n⌥⌘↑/↓ cycle\n'
+		printf '\n──\nprefix+a pin/unpin\nprefix+A toggle sidebar\nprefix+e clear all\n⌥⌘↑/↓ cycle\n⌥⌘←/→ window\n'
+	}
+}
 
-# Idle so respawn-pane has a target.
-exec tail -f /dev/null
+render
+
+# Block waiting for stdin; each Enter sent by tmux-pin-broadcast-redraw
+# unblocks `read` and triggers a re-render. When the pane is killed,
+# `read` returns non-zero and we exit cleanly.
+while IFS= read -r _; do
+	render
+done
