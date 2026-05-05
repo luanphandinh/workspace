@@ -12,8 +12,12 @@ bindings = [
   # matches them via user-keys without colliding with anything real.
   # Opt+Cmd+ArrowUp   → previous pinned session
   # Opt+Cmd+ArrowDown → next pinned session
-  { key = "ArrowUp",   mods = "Option|Command", chars = "\u001b[25~" },
-  { key = "ArrowDown", mods = "Option|Command", chars = "\u001b[26~" },
+  { key = "ArrowUp",    mods = "Option|Command", chars = "\u001b[25~" },
+  { key = "ArrowDown",  mods = "Option|Command", chars = "\u001b[26~" },
+  # Previous / next tmux WINDOW in the current session (User2 / User3).
+  # F15 / F16 codes — nothing on macOS emits these naturally.
+  { key = "ArrowLeft",  mods = "Option|Command", chars = "\u001b[28~" },
+  { key = "ArrowRight", mods = "Option|Command", chars = "\u001b[29~" },
 ]
 
 [font]
