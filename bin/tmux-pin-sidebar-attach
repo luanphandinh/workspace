@@ -21,7 +21,7 @@ fi
 
 # -hbdf : horizontal split, place to the LEFT ('b'), don't focus ('d'),
 #         FULL window-height anchored to the window edge ('f').
-# -l 18 : fixed 18-column width.
-new_pane="$(tmux split-window -hbdf -l 18 -t "$win" -P -F '#{pane_id}' \
+# -l 22 : fixed 22-column width.
+new_pane="$(tmux split-window -hbdf -l 22 -t "$win" -P -F '#{pane_id}' \
 	"$HOME/bin/tmux-pin-sidebar")"
 tmux set-option -wt "$win" '@pin_sidebar_pane' "$new_pane"

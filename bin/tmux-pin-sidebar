@@ -4,23 +4,38 @@
 # happens in-place — no respawn-pane, no flicker.
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
 
-# Suppress terminal echo so trigger keystrokes don't appear in the rendered
-# output. -icanon would let `read` see each byte, but line mode + suppressed
-# echo is enough — `read` consumes the newline cleanly.
+# Suppress terminal echo so trigger keystrokes don't appear in rendered text.
 stty -echo 2>/dev/null || :
 
-render() {
-	# \033[H = cursor home, \033[2J = clear screen, \033[3J = clear scrollback.
-	# Atomic flush by emitting all bytes back-to-back via a single subshell.
-	{
-		printf '\033[H\033[2J\033[3J'
-		printf '── pinned ──\n\n'
+# Pre-expand the escape sequences once. `printf '%s'` does NOT interpret
+# backslash escapes in its arguments, only in the format string — so we
+# materialise them here as actual control bytes and use them via %s.
+GREEN="$(printf '\033[1;32m')"
+DIM="$(printf '\033[2m')"
+RESET="$(printf '\033[0m')"
+# Erase-to-end-of-line — appended to every line so stale text from a
+# previous (longer) render is wiped without blanking the whole pane.
+EOL="$(printf '\033[K')"
 
-		if [ -s "$PIN_FILE" ]; then
+render() {
+	{
+		# Hide cursor + go home. NO full-screen clear — that's the source
+		# of the visible blank flicker. Each line below ends with EOL to
+		# erase residual text; after all content, \033[J wipes any extra
+		# trailing lines from a previous longer render.
+		printf '\033[?25l\033[H'
+
+		printf '── pinned ──%s\n%s\n' "$EOL" "$EOL"
+
+		if [ ! -s "$PIN_FILE" ]; then
+			printf '(none — prefix+a to pin)%s\n' "$EOL"
+		else
 			current="$(tmux display-message -p '#{session_id}' 2>/dev/null)"
 			mapping="$(tmux list-sessions -F '#{session_id}|#{session_name}' 2>/dev/null || :)"
+
 			while IFS= read -r entry; do
 				[ -z "$entry" ] && continue
+				# Resolve entry → (id, name). Tolerate legacy name entries.
 				case "$entry" in
 					'$'[0-9]*)
 						id="$entry"
@@ -33,26 +48,54 @@ render() {
 							| awk -F'|' -v n="$name" '$2==n{print $1; exit}')"
 						;;
 				esac
+
 				if [ -z "$id" ] || [ -z "$name" ]; then
-					printf '\033[2m  ✗ %s (dead)\033[0m\n' "${name:-$entry}"
-				elif [ "$id" = "$current" ]; then
-					printf '\033[1;32m▸ %s\033[0m\n' "$name"
-				else
-					printf '  %s\n' "$name"
+					printf "${DIM}✗ %s (dead)${RESET}%s\n" "${name:-$entry}" "$EOL"
+					continue
 				fi
+
+				# Session header — green if this is THIS sidebar's session.
+				if [ "$id" = "$current" ]; then
+					printf "${GREEN}▸ %s${RESET}%s\n" "$name" "$EOL"
+				else
+					printf '  %s%s\n' "$name" "$EOL"
+				fi
+
+				# Children — windows in that session. 4-col indent. Last
+				# entry uses `└`, others use `├`. The active window in each
+				# session gets a green ▸ in place of the tree char.
+				tmux list-windows -t "$id" -F '#{window_active}|#{window_name}' 2>/dev/null \
+					| awk -F'|' -v g="$GREEN" -v r="$RESET" -v eol="$EOL" '
+						{ lines[NR] = $0 }
+						END {
+							n = NR
+							for (i = 1; i <= n; i++) {
+								split(lines[i], p, "|")
+								active = p[1]
+								wname  = p[2]
+								tree   = (i == n) ? "└" : "├"
+								if (active == 1)
+									printf "    %s▸ %s%s%s\n", g, wname, r, eol
+								else
+									printf "    %s %s%s\n", tree, wname, eol
+							}
+						}
+					'
 			done < "$PIN_FILE"
-		else
-			printf '(none — prefix+a to pin)\n'
 		fi
 
 		# Aligned help: 8-col key field + 1 space + description.
-		# `⌥⌘↑/↓` and `⌥⌘←/→` are 5 visible cols, padded to 8 with 3 spaces.
-		printf '\n──\n'
-		printf 'prefix+a pin/unpin\n'
-		printf 'prefix+A toggle\n'
-		printf 'prefix+e clear all\n'
-		printf '⌥⌘↑/↓    cycle\n'
-		printf '⌥⌘←/→    window\n'
+		# `⌥⌘↑/↓` / `⌥⌘←/→` are 5 visible cols, padded to 8 with 3 spaces.
+		printf '\n%s──%s\n' "$EOL" "$EOL"
+		printf 'prefix+a pin/unpin%s\n' "$EOL"
+		printf 'prefix+A toggle%s\n' "$EOL"
+		printf 'prefix+e clear all%s\n' "$EOL"
+		printf '⌥⌘↑/↓    cycle%s\n' "$EOL"
+		printf '⌥⌘←/→    window%s\n' "$EOL"
+
+		# Wipe any stale content below the new render (left over from a
+		# previous taller render — e.g. dropped pin, closed window).
+		printf '\033[J\033[?25h'
 	}
 }
 
