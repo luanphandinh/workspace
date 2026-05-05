@@ -7,6 +7,13 @@
 [keyboard]
 bindings = [
   { key = "W", mods = "Command", action = "None" },
+  # Cycle pinned tmux sessions. Two unique CSI sequences (F13 / F14
+  # codes, which nothing on macOS emits naturally) are sent so tmux
+  # matches them via user-keys without colliding with anything real.
+  # Opt+Cmd+ArrowUp   → previous pinned session
+  # Opt+Cmd+ArrowDown → next pinned session
+  { key = "ArrowUp",   mods = "Option|Command", chars = "\u001b[25~" },
+  { key = "ArrowDown", mods = "Option|Command", chars = "\u001b[26~" },
 ]
 
 [font]

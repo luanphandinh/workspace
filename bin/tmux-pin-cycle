@@ -1,0 +1,44 @@
+#!/bin/sh
+# Switch the attached client to the next/previous pinned session (wraps).
+# Usage: tmux-pin-cycle [next|prev]   (default: next)
+# If the current session isn't pinned, jumps to the first pinned entry.
+PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
+DIR="${1:-next}"
+
+if [ ! -s "$PIN_FILE" ]; then
+	tmux display-message "no pinned sessions (prefix+h to pin)"
+	exit 0
+fi
+
+current="$(tmux display-message -p '#S')"
+
+target="$(awk -v cur="$current" -v dir="$DIR" '
+	{ lines[NR] = $0 }
+	END {
+		n = NR
+		if (n == 0) exit
+		for (i = 1; i <= n; i++) if (lines[i] == cur) { idx = i; break }
+		if (!idx) { print lines[1]; exit }
+		if (dir == "prev") {
+			j = idx - 1
+			if (j < 1) j = n
+		} else {
+			j = (idx % n) + 1
+		}
+		print lines[j]
+	}
+' "$PIN_FILE")"
+
+if [ -n "$target" ] && [ "$target" != "$current" ]; then
+	tmux switch-client -t "$target"
+elif [ -n "$target" ]; then
+	tmux display-message "only one pinned session"
+fi
+
+# Force any open sidebar pane(s) to redraw — switch-client just changed the
+# current session, so the green ▸ marker has to move.
+tmux list-windows -aF '#{window_id} #{@pin_sidebar_pane}' 2>/dev/null \
+	| awk '$2 != "" { print $2 }' \
+	| while IFS= read -r p; do
+		tmux respawn-pane -k -t "$p" "$HOME/bin/tmux-pin-sidebar" >/dev/null 2>&1 || :
+	done

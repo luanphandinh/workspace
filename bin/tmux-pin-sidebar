@@ -1,0 +1,25 @@
+#!/bin/sh
+# Body of the pinned-sessions sidebar. Renders the pin list ONCE and then
+# idles. Pin/unpin/cycle scripts force a redraw by `respawn-pane -k`'ing the
+# tracked sidebar pane (id stored in window-option @pin_sidebar_pane).
+PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
+
+clear
+printf '── pinned sessions ──\n\n'
+if [ -s "$PIN_FILE" ]; then
+	current="$(tmux display-message -p '#S' 2>/dev/null)"
+	while IFS= read -r s; do
+		[ -z "$s" ] && continue
+		if [ "$s" = "$current" ]; then
+			printf '\033[1;32m▸ %s\033[0m\n' "$s"
+		else
+			printf '  %s\n' "$s"
+		fi
+	done < "$PIN_FILE"
+else
+	printf '(none — prefix+h to pin)\n'
+fi
+printf '\n──\nprefix+h pin/unpin\nprefix+H hide\n⌘⇧] cycle\n'
+
+# Idle forever — keeps the pane alive so respawn-pane has a target.
+exec tail -f /dev/null

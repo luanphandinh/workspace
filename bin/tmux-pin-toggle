@@ -1,0 +1,28 @@
+#!/bin/sh
+# Toggle pin status of the current tmux session.
+# Pin list lives at $HOME/.config/tmux/pinned-sessions, one session per line.
+set -e
+
+PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
+mkdir -p "$(dirname "$PIN_FILE")"
+[ -f "$PIN_FILE" ] || : > "$PIN_FILE"
+
+session="$(tmux display-message -p '#S')"
+
+if grep -Fxq -- "$session" "$PIN_FILE" 2>/dev/null; then
+	tmp="$(mktemp)"
+	grep -Fxv -- "$session" "$PIN_FILE" > "$tmp" 2>/dev/null || :
+	mv "$tmp" "$PIN_FILE"
+	tmux display-message "unpinned: $session"
+else
+	printf '%s\n' "$session" >> "$PIN_FILE"
+	tmux display-message "pinned: $session"
+fi
+
+# If a sidebar pane is open in any window, force-redraw it so the pin/unpin
+# is reflected immediately (otherwise the user waits for the next refresh).
+tmux list-windows -aF '#{window_id} #{@pin_sidebar_pane}' 2>/dev/null \
+	| awk '$2 != "" { print $2 }' \
+	| while IFS= read -r p; do
+		tmux respawn-pane -k -t "$p" "$HOME/bin/tmux-pin-sidebar" >/dev/null 2>&1 || :
+	done
