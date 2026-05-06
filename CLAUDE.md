@@ -37,3 +37,4 @@ make install-workspace
 
 - Prefer editing in this repo, then running the install target — never edit the copies under `~/.config/`, `~/bin/`, or `~/.claude/skills/` directly, since they're overwritten on the next sync.
 - `make help` lists every target with its description.
+- This repo is supposed to be as generic as possible, since this is workspace and suppose to adapt to any companies any teams or any projects, for all development, avoid mentioning any company, team or project name, and avoid specific terms related to the tools, services, codebases, evironment variables or anything that the teams or the companies use.
