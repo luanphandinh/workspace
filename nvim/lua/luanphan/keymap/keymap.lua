@@ -20,10 +20,16 @@ vim.o.scrolloff = 8
 vim.o.signcolumn = "yes" -- always show the signcolumn on the left side
 vim.o.wrap = false       -- no soft-wrap by default; toggle with <leader>tw
 vim.o.linebreak = true   -- when wrap is on, break at word boundaries, not mid-word
--- noice.nvim renders the command line as a floating popup. Set
--- cmdheight = 0 so the bottom row is reclaimed by the buffer; the popup
--- handles `:` / `/` / search input without shifting the layout.
-vim.o.cmdheight = 0
+-- Reserve a 1-row cmdline area at the bottom so `:` commands and
+-- messages have a stable place to render — without it the buffer would
+-- shift up by 1 row whenever cmdheight grew on a `:` keypress.
+-- Set twice: once now, once on VimEnter (after every plugin finishes
+-- loading) so nothing can sneak it back to 0.
+vim.o.cmdheight = 1
+vim.api.nvim_create_autocmd("VimEnter", {
+  group = vim.api.nvim_create_augroup("LuanphanCmdheightLock", { clear = true }),
+  callback = function() vim.o.cmdheight = 1 end,
+})
 
 -- Statusline with LSP progress
 vim.o.laststatus = 2
