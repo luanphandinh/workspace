@@ -1,0 +1,27 @@
+#!/bin/sh
+# Debounced wrapper around tmux-pin-sidebar-resize. Wired to tmux's
+# client-resized hook. Only fires the actual resize after a 500 ms quiet
+# period — so a long monitor-drag or rapid zoom keypresses don't trigger
+# N back-to-back kill+recreate passes.
+#
+# Mechanism: each invocation writes a unique token to a tick file, then
+# spawns a detached subshell that sleeps DEBOUNCE_SEC and re-reads the
+# token. If the token matches what it wrote (i.e. no newer event has
+# overwritten it), it runs the resize. Otherwise a newer event has
+# already taken over and this stale wait is dropped.
+
+DEBOUNCE_SEC=0.5
+TICK_FILE="${HOME}/.config/tmux/.pin-resize-tick"
+mkdir -p "$(dirname "$TICK_FILE")"
+
+token="$(date +%s)-$$-${RANDOM:-0}"
+printf '%s\n' "$token" > "$TICK_FILE"
+
+# Detach the wait+check so tmux's hook returns immediately.
+(
+	sleep "$DEBOUNCE_SEC"
+	current="$(cat "$TICK_FILE" 2>/dev/null || :)"
+	if [ "$current" = "$token" ]; then
+		"$HOME/bin/tmux-pin-sidebar-resize" >/dev/null 2>&1 || :
+	fi
+) >/dev/null 2>&1 </dev/null &
