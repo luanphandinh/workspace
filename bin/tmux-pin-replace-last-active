@@ -1,0 +1,62 @@
+#!/bin/sh
+# Replace the LAST-ACTIVE pinned session entry in the pin file with the
+# current session. No-op when:
+#   - the current session is itself already pinned
+#   - the pin file is empty
+#   - no pinned session has any activity timestamp we can sort on
+#
+# "Last-active" = the pinned session with the most recent
+# session_activity timestamp (when it was last interacted with).
+# tmux's #{client_last_session} is consulted first as a fast path; if
+# it's a pinned session, we use it directly.
+PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
+[ -f "$PIN_FILE" ] || { tmux display-message "no pinned sessions"; exit 0; }
+[ -s "$PIN_FILE" ] || { tmux display-message "no pinned sessions"; exit 0; }
+
+current_id="$(tmux display-message -p '#{session_id}')"
+current_name="$(tmux display-message -p '#S')"
+
+# Already pinned → ignore per spec.
+if grep -Fxq -- "$current_id" "$PIN_FILE" 2>/dev/null; then
+	tmux display-message "$current_name is already pinned"
+	exit 0
+fi
+
+# Fast path: previous session for this client.
+last_name="$(tmux display-message -p '#{client_last_session}' 2>/dev/null || :)"
+last_id=""
+if [ -n "$last_name" ]; then
+	last_id="$(tmux list-sessions -F '#{session_name}|#{session_id}' 2>/dev/null \
+		| awk -F'|' -v n="$last_name" '$1==n{print $2; exit}')"
+	if [ -n "$last_id" ] && ! grep -Fxq -- "$last_id" "$PIN_FILE" 2>/dev/null; then
+		last_id=""   # previous session isn't pinned — fall through
+	fi
+fi
+
+# Slow path: walk every pinned id, pick the one with greatest activity.
+if [ -z "$last_id" ]; then
+	last_id="$(awk 'NF' "$PIN_FILE" | while IFS= read -r pid; do
+		ts="$(tmux display-message -p -t "$pid" '#{session_activity}' 2>/dev/null || :)"
+		[ -n "$ts" ] && printf '%s %s\n' "$ts" "$pid"
+	done | sort -rn | awk 'NR==1{print $2}')"
+fi
+
+if [ -z "$last_id" ]; then
+	tmux display-message "no pinned session is alive — nothing to replace"
+	exit 0
+fi
+
+# Look up the human-readable name of the slot we're replacing for the toast.
+last_name="$(tmux list-sessions -F '#{session_id}|#{session_name}' 2>/dev/null \
+	| awk -F'|' -v id="$last_id" '$1==id{print $2; exit}')"
+
+# In-place replace, preserving line order.
+tmp="$(mktemp)"
+awk -v old="$last_id" -v new="$current_id" '
+	$0 == old { print new; next }
+	{ print }
+' "$PIN_FILE" > "$tmp"
+mv "$tmp" "$PIN_FILE"
+
+tmux display-message "pin slot ${last_name:-$last_id} → $current_name"
+"$HOME/bin/tmux-pin-broadcast-redraw" >/dev/null 2>&1 || :

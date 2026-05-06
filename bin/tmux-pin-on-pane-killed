@@ -1,0 +1,27 @@
+#!/bin/sh
+# Called from tmux's after-kill-pane / pane-died hooks. Re-balances the
+# layout in the affected window (so freed space gets distributed evenly
+# across the remaining editor panes) and re-pins the sidebar — if any —
+# back to its canonical width.
+#
+# Operates ONLY on the window whose id is passed as $1. tmux substitutes
+# #{window_id} in the hook command, so the script targets surgically
+# instead of touching every window in the server.
+WIDTH=22
+
+win="${1:-}"
+[ -z "$win" ] && exit 0
+
+sidebar="$(tmux list-panes -t "$win" -F '#{pane_id} #{@pin_sidebar}' 2>/dev/null \
+	| awk '$2 == "1" { print $1; exit }')"
+
+# Re-apply tiled so remaining panes share space evenly. Caveat: this
+# collapses any vertical split structure into a single grid — same
+# trade-off as the resize hook. Switch to a different preset
+# (`even-horizontal`, `main-vertical`, etc.) here if your layouts
+# preserve more vertical structure than horizontal.
+tmux select-layout -t "$win" tiled >/dev/null 2>&1 || :
+
+if [ -n "$sidebar" ]; then
+	tmux resize-pane -t "$sidebar" -x "$WIDTH" >/dev/null 2>&1 || :
+fi

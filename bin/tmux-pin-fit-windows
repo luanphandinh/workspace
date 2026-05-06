@@ -1,0 +1,37 @@
+#!/bin/sh
+# Force every tmux window across the server to the dimensions of the
+# currently-attached client. tmux normally only resizes a window when a
+# client is actively viewing it, so inactive sessions retain the size
+# cached from whenever they were last viewed — and `select-layout` /
+# `resize-pane` against that stale size produces a wrong layout. Calling
+# this before any layout op makes every window match the live viewport.
+#
+# Strategy: temporarily flip server option window-size to `manual` so
+# tmux honours our explicit `resize-window -x/-y`, then restore the
+# previous value at exit.
+set -e
+
+# Capture viewport from the current client. If the script is run outside
+# an attached client, fall back to the largest connected client.
+client_w="$(tmux display-message -p '#{client_width}' 2>/dev/null || :)"
+client_h="$(tmux display-message -p '#{client_height}' 2>/dev/null || :)"
+
+if [ -z "$client_w" ] || [ -z "$client_h" ]; then
+	# No active client context — pick any attached client's viewport.
+	client_w="$(tmux list-clients -F '#{client_width}' 2>/dev/null | sort -rn | head -1)"
+	client_h="$(tmux list-clients -F '#{client_height}' 2>/dev/null | sort -rn | head -1)"
+fi
+
+[ -z "$client_w" ] && exit 0
+[ -z "$client_h" ] && exit 0
+
+# Remember the previous window-size policy and restore on exit.
+prev_mode="$(tmux show-options -gqv window-size 2>/dev/null || :)"
+[ -z "$prev_mode" ] && prev_mode="latest"
+trap 'tmux set-option -g window-size "$prev_mode" >/dev/null 2>&1 || :' EXIT
+
+tmux set-option -g window-size manual >/dev/null 2>&1 || :
+
+tmux list-windows -aF '#{window_id}' 2>/dev/null | while IFS= read -r win; do
+	tmux resize-window -t "$win" -x "$client_w" -y "$client_h" >/dev/null 2>&1 || :
+done

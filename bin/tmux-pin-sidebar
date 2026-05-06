@@ -4,6 +4,14 @@
 # happens in-place — no respawn-pane, no flicker.
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
 
+# Mark this pane as a sidebar so tmux-pin-sidebar-resize can find it across
+# every session/window without relying on the window-level pointer
+# (@pin_sidebar_pane). Idempotent — safe to set on every render. Also
+# self-heals existing live sidebars on first redraw after a script update.
+if [ -n "${TMUX_PANE:-}" ]; then
+	tmux set-option -pt "$TMUX_PANE" '@pin_sidebar' '1' >/dev/null 2>&1 || :
+fi
+
 # Suppress terminal echo so trigger keystrokes don't appear in rendered text.
 stty -echo 2>/dev/null || :
 
@@ -54,8 +62,11 @@ render() {
 			current="$(tmux display-message -p '#{session_id}' 2>/dev/null)"
 			mapping="$(tmux list-sessions -F '#{session_id}|#{session_name}' 2>/dev/null || :)"
 
-			# Top rule for the first session block.
-			printf '%s%s\n' "$RULE" "$EOL"
+			# Rules around each session block. A rule is rendered green when
+			# either neighbour (the session above OR below it) is the
+			# current sidebar's session — so the top + bottom of the
+			# focused block both appear in green.
+			prev_current=0
 
 			while IFS= read -r entry; do
 				[ -z "$entry" ] && continue
@@ -73,19 +84,26 @@ render() {
 						;;
 				esac
 
+				if [ "$id" = "$current" ]; then is_current=1; else is_current=0; fi
+
+				# Top rule of this session: green if THIS or PREV is current.
+				if [ "$is_current" = "1" ] || [ "$prev_current" = "1" ]; then
+					printf "${GREEN}%s${RESET}%s\n" "$RULE" "$EOL"
+				else
+					printf '%s%s\n' "$RULE" "$EOL"
+				fi
+
 				if [ -z "$id" ] || [ -z "$name" ]; then
 					printf "${DIM}✗ %s (dead)${RESET}%s\n" "${name:-$entry}" "$EOL"
-					printf '%s%s\n' "$RULE" "$EOL"
+					prev_current=$is_current
 					continue
 				fi
 
 				# Session header — green if this is THIS sidebar's session.
-				if [ "$id" = "$current" ]; then
+				if [ "$is_current" = "1" ]; then
 					printf "${GREEN}▸ %s${RESET}%s\n" "$name" "$EOL"
-					is_current=1
 				else
 					printf '  %s%s\n' "$name" "$EOL"
-					is_current=0
 				fi
 
 				# Children — windows in that session. 4-col indent. Last
@@ -115,17 +133,27 @@ render() {
 						}
 					'
 
-				# Bottom rule for this session = top rule for the next.
-				printf '%s%s\n' "$RULE" "$EOL"
+				prev_current=$is_current
 			done < "$PIN_FILE"
+
+			# Closing rule below the last session: green if last was current.
+			if [ "$prev_current" = "1" ]; then
+				printf "${GREEN}%s${RESET}%s\n" "$RULE" "$EOL"
+			else
+				printf '%s%s\n' "$RULE" "$EOL"
+			fi
 		fi
 
 		# Aligned help: 8-col key field + 1 space + description.
 		# `⌥⌘↑/↓` / `⌥⌘←/→` are 5 visible cols, padded to 8 with 3 spaces.
-		printf '\n%s──%s\n' "$EOL" "$EOL"
+		# Blank spacer line above must be EOL-cleared (not just `\n`-skipped)
+		# so a previous longer render's content doesn't linger here.
+		printf '%s\n──%s\n' "$EOL" "$EOL"
 		printf 'prefix+a pin/unpin%s\n' "$EOL"
 		printf 'prefix+A toggle%s\n' "$EOL"
 		printf 'prefix+e clear all%s\n' "$EOL"
+		printf 'prefix+P replace last%s\n' "$EOL"
+		printf 'prefix+S resize%s\n' "$EOL"
 		printf '⌥⌘↑/↓    cycle%s\n' "$EOL"
 		printf '⌥⌘←/→    window%s\n' "$EOL"
 

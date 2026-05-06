@@ -32,6 +32,11 @@ fi
 # also get migrated to ids during the prune.
 "$HOME/bin/tmux-pin-prune" >/dev/null 2>&1 || :
 
+# Force every window across the server to the current client viewport
+# BEFORE we attach sidebars. Inactive sessions otherwise keep stale cached
+# sizes and the new sidebar pane comes up wrong-sized.
+"$HOME/bin/tmux-pin-fit-windows" >/dev/null 2>&1 || :
+
 # Set the global flag FIRST so tmux-pin-sidebar-attach (which gates on it)
 # actually creates panes when we call it below.
 tmux set-option -g '@pin_sidebar_open' '1'
@@ -39,3 +44,8 @@ tmux set-option -g '@pin_sidebar_open' '1'
 tmux list-windows -aF '#{window_id}' 2>/dev/null | while IFS= read -r win; do
 	"$HOME/bin/tmux-pin-sidebar-attach" "$win" >/dev/null 2>&1 || :
 done
+
+# Always finish with a server-wide resize so every sidebar — including ones
+# created by hooks for windows we don't directly own here — is forced to
+# the canonical 22-col width. This is the same logic prefix+S runs.
+"$HOME/bin/tmux-pin-sidebar-resize" >/dev/null 2>&1 || :

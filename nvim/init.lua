@@ -37,6 +37,7 @@ require("packer").startup(function(use)
   require("luanphan.plugins.terminal")(use)
   require("luanphan.plugins.multi-cursor")(use)
   require("luanphan.plugins.which-key")(use)
+  require("luanphan.plugins.noice")(use)
 
   require("luanphan.keymap.keymap")
   require("luanphan.cursor_agent").setup()

@@ -25,3 +25,6 @@ fi
 new_pane="$(tmux split-window -hbdf -l 22 -t "$win" -P -F '#{pane_id}' \
 	"$HOME/bin/tmux-pin-sidebar")"
 tmux set-option -wt "$win" '@pin_sidebar_pane' "$new_pane"
+# Pane-level marker — durable identifier used by tmux-pin-sidebar-resize.
+# Survives even if @pin_sidebar_pane (window option) drifts.
+tmux set-option -pt "$new_pane" '@pin_sidebar' '1' >/dev/null 2>&1 || :

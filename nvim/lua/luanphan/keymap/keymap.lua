@@ -20,6 +20,10 @@ vim.o.scrolloff = 8
 vim.o.signcolumn = "yes" -- always show the signcolumn on the left side
 vim.o.wrap = false       -- no soft-wrap by default; toggle with <leader>tw
 vim.o.linebreak = true   -- when wrap is on, break at word boundaries, not mid-word
+-- noice.nvim renders the command line as a floating popup. Set
+-- cmdheight = 0 so the bottom row is reclaimed by the buffer; the popup
+-- handles `:` / `/` / search input without shifting the layout.
+vim.o.cmdheight = 0
 
 -- Statusline with LSP progress
 vim.o.laststatus = 2
@@ -246,7 +250,7 @@ vim.keymap.set("n", "<leader>fS", "<cmd>wa<cr>", { desc = "Save all files" })
 -- (formatter, codegen, git checkout) has rewritten the file on disk.
 vim.keymap.set("n", "<leader>fl", "<cmd>edit!<cr>", { desc = "Reload File Content From Disk" })
 
-vim.keymap.set("n", "<leader>tw", function()
+vim.keymap.set("n", "<leader>tW", function()
   vim.wo.wrap = not vim.wo.wrap
   vim.notify("wrap: " .. (vim.wo.wrap and "on" or "off"), vim.log.levels.INFO)
 end, { desc = "Toggle word wrap (window-local)" })
