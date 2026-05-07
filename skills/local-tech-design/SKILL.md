@@ -371,4 +371,9 @@ If the URL doesn't match any pattern above, ask the user which platform it is ra
    - **Git markdown** — pull, edit only the changed sections in place using the universal Diff format pattern, commit with a message naming the sections (e.g. `tech-doc: update §3.2, §6.1.GetFoo`), push or open a PR per repo convention.
 5. **Confirmation gate**: before the FIRST remote write, list to the user the exact set of sections about to change. In auto mode, edits to §1 / §2 / §7 / §8 push directly; edits touching §3 / §4 / §5 / §6 require explicit user confirmation (these are the high-impact sections reviewers care about most).
 6. **Local file is the source of truth.** Sync is one-way (local → remote). Never pull remote changes back into the local tech doc without the user's explicit instruction.
-
+7. **NEVER modify the remote doc's title.** The local tech doc has no title heading (it starts at `# 1. Overview & Background` per the document-structure rule); the remote doc's title was set by the user (or by a prior `+create` call) and lives outside the §1..§8 body. Title is **out of scope** for every sync operation — leave it untouched on every platform:
+   - **Lark docx / sheets / wiki**: do NOT pass `--title` to `docs +update` / `sheets +update` / `wiki +update`; do NOT call any `set-title` / `update-title` / file rename API.
+   - **Confluence**: when `PUT`-ing the page, send the existing `title` field verbatim (read it from the prior GET) — never substitute a derived title.
+   - **Google Docs / Sheets**: do NOT include `updateDocumentName` / file `name` in `batchUpdate` or `files.update` calls.
+   - **Git markdown**: do NOT rename the file. The filename is the de-facto title; preserve it.
+   If the user explicitly asks to rename the remote doc, do that as a SEPARATE confirmed action — never bundle it with a content sync.
