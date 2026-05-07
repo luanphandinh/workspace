@@ -348,7 +348,12 @@ return function(_use)
       end
     end
 
-    -- 2b. Toggle off the <leader>tt terminal (terminal.lua listens for this
+    -- 2b. Close any open diffview tab — it's bound to the OLD cwd's git
+    --     repo and trying to survive the cd produces ghost diffview://
+    --     buffers that won't refresh against the new worktree.
+    pcall(vim.cmd, "DiffviewClose")
+
+    -- 2c. Toggle off the <leader>tt terminal (terminal.lua listens for this
     --     User event) so the cd doesn't have to race with a visible window.
     pcall(vim.api.nvim_exec_autocmds, "User", { pattern = "LuanphanWorktreeSwitchPre" })
 

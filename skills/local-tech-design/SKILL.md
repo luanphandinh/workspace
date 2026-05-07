@@ -16,6 +16,75 @@ description: "Tech Design Genius"
   - Wrap each header cell in `**…**` so the text is bold even in renderers that don't auto-bold the header row.
   - Auto-applies a gray fill to the header row of Markdown tables — combining auto-fill with the explicit `**…**` gives bold + gray-bg with no extra markup.
   - Example header row: `| **Field** | **Type** | **Notes** | **Details** |` — applies to *every* table in the doc, not just field tables.
+## Diff format (universal — applies to code, IDL, schema, anything)
+**Every diff in the doc — Go/Python/etc. code, Thrift/Protobuf IDL, SQL DDL, YAML config, anything else — uses the same parent-context pattern.** The point: reviewers should grok WHERE in the parent block the change lives, which conditions/fields surround it, and what runs after, without us pasting the entire block. This rule is referenced from §5 and §6 (and anywhere else a diff appears) — do NOT redefine it inline; just follow it.
+Pattern, in order:
+1. The parent block signature line, verbatim — `func DoThing(ctx context.Context, …) error {` for a function, `struct GetFooRequest {` for an IDL struct, `service FooService {` for an IDL service, `CREATE TABLE foo (` for SQL DDL, etc.
+2. **Up to 5 lines** of explicit context that matters (early returns, validation, sibling fields/methods near the change — keep them, don't elide).
+3. `...` on its own line to elide an uninteresting middle stretch.
+4. **Up to 5 lines** of explicit context immediately above the change.
+5. The actual `-` / `+` lines.
+6. **Up to 5 lines** of explicit context immediately below the change.
+7. `...` to elide whatever's left in the parent block.
+Use a fenced ```diff``` block. Identifier names appear naturally in the diff; no extra prose call-out needed.
+**Exception — fully NEW parent block**: when the parent function/struct/service/table itself is new (no prior version exists), show the **entire definition** with `+` on every line, no `...` elisions — reviewers need the full thing because there is no "around it" to scan. This applies to a brand-new RPC method (full IDL method + request + response structs), a new struct, a new SQL table, a new endpoint, etc.
+Code-change example (existing function, placeholders only):
+````
+```diff
+ func <ParentFunc>(ctx context.Context, input *<InputType>) (*<OutputType>, error) {
+     if input == nil {
+         return nil, <ErrNilSentinel>
+     }
+     ...
+     result, err := <fetchFromA>(ctx, input.ID)
+     if err != nil {
+         return nil, err
+     }
+-    if <existing condition> {
+-        result, err = <fetchFromB>(ctx, input.ID)
++    if <existing condition> || <new condition> {
++        result, err = <fetchFromB>(ctx, input.ID)
++        <writeToA>(ctx, input.ID, result, <ttl>)
+     }
+     if err != nil {
+         return nil, err
+     }
+     ...
+ }
+```
+````
+IDL-diff example (existing struct, adding one field — Thrift placeholder):
+````
+```diff
+ struct <RequestStruct> {
+     1: required i64 user_id
+     2: optional string region
+     ...
+     5: optional i32 page_size
++    6: optional bool include_deleted
+     7: optional string cursor
+     ...
+ }
+```
+````
+IDL-diff example (NEW method — show everything, no elision):
+````
+```diff
++service <ServiceName> {
++    <ResponseStruct> <NewMethod>(1: <RequestStruct> req)
++}
++
++struct <RequestStruct> {
++    1: required i64 user_id
++    2: optional string region
++}
++
++struct <ResponseStruct> {
++    1: required i32 status
++    2: optional string message
++}
+```
+````
 ## Confirming microservices and their codebase/relationship
 - All the microservices code base should be under the the current folder that you get invoked, can proceed to check the folder name, some of the code, and map the codebase folder name to the microservices in the design
 - **IGNORE the `local_workspaces/` container folder and any subfolder containing a `workspace.yml`**: every workspace created by `mkws` lives at `<root>/local_workspaces/<name>/` and its contents are duplicates of sibling repos already in the root. Skip the entire `local_workspaces/` tree (and defensively any other `workspace.yml`-bearing folder); only consider the original sibling repos as candidates for the mapping.
@@ -153,6 +222,11 @@ The "wide-angle lens" section: every reader should be able to grok the new archi
     - `### Response`
     - `### Logic change`
     - `### Code change`
+- **Under `### Request` and `### Response`** — TWO artefacts in this exact order:
+  1. The `Field | Type | Notes | Details` 4-column field table (format below).
+  2. An **IDL diff code block** for the request struct (under Request) and the response struct (under Response), following the **universal Diff format** rule defined earlier in this skill. Do NOT redefine the diff pattern here.
+     - **NEW API** (no prior version): show the **entire** request/response struct definition with `+` on every line, no `...` elisions.
+     - **Existing API**: show only the diff using the parent-context pattern (struct signature + ≤5 lines context above/below + `-`/`+` lines + `...` for elided middles).
 - **Field table format** — request/response payloads are documented as Markdown tables, one per request and one per response, using **exactly these 4 columns** in this order:
   ```
   | **Field** | **Type** | **Notes** | **Details**                             |
@@ -183,46 +257,15 @@ Each per-method block (`#### <method>` H4 in the tech doc) has these fixed-label
 - `##### Logic change`
 - `##### Code change`
 
-If the same API is already documented in §5 (External Technical Design), **omit `Request` and `Response` entirely** — no heading, no table, no pointer, no "see §5" line. The block then has only `Logic change` + `Code change` headings. Don't duplicate the schema across sections.
+If the same API is already documented in §5 (External Technical Design), **omit `Request` and `Response` entirely** — no heading, no field table, no IDL diff block, no pointer, no "see §5" line. The block then has only `Logic change` + `Code change` headings. Don't duplicate the schema or IDL across sections.
 
 The content under each heading:
 
-- Under **Request** / **Response** — the `Field | Type | Notes | Details` 4-column table (same format as §5; only rows worth listing).
+- Under **Request** / **Response** — TWO artefacts in this exact order, identical to §5:
+  1. The `Field | Type | Notes | Details` 4-column table (only rows worth listing).
+  2. An **IDL diff code block** for the request struct (under Request) and the response struct (under Response), following the **universal Diff format** rule. NEW method → entire struct with `+` on every line, no elisions; existing method → diff with parent-context pattern.
 - Under **Logic change** — 2–5 bullets describing the **high-level behaviour change** at the API level: what the method now does differently end-to-end. This is the "what" only. Drilling into specific helper functions, private method names, internal struct fields, or anything wrapped in backticks belongs in the Code change diff, not here.
-- **Code change** — actual diff that locates the change inside its **parent function** so reviewers can see what's around it without reading the whole file. Pattern, in order:
-  1. The parent function signature line (verbatim — `func DoThing(ctx context.Context, …) error {`).
-  2. **up to 5 lines** of explicit context that matters (early returns, validation, where the changed branch lives — keep them, don't elide).
-  3. `...` on its own line to elide an uninteresting middle stretch.
-  4. **5 lines** of explicit context immediately above the change.
-  5. The actual `-` / `+` lines.
-  6. **upto 5 lines** of explicit context immediately below the change.
-  7. `...` to elide whatever's left in the function.
-  
-  Goal: reviewers should be able to grok where in the function the change lives, which conditions guard it, and what runs after, without us pasting the entire 80-line function. Function names appear naturally in the diff; no extra prose call-out needed.
-  ````
-  ```diff
-   func <ParentFunc>(ctx context.Context, input *<InputType>) (*<OutputType>, error) {
-       if input == nil {
-           return nil, <ErrNilSentinel>
-       }
-       …
-       result, err := <fetchFromA>(ctx, input.ID)
-       if err != nil {
-           return nil, err
-       }
-  -    if <existing condition> {
-  -        result, err = <fetchFromB>(ctx, input.ID)
-  +    if <existing condition> || <new condition> {
-  +        result, err = <fetchFromB>(ctx, input.ID)
-  +        <writeToA>(ctx, input.ID, result, <ttl>)
-       }
-       if err != nil {
-           return nil, err
-       }
-       …
-   }
-  ```
-  ````
+- Under **Code change** — diff per the **universal Diff format** rule. Do not redefine the pattern here.
 
 ##### Infra changes (omit the heading entirely if the service has no infra work)
 Only use this section when the change touches infrastructure (Redis client, Kafka consumer, DB driver, message broker, cache layer, etc.). Each block is named by **the infra action**, never by source file or function:
@@ -236,7 +279,7 @@ Examples of infra-action block names (H4 in the tech doc):
 Each infra-action block has these fixed-label sub-headings at H5:
 
 - `##### Logic change` — high-level only, same rule as API changes.
-- `##### Code change` — same diff-with-context rule (parent function signature + up to 5 lines context above and below).
+- `##### Code change` — diff per the **universal Diff format** rule (covers code AND schema/DDL/config diffs).
 
 ##### Impact + mitigation
 One short bullet list of cross-service / cross-pane effects and how to handle each. **Omit this heading entirely** when the service's changes are simple and low-impact (e.g. a single localized field rename, a comment-only edit, an isolated helper tweak with no callers outside this service) — there is nothing for reviewers to be warned about, and an empty heading just adds noise. Keep the heading only when there is at least one concrete cross-cutting effect worth listing.
@@ -308,4 +351,24 @@ flowchart LR
 - **Subsequent rounds**: only revise the sections that actually changed. Don't rewrite §1/§2/§7/§8 unless the requirement itself shifted. New questions that arise during §6 deep-dive get added to §3 (not inline in §6).
 - **For §6 (Internal Technical Design)**: dispatch one FOCUSED AGENT TASK per microservice IN PARALLEL — each agent explores its repo, computes the IDL/logic/code diff, and reports back. The main agent stitches the results into §6.
 - Use the codebase mapping from `<tech_doc_name>_mapping.md` as the canonical microservice list — never guess service boundaries.
+## Sync to remote (when the user provides a URL)
+**Trigger**: user provides a URL pointing to where the tech doc should live remotely. Detect the platform from the URL host + path and route to the right skill:
+| **URL pattern**                                                                              | **Platform**                | **Skill / tool**                                                                                         |
+| -------------------------------------------------------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `feishu.cn`, `larksuite.com`, `larkoffice.com` — match sub-path `/docx/`, `/sheets/`, `/wiki/`, `/file/` | Lark / 飞书                  | `lark-doc` (docx), `lark-sheets` (sheets), `lark-wiki` (wiki node), `lark-markdown` (raw `.md` in Drive) |
+| `atlassian.net/wiki/`, `*.atlassian.com/wiki/`, self-hosted Confluence                       | Confluence                  | WebFetch + Confluence REST API (`/rest/api/content/{id}`)                                                |
+| `docs.google.com/document/`, `docs.google.com/spreadsheets/`                                 | Google Docs / Sheets        | `mcp__claude_ai_Google_Drive__*` deferred tools                                                          |
+| `github.com/.../blob/.../*.md`, `gitlab.*/.../blob/.../*.md`, any git-hosted markdown file   | Remote markdown in git repo | `codebase` skill or `gh` CLI for GitHub                                                                  |
+If the URL doesn't match any pattern above, ask the user which platform it is rather than guessing.
+**Upload algorithm**:
+1. **Fetch the remote first.** If it's empty / placeholder / brand-new → push the entire local tech doc once and stop. Done.
+2. If the remote has existing content → compute a **section-level diff** using the §1..§8 numbered headings (and their sub-headings: §3.X, §5.`<method>`, §6.X Service, §6.X.`<method>`, etc.) as the diff boundaries. For each heading whose body actually changed, replace **only that section** remotely. **Never overwrite the entire doc.**
+3. Walk both local and remote as a heading tree (`H1 > H2 > H3 > ...`). The **deepest** heading whose body differs is the replacement unit — don't replace a parent if only one child changed. Identical sections are skipped.
+4. Per-platform write strategy:
+   - **Lark docx** — `docs +fetch --section <heading>` to read the current section, then `docs +update` with `block_replace` / `str_replace` / `block_insert_after` targeted at that section's blocks. **Never use `overwrite`** on the whole doc.
+   - **Confluence** — pages store body as a single XHTML blob. Read the body, splice in the changed sections by heading, write back via `PUT /rest/api/content/{id}`. Section-level intent, single-write API.
+   - **Google Docs / Sheets** — `documents.batchUpdate` with `replaceAllText` / `insertText` requests scoped to the changed section's range; for Sheets, target the cell range that holds that section.
+   - **Git markdown** — pull, edit only the changed sections in place using the universal Diff format pattern, commit with a message naming the sections (e.g. `tech-doc: update §3.2, §6.1.GetFoo`), push or open a PR per repo convention.
+5. **Confirmation gate**: before the FIRST remote write, list to the user the exact set of sections about to change. In auto mode, edits to §1 / §2 / §7 / §8 push directly; edits touching §3 / §4 / §5 / §6 require explicit user confirmation (these are the high-impact sections reviewers care about most).
+6. **Local file is the source of truth.** Sync is one-way (local → remote). Never pull remote changes back into the local tech doc without the user's explicit instruction.
 
