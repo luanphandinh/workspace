@@ -12,10 +12,18 @@ description: "Tech Design Genius"
 - Inside a folder name "tech_doc" under the same folder that you get invoked, ask the user to confirm the tech design document name and the format, then create the tech design document under that folder, and make sure to save all the changes to the document as you work on it, so that you won't lose any of your work in case of any unexpected situation
 ## Format of the tech design
 - Do NOT PUT ANY empty line in between lines, just new line is enough, no empty line
-- **Tables — header styling.** Every Markdown table in the doc (§3.0 Summary, §3.X comparison, §5/§6 field tables, §7 Effort, §8 Release Checklist, etc.) MUST render its header row as **bold + gray-background**. Implementation:
+- **Tables — header styling.** Every Markdown table in the doc (§3 Decisions table, §5/§6 field tables, §7 Effort, §8 Release Checklist, etc.) MUST render its header row as **bold + gray-background**. Implementation:
   - Wrap each header cell in `**…**` so the text is bold even in renderers that don't auto-bold the header row.
   - Auto-applies a gray fill to the header row of Markdown tables — combining auto-fill with the explicit `**…**` gives bold + gray-bg with no extra markup.
   - Example header row: `| **Field** | **Type** | **Notes** | **Details** |` — applies to *every* table in the doc, not just field tables.
+## TLDR — short & concise (universal, applies to the entire doc)
+**Brevity is the rule everywhere.** Every section, every bullet, every table cell, every code-block name, every diagram label. The whole tech doc should be skimmable in under five minutes and still convey every key point.
+- **One short phrase beats a sentence; a noun phrase beats a sentence; a verb + identifier beats a noun phrase.** Pick the shortest form that still carries the meaning.
+- **Don't restate context the reader can derive** (no "as discussed above", no "this means that", no "in other words").
+- **Cut throat-clearing**: drop "in order to", "with the goal of", "it should be noted that", "we propose to", "the team has decided that".
+- **Specific beats abstract.** "Add `region` to `GetFooRequest`" beats "extend the request schema with the geographic context needed downstream".
+- **Don't over-explain in headings, names, or summary cells when the body or a referenced section already carries the detail.** Trust the structure: a §8 release item doesn't restate §6's diff; a §7 task name doesn't restate §6's logic; a `Code change` summary doesn't recap the diff.
+- **This rule wins on conflict.** If a per-section rule says "1–2 sentences" and one short phrase suffices, write the phrase. If a per-section rule says "2–4 sub-bullets" and 1 says everything, use 1.
 ## Diff format (universal — applies to code, IDL, schema, anything)
 **Every diff in the doc — Go/Python/etc. code, Thrift/Protobuf IDL, SQL DDL, YAML config, anything else — uses the same parent-context pattern.** The point: reviewers should grok WHERE in the parent block the change lives, which conditions/fields surround it, and what runs after, without us pasting the entire block. This rule is referenced from §5 and §6 (and anywhere else a diff appears) — do NOT redefine it inline; just follow it.
 Pattern, in order:
@@ -27,6 +35,18 @@ Pattern, in order:
 6. **Up to 5 lines** of explicit context immediately below the change.
 7. `...` to elide whatever's left in the parent block.
 Use a fenced ```diff``` block. Identifier names appear naturally in the diff; no extra prose call-out needed.
+**Every diff block MUST be wrapped in a named, collapsible `<details>` element in source.** Source format:
+````
+<details>
+<summary><strong><code-block name per Sync rule #9 conventions></strong></summary>
+
+```diff
+ <diff content>
+```
+
+</details>
+````
+This makes the block render as a collapsed disclosure widget on GitHub / GitLab natively, and on Lark / Confluence the converter maps the wrapper to the platform's native collapsible code primitive (collapsed by default + named title) — see Sync-to-remote rule #9 for the per-platform conversion. Never emit a bare ```diff``` block without the wrapper.
 **Exception — fully NEW parent block**: when the parent function/struct/service/table itself is new (no prior version exists), show the **entire definition** with `+` on every line, no `...` elisions — reviewers need the full thing because there is no "around it" to scan. This applies to a brand-new RPC method (full IDL method + request + response structs), a new struct, a new SQL table, a new endpoint, etc.
 Code-change example (existing function, placeholders only):
 ````
@@ -85,6 +105,22 @@ IDL-diff example (NEW method — show everything, no elision):
 +}
 ```
 ````
+## Nested-list table cell format (universal — applies to any table cell that holds a 2-level nested list)
+**Define the cell shape ONCE here; rules elsewhere (§3 Detail, §3 Decisions, anything else that needs nested content in a table cell) reference this format and add only their own content constraints.** Do NOT redefine the encoding inline.
+**Source encoding** — kept compact so the cell stays a valid Markdown table cell while still being parsable into a nested list:
+- **Level 1 (item header)** — a bold line: `**<header text>**`. **No leading bullet character.** Header text is short.
+- **Level 2 (sub-bullet)** — a line starting with `• ` (bullet + space) followed by the bullet text.
+- **`<br>`** separates lines within a Level-1 item (between the header and its first sub-bullet, between consecutive sub-bullets).
+- **`<br><br>`** separates Level-1 items.
+- **`<br>` IS permitted** in any cell that opts into this format (overrides the "single-line cells only" rule for those specific cells).
+**Generic shape**:
+`**<L1 header A>**<br>• <sub-bullet A.1><br>• <sub-bullet A.2><br><br>**<L1 header B>**<br>• <sub-bullet B.1>`
+**Remote rendering**: the **Sync-to-remote** rule converts cells in this format to platform-native nested lists (Lark `bullet` blocks at indent depth 1/2, Confluence nested `<ul><li>`, Google Docs `createParagraphBullets` with `nestingLevel: 1`, GFM `<ul><li>` HTML for git markdown). Never let `<br>` or `•` survive as literal text on the rendered page.
+**When a rule references this format**, it specifies only what's specific to that use:
+- Which Level-1 headers are required (fixed labels + order) or how they're shaped (e.g. `**Option <N> — <name>**`).
+- Cap on number of Level-1 items.
+- Cap on number of Level-2 sub-bullets per Level-1 item.
+- Any content rules (e.g. "statements only, no questions").
 ## Confirming microservices and their codebase/relationship
 - All the microservices code base should be under the the current folder that you get invoked, can proceed to check the folder name, some of the code, and map the codebase folder name to the microservices in the design
 - **IGNORE the `local_workspaces/` container folder and any subfolder containing a `workspace.yml`**: every workspace created by `mkws` lives at `<root>/local_workspaces/<name>/` and its contents are duplicates of sibling repos already in the root. Skip the entire `local_workspaces/` tree (and defensively any other `workspace.yml`-bearing folder); only consider the original sibling repos as candidates for the mapping.
@@ -103,10 +139,10 @@ Heading hierarchy is **strict and contiguous: H1 > H2 > H3 > H4 > H5**. Never ju
 | Section            | H1                                | H2                                | H3                                | H4                                | H5                                |
 | ------------------ | --------------------------------- | --------------------------------- | --------------------------------- | --------------------------------- | --------------------------------- |
 | §1, §2, §7, §8     | `# N. <name>`                     | —                                 | —                                 | —                                 | —                                 |
-| §3 Design Decisions| `# 3. Design Decisions`           | `## 3.0 Summary`, `## 3.X <name>` | —                                 | —                                 | —                                 |
-| §4 Solution Overview | `# 4. Preferred Solution Overview` | `## 4.1 Architecture flowchart`, `## 4.2 Cross-service sequence diagrams` | —                                 | —                                 | —                                 |
+| §3 Design Decisions| `# 3. Design Decisions`           | none by default — entire section is ONE table; H2 sub-sections (`## 3.X <name>`) added ONLY when user explicitly asks for a deeper writeup | —                                 | —                                 | —                                 |
+| §4 Solution Overview | `# 4. Preferred Solution Overview` | `## 4.1 Architecture flowchart`, `## 4.2 Cross-service sequence diagrams` | `### <diagram name>` (under §4.2 — required when there are 2+ sequence diagrams; omit the H3 when there's exactly 1) | —                                 | —                                 |
 | §5 External        | `# 5. External Technical Design`  | `## <method/api_name>`            | `### Request`, `### Response`, `### Logic change`, `### Code change` | — | — |
-| §6 Internal        | `# 6. Internal Technical Design`  | `## 6.X Service: <Name>`          | `### API changes`, `### Infra changes`, `### Impact + mitigation` (omit if changes are simple / low-impact) | `#### <method/api_name>` (under API changes) or `#### Redis library change` etc. (under Infra changes) | `##### Request`, `##### Response`, `##### Logic change`, `##### Code change` |
+| §6 Internal        | `# 6. Internal Technical Design`  | `## 6.X Service: <Name>`          | `### API changes`, `### Infra changes`, `### Impact + mitigation` (omitted by default — keep ONLY if there's a genuinely critical cross-cutting risk; cap 3 points) | `#### <method/api_name>` (under API changes) or `#### Redis library change` etc. (under Infra changes) | `##### Request`, `##### Response`, `##### Logic change`, `##### Code change` |
 
 The examples below use `### N.` for §1..§8 purely because they're embedded in this SKILL.md (which has its own H1/H2 above). In the tech doc you generate, those become `# N.`, every `#### X.Y` becomes `## X.Y`, and so on per the table above.
 
@@ -129,63 +165,33 @@ Placeholder block — the user fills in URLs later. Pre-populate with empty bull
 ```
 
 ### 3. Design Decisions
-**High-impact only — cap at 3–4 decisions total.** Each decision answers ONE concrete question that came up while designing AND would meaningfully change the architecture if picked differently (caching strategy, data-sync model, schema shape that affects multiple services, rollout strategy with risk, error semantics that propagate, etc.). The point: "Design Decisions" is the small set of choices reviewers MUST scrutinise — not an exhaustive log of every fork.
-Each decision is independent — you may pick Option 1 in §3.1 and Option 3 in §3.2.
-**What to OMIT** — anything trivial / low-impact / obvious / local-to-one-file / already-decided-upstream. Drop these entirely; their resolution shows up naturally in the §6 Code change diff. Heuristics that mean "skip §3":
-- **Already specified upstream.** If a linked PRD, requirements doc, or parent tech doc already mandates a single solution for this question (e.g. "must use Kafka", "rollout via shadow-cutover only"), drop the decision — even if it would normally be high-impact. There is nothing for reviewers to weigh; reproducing it in §3 just adds noise and risks contradicting the source. Cite the upstream doc once in §2 Links and move on.
-- The pick is dictated by an existing convention or framework default ("we use Hertz, so handler shape is fixed").
-- Both options are reasonable and the picked one is easily reversible (rename a field, swap a struct).
-- The decision touches only one file / one function and doesn't cross service boundaries.
-- The "Why" cell would be a tautology like "matches existing code" or "simpler".
+**ONE single table for the entire §3 — by default, no sub-headings, no per-decision prose, no separate comparison tables.** Every meaningful design choice lives as a row in the same table so reviewers see the whole set at a glance.
+**High-impact only — cap at 3–4 rows total.** Each row answers ONE concrete question that came up while designing AND would meaningfully change the architecture if picked differently (caching strategy, data-sync model, schema shape that crosses services, rollout strategy with risk, error semantics that propagate, etc.). Drop trivial / obvious / upstream-fixed choices entirely; their resolution shows up naturally in the §6 Code change diff.
+**What to OMIT** as a row:
+- **Already specified upstream** (PRD, requirements doc, parent tech doc) — cite the upstream doc once in §2 Links and skip.
+- Dictated by an existing convention or framework default ("we use Hertz, so handler shape is fixed").
+- Easily reversible local-to-one-file picks (rename a field, swap a struct).
 - A typical reviewer wouldn't push back on either alternative.
-**Bias hard toward fewer decisions.** §3 should be as small as possible — zero entries is fine if upstream specs already pin every meaningful choice; in that case write `N/A — all design choices fixed by <link in §2>`. If you have more than 4 decisions, **drop the weakest** until §3 contains only the heavyweights worth a real discussion — those low-impact picks just disappear; the resolution will be visible in the §6 Code change diff anyway. Surface decisions as you discover them; if a discovery during the §6 deep-dive is genuinely high-impact AND not pre-decided upstream, promote it back into §3.
-#### 3.0 Summary
-A single Markdown table listing every decision in §3 with its picked option. At-a-glance follow-up reference — readers should grok the full set of choices without scrolling through every sub-section. Per-section `**Decision:**` lines are **NOT** repeated; they live only here.
-```
-| **#**   | **Decision**                | **Picked option**             | **Why**                                       |
-| ------- | --------------------------- | ----------------------------- | --------------------------------------------- |
-| 3.1     | <decision A topic>          | Option <N> — <short name>     | <one-line reason>                             |
-| 3.2     | <decision B topic>          | Option <N> — <short name>     | <one-line reason>                             |
-| 3.3     | <decision C topic>          | Option <N> — <short name>     | <one-line reason>                             |
-```
-Single-line cells only — no `<br>`, no nested bullets. "Picked option" is `Option <N> — <short name>` matching the per-section numbering. "Why" is one short sentence; if it can't fit on one line, split the decision.
-#### 3.1 .. 3.N — per decision
-For EACH decision after the summary:
-- A short heading in **topic / resolution form** — a noun phrase, NOT a question (e.g. `### 3.4 <decision topic>` or `### 3.4 Use <picked option> for <topic>`). No "?", no "How should we…", no "Should we…". The §3.0 summary table inherits the same wording — keep it scannable, not interrogative.
-- 1–2 sentences of context. **Phrased as a statement, never a question.** No "?", no rhetorical "How should we…", no "Should we…". State the constraint or trigger that forces this decision plainly (good: "<concrete fact about load / SLA / data shape that forces a pick>". Bad: "How should we handle X? Should we use A or B?"). The context exists to ground the options; the question itself is implicit and lives in the heading.
-- **Strict numbered options**: every alternative is `**Option <N> — <short name>**`, starting at 1, contiguous, no gaps. No other naming scheme (no "Variant A", no bare bold names). The picked one is suffixed with **`(Preferred)`**.
-- **Per-option layout**, in this exact order:
-  1. The bold heading line (with `(Preferred)` on the picked one).
-  2. `- Logic:` — bullet list summarising the behaviour — what it does, where, when, in what order — 2–5 bullets. Mandatory.
-- **One comparison table after ALL options** instead of prose Pros/Cons/Risk:
-  - Rows = the criteria you actually want reviewers to weigh (`Latency`, `Storage size`, `Ops complexity`, `Staleness`, `Coupling`, `Failure mode`, etc. — pick whatever drives the decision).
-  - Columns = each `Option <N> — <name>`, with `(Preferred)` in the header for the picked one.
-  - Each cell = ONE short phrase, no sentences, no nested bullets, no `<br>`. If you can't fit, the criterion is too coarse — split it.
-  - Pick 4–7 rows: enough to tell the story, few enough to read in one glance.
-- **No `**Decision:**` line at the bottom** — that info lives in §3.0's summary table. Don't duplicate.
-Example (placeholders only — replace with concrete topic / option / criteria when writing):
-```
-### 3.4 <decision topic>
-Context: <one or two sentences stating the constraint or trigger that forces this decision>.
-**Option 1 — <short name> (Preferred)**
-- Logic:
-  - <step 1: what this option does>
-  - <step 2: where it operates>
-  - <step 3: failure / fallback path>
-**Option 2 — <short name>**
-- Logic:
-  - <step 1>
-  - <step 2>
-  - <step 3>
-
-| **Criterion**       | **Option 1 — <short name> (Preferred)** | **Option 2 — <short name>** |
-| ------------------- | --------------------------------------- | --------------------------- |
-| <criterion 1>       | <one short phrase>                      | <one short phrase>          |
-| <criterion 2>       | <one short phrase>                      | <one short phrase>          |
-| <criterion 3>       | <one short phrase>                      | <one short phrase>          |
-| <criterion 4>       | <one short phrase>                      | <one short phrase>          |
-| <criterion 5>       | <one short phrase>                      | <one short phrase>          |
-```
+**Bias hard toward fewer rows.** Zero rows is fine if upstream specs pin every meaningful choice; in that case write `N/A — all design choices fixed by <link in §2>`. If you have more than 4 rows, drop the weakest until only heavyweights remain.
+**The table — exactly 4 columns, in this exact order:**
+| **#**   | **Name**             | **Detail**                                                                                                                                                              | **Decisions**                                                                                                                                                                          |
+| ------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 3.1     | <short topic>        | **Summary**<br>• <constraint / trigger 1><br>• <constraint / trigger 2><br><br>**Target**<br>• <goal 1><br>• <goal 2>                                                   | **Option 1 — <preferred short name> (Preferred)**<br>• <logic step 1><br>• <logic step 2><br><br>**Option 2 — <short name>**<br>• <logic step 1><br>• <logic step 2>                    |
+| 3.2     | <short topic>        | **Summary**<br>• <constraint 1><br><br>**Target**<br>• <goal 1><br>• <goal 2>                                                                                          | **Option 1 — <preferred short name> (Preferred)**<br>• <logic step 1><br>• <logic step 2><br><br>**Option 2 — <short name>**<br>• <logic step 1><br>• <logic step 2><br><br>**Option 3 — <short name>**<br>• <logic step 1><br>• <logic step 2> |
+| 3.3     | <short topic>        | **Summary**<br>• <upstream constraint that left only one viable path><br><br>**Target**<br>• <goal>                                                                    | **Option 1 — <preferred short name> (Preferred)**<br>• <logic step 1><br>• <logic step 2>                                                                                              |
+- **#** — `3.<N>`, contiguous starting at `3.1`.
+- **Name** — short noun-phrase topic. **NOT a question** (no `?`, no "How should we…", no "Should we…"). Scannable.
+- **Detail** — uses the **Nested-list table cell format**. Constraints specific to this column:
+  - Exactly **TWO Level-1 items**, in this fixed order: `**Summary**`, then `**Target**`.
+  - **1–3 Level-2 sub-bullets** per Level-1 item.
+  - All sub-bullets are **statements, never questions** (no `?`, no "Should we…"). `Summary` bullets state the constraint / trigger that forces this decision; `Target` bullets state the concrete goal we're aiming for.
+- **Decisions** — uses the **Nested-list table cell format**. Constraints specific to this column:
+  - **Up to 3 Level-1 items** (options) for complex decisions; **just 1** for trivial / forced picks (e.g. an upstream constraint left only one viable path — record it for transparency).
+  - **The Preferred option is ALWAYS Option 1** — pick the chosen option first and number it `Option 1`. Alternatives become `Option 2`, `Option 3` in any order. The `**(Preferred)**` suffix still appears on Option 1 for explicit visual confirmation, but its position alone signals the pick. Reviewers should never have to scan past Option 1 to find what was chosen.
+  - Level-1 header shape: `**Option <N> — <short name>**`, numbered contiguously from 1.
+  - **2–4 Level-2 sub-bullets** per option, describing the option's simple logic (what it does, where, when, fallback).
+**No per-decision sub-sections by default.** No prose context, no per-decision criterion-comparison table, no individual H2 headings. The table above is the entire §3.
+**Promote to an H2 sub-section ONLY when the user explicitly asks** (e.g. "expand 3.2 with a comparison table" or "add a deeper writeup for 3.1"). When promoted, the sub-section may include: a context paragraph, per-option logic bullets at full depth, and a `Criterion × Option` comparison table. Add a `(see §3.2 below)` pointer in the table's row when this happens.
 
 ### 4. Preferred Solution Overview
 The "wide-angle lens" section: every reader should be able to grok the new architecture and its cross-service flows from §4 alone, without scrolling into the per-service deep-dive in §6. §4 has TWO subsections, in this exact order:
@@ -199,7 +205,8 @@ The "wide-angle lens" section: every reader should be able to grok the new archi
 #### 4.2 Cross-service sequence diagrams
 - One mermaid `sequenceDiagram` block per non-trivial cross-service interaction (≥2 hops, async edges, retries). Trivial single-RPC calls don't need one.
 - This subsection lives **here** (under overview), **not** scattered inside the per-service sections in §6 — readers see the full end-to-end interactions before they drill into individual services.
-- **Diagrams only — no scenario descriptions, no preceding/trailing prose.** If a diagram needs a label, put it inside the `sequenceDiagram` (e.g. as a `Note over Participant: ...` block or in the participant names themselves).
+- **Per-diagram heading** — when there are **2 or more** sequence diagrams, each diagram MUST be preceded by a heading **one level smaller than the §4.2 heading** (i.e. H3 in the output tech doc, since §4.2 is H2): `### <short diagram name>`. The name is a short noun phrase describing what the flow is (e.g. `### Order placement`, `### Refund cancellation`, `### Cache miss read path`) — keep it scannable, not a sentence. When there is **exactly one** sequence diagram, omit the H3 entirely (the §4.2 heading covers it).
+- **Diagrams only — no scenario descriptions, no preceding/trailing prose.** The H3 name is the only label. If a diagram needs an in-flow label, put it inside the `sequenceDiagram` (e.g. as a `Note over Participant: ...` block or in the participant names themselves).
 - Mark NEW arrows / participants in green using the same `(NEW)` marker + green styling rule as the §4.1 flowchart — keeps the visual signal consistent across diagrams.
 - **Every arrow MUST name the exact operation, never a generic verb.** The label answers "what call is this?" precisely enough that a reviewer could grep for it. Use the form below per protocol:
   - **HTTP** — `METHOD /path/with/{params}` (e.g. `POST /v1/<resource>`, `GET /v1/<resource>/{id}`).
@@ -282,33 +289,53 @@ Each infra-action block has these fixed-label sub-headings at H5:
 - `##### Code change` — diff per the **universal Diff format** rule (covers code AND schema/DDL/config diffs).
 
 ##### Impact + mitigation
-One short bullet list of cross-service / cross-pane effects and how to handle each. **Omit this heading entirely** when the service's changes are simple and low-impact (e.g. a single localized field rename, a comment-only edit, an isolated helper tweak with no callers outside this service) — there is nothing for reviewers to be warned about, and an empty heading just adds noise. Keep the heading only when there is at least one concrete cross-cutting effect worth listing.
-
+**Omit this heading entirely by default.** Only include it when the service introduces a **genuinely critical, cross-cutting risk** that reviewers must be warned about up front (e.g. breaking change to an upstream contract, data migration with rollback constraints, latency budget eaten by a new sync RPC). If nothing meets that bar — no heading, no empty placeholder, no "N/A". Keep the noise floor low.
+**When kept, the section is a tight nested list — at most 3 critical points.** Format:
+- **Level 1** — one bullet per critical point. Each bullet is **a single line stating the problem** (what breaks, what regresses, what risks blowing up). No prose paragraph, no multi-clause sentence — one short statement.
+- **Level 2 (indented child)** — exactly one sub-bullet under each Level-1 point, prefixed `Mitigation: `, stating concretely how the risk is handled (feature flag, rollout step, fallback path, monitoring alert, etc.). One line.
+- **Cap: 3 Level-1 points.** If you have a 4th, either it's not actually critical (drop it) or two of the existing ones are the same risk in disguise (merge them). The list is a triage signal — bloating it dilutes attention.
+Example shape (placeholders):
+```
+- <Problem 1 in one line>
+  - Mitigation: <one-line concrete handling>
+- <Problem 2 in one line>
+  - Mitigation: <one-line concrete handling>
+```
 — Do NOT put sequence diagrams here; those live in §4.2 so they're surfaced before the deep-dive.
 
 ### 7. Effort & Estimation
-A small Markdown table:
-| **Microservice / task** | **Owner** | **Effort (d)** | **Notes** |
-- Effort in person-days. Round to halves.
-- Owner can be `TBD` if unassigned.
+A small Markdown table — exactly 4 columns in this order:
+| **Microservice / task** | **Owner**     | **Effort (d)** | **Notes**                       |
+| ----------------------- | ------------- | -------------- | ------------------------------- |
+| <service-a>             | <owner / TBD> | <person-days>  | <empty or a few words>          |
+| <task-name>             | <owner / TBD> | <person-days>  | blocked on <X>                  |
+- Per the **TLDR rule**, every cell is as short as possible. The §6 diff is the source of truth for what's actually being built — never restate §6 content here.
+- **Microservice / task** — service name (e.g. `service-a`) or short task verb-phrase (e.g. `migrate redis client`, `backfill region column`). NO description of what the work does. If the reader needs to know what's in the change, they read §6.
+- **Owner** — single name, or `TBD` if unassigned.
+- **Effort (d)** — person-days, rounded to halves (`0.5`, `1`, `1.5`, …).
+- **Notes** — keep **empty by default**. Only fill it when there's a genuinely useful planning signal (a blocker, a dependency on another team, a non-obvious risk). Even then, prefer a single short phrase (`blocked on <X>`, `needs DBA review`, `depends on §3.2 pick`). Use the **Nested-list table cell format** ONLY when there are 2+ structured categories worth listing (e.g. multiple dependencies + multiple risks); cap 3 Level-1 items, 1–3 sub-bullets each. If you can't justify the structure, leave it as a single phrase.
 
 ### 8. Release Checklist
-**Production-deploy only.** This section lists what physically goes to production for this design — nothing else. NO dev-flow items (no MR-merge gates, no test-green gates, no review-approval gates, no testing-env deploys, no rollback-doc reminders); those belong in the team's normal CI/CD, not in the tech doc.
-
-What to include — a flat list of two kinds of items:
-
-- **Services to deploy** — one bullet per service, naming the service exactly. Order = the rollout order if there's a dependency.
-- **Configs / dynamic settings to update** — one bullet per config, naming the config key (or TCC key, feature flag, env var) and the new value. Include the target environment (e.g. `prod`).
-
-Example shape:
+**Production-deploy only.** What physically goes to prod — nothing else. NO dev-flow items (no MR-merge gates, no test-green gates, no review-approval gates, no testing-env deploys, no rollback-doc reminders); those belong in the team's normal CI/CD.
+Per the **TLDR rule**, every line is **verb + name**. NO description of what's in the release, why, or what it does — §6 is the source of truth.
+- **Services to deploy** — `Deploy <service-name>`. Just that. Order = rollout order if there's a dependency.
+- **Configs / dynamic settings** — `Update <namespace>/<key> = <new-value> (<env>)` or `Enable feature flag <flag-name> (<env>, <%>)`. NO explanation of what the config controls.
+- **EXCEPTION — multi-step releases for one service.** Only when a single service needs ordered sub-steps (e.g. schema migration before app deploy, shadow → canary → 100%, dependency cutover) — promote it to a nested checklist under the service's bullet. Single-step deploys stay one line.
+Example:
 ```
 - [ ] Deploy <service-a>
 - [ ] Deploy <service-b>
 - [ ] Update config <namespace>/<key> = <new-value> (prod)
 - [ ] Enable feature flag <flag-name> (prod, 100%)
 ```
-
-If a service or config is already in `## 6.X Service: <Name>` as a code change but doesn't need a separate prod action, it does NOT belong here. The checklist is the deploy artefact, not a re-listing of the diff.
+Multi-step example:
+```
+- [ ] Deploy <service-c>
+  - [ ] Run schema migration <name>
+  - [ ] Deploy app to canary (10%)
+  - [ ] Promote to 100%
+```
+If a service or config is already in §6 as a code change but doesn't need a separate prod action, it does NOT belong here. This is the deploy artefact, not a re-listing of the diff.
 
 ## Diagrams — ASCII in chat, mermaid in tech doc
 - Every non-trivial design needs a diagram. Required at two points, BOTH in §4:
@@ -371,9 +398,48 @@ If the URL doesn't match any pattern above, ask the user which platform it is ra
    - **Git markdown** — pull, edit only the changed sections in place using the universal Diff format pattern, commit with a message naming the sections (e.g. `tech-doc: update §3.2, §6.1.GetFoo`), push or open a PR per repo convention.
 5. **Confirmation gate**: before the FIRST remote write, list to the user the exact set of sections about to change. In auto mode, edits to §1 / §2 / §7 / §8 push directly; edits touching §3 / §4 / §5 / §6 require explicit user confirmation (these are the high-impact sections reviewers care about most).
 6. **Local file is the source of truth.** Sync is one-way (local → remote). Never pull remote changes back into the local tech doc without the user's explicit instruction.
-7. **NEVER modify the remote doc's title.** The local tech doc has no title heading (it starts at `# 1. Overview & Background` per the document-structure rule); the remote doc's title was set by the user (or by a prior `+create` call) and lives outside the §1..§8 body. Title is **out of scope** for every sync operation — leave it untouched on every platform:
-   - **Lark docx / sheets / wiki**: do NOT pass `--title` to `docs +update` / `sheets +update` / `wiki +update`; do NOT call any `set-title` / `update-title` / file rename API.
-   - **Confluence**: when `PUT`-ing the page, send the existing `title` field verbatim (read it from the prior GET) — never substitute a derived title.
-   - **Google Docs / Sheets**: do NOT include `updateDocumentName` / file `name` in `batchUpdate` or `files.update` calls.
-   - **Git markdown**: do NOT rename the file. The filename is the de-facto title; preserve it.
-   If the user explicitly asks to rename the remote doc, do that as a SEPARATE confirmed action — never bundle it with a content sync.
+7. **Table cells using the Nested-list table cell format MUST be uploaded as platform-native nested lists, NOT as `<br>•` run-on text.** This applies to the §3 Detail and Decisions columns and any other cell that opts into the format. The remote cell must visually show indented sub-items (Level-1 header > Level-2 sub-bullets), not a single paragraph with `•` characters and line breaks left as literal text.
+   - **Parse the source cell** per the encoding defined in the Nested-list cell format section (bold non-indented line = Level 1; `• ` line = Level 2; `<br>` within an item; `<br><br>` between items). Preserve the bold marker on Level-1 lines as bold formatting on the rendered list item.
+   - **CRITICAL — `<br>` and `•` are PARSER MARKERS, not content.** Both characters must be **consumed entirely** during parsing and **never appear** in the text content of any rendered list item:
+     - `<br>` is a structural separator (line boundary inside the cell). It must NOT survive into a rendered list item's body and become a hard line break inside that item. A Level-2 sub-bullet renders as **ONE continuous line of text**, full stop — no internal `<br>`-induced line breaks splitting one bullet's text into two visual lines.
+     - `• ` (bullet + space) is the Level-2 marker. The platform's native bullet glyph replaces it; the literal `•` character must NOT appear at the start of the rendered item.
+     - The Level-1 bold marker `**…**` becomes bold styling on the rendered item; the `**` characters must NOT survive as literal text.
+   - **Long sub-bullets wrap naturally**: if a single Level-2 sub-bullet's text is long enough to need wrapping in the remote table cell, let the platform's renderer auto-wrap it based on column width (per the column-width rule in #8). Never insert `<br>` or any other hard-break marker inside a sub-bullet's text to force a wrap — that breaks the "one bullet = one logical line" invariant and produces fragmented rendered items.
+   - **Verify after write**: re-fetch the cell and confirm (a) every list item is a single logical line of text, (b) no `<br>`, `•`, or `**` characters appear as literal text anywhere in the rendered list, and (c) no list item has been split into multiple list items by a stray `<br>`. If any of these fail, the conversion is broken — fix the parser/emitter, don't paper over with text-substitution hacks.
+   - **Per-platform list emission**:
+     - **Lark docx**: emit nested `bullet` list blocks inside the table cell — Level-1 items at indent depth 1, Level-2 sub-bullets at indent depth 2. Use `docs +update` block-level operations targeting the cell. Never let `•` survive as a literal character on the rendered page.
+     - **Confluence**: emit `<ul><li>...</li></ul>` for Level 1 with a nested `<ul><li>...</li></ul>` inside each `<li>` for Level 2. Strip the source `•` and `<br>` markers entirely.
+     - **Google Docs / Sheets**: `documents.batchUpdate` with `createParagraphBullets` requests scoped to the cell range; Level-2 sub-bullets get `nestingLevel: 1`.
+     - **Git markdown**: GFM table cells don't support multi-line markdown lists, so emit explicit `<ul><li>...</li></ul>` HTML inside the cell — GitHub / GitLab honor the HTML and render proper nested lists.
+8. **Table column widths on remote — applies to EVERY table in the doc** (§3 Decisions table, §5/§6 field tables, §7 Effort table, §8 Release Checklist, and any future tables). When writing to a rich-text platform that supports explicit column widths (Lark / Confluence / Google Docs), set widths to **maximize horizontal use of the row** instead of leaving the platform's default even-distribution — the goal is to stop wide-content cells from wrapping mid-sentence onto extra lines.
+   - **Narrow columns (set as small as possible while keeping the widest value on one line)**: numbering / index / short-tag columns — `#` in §3, `**Field**` and `**Type**` in §5/§6 field tables, `**Owner**` and `**Effort (d)**` in §7, status checkboxes in §8. Pick the smallest width the platform supports that still keeps the longest cell value on one line.
+   - **Wide content columns (give them the rest of the row width)**: `Detail` and `Decisions` in §3, `Notes` / `Details` in §5/§6 field tables, `Notes` in §7, the description text in §8 — distribute the remaining row width proportionally to content density. A single Level-2 sub-bullet should fit on ONE rendered line; Level-1 items shouldn't get fragmented.
+   - **Per-platform mechanism**: Lark docx — set `column_width` on each table column block during `docs +update`; Confluence — emit `<colgroup><col style="width: …%"></col>…</colgroup>` inside the `<table>`; Google Docs — `updateTableColumnProperties` with explicit `columnWidthPx` per column.
+   - **Markdown remote (git)**: GFM tables don't support explicit widths — skip width control entirely; renderers auto-fit. Don't pad the source with extra dashes trying to fake widths.
+   - **Verify after write**: re-fetch the page and confirm narrow columns haven't been auto-widened, wide content cells use the full available row width, and no wide cell wraps a single sub-bullet onto a second line just because the column was too narrow.
+9. **Code blocks: name them + collapse-by-default on remote.** Every diff code block (and any other code block longer than ~10 lines) MUST carry a **name** identifying what it is, and MUST be uploaded in the **collapsed** state on every platform that supports collapsing. The local source uses a `<details><summary>` wrapper as the canonical encoding (per the universal Diff format rule); the converter maps that wrapper to the platform's native collapsible-code primitive.
+   - **Source encoding** (local markdown):
+     ````
+     <details>
+     <summary><strong>Code change — &lt;ParentFunc&gt; (path/to/file.go)</strong></summary>
+
+     ```diff
+      func <ParentFunc>(...) ... {
+      ...
+     ```
+
+     </details>
+     ````
+     The summary text follows the **Code-block name conventions** below.
+   - **Code-block name conventions**:
+     - Function diff → `Code change — <ParentFunc> (<short file path>)` (e.g. `Code change — GetFoo (handler/foo.go)`).
+     - IDL struct diff → `IDL — <StructName> (<idl file>)` (e.g. `IDL — GetFooRequest (foo.thrift)`).
+     - IDL service / method diff → `IDL — <ServiceName>.<Method> (<idl file>)`.
+     - SQL DDL diff → `SQL — <table_name> (<migration file>)`.
+     - Config diff → `Config — <config key> (<file path or namespace>)`.
+   - **Per-platform conversion of the `<details>` wrapper**:
+     - **Lark docx**: emit a code block with `language: diff` and the summary text set as the block's title; mark the block as **collapsed by default**. Use lark-doc's collapsible code-block / callout-with-code support.
+     - **Confluence**: emit `<ac:structured-macro ac:name="code">` with `<ac:parameter ac:name="title">…name…</ac:parameter>`, `<ac:parameter ac:name="language">diff</ac:parameter>`, and `<ac:parameter ac:name="collapse">true</ac:parameter>`.
+     - **Google Docs**: no native collapsible code block. Render the summary as a small bold paragraph immediately above the code block; leave the code expanded (platform limitation — flag this in the confirmation gate so the user knows).
+     - **Git markdown**: keep the `<details><summary>…</summary>…</details>` wrapper as-is. GitHub / GitLab render it natively as a collapsed disclosure widget. Do NOT strip the wrapper.
+   - **Verify after write**: re-fetch and confirm the code block has its name visible above/inline with the block, is in the collapsed state on supporting platforms, and the diff content expands correctly when toggled.
