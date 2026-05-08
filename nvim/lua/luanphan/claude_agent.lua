@@ -2,7 +2,7 @@ return require("luanphan.terminal_agent").create({
   g_bufnr = "claude_agent_bufnr",
   notify_prefix = "claude_agent",
   augroup_prefix = "ClaudeAgent",
-  hint_open = "<leader>ac",
+  hint_open = "<leader>cc",
   defaults = { cmd = "claude" },
   keymaps = {
     toggle = "<leader>cc",
