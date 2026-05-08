@@ -28,6 +28,11 @@ PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 CACHE_FILE = Path("/tmp/claude-code-statusline-cache.json")
 ERR_LOG = Path("/tmp/claude-code-statusline.err.log")
 CACHE_TTL_SEC = 60
+# Side-channel for the tmux status bar: every invocation dumps the
+# current rate-limit percentages here so external readers (e.g. tmux's
+# status-right) can show the same numbers without re-running the
+# JSON-from-stdin contract Claude Code uses.
+RATE_LIMITS_CACHE = Path("/tmp/claude-rate-limits.json")
 
 
 def _num(v):
@@ -230,6 +235,22 @@ def render(data: dict) -> str:
         week_sonnet = weekly_sonnet_tokens()
     except Exception:
         week_sonnet = 0
+
+    # Side-channel dump for the tmux status bar — it can't get the stdin
+    # JSON Claude Code provides, so we write the numbers it needs here on
+    # every invocation. Best-effort; failures must not break the bar.
+    try:
+        five = rate_limits.get("five_hour") if isinstance(rate_limits, dict) else None
+        seven = rate_limits.get("seven_day") if isinstance(rate_limits, dict) else None
+        RATE_LIMITS_CACHE.write_text(json.dumps({
+            "five_hour_pct":   _num(five.get("used_percentage")) if isinstance(five, dict) else None,
+            "five_hour_reset": five.get("resets_at")             if isinstance(five, dict) else None,
+            "seven_day_pct":   _num(seven.get("used_percentage")) if isinstance(seven, dict) else None,
+            "seven_day_reset": seven.get("resets_at")             if isinstance(seven, dict) else None,
+            "updated_at":      time.time(),
+        }))
+    except Exception:
+        pass
 
     parts = [
         model_name,

@@ -1,0 +1,61 @@
+#!/bin/sh
+# tmux-claude-codex-status — formatted Claude + Codex usage strip for the
+# tmux status bar.
+#
+# Reads /tmp/claude-rate-limits.json, which is written by
+# bin/claude-code-statusline whenever Claude Code calls it. So the
+# numbers shown here are the SAME official rate-limit percentages
+# Claude Code uses internally — not ccusage's dollar cost.
+#
+# Output format:
+#   claude(session 45%, 7d-all 23%) | codex(n/a)
+#
+# When Claude Code hasn't been running recently, the cache is stale and
+# we annotate the line so the user knows the numbers are old.
+RATE_LIMITS_CACHE=/tmp/claude-rate-limits.json
+STALE_AFTER_SEC=900   # 15 minutes — flag the line as stale beyond this
+
+# Always print SOMETHING — the bar must never go blank.
+fallback() { printf 'claude(no data) | codex(n/a)'; }
+
+if [ ! -f "$RATE_LIMITS_CACHE" ]; then
+	fallback
+	exit 0
+fi
+
+# Pull the four fields we care about with jq (already on this machine —
+# see bin/tmux-claude-codex-status sibling). Empty-string fallback when
+# null so the format string doesn't barf.
+read five_pct seven_pct updated <<EOF
+$(jq -r '
+	[
+		(.five_hour_pct // "n/a"),
+		(.seven_day_pct // "n/a"),
+		(.updated_at   // 0)
+	] | @tsv
+' "$RATE_LIMITS_CACHE" 2>/dev/null)
+EOF
+
+if [ -z "$updated" ]; then
+	fallback
+	exit 0
+fi
+
+# Stale flag — when Claude Code hasn't run for a while the numbers are old.
+now=$(date +%s)
+age=$((now - ${updated%.*}))
+stale_marker=""
+if [ "$age" -gt "$STALE_AFTER_SEC" ]; then
+	stale_marker=" (stale)"
+fi
+
+# Format percentages as integers when numeric; pass through "n/a" untouched.
+fmt() {
+	case "$1" in
+		n/a|"") printf 'n/a' ;;
+		*)      printf '%.0f%%' "$1" ;;
+	esac
+}
+
+printf 'claude(session %s, 7d-all %s%s) | codex(n/a)' \
+	"$(fmt "$five_pct")" "$(fmt "$seven_pct")" "$stale_marker"
