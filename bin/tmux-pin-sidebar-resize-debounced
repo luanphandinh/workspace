@@ -14,10 +14,19 @@ DEBOUNCE_SEC=0.5
 TICK_FILE="${HOME}/.config/tmux/.pin-resize-tick"
 mkdir -p "$(dirname "$TICK_FILE")"
 
+# Step 1 — IMMEDIATE refresh. tmux otherwise leaves `....` placeholders
+# wherever the cached pane layout no longer matches the new viewport
+# (Alacritty zoom in/out, monitor change). Run with no delay so the
+# artifacts disappear within one frame.
+tmux refresh-client -S >/dev/null 2>&1 || :
+
+# Step 2 — DEBOUNCED sidebar snap. Each new event overwrites the token
+# in TICK_FILE; the detached wait re-reads it and only fires the actual
+# resize when its own token is still current (i.e. no newer event
+# arrived during the wait).
 token="$(date +%s)-$$-${RANDOM:-0}"
 printf '%s\n' "$token" > "$TICK_FILE"
 
-# Detach the wait+check so tmux's hook returns immediately.
 (
 	sleep "$DEBOUNCE_SEC"
 	current="$(cat "$TICK_FILE" 2>/dev/null || :)"

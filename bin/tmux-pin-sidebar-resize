@@ -1,49 +1,35 @@
 #!/bin/sh
-# Force every pinned-sessions sidebar back to its canonical width across
-# the whole tmux server. Used after monitor plug/unplug when tmux layout
-# caching has left the strip at a wrong width / wrong window proportion.
-#
-# Strategy: kill every tagged sidebar pane and immediately re-attach a
-# fresh one to the same window via tmux-pin-sidebar-attach. A plain
-# `resize-pane -x` only nudges the pane within whatever (potentially
-# stale) layout tmux has cached — it doesn't refresh the surrounding
-# window. Recreating the pane forces tmux to re-evaluate the layout and
-# the new sidebar comes up at the canonical 22-col width every time.
-#
-# Discovery is via the pane-level option @pin_sidebar=1 (set by
-# tmux-pin-sidebar-attach when the pane is created and re-asserted by
-# tmux-pin-sidebar on every render).
+# Re-fit every window to the current client viewport AND snap each
+# pinned sidebar back to 22 cols — without ever rearranging panes.
+# Layout topology (which splits are vertical vs horizontal, weights
+# between siblings) is preserved end-to-end:
+#   - tmux-pin-fit-windows  → resize-window -x W -y H per window. tmux
+#                             scales the existing pane structure
+#                             proportionally to the new dimensions.
+#   - resize-pane -x 22     → force the sidebar pane back to canonical
+#                             width; tmux redistributes the freed/
+#                             absorbed columns across siblings using
+#                             their existing weights.
+# No kill+recreate, no select-layout. Both would clobber topology.
 WIDTH=22
 
-# Collect "<window_id> <pane_id>" pairs for every tagged sidebar.
-pairs="$(tmux list-panes -aF '#{window_id}|#{pane_id}|#{@pin_sidebar}' 2>/dev/null \
-	| awk -F'|' '$3 == "1" { print $1, $2 }')"
-
-if [ -z "$pairs" ]; then
-	tmux display-message "no pinned sidebars to resize"
-	exit 0
-fi
-
-# Force every window to the current client viewport BEFORE we kill+recreate
-# any panes. tmux normally only resizes windows that a client is actively
-# viewing; without this, inactive sessions would have their sidebar
-# recreated against a stale (possibly tiny) cached window size.
+# 1. Fit every window to the live viewport (handles inactive sessions
+#    whose cached size diverged from the current client).
 "$HOME/bin/tmux-pin-fit-windows" >/dev/null 2>&1 || :
 
-# Make sure the global flag is on — tmux-pin-sidebar-attach gates on it.
-tmux set-option -g '@pin_sidebar_open' '1' >/dev/null 2>&1 || :
+# 2. Snap every tagged sidebar pane back to 22 cols.
+tmux list-panes -aF '#{pane_id} #{@pin_sidebar}' 2>/dev/null \
+	| awk '$2 == "1" { print $1 }' \
+	| while IFS= read -r pane; do
+		[ -z "$pane" ] && continue
+		tmux resize-pane -t "$pane" -x "$WIDTH" >/dev/null 2>&1 || :
+	done
 
-# Kill every tagged sidebar pane first.
-printf '%s\n' "$pairs" | while IFS=' ' read -r _win pane; do
-	[ -z "$pane" ] && continue
-	tmux kill-pane -t "$pane" >/dev/null 2>&1 || :
-done
+# 3. Repaint sidebar contents (line widths may have changed).
+"$HOME/bin/tmux-pin-broadcast-redraw" >/dev/null 2>&1 || :
 
-# Re-attach a fresh sidebar into each affected window. Dedupe windows in
-# case future changes ever permit multiple sidebars per window.
-printf '%s\n' "$pairs" | awk '{ print $1 }' | sort -u | while IFS= read -r win; do
-	[ -z "$win" ] && continue
-	"$HOME/bin/tmux-pin-sidebar-attach" "$win" >/dev/null 2>&1 || :
-done
+# 4. Force a full client repaint to clear any `....` placeholder cells
+#    where the cached layout didn't match the new viewport.
+tmux refresh-client -S >/dev/null 2>&1 || :
 
-tmux display-message "pinned sidebar reset to ${WIDTH} cols (all sessions)"
+tmux display-message "viewport re-fit, sidebars snapped to ${WIDTH} cols"
