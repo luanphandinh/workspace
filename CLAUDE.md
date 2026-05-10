@@ -2,6 +2,10 @@
 
 This repo is the user's dotfiles / workspace tooling root: Neovim config, tmux, Alacritty, shared scripts under `bin/`, and reusable skills under `skills/`. Each subsystem has a Makefile target that installs it into the live location on the user's machine. The rule is: **edit in this repo, then run the matching Make target before considering the change complete** — otherwise the edit exists only in the repo, not in what the user actually uses.
 
+## Sync with AGENTS.md — keep both files identical
+
+This file (`CLAUDE.md`) and `AGENTS.md` carry the **same instructions**, mirrored for different agent runtimes. Whenever you edit ONE of them, you MUST apply the **identical change** to the other in the same turn — no exceptions, no "I'll do the other one later". A reviewer should be able to `diff CLAUDE.md AGENTS.md` and see only the title-line difference (`# Claude instructions` vs. `# Agent instructions`). If the two files drift, agents on different runtimes will follow different rules — that's the bug this rule prevents.
+
 ## Neovim configuration
 
 - Neovim config lives under `nvim/` in this repository. The `nvim-config` Makefile target copies it to `~/.config/nvim/` and runs Packer.
