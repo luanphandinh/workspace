@@ -687,10 +687,20 @@ def cmd_merge(target: str, folders: list) -> int:
     case_b = target in ("master", "main")
 
     if case_b:
-        # Case B: from inside a workspace, merge base into each worktree's feature branch.
-        if not (pwd / "workspace.yml").is_file():
-            die("`mkws merge master|main` must be run from inside a workspace dir (one with workspace.yml)")
-        repos = expand_targets(folders)
+        # Case B: merge base into feature-branch worktree(s).
+        # Allowed cwd contexts:
+        #   1. workspace dir (has workspace.yml)         → all worktrees in manifest
+        #   2. a worktree inside a workspace             → just that one worktree
+        if (pwd / "workspace.yml").is_file():
+            workspace_dir = pwd
+        elif (pwd / ".git").exists() and (pwd.parent / "workspace.yml").is_file():
+            workspace_dir = pwd.parent
+            if not folders:
+                folders = [str(pwd)]
+        else:
+            die("`mkws merge master|main` must be run from inside a workspace dir or one of its worktrees")
+
+        repos = expand_targets(folders) if folders else expand_targets([str(workspace_dir)])
         if not repos:
             heading("summary")
             info("no git repos found")
@@ -725,8 +735,11 @@ def cmd_merge(target: str, folders: list) -> int:
         return 0 if failed == 0 else 1
 
     # Case A: target is a workspace name. Find <root>/local_workspaces/<target>/workspace.yml.
+    # Allowed cwd contexts: root, local_workspaces/, a workspace dir, OR a source repo
+    # (sibling of local_workspaces/) — the last one auto-scopes to that one repo.
     candidates = [
         pwd / "local_workspaces" / target / "workspace.yml",                  # cwd is root
+        pwd.parent / "local_workspaces" / target / "workspace.yml",           # cwd is a source repo (sibling of local_workspaces/)
         pwd.parent / target / "workspace.yml",                                # cwd is local_workspaces/
         pwd.parent.parent / "local_workspaces" / target / "workspace.yml",    # cwd is a workspace
     ]
@@ -742,7 +755,14 @@ def cmd_merge(target: str, folders: list) -> int:
         die(f"workspace.yml at {yml} has no branch_name — nothing to merge")
 
     repo_names = data["repos"] or []
-    if folders:
+    # Auto-scope to the current dir if it's a source repo in the manifest.
+    if (pwd / ".git").is_dir() and pwd.parent == repo_root and pwd.name in repo_names:
+        if folders:
+            wanted = {Path(f).name for f in folders}
+            if pwd.name not in wanted:
+                die(f"current dir '{pwd.name}' is not in the requested folder scope")
+        repo_names = [pwd.name]
+    elif folders:
         wanted = {Path(f).name for f in folders}
         repo_names = [r for r in repo_names if r in wanted]
     if not repo_names:
@@ -1216,27 +1236,32 @@ Modes:
                                              #   branch in $PWD's repos
                mkws rebase diamond_filter
   merge      Bidirectional merge driven by <target>:
-             • `mkws merge master` (or `main`) — Case B: from inside a
-               workspace, for each worktree on a feature branch: fetch
-               origin/<base>, pull origin/<feature> if a remote exists,
-               merge origin/<base> --no-ff into the feature branch, then
-               push the feature branch. Replaces `mkws rebase` with the added
-               feature-pull and post-merge push. Halts on conflict.
-             • `mkws merge <workspace-name>` — Case A: from the root, for each
-               source sibling repo on master/main listed in the workspace's
-               manifest: pull --ff-only base, then merge --no-ff <feature>
-               into base. NO push — review and `git push origin master`
-               yourself when satisfied. Workspace is NOT dropped.
-             Both cases serial; halt on conflict (state left in place to
-             resolve manually). Folder args optional to scope to specific
-             repos by name.
+             • `mkws merge master` (or `main`) — Case B: for each worktree on
+               a feature branch: fetch origin/<base>, pull origin/<feature>
+               if a remote exists, merge origin/<base> --no-ff into the
+               feature branch, then push the feature branch. Replaces
+               `mkws rebase` with the added feature-pull and post-merge push.
+               Halts on conflict.
+             • `mkws merge <workspace-name>` — Case A: for each source sibling
+               repo on master/main listed in the workspace's manifest: pull
+               --ff-only base, then merge --no-ff <feature> into base. NO
+               push — review and `git push origin master` yourself when
+               satisfied. Workspace is NOT dropped.
+             Context-aware cwd:
+               - In root or workspace dir → operates on all matching repos.
+               - In a single git repo → auto-scopes to that one repo (the
+                 source repo for Case A, the worktree for Case B).
+             Folder args optional to further scope by repo name. Both cases
+             serial; halt on conflict (state left in place to resolve).
              Examples:
-               # inside workspace: integrate latest master into feature + push
+               # inside workspace: integrate latest master into all worktrees
                cd local_workspaces/myws && mkws merge master
+               # inside ONE worktree: integrate just that one
+               cd local_workspaces/myws/repo-a && mkws merge master
                # at root: land feature → master locally across all repos
                mkws merge myws
-               # scope to one repo
-               mkws merge myws repo-a
+               # inside ONE source repo: land just that one
+               cd repo-a && mkws merge myws
   sync       Composite: for every matching repo, pull the current branch,
              rebase onto master (skipped if already on master/main), then
              push. Serial. Rebase conflicts halt the whole run with the same
