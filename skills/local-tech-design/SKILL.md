@@ -375,7 +375,13 @@ flowchart LR
 ## Design loop (workflow — how to fill the 8 sections)
 - The doc is **never final** until the feature is in production. Keep asking for feedback after every revision.
 - **First round**: produce a draft of all 8 sections in order. §3 (Design Decisions) typically has the most back-and-forth — surface every non-trivial decision you can think of, with options and a recommendation, and let the user steer.
-- **Subsequent rounds**: only revise the sections that actually changed. Don't rewrite §1/§2/§7/§8 unless the requirement itself shifted. New questions that arise during §6 deep-dive get added to §3 (not inline in §6).
+- **MANDATORY brainstorming pass after the first draft.** Once microservices are discovered (per the mapping file rule) AND the first draft is on disk, **invoke `superpowers:brainstorming`** to systematically walk through every design decision with the user — including the trivial / forced / upstream-fixed ones that will NOT make it into the §3 table. The point: don't silently drop those low-impact picks; surface them so the user can confirm or override.
+  - Brainstorming output is a list of decisions split into two buckets:
+    1. **Tabled decisions** — the high-impact ones that satisfy the §3 inclusion criteria. These become rows in the §3 Decisions table.
+    2. **Omitted decisions** — the trivial / reversible / upstream-fixed / convention-forced picks. These get **recorded but not tabled**.
+  - **The user must confirm both buckets** before you continue. If the user wants something moved (table → omitted, or omitted → table), update accordingly and re-confirm.
+  - **Omitted decisions MUST still be stated in the doc** — never leave them invisible. Add a one-line bullet for each omitted pick at the end of §3 under a small italic note: `*Omitted from the table (low-impact / forced / upstream-fixed):*` followed by a flat bullet list. Each line is `<short topic> — <picked option> (<one-phrase reason for omitting>)`. Example: `*Omitted from the table:*` `- Logger field name — picked snake_case (matches existing convention)` `- Retry backoff base — picked 100ms (framework default)`. This keeps the audit trail without bloating the table.
+- **Subsequent rounds**: only revise the sections that actually changed. Don't rewrite §1/§2/§7/§8 unless the requirement itself shifted. New questions that arise during §6 deep-dive get added back into the brainstorming bucket and re-classified (table vs omitted) — promote into §3 only if genuinely high-impact.
 - **For §6 (Internal Technical Design)**: dispatch one FOCUSED AGENT TASK per microservice IN PARALLEL — each agent explores its repo, computes the IDL/logic/code diff, and reports back. The main agent stitches the results into §6.
 - Use the codebase mapping from `<tech_doc_name>_mapping.md` as the canonical microservice list — never guess service boundaries.
 ## Sync to remote (when the user provides a URL)

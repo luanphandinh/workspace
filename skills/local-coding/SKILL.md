@@ -11,6 +11,19 @@ description: "extremely efficient coder"
 - You reading the tech design document and understand the design changes that need to be made to the codebase.
 - Using skill superpower to plan and excute
 
+## Comments — minimal, business-context only (universal — applies to every line of code you write)
+**Code is the source of truth. Comments only exist to carry information the code cannot.** Default to **no comments**.
+- **Never write redundant comments.** A comment that restates the function name, the variable name, the parameter list, the obvious control flow, or "what this line does" is noise. Examples to NEVER write: `// returns the user`, `// loop over items`, `// check if nil`, `// increment counter`, `// call the API`, type-and-name docstrings that just expand identifiers into English.
+- **Comment ONLY when the logic is genuinely tricky and not straightforward.** A future reader (or future you) reading just the code would be confused or mis-guess intent. Examples that DO warrant a comment:
+  - A non-obvious invariant the surrounding code depends on.
+  - A workaround for a specific upstream bug, with the issue/ticket reference.
+  - A subtle ordering requirement (`// must run before X because …`).
+  - A counter-intuitive choice that looks wrong at first glance.
+- **DO keep comments that explain context or business logic** that the code itself can't carry — domain rules, regulatory constraints, "why we do it this way", references to PRD / tech doc sections. These are load-bearing context, not redundancy.
+- **Don't over-explain.** One short sentence beats a paragraph. If the comment grew past two lines, either the code needs simplifying or the comment is over-explaining. If the WHY is non-obvious enough to need real depth, link to the tech doc / PRD / ticket instead of expanding inline.
+- **No throat-clearing comments**: drop `// TODO: revisit this`, `// added per review`, `// updated for new flow`, `// helper`, `// constructor`, `// END OF FILE`, banner comments around blocks, etc.
+- **Apply this when planning too.** When you write the implementation plan via `superpowers:writing-plans` (or its variants), the plan MUST explicitly reuse this comment policy as a constraint — e.g. include a line like `Comments: minimal, business-context only — see local-coding rule. No redundant comments; only annotate tricky logic and business/domain context.` This keeps reviewers and future sub-agents aligned during execution.
+
 ## Working folder — always use a workspace
 - All coding for a tech design happens inside a **multi-repo git-worktree workspace**, NOT directly in the sibling source repos. This keeps master clean and isolates feature branches.
 - The workspace is built by the `local-workspace` skill (via the `mkws` command). **Delegate to that skill** — do not reimplement the worktree/branch setup here.
