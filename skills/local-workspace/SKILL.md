@@ -23,7 +23,7 @@ mkws sync [<folder>...]
 mkws drop <folder>
 ```
 - `--name` — workspace folder name. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). `/` in the name becomes `_` in the folder.
-- `--branch` — required on first invocation (when no `workspace.yml` yet). Optional on later invocations; if passed, must match the yml exactly.
+- `--branch` — **required only when adding repos** (`--add ...`) so worktrees have a branch to attach to. **Optional** when creating an empty workspace (no `--add`) or when extending an empty workspace with no repos. If the workspace already has a `branch_name` set, `--branch` is optional but, if passed, must match exactly. If the workspace was created empty (`branch_name:` in yml is empty) and you later pass `--branch`, the value is persisted into the yml. Once persisted, the existing-yml match-or-error rule kicks in.
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
 - `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders. Rejects `--add`, `--branch`, `--name`.
   Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull ./local_workspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
@@ -63,6 +63,14 @@ Confirm the root (ask if unclear), then:
 ```
 cd <root>
 mkws --name X --branch feature/Y --add A B
+```
+
+## Create an empty workspace (no repos yet, branch can wait)
+User intent: "make an empty workspace called X — I'll add repos later". Useful when bootstrapping a tech-design folder before microservices are mapped in. Branch is optional here; you can set it later when you add the first repo.
+```
+cd <root>
+mkws --name X                    # no --add, no --branch — empty workspace, blank branch
+mkws --name X --branch feature/Y # later: persist the branch into the yml
 ```
 
 ## Add repos to an existing workspace
@@ -132,8 +140,9 @@ Gather these from the user if unclear — don't guess:
 1. **Root directory** — which folder contains the repos? Confirm `$PWD` is that folder.
 2. **Workspace name** — what should it be called?
 3. **Creating vs. extending?** Check whether `<root>/local_workspaces/<name>/workspace.yml` exists.
-   - Exists → extending. No `--branch` needed; read it from the yml.
-   - Doesn't exist → creating. `--branch` required; ask if not given.
+   - Exists with `branch_name` set → extending. No `--branch` needed; read it from the yml.
+   - Exists but `branch_name` is empty → workspace was bootstrapped empty. `--branch` is required if you're adding repos this turn; otherwise still optional.
+   - Doesn't exist → creating. `--branch` required ONLY if `--add` is also passed (worktrees need a branch). For an empty workspace (no `--add`), `--branch` is optional and can be filled in later.
 4. **Repos** — which ones? If vague ("the usual", "all of them"), ask and offer a glob listing of candidates.
 
 # After you run

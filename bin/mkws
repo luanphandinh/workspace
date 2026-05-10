@@ -815,17 +815,27 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
     if yml.is_file():
         data = read_manifest(yml)
         existing = data["branch_name"]
-        if not existing:
-            die(f"workspace.yml at {yml} is missing branch_name")
-        if branch_flag and branch_flag != existing:
-            die(f"--branch '{branch_flag}' does not match workspace.yml branch '{existing}'")
-        branch = existing
+        if existing:
+            if branch_flag and branch_flag != existing:
+                die(f"--branch '{branch_flag}' does not match workspace.yml branch '{existing}'")
+            branch = existing
+        else:
+            # Branch is empty in yml — workspace was created empty (no --branch).
+            if branch_flag:
+                # User is filling in the branch now; persist it.
+                write_manifest(yml, name=name, branch=branch_flag, repos=data["repos"])
+                branch = branch_flag
+            elif repos_arg:
+                die(f"workspace.yml at {yml} has no branch_name; re-run with --branch <branch> to add repos")
+            else:
+                # No-op extension on an empty workspace — report and exit clean.
+                branch = ""
     else:
-        if not branch_flag:
-            die("--branch required when creating a new workspace")
+        if not branch_flag and repos_arg:
+            die("--branch required when adding repos to a new workspace")
         workspace_dir.mkdir(parents=True, exist_ok=True)
-        write_manifest(yml, name=name, branch=branch_flag, repos=[])
-        branch = branch_flag
+        write_manifest(yml, name=name, branch=branch_flag or "", repos=[])
+        branch = branch_flag or ""
 
     added = skipped = failed = 0
 
@@ -888,7 +898,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
 
     heading("summary")
     info(f"workspace: {BOLD}{workspace_dir}{RESET}")
-    info(f"branch:    {BOLD}{branch}{RESET}")
+    info(f"branch:    {BOLD}{branch or '(unset — pass --branch to set)'}{RESET}")
     color = GREEN if failed == 0 else YELLOW
     info(f"added: {color}{added}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
     return 0
