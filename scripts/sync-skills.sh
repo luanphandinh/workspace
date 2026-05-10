@@ -11,10 +11,12 @@ fi
 
 # Cursor / Claude: ~/.cursor/skills, ~/.claude/skills
 # Codex CLI (user scope): ~/.agents/skills — see https://developers.openai.com/codex/skills
+# Hermes agent (user scope): ~/.hermes/skills
 DESTS=(
   "${HOME}/.claude/skills"
   "${HOME}/.cursor/skills"
   "${HOME}/.agents/skills"
+  "${HOME}/.hermes/skills"
 )
 
 for d in "${DESTS[@]}"; do
