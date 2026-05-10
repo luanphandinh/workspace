@@ -2,6 +2,14 @@
 
 This repo is the user's dotfiles / workspace tooling root: Neovim config, tmux, Alacritty, shared scripts under `bin/`, and reusable skills under `skills/`. Each subsystem has a Makefile target that installs it into the live location on the user's machine. The rule is: **edit in this repo, then run the matching Make target before considering the change complete** — otherwise the edit exists only in the repo, not in what the user actually uses.
 
+## Generic workspace rule
+
+- This repo must stay generic because it is workspace tooling meant to adapt to any company, team, or project.
+- Do not mention company names, team names, project names, internal service names, codebase names, environment variable names, domain terms, product names, business entities, or workflow-specific identifiers in committed files.
+- This rule applies to examples, diagrams, placeholder names, comments, docs, skill instructions, scripts, config, and final output that describes repo changes.
+- Use neutral placeholders such as `<user-focus>`, `<service-a>`, `<repo-a>`, `<method-name>`, `<field-name>`, `<topic-name>`, `example-service`, or `example-repo`.
+- Before editing or syncing this repo, scan new text for non-generic names and replace them with neutral placeholders.
+
 ## Sync with AGENTS.md — keep both files identical
 
 This file (`CLAUDE.md`) and `AGENTS.md` carry the **same instructions**, mirrored for different agent runtimes. Whenever you edit ONE of them, you MUST apply the **identical change** to the other in the same turn — no exceptions, no "I'll do the other one later". A reviewer should be able to `diff CLAUDE.md AGENTS.md` and see only the title-line difference (`# Claude instructions` vs. `# Agent instructions`). If the two files drift, agents on different runtimes will follow different rules — that's the bug this rule prevents.
@@ -41,4 +49,3 @@ make install-workspace
 
 - Prefer editing in this repo, then running the install target — never edit the copies under `~/.config/`, `~/bin/`, or `~/.claude/skills/` directly, since they're overwritten on the next sync.
 - `make help` lists every target with its description.
-- This repo is supposed to be as generic as possible, since this is workspace and suppose to adapt to any companies any teams or any projects, for all development, avoid mentioning any company, team or project name, and avoid specific terms related to the tools, services, codebases, evironment variables or anything that the teams or the companies use.

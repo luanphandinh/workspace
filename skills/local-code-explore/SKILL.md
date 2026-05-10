@@ -47,38 +47,47 @@ Report back in under 200 words:
 - Before drawing the diagram, mentally normalize findings into edges: `(caller service, protocol, method/path/topic, callee service, evidence file:line)`. Use those edges to compose full paths from upstream entrypoints through downstream leaves. Shared services should appear once in the graph where possible.
 - If a discovered service is disconnected from the main chain, do not create a second diagram. Add it under the same diagram as a clearly labeled `Disconnected / evidence not found` box, then explain briefly why the connection is not proven.
 - Each service must be rendered as its own box. Each service box contains the service name and codebase folder. Arrows between boxes must include the protocol plus method/path/topic, such as `RPC: MethodAB`, `HTTP: POST /path`, or `MQ: topic-x`.
+- Always include what the user asked to look up directly in the diagram, and propagate that focus throughout the relevant flow. Mark the exact service box, handler, function, field, API path, RPC method, MQ topic, or edge with `<<< USER FOCUS: <short label>`.
+- Every service box on the focused call path must include a `focus:` line that explains how that service participates in the user's requested lookup, such as `focus: upstream caller of <item>`, `focus: owns <item>`, `focus: transforms <item>`, `focus: downstream dependency for <item>`, or `focus: consumes <item>`.
+- Every arrow on the focused call path must include the focus label after the protocol and method/path/topic, for example `RPC: MethodAB | focus: <item> flow`. Branches that are unrelated to the requested lookup can omit the focus label, but do not omit it from any edge needed to understand the requested flow.
 - For branching, draw visible connector lines from the parent service box to each branch. Do not leave a branch as an isolated vertical line; use horizontal ASCII connectors so the reader can see which parent service owns the call.
 - Preferred format for connected graphs with multiple branches:
 ```
 +-------------------------+
 | A service               |
 | repo: repo-a            |
+| focus: upstream caller  |
 +-------------------------+
             |
-            | RPC: MethodAB
+            | RPC: MethodAB | focus: <user-focus> flow
             v
 +-------------------------+
 | B service               |
 | repo: repo-b            |
+| focus: owns <user-focus>| <<< USER FOCUS: function/API under investigation
 +-------------------------+
             |
             +-------------------------+
             |                         |
             | HTTP: POST /to-d        | MQ: topic-x
+            | focus: <user-focus> flow | focus: <user-focus> event
             v                         v
 +-------------------------+  +-------------------------+
 | D service               |  | E service               |
 | repo: repo-d            |  | repo: repo-e            |
+| focus: downstream dep   |  | focus: event consumer   |
 +-------------------------+  +-------------------------+
             |                         |
             | RPC: MethodDF           | HTTP: GET /to-g
+            | focus: <user-focus> flow | focus: <user-focus> flow
             v                         v
 +-------------------------+  +-------------------------+
 | F service               |  | G service               |
 | repo: repo-f            |  | repo: repo-g            |
+| focus: final dependency |  | focus: final dependency |
 +-------------------------+  +-------------------------+
 ```
 - If the external service can not be found in the codebase, hightlight it
-- If user ask about specific field or part of the logic, highlight it in the diagram or the logic so the user can easily focus to it
+- If user ask about specific field or part of the logic, highlight it in the diagram and the logic summary so the user can easily focus to it
 - DO NOT OVER EXPLAIN, if the user want to drill down to the detail of the specfic part, user need to ask and you will support
 - Provide some key information under the diagram, such as when RPC function get calls, which file and line of code is that, the information should be provided follow the diagram call chains, so that user can easily understand the relationship between the diagram and the codebase
