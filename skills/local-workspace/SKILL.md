@@ -19,6 +19,7 @@ mkws pull [<folder>...]
 mkws push [<folder>...]
 mkws master [<folder>...]
 mkws rebase [<folder>...]
+mkws merge <target> [<folder>...]
 mkws sync [<folder>...]
 mkws drop <folder>
 ```
@@ -31,6 +32,10 @@ mkws drop <folder>
 - `master` — subcommand. For every matching repo: `git clean -d -f`, optional `git checkout -- .` to discard local changes (only runs when dirty), switch to master (fallback main), and `git pull --ff-only`. **Destructive** to uncommitted work. Accepts the same folder-args form as `pull`. **BLOCKED when any target folder itself contains a `workspace.yml`** — running it in a workspace would wipe feature-branch state across the worktrees. Rejects `--add`, `--branch`, `--name`.
   Examples: `mkws master`, `mkws master repo-a repo-b`, `mkws master /abs/path/to/root`.
 - `rebase` — subcommand. For every matching repo on a feature branch: stash dirty edits (`git stash push -u`), `git fetch origin <base>`, `git merge origin/<base>` into the current branch, pop the stash. Serial — conflicts need attention. On conflict: **HALTS** — leaves the merge + stash in place, prints resolve-and-finish instructions, skips remaining repos. Non-conflict failures trigger `git merge --abort` + stash-pop. Already-on-base / detached HEAD repos are skipped. Same folder-args form as `pull`.
+- `merge` — subcommand. **Bidirectional** merge driven by the required `<target>` argument:
+  - **`mkws merge master`** (or `main`) — *Case B: integrate latest base INTO the feature branch*. Run from inside a workspace dir. For each worktree: stash dirty edits, `git fetch origin <base>`, `git pull --ff-only origin <feature>` (only if `origin/<feature>` exists), `git merge --no-ff origin/<base>` into the feature branch, pop stash, `git push origin <feature>`. Halts on conflict (state left in place to resolve). **Replaces `mkws rebase`** with the added feature-pull and post-merge push.
+  - **`mkws merge <workspace-name>`** — *Case A: land the feature branch INTO base, locally only*. Run from the root (where `local_workspaces/` is a child). Reads the workspace's manifest, then for each source sibling repo (`<root>/<repo>`, NOT the worktree): verifies it's on master/main and clean, `git pull --ff-only`, `git merge --no-ff <feature_branch>`. **NO push** — review the merge commits, then `git push origin master` per repo when satisfied. **Workspace is NOT dropped** — it stays for further work.
+  - Both cases: serial, halt on conflict, optional folder args to scope to specific repos by name. Rejects `--add` / `--branch` / `--name`.
 - `sync` — subcommand. Composite: for every matching repo, `pull` the current branch → `rebase` onto master (skipped if already on `master`/`main`) → `push`. Serial. **Halts on rebase conflict** (same behavior as `mkws rebase`). Pull/push failures for one repo are recorded but don't halt — the run continues to the next repo. Same folder-args form as `pull`.
 - `drop` — subcommand. **Destructive.** Removes every worktree listed in the manifest via `git worktree remove --force`, prunes the source repos, and deletes the workspace folder (and the empty `local_workspaces/` container if nothing else is left). Uncommitted work in the worktrees is lost. No confirmation prompt. Takes a required positional **folder path** (relative or absolute). Rejects `--add`, `--branch`, and `--name`.
 
@@ -113,6 +118,24 @@ cd <root>
 mkws master
 ```
 **Refuse** if the user asks to run this inside a workspace folder — the command is blocked and will error. Explain that workspaces hold feature-branch state per worktree, and they should `cd <root>` first (or use `mkws pull` which is branch-agnostic and safe inside a workspace).
+
+## Land feature → master locally (per-repo, no push)
+User intent: "merge my workspace branch back to master locally so I can review before pushing", "I don't want to push the feature branch to remote and merge there — just merge locally and push master myself".
+```
+cd <root>
+mkws merge <workspace-name>            # all repos in the manifest
+mkws merge <workspace-name> repo-a     # scope to one repo
+```
+Each source sibling repo (NOT the worktree) is pulled `--ff-only` on master/main, then `git merge --no-ff <feature_branch>` is run. **No push** — review the merge, then `git push origin master` (or `main`) per repo. The workspace stays intact for further work; drop it manually with `mkws drop` when fully done.
+
+## Bring latest master into the feature branch + push
+User intent: "merge master into my feature branch", "keep my workspace up to date with master and push the result". This replaces `mkws rebase` with auto-pull of the feature branch first and auto-push at the end.
+```
+cd <root>/local_workspaces/<workspace-name>
+mkws merge master           # or `mkws merge main`
+mkws merge master repo-a    # scope to one worktree
+```
+Per worktree: stash → fetch origin/<base> → pull origin/<feature> if remote exists → merge --no-ff origin/<base> → pop stash → push origin <feature>. Halts on conflict.
 
 ## Drop a workspace
 User intent: "drop workspace X", "delete the workspace", "clean up the worktrees for X", "we're done with this feature branch, wipe it". This is **destructive** — `mkws drop` removes every worktree in the manifest, prunes the source repos, and deletes the workspace folder.
