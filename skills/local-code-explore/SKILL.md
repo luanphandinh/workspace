@@ -27,7 +27,7 @@ description: "Exploring the code base"
   - which files/lines implement the entry point
   - any further downstream calls it makes (so the main agent can decide whether to recurse)
   - brief logic summary — no full code dumps, no full file reads
-- **Merge phase:** after all sub-agents return, the main agent merges their reports into the final diagram + mapping. If any sub-agent surfaces a new downstream service (C calls D), decide whether to recurse with another parallel fan-out.
+- **Merge phase:** after all sub-agents return, the main agent must first merge every reported edge into one transitive service graph, then render that single graph in the final diagram + mapping. Do not output one chart per sub-agent or one chart per service. If any sub-agent surfaces a new downstream service (C calls D), decide whether to recurse with another parallel fan-out before final rendering.
 - **Don't fan out when:** the call chain is strictly linear (A→B→C with no branching), the downstream is trivial (single helper), or the branches share state the main agent needs to reason about together.
 ### Sub-agent prompt template
 ```
@@ -41,10 +41,44 @@ Report back in under 200 words:
   - if a downstream target is not obvious from the code, say so — don't guess
 ```
 ## Output phase
-- Digaram format must be compatible with the current chat window, under text format so user can understand, dont use any external UML diagram
-- After exploring, draw diagram to illustrate the relationship between the microservices, and also the call chain between the microservices, each microservices box contains the microservice name and its codebase folder, and the arrow between the microservices indicate the call relationship, and also indicate the protocol of the call, such as RPC or HTTP or any other protocol
+- Diagram format must be compatible with the current chat window, under text format so user can understand, dont use any external UML diagram.
+- Always render exactly one merged end-to-end call chain diagram for all services discovered during exploration. If A calls B and B calls D, the final diagram must show `A -> B -> D`, not separate diagrams `A -> B` and `B -> D`.
+- The single diagram must include all connected branches in the same chart. Do not output one chart per service, branch, sub-agent, upstream chain, or downstream chain.
+- Before drawing the diagram, mentally normalize findings into edges: `(caller service, protocol, method/path/topic, callee service, evidence file:line)`. Use those edges to compose full paths from upstream entrypoints through downstream leaves. Shared services should appear once in the graph where possible.
+- If a discovered service is disconnected from the main chain, do not create a second diagram. Add it under the same diagram as a clearly labeled `Disconnected / evidence not found` box, then explain briefly why the connection is not proven.
+- Each service must be rendered as its own box. Each service box contains the service name and codebase folder. Arrows between boxes must include the protocol plus method/path/topic, such as `RPC: MethodAB`, `HTTP: POST /path`, or `MQ: topic-x`.
+- For branching, draw visible connector lines from the parent service box to each branch. Do not leave a branch as an isolated vertical line; use horizontal ASCII connectors so the reader can see which parent service owns the call.
+- Preferred format for connected graphs with multiple branches:
+```
++-------------------------+
+| A service               |
+| repo: repo-a            |
++-------------------------+
+            |
+            | RPC: MethodAB
+            v
++-------------------------+
+| B service               |
+| repo: repo-b            |
++-------------------------+
+            |
+            +-------------------------+
+            |                         |
+            | HTTP: POST /to-d        | MQ: topic-x
+            v                         v
++-------------------------+  +-------------------------+
+| D service               |  | E service               |
+| repo: repo-d            |  | repo: repo-e            |
++-------------------------+  +-------------------------+
+            |                         |
+            | RPC: MethodDF           | HTTP: GET /to-g
+            v                         v
++-------------------------+  +-------------------------+
+| F service               |  | G service               |
+| repo: repo-f            |  | repo: repo-g            |
++-------------------------+  +-------------------------+
+```
 - If the external service can not be found in the codebase, hightlight it
 - If user ask about specific field or part of the logic, highlight it in the diagram or the logic so the user can easily focus to it
 - DO NOT OVER EXPLAIN, if the user want to drill down to the detail of the specfic part, user need to ask and you will support
 - Provide some key information under the diagram, such as when RPC function get calls, which file and line of code is that, the information should be provided follow the diagram call chains, so that user can easily understand the relationship between the diagram and the codebase
-
