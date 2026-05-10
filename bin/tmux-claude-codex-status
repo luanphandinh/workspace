@@ -8,20 +8,106 @@
 # Claude Code uses internally — not ccusage's dollar cost.
 #
 # Output format:
-#   claude [ session 45% | 7d-all 23% ] | codex [N/A]
+#   claude [ session 45% | 7d-all 23% ] | codex [ 5h 13% | 7d 2% | tok 1.2M ]
 #
 # When Claude Code hasn't been running recently, the cache is stale and
 # we annotate the line so the user knows the numbers are old.
 RATE_LIMITS_CACHE=/tmp/claude-rate-limits.json
 STALE_AFTER_SEC=900   # 15 minutes — flag the line as stale beyond this
+CODEX_STATE_DB="$HOME/.codex/state_5.sqlite"
 
 # Always print SOMETHING — the bar must never go blank.
-fallback() { printf 'claude [ no data ] | codex [N/A]'; }
+claude_fallback() { printf 'claude [ no data ]'; }
+codex_fallback() { printf 'codex [ no data ]'; }
+
+fmt_pct() {
+	case "$1" in
+		n/a|"") printf 'n/a' ;;
+		*)      printf '%.0f%%' "$1" ;;
+	esac
+}
+
+fmt_count() {
+	case "$1" in
+		''|*[!0-9]*) printf 'n/a' ;;
+		??????????*) awk -v n="$1" 'BEGIN { printf "%.1fB", n / 1000000000 }' ;;
+		???????*)    awk -v n="$1" 'BEGIN { printf "%.1fM", n / 1000000 }' ;;
+		????*)       awk -v n="$1" 'BEGIN { printf "%.0fK", n / 1000 }' ;;
+		*)           printf '%s' "$1" ;;
+	esac
+}
+
+fmt_window() {
+	case "$1" in
+		''|*[!0-9]*) printf 'usage' ;;
+		10080)       printf '7d' ;;
+		300)         printf '5h' ;;
+		*)
+			if [ $(( $1 % 1440 )) -eq 0 ]; then
+				printf '%dd' $(( $1 / 1440 ))
+			elif [ $(( $1 % 60 )) -eq 0 ]; then
+				printf '%dh' $(( $1 / 60 ))
+			else
+				printf '%sm' "$1"
+			fi
+			;;
+	esac
+}
+
+codex_status() {
+	if ! command -v sqlite3 >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+		codex_fallback
+		return
+	fi
+
+	if [ ! -f "$CODEX_STATE_DB" ]; then
+		codex_fallback
+		return
+	fi
+
+	rollout_path=$(sqlite3 -readonly "$CODEX_STATE_DB" \
+		"select rollout_path from threads where rollout_path != '' order by updated_at desc limit 1;" 2>/dev/null)
+	if [ -z "$rollout_path" ] || [ ! -f "$rollout_path" ]; then
+		codex_fallback
+		return
+	fi
+
+	read primary_pct secondary_pct primary_window secondary_window total_tokens <<EOF
+$(tail -2000 "$rollout_path" | jq -r '
+	select(.type == "event_msg" and .payload.type == "token_count") |
+	[
+		(.payload.rate_limits.primary.used_percent // "n/a"),
+		(.payload.rate_limits.secondary.used_percent // "n/a"),
+		(.payload.rate_limits.primary.window_minutes // ""),
+		(.payload.rate_limits.secondary.window_minutes // ""),
+		(.payload.info.total_token_usage.total_tokens // "")
+	] | @tsv
+' 2>/dev/null | tail -1)
+EOF
+
+	if [ -z "$primary_pct" ]; then
+		codex_fallback
+		return
+	fi
+
+	now=$(date +%s)
+	updated=$(stat -f %m "$rollout_path" 2>/dev/null || printf '%s' "$now")
+	stale_marker=""
+	if [ $((now - updated)) -gt "$STALE_AFTER_SEC" ]; then
+		stale_marker=" stale"
+	fi
+
+	printf 'codex [ %s %s | %s %s | tok %s%s ]' \
+		"$(fmt_window "$primary_window")" "$(fmt_pct "$primary_pct")" \
+		"$(fmt_window "$secondary_window")" "$(fmt_pct "$secondary_pct")" \
+		"$(fmt_count "$total_tokens")" "$stale_marker"
+}
 
 if [ ! -f "$RATE_LIMITS_CACHE" ]; then
-	fallback
+	printf '%s | %s' "$(claude_fallback)" "$(codex_status)"
 	exit 0
 fi
+
 
 # Pull the four fields we care about with jq (already on this machine —
 # see bin/tmux-claude-codex-status sibling). Empty-string fallback when
@@ -37,7 +123,7 @@ $(jq -r '
 EOF
 
 if [ -z "$updated" ]; then
-	fallback
+	printf '%s | %s' "$(claude_fallback)" "$(codex_status)"
 	exit 0
 fi
 
@@ -49,13 +135,5 @@ if [ "$age" -gt "$STALE_AFTER_SEC" ]; then
 	stale_marker=" (stale)"
 fi
 
-# Format percentages as integers when numeric; pass through "n/a" untouched.
-fmt() {
-	case "$1" in
-		n/a|"") printf 'n/a' ;;
-		*)      printf '%.0f%%' "$1" ;;
-	esac
-}
-
-printf 'claude [ session %s | 7d-all %s%s ] | codex [N/A]' \
-	"$(fmt "$five_pct")" "$(fmt "$seven_pct")" "$stale_marker"
+printf 'claude [ session %s | 7d-all %s%s ] | %s' \
+	"$(fmt_pct "$five_pct")" "$(fmt_pct "$seven_pct")" "$stale_marker" "$(codex_status)"
