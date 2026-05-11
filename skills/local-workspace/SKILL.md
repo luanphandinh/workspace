@@ -165,7 +165,7 @@ Source repos are siblings of the root and have `.git` as a **directory** (worktr
 # Behavior rules (what the command does for you)
 - Repos already in the yml are reported and skipped — not an error.
 - Missing repos print an error but the run continues.
-- Per-repo branch resolution: check out the existing branch; if absent, `git fetch origin` then create the new branch from `origin/master` (fallback `origin/main`, then local `master`/`main` if no remote).
+- Per-repo branch resolution: check out the existing local branch; if absent, `git fetch origin`, then create a local tracking branch from `origin/<branch>` when it exists. If no same-named remote branch exists, create the branch from `origin/master` (fallback `origin/main`, then local `master`/`main` if no remote).
 - If a worktree path exists on disk but isn't in the yml, it's recorded in the yml and skipped (no re-clone).
 - `mkws` does NOT create a `go.work`. Per-module semantics is the norm (tests and gopls run with `GOWORK=off`); cross-module navigation happens via `<leader>gw` worktree switching.
 

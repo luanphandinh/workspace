@@ -1137,18 +1137,39 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             skipped += 1
             continue
 
-        # Try the existing branch first. Bash version silences stderr here
-        # because the "no such branch" error is expected.
-        proc = run(["git", "-C", str(repo_path), "worktree", "add", str(wt_path), branch])
-        if proc.returncode == 0:
-            ok(f"checked out existing branch {branch}")
-            append_repo(yml, leaf)
-            added += 1
+        if has_ref(repo_path, f"refs/heads/{branch}"):
+            proc = run(["git", "-C", str(repo_path), "worktree", "add", str(wt_path), branch])
+            if proc.returncode == 0:
+                ok(f"checked out existing branch {branch}")
+                append_repo(yml, leaf)
+                added += 1
+                continue
+            fail("existing branch worktree add failed")
+            failed += 1
             continue
 
         info("fetching latest from origin")
         if run(["git", "-C", str(repo_path), "fetch", "origin", "--quiet"]).returncode != 0:
             warn("fetch failed, falling back to local refs")
+
+        remote_branch = f"origin/{branch}"
+        if has_ref(repo_path, f"refs/remotes/{remote_branch}"):
+            info(f"creating tracking branch {branch} from {remote_branch}")
+            proc = run(
+                [
+                    "git", "-C", str(repo_path), "worktree", "add",
+                    "--track", "-b", branch, str(wt_path), remote_branch,
+                ],
+                capture=False,
+            )
+            if proc.returncode == 0:
+                ok(f"worktree added at {wt_path}")
+                append_repo(yml, leaf)
+                added += 1
+                continue
+            fail("tracking worktree add failed")
+            failed += 1
+            continue
 
         base = detect_base(repo_path)
         if base is None:
