@@ -1136,10 +1136,28 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             skipped += 1
             continue
 
+        info("fetching latest from origin")
+        if run(["git", "-C", str(repo_path), "fetch", "origin", "--quiet"]).returncode != 0:
+            warn("fetch failed, falling back to local refs")
+
+        remote_branch = f"origin/{branch}"
+        remote_branch_exists = has_ref(repo_path, f"refs/remotes/{remote_branch}")
+
         if has_ref(repo_path, f"refs/heads/{branch}"):
             proc = run(["git", "-C", str(repo_path), "worktree", "add", str(wt_path), branch])
             if proc.returncode == 0:
                 ok(f"checked out existing branch {branch}")
+                if remote_branch_exists:
+                    up = run(
+                        [
+                            "git", "-C", str(wt_path), "branch",
+                            "--set-upstream-to", remote_branch, branch,
+                        ]
+                    )
+                    if up.returncode == 0:
+                        ok(f"tracking {remote_branch}")
+                    else:
+                        warn(f"failed to set upstream to {remote_branch}")
                 append_repo(yml, leaf)
                 added += 1
                 continue
@@ -1147,12 +1165,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             failed += 1
             continue
 
-        info("fetching latest from origin")
-        if run(["git", "-C", str(repo_path), "fetch", "origin", "--quiet"]).returncode != 0:
-            warn("fetch failed, falling back to local refs")
-
-        remote_branch = f"origin/{branch}"
-        if has_ref(repo_path, f"refs/remotes/{remote_branch}"):
+        if remote_branch_exists:
             info(f"creating tracking branch {branch} from {remote_branch}")
             proc = run(
                 [
