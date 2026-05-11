@@ -15,8 +15,8 @@ description: "Use when implementing code changes from a tech design, workspace p
 When this skill is used for any code change, do not start implementation immediately.
 
 1. **Brainstorm first**: invoke `superpowers:brainstorming` to understand the requested change, inspect the current workspace context, compare possible implementation approaches, and get user approval for the design direction.
-2. **Plan second**: after the design direction is approved, invoke `superpowers:writing-plans` to create the implementation plan.
-3. **Execute third**: after the plan is approved, implement through `superpowers:subagent-driven-development` when practical; otherwise use `superpowers:executing-plans`.
+2. **Plan second**: after the design direction is approved, invoke `superpowers:writing-plans` to create the implementation plan under `<workspace>/implementation_plan/`.
+3. **Execute third**: after the plan is approved, implement through `superpowers:subagent-driven-development` when practical; otherwise use `superpowers:executing-plans`. All execution notes and task records also live under `<workspace>/implementation_plan/`.
 
 If the user already provides an approved design or an existing plan, verify that approval and resume from the next missing phase instead of repeating completed phases.
 
@@ -34,7 +34,7 @@ If the user already provides an approved design or an existing plan, verify that
 - **Apply this when planning too.** When you write the implementation plan via `superpowers:writing-plans` (or its variants), the plan MUST explicitly reuse this comment policy as a constraint — e.g. include a line like `Comments: minimal, business-context only — see local-coding rule. No redundant comments; only annotate tricky logic and business/domain context.` This keeps reviewers and future sub-agents aligned during execution.
 
 ## Working folder — workspace + co-located tech_doc
-- All coding for a tech design happens inside a **multi-repo git-worktree workspace** at `<root>/local_workspaces/<workspace-name>/`. This is the SAME workspace that the `local-tech-design` skill created during the tech-design phase — it already holds the tech doc, mapping file, and any plans under `<workspace>/tech_doc/`. **Never edit the original sibling source repos** outside the workspace.
+- All coding for a tech design happens inside a **multi-repo git-worktree workspace** at `<root>/local_workspaces/<workspace-name>/`. This is the SAME workspace that the `local-tech-design` skill created during the tech-design phase — it already holds the tech doc and mapping file under `<workspace>/tech_doc/`, and implementation planning artifacts belong under `<workspace>/implementation_plan/`. **Never edit the original sibling source repos** outside the workspace.
 - Workspace creation/extension is owned by the `local-workspace` skill (via `mkws`). **Delegate to that skill** — do not reimplement the worktree/branch setup here.
 - **No `go.work` is created.** Each repo in the workspace builds/tests against its own `go.mod` / `go.sum` (tests and gopls run with `GOWORK=off`). For cross-module navigation, switch worktrees with `<leader>gw` instead.
 
@@ -43,15 +43,23 @@ If the user already provides an approved design or an existing plan, verify that
 2. **Read context from inside the workspace**:
    - The tech design doc at `<root>/local_workspaces/<workspace-name>/tech_doc/<tech_doc_name>.md`.
    - The mapping file at `<root>/local_workspaces/<workspace-name>/tech_doc/<tech_doc_name>_mapping.md` — lists every microservice → sibling-repo folder.
-   - Any existing implementation plan files under `<workspace>/tech_doc/` (e.g. plans authored earlier by `superpowers:writing-plans`).
+   - Any existing implementation planning files under `<workspace>/implementation_plan/` (plans, execution notes, task records, sub-agent handoff notes).
 3. Confirm the workspace state at `<root>/local_workspaces/<workspace-name>/workspace.yml`:
    - **Workspace exists but `branch_name` is empty AND no repos attached** (the typical handoff from `local-tech-design`, which creates the workspace empty without a branch) → ask the user for the **feature branch name** (suggested default: `feat/<workspace-name>`), then invoke `local-workspace` to run `mkws --branch <branch> --add <repo1> <repo2> …` for every repo in the mapping file. The `--branch` flag both persists the branch into the yml and attaches the worktrees in one shot.
    - **Workspace exists with `branch_name` already set and some repos attached** → diff against the mapping file; for any missing repos, run `mkws --add <repo>…` (no `--name` / `--branch` — they're already in the yml).
    - **Workspace does not exist** → unusual at this stage; surface to the user and ask whether to invoke `local-tech-design` first or bootstrap inline (`mkws --name <workspace-name>` to create empty, then `mkws --branch <branch> --add <repos>` to attach).
-4. `cd` into `<root>/local_workspaces/<workspace-name>/` before any edits. All subsequent coding, builds, tests, and plan files run from there.
+4. `cd` into `<root>/local_workspaces/<workspace-name>/` before any edits. All subsequent coding, builds, tests, planning, and execution records run from there.
 
-### Plans live inside the workspace
-Any implementation plan you produce (via `superpowers:writing-plans` or its variants) MUST be saved under `<root>/local_workspaces/<workspace-name>/tech_doc/` alongside the tech doc and mapping. Use a clear filename like `<tech_doc_name>_plan.md` (or `<tech_doc_name>_plan_<topic>.md` if you split by area) so future sessions can find the plan with one folder listing. Never write the plan into the per-repo worktree or to a global path — keep all design + planning context co-located in `<workspace>/tech_doc/`.
+### Implementation planning files live under implementation_plan
+Create `<root>/local_workspaces/<workspace-name>/implementation_plan/` before invoking `superpowers:writing-plans` or any execution workflow.
+
+All Superpowers planning and execution artifacts MUST be saved under this folder:
+- Implementation plans from `superpowers:writing-plans`.
+- Execution checkpoints, task records, and task status notes from `superpowers:executing-plans`.
+- Sub-agent task prompts, handoff notes, review notes, and result summaries from `superpowers:subagent-driven-development`.
+- Any follow-up task list or verification log created during coding.
+
+Use clear filenames such as `<tech_doc_name>_plan.md`, `<tech_doc_name>_tasks.md`, `<tech_doc_name>_execution.md`, or `<tech_doc_name>_subagents.md`. Never write these files into `<workspace>/tech_doc/`, a per-repo worktree, or a global path. Keep `tech_doc/` for design and mapping inputs; keep `implementation_plan/` for coding plans and execution records.
 
 ### During coding
 - Treat `<root>/local_workspaces/<workspace-name>/<repo>/` as the canonical path for each repo's source — never edit the original sibling repo outside the workspace.
