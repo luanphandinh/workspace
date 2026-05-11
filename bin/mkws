@@ -1078,6 +1078,92 @@ def cmd_drop(folder: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# sync_tech_doc mode: mirror every workspace tech_doc folder into the root
+# tech_doc index using symlinks:
+#   <root>/tech_doc/<workspace-name>/tech_doc -> <root>/local_workspaces/<workspace-name>/tech_doc
+# Stale generated symlinks are removed. Real files/dirs are never deleted.
+# ---------------------------------------------------------------------------
+def resolve_workspace_root(pwd: Path) -> Path:
+    if (pwd / "workspace.yml").is_file():
+        return pwd.parent.parent
+    if pwd.name == WS_CONTAINER:
+        return pwd.parent
+    return pwd
+
+
+def cmd_sync_tech_doc() -> int:
+    root = resolve_workspace_root(Path.cwd()).resolve()
+    workspaces_dir = root / WS_CONTAINER
+    index_dir = root / "tech_doc"
+
+    if not workspaces_dir.is_dir():
+        die(f"no {WS_CONTAINER}/ directory at {root}")
+
+    index_dir.mkdir(parents=True, exist_ok=True)
+
+    desired: dict = {}
+    for workspace_dir in sorted(p for p in workspaces_dir.iterdir() if p.is_dir()):
+        yml = workspace_dir / "workspace.yml"
+        if not yml.is_file():
+            continue
+        tech_doc = workspace_dir / "tech_doc"
+        if tech_doc.is_dir():
+            data = read_manifest(yml)
+            name = data["name"] or workspace_dir.name
+            desired[name] = tech_doc.resolve()
+
+    created = updated = removed = skipped = 0
+
+    heading("link tech docs")
+    for name, target in desired.items():
+        link_parent = index_dir / name
+        link_path = link_parent / "tech_doc"
+        link_parent.mkdir(parents=True, exist_ok=True)
+
+        if link_path.is_symlink():
+            current = link_path.resolve()
+            if current == target:
+                info(f"{name}: already linked")
+                skipped += 1
+                continue
+            link_path.unlink()
+            link_path.symlink_to(target, target_is_directory=True)
+            ok(f"{name}: updated -> {target}")
+            updated += 1
+            continue
+
+        if link_path.exists():
+            warn(f"{name}: {link_path} exists and is not a symlink, skipping")
+            skipped += 1
+            continue
+
+        link_path.symlink_to(target, target_is_directory=True)
+        ok(f"{name}: created -> {target}")
+        created += 1
+
+    heading("remove stale links")
+    for entry in sorted(p for p in index_dir.iterdir() if p.is_dir()):
+        link_path = entry / "tech_doc"
+        if entry.name in desired:
+            continue
+        if not link_path.is_symlink():
+            continue
+        link_path.unlink()
+        removed += 1
+        ok(f"{entry.name}: removed stale link")
+        try:
+            entry.rmdir()
+        except OSError:
+            pass
+
+    heading("summary")
+    info(f"root:    {BOLD}{root}{RESET}")
+    info(f"index:   {BOLD}{index_dir}{RESET}")
+    info(f"created: {created}, updated: {updated}, removed: {removed}, skipped: {skipped}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # default mode: create or extend a workspace, optionally --add repos.
 # ---------------------------------------------------------------------------
 def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
@@ -1225,6 +1311,7 @@ Usage:
   mkws merge <target> [<folder>...]
   mkws sync [<folder>...]
   mkws drop <folder>
+  mkws sync_tech_doc
 
 Modes:
   (default)  Create or extend a workspace. Run from the root folder that
@@ -1311,6 +1398,15 @@ Modes:
              Examples:
                mkws drop ./local_workspaces/myws
                mkws drop /abs/path/to/ws
+  sync_tech_doc
+             Mirror workspace tech docs into one root index:
+             `<root>/tech_doc/<workspace>/tech_doc` symlinks to
+             `<root>/local_workspaces/<workspace>/tech_doc`.
+             Creates links for new workspace tech docs and removes stale
+             generated links when a workspace tech_doc disappears. Real files
+             or directories are never deleted.
+             Example:
+               mkws sync_tech_doc
 
 Flags:
   --name <name>       workspace name. Required when creating a new workspace
@@ -1386,6 +1482,9 @@ def parse_args(argv):
                 target_path = argv.pop(0)
             else:
                 die(f"'drop' requires a workspace folder path\n\n{USAGE}")
+        elif sub == "sync_tech_doc":
+            mode = "sync_tech_doc"
+            argv.pop(0)
         else:
             die(f"unknown subcommand: {sub}\n\n{USAGE}")
 
@@ -1450,6 +1549,10 @@ def main() -> None:
         if repos or branch or name:
             die("'drop' takes a folder path only; --add/--branch/--name are not accepted")
         sys.exit(cmd_drop(target_path))
+    if mode == "sync_tech_doc":
+        if repos or branch or name or target_path or target_paths:
+            die("'sync_tech_doc' takes no args; --add/--branch/--name are not accepted")
+        sys.exit(cmd_sync_tech_doc())
     sys.exit(cmd_default(name, branch, repos))
 
 
