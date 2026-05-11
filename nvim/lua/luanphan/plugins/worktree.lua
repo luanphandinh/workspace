@@ -174,6 +174,49 @@ return function(_use)
     return nil
   end
 
+  local function tab_has_diffview(tabid)
+    for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(tabid)) do
+      local bufname = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(winid))
+      if bufname:match("^diffview://") then
+        return true
+      end
+    end
+    return false
+  end
+
+  local function close_diffview_tabs()
+    local original = vim.api.nvim_get_current_tabpage()
+    local tabs = {}
+    for _, tabid in ipairs(vim.api.nvim_list_tabpages()) do
+      if tab_has_diffview(tabid) then
+        tabs[#tabs + 1] = tabid
+      end
+    end
+
+    for _, tabid in ipairs(tabs) do
+      if vim.api.nvim_tabpage_is_valid(tabid) then
+        local tabnr = vim.api.nvim_tabpage_get_number(tabid)
+        pcall(vim.api.nvim_set_current_tabpage, tabid)
+        pcall(vim.cmd, "DiffviewClose")
+        if vim.api.nvim_tabpage_is_valid(tabid) then
+          pcall(vim.cmd, "tabclose! " .. tabnr)
+        end
+      end
+    end
+
+    if vim.api.nvim_tabpage_is_valid(original) then
+      pcall(vim.api.nvim_set_current_tabpage, original)
+    end
+  end
+
+  local function path_is_in_dir(path, dir)
+    if path == dir then return true end
+    if dir:sub(-1) == "/" then
+      return vim.startswith(path, dir)
+    end
+    return vim.startswith(path, dir .. "/")
+  end
+
   -- Focus priority after a switch:
   --   1. visible agent float (<leader>cc / <leader>ac), enter terminal mode
   --   2. window showing the file we just re-opened
@@ -351,7 +394,7 @@ return function(_use)
     -- 2b. Close any open diffview tab — it's bound to the OLD cwd's git
     --     repo and trying to survive the cd produces ghost diffview://
     --     buffers that won't refresh against the new worktree.
-    pcall(vim.cmd, "DiffviewClose")
+    close_diffview_tabs()
 
     -- 2c. Toggle off the <leader>tt terminal (terminal.lua listens for this
     --     User event) so the cd doesn't have to race with a visible window.
@@ -391,7 +434,7 @@ return function(_use)
         if buftype == "terminal" and not vim.startswith(name, "term://" .. cwd) then
           -- Non-agent terminals are always "modified" (live process); force-close.
           pcall(vim.api.nvim_buf_delete, buf, { force = true })
-        elseif buftype == "" and name ~= "" and not vim.bo[buf].modified and not vim.startswith(name, cwd) then
+        elseif buftype == "" and name ~= "" and not vim.bo[buf].modified and not path_is_in_dir(name, cwd) then
           pcall(vim.api.nvim_buf_delete, buf, { force = false })
         end
       end
