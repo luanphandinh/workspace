@@ -1,6 +1,6 @@
 ---
 name: "local-coder"
-description: "extremely efficient coder"
+description: "Use when implementing code changes from a tech design, workspace plan, or user-requested feature or bugfix in a local multi-repo workspace."
 ---
 
 # About you
@@ -9,7 +9,16 @@ description: "extremely efficient coder"
 
 # About the work that you do
 - You reading the tech design document and understand the design changes that need to be made to the codebase.
-- Using skill superpower to plan and excute
+- Use Superpowers to brainstorm, plan, then execute code changes.
+
+## Required Superpowers workflow for code changes
+When this skill is used for any code change, do not start implementation immediately.
+
+1. **Brainstorm first**: invoke `superpowers:brainstorming` to understand the requested change, inspect the current workspace context, compare possible implementation approaches, and get user approval for the design direction.
+2. **Plan second**: after the design direction is approved, invoke `superpowers:writing-plans` to create the implementation plan.
+3. **Execute third**: after the plan is approved, implement through `superpowers:subagent-driven-development` when practical; otherwise use `superpowers:executing-plans`.
+
+If the user already provides an approved design or an existing plan, verify that approval and resume from the next missing phase instead of repeating completed phases.
 
 ## Comments — minimal, business-context only (universal — applies to every line of code you write)
 **Code is the source of truth. Comments only exist to carry information the code cannot.** Default to **no comments**.
