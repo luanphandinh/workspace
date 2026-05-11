@@ -22,6 +22,7 @@ mkws rebase [<folder>...]
 mkws merge <target> [<folder>...]
 mkws sync [<folder>...]
 mkws drop <folder>
+mkws sync_tech_doc
 ```
 - `--name` — workspace folder name, or a path to an existing workspace directory that contains `workspace.yml`. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). Plain names create/use `<root>/local_workspaces/<name>`; path values target that workspace directly.
 - `--branch` — **required only when adding repos** (`--add ...`) so worktrees have a branch to attach to. **Optional** when creating an empty workspace (no `--add`) or when extending an empty workspace with no repos. If the workspace already has a `branch_name` set, `--branch` is optional but, if passed, must match exactly. If the workspace was created empty (`branch_name:` in yml is empty) and you later pass `--branch`, the value is persisted into the yml. Once persisted, the existing-yml match-or-error rule kicks in.
@@ -41,6 +42,7 @@ mkws drop <folder>
   - Both cases: serial, halt on conflict, optional folder args to further scope by repo name. Rejects `--add` / `--branch` / `--name`.
 - `sync` — subcommand. Composite: for every matching repo, `pull` the current branch → `rebase` onto master (skipped if already on `master`/`main`) → `push`. Serial. **Halts on rebase conflict** (same behavior as `mkws rebase`). Pull/push failures for one repo are recorded but don't halt — the run continues to the next repo. Same folder-args form as `pull`.
 - `drop` — subcommand. **Destructive for code worktrees only.** Removes every worktree listed in the manifest via `git worktree remove --force`, prunes the source repos, keeps the workspace folder, and resets `workspace.yml` to an empty branch/repo list. Workspace-level files such as `tech_doc/` remain in place. No confirmation prompt. Takes a required positional **folder path** (relative or absolute). Rejects `--add`, `--branch`, and `--name`.
+- `sync_tech_doc` — subcommand. Builds a root-level tech-doc index by symlinking each workspace tech doc into `<root>/tech_doc/<workspace-name>/tech_doc`. Creates links for newly created workspace tech docs and removes stale generated symlinks for workspace tech docs that disappeared. It never deletes real files or real directories. Takes no args and rejects `--add`, `--branch`, and `--name`.
 
 ## Layout — all workspaces live under `local_workspaces/`
 Every workspace is placed at `<root>/local_workspaces/<name>/` instead of directly under the root. This keeps the root folder clean even when many workspaces accumulate. `mkws` creates the `local_workspaces/` container on demand.
@@ -159,6 +161,18 @@ mkws drop ./local_workspaces/<name>    # relative from the root
 After removing code worktrees, `mkws drop` rewrites `workspace.yml` with the same workspace name, blank `branch_name`, and an empty `repos:` list. Removing the workspace directory itself is a separate user decision.
 
 **Warn the user** before running if there may be uncommitted changes in the worktrees — `mkws drop` runs `git worktree remove --force` without a confirmation prompt, so local edits inside code worktrees are lost. If unsure, ask the user to commit/push first (or inspect with `git -C <root>/<repo> worktree list`).
+
+## Sync workspace tech docs
+User intent: "preview all tech docs in one folder", "refresh the tech doc index", "link workspace tech docs into the root tech_doc folder".
+```
+cd <root>
+mkws sync_tech_doc
+```
+The command scans `<root>/local_workspaces/*/workspace.yml`. For every workspace that has a `tech_doc/` folder, it creates or updates:
+```
+<root>/tech_doc/<workspace-name>/tech_doc -> <root>/local_workspaces/<workspace-name>/tech_doc
+```
+If a workspace `tech_doc/` folder is removed, the matching generated symlink is removed on the next run. If `<root>/tech_doc/<workspace-name>/tech_doc` already exists as a real file or directory, `mkws sync_tech_doc` warns and skips it rather than deleting user content.
 
 ## Inspect a workspace
 Read `<root>/local_workspaces/<name>/workspace.yml` directly. Report `name`, `branch_name`, and `repos`.
