@@ -312,6 +312,17 @@ def resolve_default_context(pwd: Path, name_flag: str):
     if not name_flag:
         die("--name required (or run from inside a workspace dir)")
 
+    if Path(name_flag).is_absolute() or "/" in name_flag:
+        workspace_dir = Path(name_flag)
+        if not workspace_dir.is_absolute():
+            workspace_dir = pwd / workspace_dir
+        workspace_dir = workspace_dir.resolve()
+        yml = workspace_dir / "workspace.yml"
+        if not yml.is_file():
+            die(f"--name path does not contain workspace.yml: {workspace_dir}")
+        data = read_manifest(yml)
+        return workspace_dir, workspace_dir.parent.parent, data["name"] or workspace_dir.name
+
     repo_root = pwd.parent if pwd.name == WS_CONTAINER else pwd
     workspace_folder = name_flag.replace("/", "_")
     return repo_root / WS_CONTAINER / workspace_folder, repo_root, name_flag
@@ -988,10 +999,10 @@ def cmd_sync(folders: list) -> int:
 
 
 # ---------------------------------------------------------------------------
-# drop mode: remove every worktree listed in the manifest, prune the source
-# repos, then delete the workspace folder itself. Destructive by design —
-# uncommitted work inside the worktrees is lost (mirrors `git worktree remove
-# --force`). No confirmation prompt.
+# drop mode: remove every code worktree listed in the manifest and prune the
+# source repos, but keep the workspace folder and workspace-level files. The
+# manifest is reset to an empty branch/repo list so docs and other workspace
+# artifacts remain available for future reuse.
 # ---------------------------------------------------------------------------
 def cmd_drop(folder: str) -> int:
     path = Path(folder)
@@ -1056,25 +1067,13 @@ def cmd_drop(folder: str) -> int:
                 warn(f"prune failed for {src}")
 
     heading("cleanup")
-    try:
-        shutil.rmtree(workspace_dir)
-        ok(f"removed workspace dir {workspace_dir}")
-    except OSError as e:
-        fail(f"failed to remove {workspace_dir}: {e}")
-
-    # If the local_workspaces container is now empty, drop it too. Best-effort —
-    # any failure is fine (container still holds other workspaces).
-    container = workspace_dir.parent
-    if container.is_dir() and container.name == WS_CONTAINER:
-        try:
-            container.rmdir()
-            ok(f"removed empty container {container}")
-        except OSError:
-            pass
+    write_manifest(yml, name=data["name"] or workspace_dir.name, branch="", repos=[])
+    ok(f"reset manifest at {yml}")
+    ok(f"kept workspace dir {workspace_dir}")
 
     heading("summary")
-    info(f"workspace: {BOLD}{workspace_dir}{RESET} (dropped)")
-    info(f"repos dropped: {len(repos)}")
+    info(f"workspace: {BOLD}{workspace_dir}{RESET} (kept)")
+    info(f"code repos dropped: {len(repos)}")
     return 0
 
 
@@ -1255,7 +1254,7 @@ Modes:
              Examples:
                mkws rebase                   # merge master into every feature
                                              #   branch in $PWD's repos
-               mkws rebase diamond_filter
+               mkws rebase repo-a
   merge      Bidirectional merge driven by <target>:
              • `mkws merge master` (or `main`) — Case B: for each worktree on
                a feature branch: fetch origin/<base>, pull origin/<feature>
@@ -1290,11 +1289,12 @@ Modes:
              don't halt — they're recorded and the run continues.
              Examples:
                mkws sync                     # pull+rebase+push every repo
-               mkws sync diamond_filter      # just one repo
-  drop       Remove every worktree listed in the workspace, prune the source
-             repos, and delete the workspace folder itself. DESTRUCTIVE —
-             uncommitted work in the worktrees is lost (runs `git worktree
-             remove --force`). No confirmation prompt.
+               mkws sync repo-a              # just one repo
+  drop       Remove every code worktree listed in the workspace and prune the
+             source repos. Keeps the workspace folder and workspace-level files,
+             then resets workspace.yml to an empty branch/repo list.
+             DESTRUCTIVE for code worktrees — uncommitted work there is lost
+             (runs `git worktree remove --force`). No confirmation prompt.
              Examples:
                mkws drop ./local_workspaces/myws
                mkws drop /abs/path/to/ws
