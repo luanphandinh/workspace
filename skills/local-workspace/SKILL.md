@@ -23,7 +23,7 @@ mkws merge <target> [<folder>...]
 mkws sync [<folder>...]
 mkws drop <folder>
 ```
-- `--name` — workspace folder name. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). `/` in the name becomes `_` in the folder.
+- `--name` — workspace folder name, or a path to an existing workspace directory that contains `workspace.yml`. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). Plain names create/use `<root>/local_workspaces/<name>`; path values target that workspace directly.
 - `--branch` — **required only when adding repos** (`--add ...`) so worktrees have a branch to attach to. **Optional** when creating an empty workspace (no `--add`) or when extending an empty workspace with no repos. If the workspace already has a `branch_name` set, `--branch` is optional but, if passed, must match exactly. If the workspace was created empty (`branch_name:` in yml is empty) and you later pass `--branch`, the value is persisted into the yml. Once persisted, the existing-yml match-or-error rule kicks in.
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
 - `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders. Rejects `--add`, `--branch`, `--name`.
@@ -40,7 +40,7 @@ mkws drop <folder>
     - Run from inside a **single git repo** → auto-scopes to that one repo (the source repo for Case A, the worktree for Case B). Same scoping behavior as `pull` / `push` / `rebase`.
   - Both cases: serial, halt on conflict, optional folder args to further scope by repo name. Rejects `--add` / `--branch` / `--name`.
 - `sync` — subcommand. Composite: for every matching repo, `pull` the current branch → `rebase` onto master (skipped if already on `master`/`main`) → `push`. Serial. **Halts on rebase conflict** (same behavior as `mkws rebase`). Pull/push failures for one repo are recorded but don't halt — the run continues to the next repo. Same folder-args form as `pull`.
-- `drop` — subcommand. **Destructive.** Removes every worktree listed in the manifest via `git worktree remove --force`, prunes the source repos, and deletes the workspace folder (and the empty `local_workspaces/` container if nothing else is left). Uncommitted work in the worktrees is lost. No confirmation prompt. Takes a required positional **folder path** (relative or absolute). Rejects `--add`, `--branch`, and `--name`.
+- `drop` — subcommand. **Destructive for code worktrees only.** Removes every worktree listed in the manifest via `git worktree remove --force`, prunes the source repos, keeps the workspace folder, and resets `workspace.yml` to an empty branch/repo list. Workspace-level files such as `tech_doc/` remain in place. No confirmation prompt. Takes a required positional **folder path** (relative or absolute). Rejects `--add`, `--branch`, and `--name`.
 
 ## Layout — all workspaces live under `local_workspaces/`
 Every workspace is placed at `<root>/local_workspaces/<name>/` instead of directly under the root. This keeps the root folder clean even when many workspaces accumulate. `mkws` creates the `local_workspaces/` container on demand.
@@ -48,6 +48,7 @@ Every workspace is placed at `<root>/local_workspaces/<name>/` instead of direct
 ## Context detection (important!)
 `mkws` detects its context from `$PWD`:
 - If `$PWD/workspace.yml` exists → `$PWD` **is** the workspace dir; root is its **grandparent** (because the workspace lives at `<root>/local_workspaces/<name>/`). `--name` is optional.
+- If `--name` is an absolute or relative path to a directory with `workspace.yml` → that directory is the workspace dir, and root is its grandparent.
 - If `$PWD`'s basename is `local_workspaces` → root is its parent. `--name` is required.
 - Otherwise → `$PWD` is the **root**; workspace goes to `$PWD/local_workspaces/<name>/`. `--name` is required.
 
@@ -88,6 +89,7 @@ From the root:
 ```
 cd <root>
 mkws --name X --add C
+mkws --name <root>/local_workspaces/X --add C
 ```
 
 From inside the workspace (preferred if the user is already there):
@@ -148,13 +150,15 @@ mkws merge master
 ```
 Per worktree: stash → fetch origin/<base> → pull origin/<feature> if remote exists → merge --no-ff origin/<base> → pop stash → push origin <feature>. Halts on conflict.
 
-## Drop a workspace
-User intent: "drop workspace X", "delete the workspace", "clean up the worktrees for X", "we're done with this feature branch, wipe it". This is **destructive** — `mkws drop` removes every worktree in the manifest, prunes the source repos, and deletes the workspace folder.
+## Drop workspace code
+User intent: "drop workspace X", "clean up the worktrees for X", "remove the code from this workspace", "we're done with this feature branch". This is **destructive for code worktrees** — `mkws drop` removes every worktree in the manifest and prunes the source repos, but keeps the workspace folder and workspace-level files such as `tech_doc/`.
 ```
 mkws drop <root>/local_workspaces/<name>
 mkws drop ./local_workspaces/<name>    # relative from the root
 ```
-**Warn the user** before running if there may be uncommitted changes in the worktrees — `mkws drop` runs `git worktree remove --force` without a confirmation prompt, so local edits are lost. If unsure, ask the user to commit/push first (or inspect with `git -C <root>/<repo> worktree list`).
+After removing code worktrees, `mkws drop` rewrites `workspace.yml` with the same workspace name, blank `branch_name`, and an empty `repos:` list. Removing the workspace directory itself is a separate user decision.
+
+**Warn the user** before running if there may be uncommitted changes in the worktrees — `mkws drop` runs `git worktree remove --force` without a confirmation prompt, so local edits inside code worktrees are lost. If unsure, ask the user to commit/push first (or inspect with `git -C <root>/<repo> worktree list`).
 
 ## Inspect a workspace
 Read `<root>/local_workspaces/<name>/workspace.yml` directly. Report `name`, `branch_name`, and `repos`.
@@ -165,7 +169,7 @@ Source repos are siblings of the root and have `.git` as a **directory** (worktr
 # Behavior rules (what the command does for you)
 - Repos already in the yml are reported and skipped — not an error.
 - Missing repos print an error but the run continues.
-- Per-repo branch resolution: check out the existing branch; if absent, `git fetch origin` then create the new branch from `origin/master` (fallback `origin/main`, then local `master`/`main` if no remote).
+- Per-repo branch resolution: `git fetch origin` first; if a same-named local branch exists, check it out and set it to track `origin/<branch>` when that remote branch exists. If no local branch exists but `origin/<branch>` does, create a local tracking branch from it. If no same-named remote branch exists, create the branch from `origin/master` (fallback `origin/main`, then local `master`/`main` if no remote).
 - If a worktree path exists on disk but isn't in the yml, it's recorded in the yml and skipped (no re-clone).
 - `mkws` does NOT create a `go.work`. Per-module semantics is the norm (tests and gopls run with `GOWORK=off`); cross-module navigation happens via `<leader>gw` worktree switching.
 
