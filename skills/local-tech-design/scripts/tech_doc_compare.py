@@ -3,7 +3,7 @@
 
 This helper is intentionally read-only. It builds a heading-aware section index
 for local and remote markdown, then reports the deepest changed sections so an
-agent can prepare targeted str_replace updates instead of whole-document writes.
+agent can prepare targeted exact-text updates instead of whole-document writes.
 """
 
 from __future__ import annotations
@@ -26,7 +26,28 @@ FENCE_RE = re.compile(r"^\s*(```|~~~)")
 TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$")
 MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 HTML_TAG_RE = re.compile(r"</?[^>\s]+(?:\s[^>]*)?>")
-DIAGRAM_BLOCK_TOKEN = "DIAGRAM_BLOCK"
+BLOCK_TAGS = (
+    "blockquote",
+    "callout",
+    "div",
+    "document",
+    "excerpt",
+    "fragment",
+    "li",
+    "ol",
+    "p",
+    "section",
+    "table",
+    "tbody",
+    "td",
+    "th",
+    "thead",
+    "title",
+    "tr",
+    "ul",
+)
+MERMAID_BLOCK_TOKEN = "MERMAID_BLOCK"
+OPAQUE_REMOTE_BLOCK_TOKEN = "OPAQUE_REMOTE_BLOCK"
 
 
 @dataclass(frozen=True)
@@ -154,8 +175,70 @@ def fetch_remote_markdown(remote: str, lark_cli: str) -> str:
 
 def normalize_heading(title: str) -> str:
     title = title.strip()
+    title = HTML_TAG_RE.sub("", title)
     title = re.sub(r"\s+", " ", title)
     return title
+
+
+def normalize_common_markup(text: str) -> str:
+    text = html.unescape(text)
+    text = re.sub(
+        r"(?ims)^(```+|~~~+)\s*mermaid[^\n]*\n.*?^\1\s*$",
+        normalize_mermaid_fence,
+        text,
+    )
+    text = re.sub(
+        r"<readonly-block\b([^>]*)>\s*</readonly-block>",
+        normalize_opaque_block,
+        text,
+    )
+    text = re.sub(
+        r"(?is)<h([1-6])\b[^>]*>(.*?)</h\1>",
+        lambda match: "\n"
+        + ("#" * int(match.group(1)))
+        + " "
+        + HTML_TAG_RE.sub("", match.group(2)).strip()
+        + "\n",
+        text,
+    )
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</li\s*>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<li\b[^>]*>", "\n- ", text, flags=re.IGNORECASE)
+    text = re.sub(r"</t[dh]\s*>", " | ", text, flags=re.IGNORECASE)
+    text = re.sub(r"<t[dh]\b[^>]*>", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"</tr\s*>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<tr\b[^>]*>", "\n", text, flags=re.IGNORECASE)
+    for tag in BLOCK_TAGS:
+        text = re.sub(rf"</?{tag}\b[^>]*>", "\n", text, flags=re.IGNORECASE)
+    text = MARKDOWN_LINK_RE.sub(normalize_markdown_link, text)
+    return text
+
+
+def normalize_mermaid_fence(match: re.Match[str]) -> str:
+    fence = match.group(1)
+    full = match.group(0)
+    lines = full.splitlines()
+    body_lines = lines[1:-1] if len(lines) >= 2 and lines[-1].strip() == fence else lines[1:]
+    normalized_body = "\n".join(line.strip() for line in body_lines if line.strip())
+    return f"\n{MERMAID_BLOCK_TOKEN}\n{normalized_body}\n"
+
+
+def normalize_opaque_block(match: re.Match[str]) -> str:
+    attrs = match.group(1)
+    block_type_match = re.search(r'\btype=["\']?([^"\'\s>]+)', attrs)
+    block_type = block_type_match.group(1) if block_type_match else "unknown"
+    return f"\n{OPAQUE_REMOTE_BLOCK_TOKEN} type={block_type}\n"
+
+
+def canonicalize_document_text(text: str) -> str:
+    text = normalize_common_markup(text)
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def normalize_markdown_link(match: re.Match[str]) -> str:
@@ -178,35 +261,22 @@ def normalize_line_for_hash(line: str) -> str:
     line = line.strip()
     line = re.sub(r"\\([\\`*_{}\[\]()#+\-.!|])", r"\1", line)
     line = re.sub(r"^#{1,6}\s+", "", line)
-    line = re.sub(r"^[-*+]\s+", "- ", line)
-    line = re.sub(r"^•\s+", "- ", line)
-    line = re.sub(r"^(\d+)[.)]\s+", r"\1. ", line)
+    line = re.sub(r"^[-*+]\s+", "", line)
+    line = re.sub(r"^•\s+", "", line)
+    line = re.sub(r"^(\d+)[.)]\s+", "", line)
     line = re.sub(r"`([^`]+)`", r"\1", line)
     line = line.replace("**", "").replace("__", "")
     line = line.replace("<strong>", "").replace("</strong>", "")
     line = line.replace("<b>", "").replace("</b>", "")
     line = normalize_table_row(line)
+    line = re.sub(r"\s*\|\s*", " | ", line)
+    line = line.strip(" |")
     line = re.sub(r"\s+", " ", line)
     return line.strip()
 
 
 def normalize_for_hash(text: str) -> str:
-    text = html.unescape(text)
-    text = re.sub(
-        r"(?ims)^(```+|~~~+)\s*mermaid[^\n]*\n.*?^\1\s*$",
-        f"\n{DIAGRAM_BLOCK_TOKEN}\n",
-        text,
-    )
-    text = re.sub(
-        r"<readonly-block\b[^>]*>\s*</readonly-block>",
-        f"\n{DIAGRAM_BLOCK_TOKEN}\n",
-        text,
-    )
-    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"</li\s*>", "\n", text, flags=re.IGNORECASE)
-    text = re.sub(r"<li\b[^>]*>", "\n- ", text, flags=re.IGNORECASE)
-    text = re.sub(r"</?(ul|ol)\b[^>]*>", "\n", text, flags=re.IGNORECASE)
-    text = MARKDOWN_LINK_RE.sub(normalize_markdown_link, text)
+    text = normalize_common_markup(text)
     text = HTML_TAG_RE.sub("", text)
 
     normalized: list[str] = []
@@ -223,6 +293,7 @@ def normalize_for_hash(text: str) -> str:
 
 
 def parse_sections(markdown: str) -> dict[str, Section]:
+    markdown = canonicalize_document_text(markdown)
     lines = markdown.splitlines()
     headings: list[tuple[int, int, str, str]] = []
     stack: list[tuple[int, str]] = []
@@ -308,6 +379,8 @@ def deepest(keys: Iterable[str]) -> list[str]:
 def build_plan(local_text: str, remote_text: str) -> dict[str, Any]:
     local = parse_sections(local_text)
     remote = parse_sections(remote_text)
+    local_opaque_blocks = count_opaque_blocks(local_text)
+    remote_opaque_blocks = count_opaque_blocks(remote_text)
 
     local_unstructured = set(local) == {"<document>"}
     remote_unstructured = set(remote) == {"<document>"}
@@ -324,9 +397,12 @@ def build_plan(local_text: str, remote_text: str) -> dict[str, Any]:
                 "local_sections": len(local),
                 "remote_sections": len(remote),
                 "changed_sections": 0,
+                "diagram_sections": 0,
                 "new_sections": 0,
                 "remote_only_sections": len(remote),
                 "unsafe": True,
+                "local_opaque_blocks": local_opaque_blocks,
+                "remote_opaque_blocks": remote_opaque_blocks,
                 "reason": (
                     "remote content has no parseable headings; "
                     "section-level compare is disabled"
@@ -344,21 +420,35 @@ def build_plan(local_text: str, remote_text: str) -> dict[str, Any]:
         for key in common
         if local[key].content_hash != remote[key].content_hash
     ]
+    diagram_changed = [
+        key
+        for key in changed
+        if section_has_diagram(local[key]) or section_has_diagram(remote[key])
+    ]
+    text_changed = [key for key in changed if key not in set(diagram_changed)]
     new_sections = sorted(local_keys - remote_keys)
     remote_only = sorted(remote_keys - local_keys)
-    changed_deepest = deepest(changed)
+    changed_deepest = deepest(text_changed)
+    diagram_changed_deepest = deepest(diagram_changed)
 
     return {
         "summary": {
             "local_sections": len(local),
             "remote_sections": len(remote),
             "changed_sections": len(changed_deepest),
+            "diagram_sections": len(diagram_changed_deepest),
             "new_sections": len(new_sections),
             "remote_only_sections": len(remote_only),
             "unsafe": False,
+            "local_opaque_blocks": local_opaque_blocks,
+            "remote_opaque_blocks": remote_opaque_blocks,
         },
         "changed_sections": [
             section_record(key, local[key], remote[key]) for key in changed_deepest
+        ],
+        "diagram_sections": [
+            section_record(key, local[key], remote[key], diagram=True)
+            for key in diagram_changed_deepest
         ],
         "new_sections": [section_record(key, local[key], None) for key in new_sections],
         "remote_only_sections": [
@@ -367,8 +457,21 @@ def build_plan(local_text: str, remote_text: str) -> dict[str, Any]:
     }
 
 
+def count_opaque_blocks(text: str) -> int:
+    return len(re.findall(r"<readonly-block\b", text, flags=re.IGNORECASE))
+
+
+def section_has_diagram(section: Section) -> bool:
+    return bool(
+        re.search(r"^(```+|~~~+)\s*mermaid\b", section.text, flags=re.IGNORECASE | re.MULTILINE)
+        or re.search(r"\bMERMAID_BLOCK\b", section.text)
+        or re.search(r"\bOPAQUE_REMOTE_BLOCK\b", section.text)
+        or re.search(r"<readonly-block\b", section.text, flags=re.IGNORECASE)
+    )
+
+
 def section_record(
-    key: str, local: Section | None, remote: Section | None
+    key: str, local: Section | None, remote: Section | None, diagram: bool = False
 ) -> dict[str, Any]:
     record: dict[str, Any] = {"key": key}
     if local:
@@ -387,8 +490,13 @@ def section_record(
             "end_line": remote.end_line,
             "hash": remote.content_hash,
         }
-    if local and remote:
-        record["str_replace_candidate"] = True
+    if local and remote and not diagram:
+        record["exact_text_replace_candidate"] = True
+        record["replacement_strategy"] = "exact_text"
+    if diagram:
+        record["diagram_replace_candidate"] = True
+        record["replacement_strategy"] = "replace_remote_diagram"
+        record["requires_confirmation"] = True
     return record
 
 
@@ -423,13 +531,19 @@ def print_plan(plan: dict[str, Any], as_json: bool) -> None:
         f"local={summary['local_sections']} "
         f"remote={summary['remote_sections']} "
         f"changed={summary['changed_sections']} "
+        f"diagrams={summary.get('diagram_sections', 0)} "
         f"new={summary['new_sections']} "
         f"remote_only={summary['remote_only_sections']}"
     )
     if summary.get("unsafe"):
         print(f"WARNING: {summary['reason']}")
 
-    for label in ("changed_sections", "new_sections", "remote_only_sections"):
+    for label in (
+        "changed_sections",
+        "diagram_sections",
+        "new_sections",
+        "remote_only_sections",
+    ):
         items = plan[label]
         if not items:
             continue
