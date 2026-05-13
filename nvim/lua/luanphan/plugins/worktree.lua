@@ -217,6 +217,30 @@ return function(_use)
     return vim.startswith(path, dir .. "/")
   end
 
+  local function clear_all_jumplists()
+    local original_tab = vim.api.nvim_get_current_tabpage()
+    local original_win = vim.api.nvim_get_current_win()
+
+    for _, tabid in ipairs(vim.api.nvim_list_tabpages()) do
+      if vim.api.nvim_tabpage_is_valid(tabid) then
+        pcall(vim.api.nvim_set_current_tabpage, tabid)
+        for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(tabid)) do
+          if vim.api.nvim_win_is_valid(winid) then
+            pcall(vim.api.nvim_set_current_win, winid)
+            pcall(vim.cmd, "clearjumps")
+          end
+        end
+      end
+    end
+
+    if vim.api.nvim_tabpage_is_valid(original_tab) then
+      pcall(vim.api.nvim_set_current_tabpage, original_tab)
+    end
+    if vim.api.nvim_win_is_valid(original_win) then
+      pcall(vim.api.nvim_set_current_win, original_win)
+    end
+  end
+
   -- Focus priority after a switch:
   --   1. visible agent float (<leader>cc / <leader>ac), enter terminal mode
   --   2. window showing the file we just re-opened
@@ -471,6 +495,10 @@ return function(_use)
     --    The terminal_agent's DirChanged hook may have already opened the
     --    agent float for this cwd; if so we want focus to land there.
     focus_after_switch(reopened)
+
+    -- 10. Jumplists are window-local but not workspace-local; clear them after
+    --     the switch settles so <C-o>/<C-i> cannot reopen old worktree files.
+    clear_all_jumplists()
 
     local msg = "Switched to worktree: " .. path
     if restored > 0 then
