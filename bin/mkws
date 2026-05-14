@@ -2,10 +2,11 @@
 """mkws — multi-repo git-worktree workspace manager.
 
 Every workspace lives at `<root>/local_workspaces/<name>/` and is a set of git
-worktrees (one per source repo) all on the same feature branch, glued together
-by a small `workspace.yml` manifest. Go workspaces (`go.work`) are intentionally
-NOT created — per-module semantics (GOWORK=off everywhere) is the standard here;
-cross-module navigation happens via `<leader>gw` worktree switching instead.
+worktrees (one per source repo) on a default branch, with optional per-repo
+branch overrides, glued together by a small `workspace.yml` manifest. Go
+workspaces (`go.work`) are intentionally NOT created — per-module semantics
+(GOWORK=off everywhere) is the standard here; cross-module navigation happens
+via `<leader>gw` worktree switching instead.
 """
 
 import concurrent.futures
@@ -173,18 +174,29 @@ def run(cmd, cwd=None, capture=True):
 
 # ---------------------------------------------------------------------------
 # workspace.yml I/O. Hand-parsed so we don't pull in PyYAML.
-# Format:
+# v1 format:
 #   name: <workspace-name>
 #   branch_name: <branch>
 #   repos:
 #     - repo-a
 #     - repo-b
+# v2 format:
+#   version: v2
+#   name: <workspace-name>
+#   branch_name: <default-branch>
+#   repos:
+#     - name: repo-a
+#       branch_name: <repo-branch>
 # ---------------------------------------------------------------------------
 def read_manifest(yml: Path) -> dict:
-    data = {"name": "", "branch_name": "", "repos": []}
+    data = {"version": "v1", "name": "", "branch_name": "", "repos": []}
     in_repos = False
+    current_repo = None
     for line in yml.read_text().splitlines():
-        if line.startswith("name:"):
+        if line.startswith("version:"):
+            data["version"] = line.split(":", 1)[1].strip() or "v1"
+            in_repos = False
+        elif line.startswith("name:"):
             data["name"] = line.split(":", 1)[1].strip()
             in_repos = False
         elif line.startswith("branch_name:"):
@@ -192,20 +204,64 @@ def read_manifest(yml: Path) -> dict:
             in_repos = False
         elif line.startswith("repos:"):
             in_repos = True
+            current_repo = None
+        elif in_repos and line.startswith("  - name:"):
+            current_repo = {"name": line.split(":", 1)[1].strip(), "branch_name": ""}
+            data["repos"].append(current_repo)
+        elif in_repos and line.startswith("    branch_name:") and current_repo is not None:
+            current_repo["branch_name"] = line.split(":", 1)[1].strip()
         elif in_repos and line.startswith("  - "):
-            data["repos"].append(line[4:].strip())
+            data["repos"].append({"name": line[4:].strip(), "branch_name": data["branch_name"]})
     return data
 
 
 def write_manifest(yml: Path, name: str, branch: str, repos: list) -> None:
-    lines = [f"name: {name}", f"branch_name: {branch}", "repos:"]
-    lines.extend(f"  - {r}" for r in repos)
+    lines = ["version: v2", f"name: {name}", f"branch_name: {branch}", "repos:"]
+    for repo in normalize_repos(repos, branch):
+        lines.append(f"  - name: {repo['name']}")
+        lines.append(f"    branch_name: {repo['branch_name']}")
     yml.write_text("\n".join(lines) + "\n")
 
 
-def append_repo(yml: Path, leaf: str) -> None:
-    with yml.open("a") as f:
-        f.write(f"  - {leaf}\n")
+def normalize_repos(repos: list, default_branch: str = "") -> list:
+    out = []
+    for repo in repos or []:
+        if isinstance(repo, dict):
+            name = str(repo.get("name") or "").strip()
+            branch = str(repo.get("branch_name") or default_branch or "").strip()
+        else:
+            name = str(repo).strip()
+            branch = default_branch or ""
+        if name:
+            out.append({"name": name, "branch_name": branch})
+    return out
+
+
+def repo_names(repos: list) -> list:
+    return [r["name"] for r in normalize_repos(repos)]
+
+
+def repo_branch(repos: list, name: str, default_branch: str = "") -> str:
+    for repo in normalize_repos(repos, default_branch):
+        if repo["name"] == name:
+            return repo["branch_name"] or default_branch
+    return default_branch
+
+
+def append_repo(yml: Path, leaf: str, branch: str) -> None:
+    data = read_manifest(yml)
+    repos = normalize_repos(data["repos"], data["branch_name"])
+    repos.append({"name": leaf, "branch_name": branch})
+    write_manifest(yml, data["name"], data["branch_name"], repos)
+
+
+def parse_repo_spec(spec: str) -> tuple:
+    if "@" not in spec:
+        return spec, ""
+    source, branch = spec.rsplit("@", 1)
+    if not source or not branch:
+        die(f"invalid --add repo spec '{spec}', expected <repo> or <repo>@<branch>")
+    return source, branch
 
 
 # ---------------------------------------------------------------------------
@@ -761,30 +817,32 @@ def cmd_merge(target: str, folders: list) -> int:
     workspace_dir = yml.parent
     repo_root = workspace_dir.parent.parent
     data = read_manifest(yml)
-    feature_branch = data["branch_name"]
-    if not feature_branch:
-        die(f"workspace.yml at {yml} has no branch_name — nothing to merge")
 
-    repo_names = data["repos"] or []
+    repo_names_list = repo_names(data["repos"])
     # Auto-scope to the current dir if it's a source repo in the manifest.
-    if (pwd / ".git").is_dir() and pwd.parent == repo_root and pwd.name in repo_names:
+    if (pwd / ".git").is_dir() and pwd.parent == repo_root and pwd.name in repo_names_list:
         if folders:
             wanted = {Path(f).name for f in folders}
             if pwd.name not in wanted:
                 die(f"current dir '{pwd.name}' is not in the requested folder scope")
-        repo_names = [pwd.name]
+        repo_names_list = [pwd.name]
     elif folders:
         wanted = {Path(f).name for f in folders}
-        repo_names = [r for r in repo_names if r in wanted]
-    if not repo_names:
+        repo_names_list = [r for r in repo_names_list if r in wanted]
+    if not repo_names_list:
         heading("summary")
         info("no repos to merge")
         return 0
 
-    info(f"merging '{feature_branch}' INTO base (master/main) across {len(repo_names)} source repo(s) (serial, no push)...")
+    info(f"merging workspace feature branches INTO base (master/main) across {len(repo_names_list)} source repo(s) (serial, no push)...")
     rebased = skipped = failed = 0
-    for r in repo_names:
+    for r in repo_names_list:
         source_repo = repo_root / r
+        feature_branch = repo_branch(data["repos"], r, data["branch_name"])
+        if not feature_branch:
+            warn(f"{r}: no branch_name in workspace.yml, skipping")
+            skipped += 1
+            continue
         heading(r)
         status = _merge_feature_to_base_one(source_repo, feature_branch)
         if status == "rebased":
@@ -1014,7 +1072,7 @@ def cmd_drop(folder: str) -> int:
         die(f"no workspace.yml at {workspace_dir} (not a workspace)")
 
     data = read_manifest(yml)
-    repos = data["repos"]
+    repos = repo_names(data["repos"])
     repo_root = workspace_dir.parent.parent
 
     # Collect unique source repos so we can prune each one once at the end,
@@ -1074,6 +1132,25 @@ def cmd_drop(folder: str) -> int:
     heading("summary")
     info(f"workspace: {BOLD}{workspace_dir}{RESET} (kept)")
     info(f"code repos dropped: {len(repos)}")
+    return 0
+
+
+def cmd_migrate(folder: str) -> int:
+    path = Path(folder) if folder else Path.cwd()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    workspace_dir = path.resolve()
+    yml = workspace_dir / "workspace.yml"
+    if not yml.is_file():
+        die(f"no workspace.yml at {workspace_dir} (not a workspace)")
+
+    data = read_manifest(yml)
+    repos = normalize_repos(data["repos"], data["branch_name"])
+    write_manifest(yml, name=data["name"] or workspace_dir.name, branch=data["branch_name"], repos=repos)
+
+    heading("migrate")
+    ok(f"wrote v2 manifest at {yml}")
+    info(f"repos: {len(repos)}")
     return 0
 
 
@@ -1170,6 +1247,8 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
     pwd = Path.cwd()
     workspace_dir, repo_root, name = resolve_default_context(pwd, name_flag)
     yml = workspace_dir / "workspace.yml"
+    repo_specs = [parse_repo_spec(r) for r in repos_arg]
+    specs_need_default_branch = any(not branch for _, branch in repo_specs)
 
     if yml.is_file():
         data = read_manifest(yml)
@@ -1184,22 +1263,28 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
                 # User is filling in the branch now; persist it.
                 write_manifest(yml, name=name, branch=branch_flag, repos=data["repos"])
                 branch = branch_flag
-            elif repos_arg:
+            elif repos_arg and specs_need_default_branch:
                 die(f"workspace.yml at {yml} has no branch_name; re-run with --branch <branch> to add repos")
             else:
                 # No-op extension on an empty workspace — report and exit clean.
                 branch = ""
     else:
-        if not branch_flag and repos_arg:
-            die("--branch required when adding repos to a new workspace")
+        if not branch_flag and repos_arg and specs_need_default_branch:
+            die("--branch required when adding repos without per-repo branches to a new workspace")
         workspace_dir.mkdir(parents=True, exist_ok=True)
         write_manifest(yml, name=name, branch=branch_flag or "", repos=[])
         branch = branch_flag or ""
 
     added = skipped = failed = 0
 
-    for repo in repos_arg:
+    for repo, repo_branch_override in repo_specs:
+        branch_for_repo = repo_branch_override or branch
         heading(repo)
+        if not branch_for_repo:
+            fail(f"no branch for {repo}; pass --branch <branch> or use {repo}@<branch>")
+            failed += 1
+            continue
+
         repo_path = resolve_source(repo, repo_root)
         if repo_path is None:
             fail(f"not a git repo: {repo}")
@@ -1210,7 +1295,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
         if leaf != repo:
             info(f"source: {repo_path} (recorded as '{leaf}')")
 
-        if leaf in read_manifest(yml)["repos"]:
+        if leaf in repo_names(read_manifest(yml)["repos"]):
             info(f"'{leaf}' already in workspace, skipping")
             skipped += 1
             continue
@@ -1218,7 +1303,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
         wt_path = workspace_dir / leaf
         if wt_path.exists():
             info("worktree path already exists, recording in yml")
-            append_repo(yml, leaf)
+            append_repo(yml, leaf, branch_for_repo)
             skipped += 1
             continue
 
@@ -1226,25 +1311,25 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
         if run(["git", "-C", str(repo_path), "fetch", "origin", "--quiet"]).returncode != 0:
             warn("fetch failed, falling back to local refs")
 
-        remote_branch = f"origin/{branch}"
+        remote_branch = f"origin/{branch_for_repo}"
         remote_branch_exists = has_ref(repo_path, f"refs/remotes/{remote_branch}")
 
-        if has_ref(repo_path, f"refs/heads/{branch}"):
-            proc = run(["git", "-C", str(repo_path), "worktree", "add", str(wt_path), branch])
+        if has_ref(repo_path, f"refs/heads/{branch_for_repo}"):
+            proc = run(["git", "-C", str(repo_path), "worktree", "add", str(wt_path), branch_for_repo])
             if proc.returncode == 0:
-                ok(f"checked out existing branch {branch}")
+                ok(f"checked out existing branch {branch_for_repo}")
                 if remote_branch_exists:
                     up = run(
                         [
                             "git", "-C", str(wt_path), "branch",
-                            "--set-upstream-to", remote_branch, branch,
+                            "--set-upstream-to", remote_branch, branch_for_repo,
                         ]
                     )
                     if up.returncode == 0:
                         ok(f"tracking {remote_branch}")
                     else:
                         warn(f"failed to set upstream to {remote_branch}")
-                append_repo(yml, leaf)
+                append_repo(yml, leaf, branch_for_repo)
                 added += 1
                 continue
             fail("existing branch worktree add failed")
@@ -1252,17 +1337,17 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             continue
 
         if remote_branch_exists:
-            info(f"creating tracking branch {branch} from {remote_branch}")
+            info(f"creating tracking branch {branch_for_repo} from {remote_branch}")
             proc = run(
                 [
                     "git", "-C", str(repo_path), "worktree", "add",
-                    "--track", "-b", branch, str(wt_path), remote_branch,
+                    "--track", "-b", branch_for_repo, str(wt_path), remote_branch,
                 ],
                 capture=False,
             )
             if proc.returncode == 0:
                 ok(f"worktree added at {wt_path}")
-                append_repo(yml, leaf)
+                append_repo(yml, leaf, branch_for_repo)
                 added += 1
                 continue
             fail("tracking worktree add failed")
@@ -1276,14 +1361,14 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             continue
 
         start_ref = f"origin/{base}" if has_ref(repo_path, f"refs/remotes/origin/{base}") else base
-        info(f"creating new branch {branch} from {start_ref}")
+        info(f"creating new branch {branch_for_repo} from {start_ref}")
         proc = run(
-            ["git", "-C", str(repo_path), "worktree", "add", "-b", branch, str(wt_path), start_ref],
+            ["git", "-C", str(repo_path), "worktree", "add", "-b", branch_for_repo, str(wt_path), start_ref],
             capture=False,
         )
         if proc.returncode == 0:
             ok(f"worktree added at {wt_path}")
-            append_repo(yml, leaf)
+            append_repo(yml, leaf, branch_for_repo)
             added += 1
         else:
             fail("worktree add failed")
@@ -1291,7 +1376,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
 
     heading("summary")
     info(f"workspace: {BOLD}{workspace_dir}{RESET}")
-    info(f"branch:    {BOLD}{branch or '(unset — pass --branch to set)'}{RESET}")
+    info(f"default branch: {BOLD}{branch or '(unset — use repo@branch or pass --branch)'}{RESET}")
     color = GREEN if failed == 0 else YELLOW
     info(f"added: {color}{added}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
     return 0
@@ -1311,6 +1396,7 @@ Usage:
   mkws merge <target> [<folder>...]
   mkws sync [<folder>...]
   mkws drop <folder>
+  mkws migrate [<workspace-folder>]
   mkws sync_tech_doc
 
 Modes:
@@ -1398,6 +1484,11 @@ Modes:
              Examples:
                mkws drop ./local_workspaces/myws
                mkws drop /abs/path/to/ws
+  migrate    Rewrite an existing workspace.yml into the v2 manifest format.
+             With no folder arg, migrates the current directory.
+             Examples:
+               mkws migrate
+               mkws migrate ./local_workspaces/myws
   sync_tech_doc
              Mirror workspace tech docs into one root index:
              `<root>/tech_doc/<workspace>/tech_doc` symlinks to
@@ -1413,12 +1504,14 @@ Flags:
                       or when invoked from the root. When invoked from inside
                       a workspace dir, read from workspace.yml. `/` in the
                       name becomes `_` in the folder.
-  --branch <branch>   branch name. Required on first create. Optional on
-                      re-add; must match workspace.yml if provided.
+  --branch <branch>   default branch name. Required when an added repo does
+                      not specify its own branch. Optional on re-add; must
+                      match workspace.yml if provided.
   --add <repo>...     one or more repos to add. Each entry can be:
                         - a bare name (looked up under the root)
                         - a relative path (resolved against $PWD, e.g. ../repo)
                         - an absolute path
+                        - any of the above with @<branch> for a per-repo branch
                       Variadic: --add a b c  or  --add a --add b
   -h, --help          show this message
 
@@ -1482,6 +1575,11 @@ def parse_args(argv):
                 target_path = argv.pop(0)
             else:
                 die(f"'drop' requires a workspace folder path\n\n{USAGE}")
+        elif sub == "migrate":
+            mode = "migrate"
+            argv.pop(0)
+            if argv and not argv[0].startswith("-"):
+                target_path = argv.pop(0)
         elif sub == "sync_tech_doc":
             mode = "sync_tech_doc"
             argv.pop(0)
@@ -1549,6 +1647,10 @@ def main() -> None:
         if repos or branch or name:
             die("'drop' takes a folder path only; --add/--branch/--name are not accepted")
         sys.exit(cmd_drop(target_path))
+    if mode == "migrate":
+        if repos or branch or name or target_paths:
+            die("'migrate' takes an optional workspace folder only; --add/--branch/--name are not accepted")
+        sys.exit(cmd_migrate(target_path))
     if mode == "sync_tech_doc":
         if repos or branch or name or target_path or target_paths:
             die("'sync_tech_doc' takes no args; --add/--branch/--name are not accepted")
