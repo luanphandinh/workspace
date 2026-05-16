@@ -42,52 +42,86 @@ Report back in under 200 words:
 ```
 ## Output phase
 - Diagram format must be compatible with the current chat window, under text format so user can understand, dont use any external UML diagram.
+- Rendering the diagram is mandatory for every exploration answer. Even if the graph is small, include the diagram first, then the mapping/evidence below it.
 - Always render exactly one merged end-to-end call chain diagram for all services discovered during exploration. If A calls B and B calls D, the final diagram must show `A -> B -> D`, not separate diagrams `A -> B` and `B -> D`.
 - The single diagram must include all connected branches in the same chart. Do not output one chart per service, branch, sub-agent, upstream chain, or downstream chain.
-- Before drawing the diagram, mentally normalize findings into edges: `(caller service, protocol, method/path/topic, callee service, evidence file:line)`. Use those edges to compose full paths from upstream entrypoints through downstream leaves. Shared services should appear once in the graph where possible.
+- Before drawing the diagram, mentally normalize findings into edges: `(caller service, protocol, method/path/topic, callee service, evidence file:line)`. Use those edges to compose full paths from upstream entrypoints through downstream leaves.
+- Reuse the same service container for the same service across the entire diagram. If multiple upstream services call the same downstream service, draw multiple inbound connectors into that one shared service container; do NOT duplicate the downstream service or split into separate charts unless the user explicitly asks for per-scenario/per-upstream diagrams.
+- A service container contains the service name and repo, plus one smaller operation box for each triggered handler/RPC method/HTTP handler/function that matters to the explored flow. If multiple upstream calls trigger different methods in the same service, put multiple smaller operation boxes inside the same bigger service container.
 - If a discovered service is disconnected from the main chain, do not create a second diagram. Add it under the same diagram as a clearly labeled `Disconnected / evidence not found` box, then explain briefly why the connection is not proven.
-- Each service must be rendered as its own box. Each service box contains the service name and codebase folder. Arrows between boxes must include the protocol plus method/path/topic, such as `RPC: MethodAB`, `HTTP: POST /path`, or `MQ: topic-x`.
-- Always include what the user asked to look up directly in the diagram, and propagate that focus throughout the relevant flow. Mark the exact service box, handler, function, field, API path, RPC method, MQ topic, or edge with `<<< USER FOCUS: <short label>`.
-- Every service box on the focused call path must include a `focus:` line that explains how that service participates in the user's requested lookup, such as `focus: upstream caller of <item>`, `focus: owns <item>`, `focus: transforms <item>`, `focus: downstream dependency for <item>`, or `focus: consumes <item>`.
-- Every arrow on the focused call path must include the focus label after the protocol and method/path/topic, for example `RPC: MethodAB | focus: <item> flow`. Branches that are unrelated to the requested lookup can omit the focus label, but do not omit it from any edge needed to understand the requested flow.
-- For branching, draw visible connector lines from the parent service box to each branch. Do not leave a branch as an isolated vertical line; use horizontal ASCII connectors so the reader can see which parent service owns the call.
+- Each service must be rendered as a larger container box. Do not put `in:` / `out:` lines in the service container; arrows are the source of truth for inbound/outbound calls.
+- Each smaller operation box inside a service container should be named by the triggered function/RPC method/HTTP handler itself, such as `<method-name>`, `<Service>.<RPCMethod>`, or `HTTP <METHOD> <path>`.
+- Operation boxes in the same service must preserve call depth:
+  - Same-level entrypoints, such as two RPC/HTTP handlers called by different upstreams, render side by side inside the service container when width allows.
+  - Sub-methods/helpers called inside one entrypoint render top-down under that entrypoint.
+  - If one entrypoint calls another local method, draw a small vertical internal arrow between those operation boxes.
+- Arrows must connect directly to the specific operation box they trigger, both for inbound and outbound calls. Do not terminate arrows at the outer service container unless the exact operation is unknown.
+- Arrows between operation boxes must include the protocol plus method/path/topic, such as `RPC: MethodAB`, `HTTP: POST /path`, or `MQ: topic-x`.
+- Always include what the user asked to look up directly in the diagram using the user's actual requested identifier/behavior, not a generic placeholder. If the user asks about a field, API, method, topic, condition, config, or value, use that exact code identifier/value when it is present in the code.
+- Do NOT use `FOCUS`, `USER FOCUS`, or repeated generic labels. Instead, add concise request-trace lines only on related boxes/edges:
+  - `**request:** <actual requested item>`
+  - `**value:** <observed value / condition / enum / payload field>` when known.
+  - `**mutates:** <from> -> <to>` when the service changes, maps, enriches, filters, or drops the value.
+  - `**passes:** <item>` when the service only forwards it unchanged.
+  - `**missing:** <item>` when expected propagation is not found.
+- Highlight means text style: use bold markdown (`**request:**`, `**value:**`, `**mutates:**`, `**passes:**`, `**missing:**`) and keep the highlighted line inside the box or next to the exact edge. Do not rely on words like "focus" to create emphasis.
+- Only annotate boxes/edges that are related to the user's request. Unrelated branches still appear in the graph but should not carry request-trace lines.
+- Draw boxes with consistent width within the same row and use continuous ASCII borders (`+-----+`, `| ... |`). Do not use fragmented or uneven box borders.
+- Nested operation boxes must have visible horizontal padding inside the service container: at least two spaces after the outer `|` before the inner `+`, and at least two spaces before the closing outer `|`. The inner method box must never visually touch or break the service container border.
+- Align connectors by box centers. The connector must leave from the horizontal center of the upstream box and the arrow head must land at the horizontal center of the downstream box whenever the layout width allows.
+- Branch from a centered spine: first draw a vertical line down from the source box center, then branch horizontally, then drop vertical lines into each target box center. Do not aim arrows at a target's left or right edge unless there is no room.
+- Prefer row-based layouts for branches and convergence: services at the same graph depth should appear on the same row when width allows, and a shared downstream service should be centered beneath its upstream callers. Keep connector columns aligned under each source and above the shared target.
 - Preferred format for connected graphs with multiple branches:
 ```
-+-------------------------+
-| A service               |
-| repo: repo-a            |
-| focus: upstream caller  |
-+-------------------------+
-            |
-            | RPC: MethodAB | focus: <user-focus> flow
-            v
-+-------------------------+
-| B service               |
-| repo: repo-b            |
-| focus: owns <user-focus>| <<< USER FOCUS: function/API under investigation
-+-------------------------+
-            |
-            +-------------------------+
-            |                         |
-            | HTTP: POST /to-d        | MQ: topic-x
-            | focus: <user-focus> flow | focus: <user-focus> event
-            v                         v
-+-------------------------+  +-------------------------+
-| D service               |  | E service               |
-| repo: repo-d            |  | repo: repo-e            |
-| focus: downstream dep   |  | focus: event consumer   |
-+-------------------------+  +-------------------------+
-            |                         |
-            | RPC: MethodDF           | HTTP: GET /to-g
-            | focus: <user-focus> flow | focus: <user-focus> flow
-            v                         v
-+-------------------------+  +-------------------------+
-| F service               |  | G service               |
-| repo: repo-f            |  | repo: repo-g            |
-| focus: final dependency |  | focus: final dependency |
-+-------------------------+  +-------------------------+
++--------------------------------+        +--------------------------------+
+| service-a                      |        | service-c                      |
+| repo: repo-a                   |        | repo: repo-c                   |
+|  +--------------------------+  |        |  +--------------------------+  |
+|  | <caller-func-a>          |  |        |  | HTTP POST /to-b          |  |
+|  +--------------------------+  |        |  +--------------------------+  |
++--------------------------------+        +--------------------------------+
+                |                                     |
+                | RPC: MethodAB                       | HTTP: POST /to-b
+                |                                     |
+                v                                     v
+        +----------------------------------------------------------+
+        | service-b                                                |
+        | repo: repo-b                                             |
+        |  +------------------------+  +------------------------+  |
+        |  | MethodAB handler       |  | POST /to-b handler     |  |
+        |  | **request:** <field>   |  | **passes:** <field>    |  |
+        |  | **mutates:** old->new  |  +------------------------+  |
+        |  +------------------------+             |                 |
+        |              |                          |                 |
+        |              v                          v                 |
+        |  +------------------------+  +------------------------+  |
+        |  | <local-helper-a>       |  | <local-helper-b>       |  |
+        |  +------------------------+  +------------------------+  |
+        +----------------------------------------------------------+
+                       |                            |
+                       | HTTP: POST /to-d           | MQ: topic-x
+                       |                            |
+                       v                            v
++--------------------------------+  +--------------------------------+
+| service-d                      |  | service-e                      |
+| repo: repo-d                   |  | repo: repo-e                   |
+|  +--------------------------+  |  |  +--------------------------+  |
+|  | POST /to-d handler       |  |  |  | topic-x consumer          |  |
+|  | **passes:** <field>      |  |  |  | **value:** <payload>      |  |
+|  +--------------------------+  |  |  +--------------------------+  |
++--------------------------------+  +--------------------------------+
+                |                                |
+                | RPC: MethodDF                  | HTTP: GET /to-g
+                v                                v
++--------------------------------+  +--------------------------------+
+| service-f                      |  | service-g                      |
+| repo: repo-f                   |  | repo: repo-g                   |
+|  +--------------------------+  |  |  +--------------------------+  |
+|  | MethodDF handler         |  |  |  | GET /to-g handler         |  |
+|  +--------------------------+  |  |  +--------------------------+  |
++--------------------------------+  +--------------------------------+
 ```
 - If the external service can not be found in the codebase, hightlight it
-- If user ask about specific field or part of the logic, highlight it in the diagram and the logic summary so the user can easily focus to it
+- If user asks about a specific field or part of the logic, highlight it in the diagram and the logic summary so the user can easily spot it.
 - DO NOT OVER EXPLAIN, if the user want to drill down to the detail of the specfic part, user need to ask and you will support
 - Provide some key information under the diagram, such as when RPC function get calls, which file and line of code is that, the information should be provided follow the diagram call chains, so that user can easily understand the relationship between the diagram and the codebase
