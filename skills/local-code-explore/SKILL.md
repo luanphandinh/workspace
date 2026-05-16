@@ -45,7 +45,9 @@ Report back in under 200 words:
 - Rendering the diagram is mandatory for every exploration answer. Even if the graph is small, include the diagram first, then the mapping/evidence below it.
 - Always render exactly one merged end-to-end call chain diagram for all services discovered during exploration. If A calls B and B calls D, the final diagram must show `A -> B -> D`, not separate diagrams `A -> B` and `B -> D`.
 - The single diagram must include all connected branches in the same chart. Do not output one chart per service, branch, sub-agent, upstream chain, or downstream chain.
-- Before drawing the diagram, mentally normalize findings into edges: `(caller service, protocol, method/path/topic, callee service, evidence file:line)`. Use those edges to compose full paths from upstream entrypoints through downstream leaves. Shared services should appear once in the graph where possible.
+- Before drawing the diagram, mentally normalize findings into edges: `(caller service, protocol, method/path/topic, callee service, evidence file:line)`. Use those edges to compose full paths from upstream entrypoints through downstream leaves.
+- Reuse the same service box for the same service across the entire diagram. If multiple upstream services call the same downstream service, draw multiple inbound connectors into that one shared service box; do NOT duplicate the downstream box or split into separate charts unless the user explicitly asks for per-scenario/per-upstream diagrams.
+- A shared service box should list multiple inbound operations as separate `in:` lines, one per upstream method/path/topic when useful.
 - If a discovered service is disconnected from the main chain, do not create a second diagram. Add it under the same diagram as a clearly labeled `Disconnected / evidence not found` box, then explain briefly why the connection is not proven.
 - Each service must be rendered as its own box. Each service box contains the service name, codebase folder, and the relevant operations for that service:
   - `in:` inbound RPC method / HTTP method+path / MQ topic that enters the service.
@@ -63,33 +65,39 @@ Report back in under 200 words:
 - Highlight means text style: use bold markdown (`**request:**`, `**value:**`, `**mutates:**`, `**passes:**`, `**missing:**`) and keep the highlighted line inside the box or next to the exact edge. Do not rely on words like "focus" to create emphasis.
 - Only annotate boxes/edges that are related to the user's request. Unrelated branches still appear in the graph but should not carry request-trace lines.
 - Draw boxes with consistent width within the same row and use continuous ASCII borders (`+-----+`, `| ... |`). Do not use fragmented or uneven box borders.
-- Align vertical and horizontal connectors so every branch visibly attaches to its parent service. Do not leave a branch as an isolated vertical line; use horizontal ASCII connectors so the reader can see which parent service owns the call.
-- Prefer row-based layouts for branches: parent box above, one connector spine, then sibling boxes on the same row. Keep connector columns aligned under the parent and above each child.
+- Align connectors by box centers. The connector must leave from the horizontal center of the upstream box and the arrow head must land at the horizontal center of the downstream box whenever the layout width allows.
+- Branch from a centered spine: first draw a vertical line down from the source box center, then branch horizontally, then drop vertical lines into each target box center. Do not aim arrows at a target's left or right edge unless there is no room.
+- Prefer row-based layouts for branches and convergence: services at the same graph depth should appear on the same row when width allows, and a shared downstream service should be centered beneath its upstream callers. Keep connector columns aligned under each source and above the shared target.
 - Preferred format for connected graphs with multiple branches:
 ```
-+--------------------------------+
-| service-a                      |
-| repo: repo-a                   |
-| out: RPC MethodAB              |
-+--------------------------------+
-                |
-                | RPC: MethodAB
-                v
-+--------------------------------+
-| service-b                      |
-| repo: repo-b                   |
-| in: RPC MethodAB               |
-| out: HTTP POST /to-d           |
-| out: MQ topic-x                |
-| handler: <method-name>         |
-| **request:** <field/method>    |
-| **mutates:** <old> -> <new>    |
-+--------------------------------+
-                |
-                +--------------------------------+
-                |                                |
-                | HTTP: POST /to-d              | MQ: topic-x
-                v                                v
++--------------------------------+        +--------------------------------+
+| service-a                      |        | service-c                      |
+| repo: repo-a                   |        | repo: repo-c                   |
+| out: RPC MethodAB              |        | out: HTTP POST /to-b           |
++--------------------------------+        +--------------------------------+
+                |                                     |
+                | RPC: MethodAB                       | HTTP: POST /to-b
+                |                                     |
+                +------------------+------------------+
+                                   |
+                                   v
+                  +--------------------------------+
+                  | service-b                      |
+                  | repo: repo-b                   |
+                  | in: RPC MethodAB               |
+                  | in: HTTP POST /to-b            |
+                  | out: HTTP POST /to-d           |
+                  | out: MQ topic-x                |
+                  | handler: <method-name>         |
+                  | **request:** <field/method>    |
+                  | **mutates:** <old> -> <new>    |
+                  +--------------------------------+
+                                   |
+                +------------------+------------------+
+                |                                     |
+                | HTTP: POST /to-d                    | MQ: topic-x
+                |                                     |
+                v                                     v
 +--------------------------------+  +--------------------------------+
 | service-d                      |  | service-e                      |
 | repo: repo-d                   |  | repo: repo-e                   |
