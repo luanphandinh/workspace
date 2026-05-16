@@ -47,14 +47,16 @@ Report back in under 200 words:
 - The single diagram must include all connected branches in the same chart. Do not output one chart per service, branch, sub-agent, upstream chain, or downstream chain.
 - Before drawing the diagram, mentally normalize findings into edges: `(caller service, protocol, method/path/topic, callee service, evidence file:line)`. Use those edges to compose full paths from upstream entrypoints through downstream leaves.
 - Reuse the same service container for the same service across the entire diagram. If multiple upstream services call the same downstream service, draw multiple inbound connectors into that one shared service container; do NOT duplicate the downstream service or split into separate charts unless the user explicitly asks for per-scenario/per-upstream diagrams.
-- A service container contains the service name and repo, plus one smaller operation box for each triggered handler/RPC method/HTTP handler/function that matters to the explored flow. If multiple upstream calls trigger different methods in the same service, put multiple smaller operation boxes inside the same bigger service container.
+- A service container contains the service name and repo. If the service has only one relevant RPC/API/function entrypoint, write that operation directly as a normal line in the service container. Do NOT draw a nested operation box for a single-method service.
+- Keep the diagram at RPC/API/function level. Do NOT dig into helper/private sub-method details by default; that creates noise. Only include helper/private functions if the user explicitly asks to drill into internal logic.
+- Use smaller nested operation boxes only when the same service has multiple same-level RPC/API/function entrypoints that matter to the explored flow. If multiple upstream calls trigger different entrypoints in the same service, put those smaller operation boxes side by side inside the same bigger service container.
 - If a discovered service is disconnected from the main chain, do not create a second diagram. Add it under the same diagram as a clearly labeled `Disconnected / evidence not found` box, then explain briefly why the connection is not proven.
 - Each service must be rendered as a larger container box. Do not put `in:` / `out:` lines in the service container; arrows are the source of truth for inbound/outbound calls.
-- Each smaller operation box inside a service container should be named by the triggered function/RPC method/HTTP handler itself, such as `<method-name>`, `<Service>.<RPCMethod>`, or `HTTP <METHOD> <path>`.
-- Operation boxes in the same service must preserve call depth:
+- A single-operation service should include `method: <method-name>`, `rpc: <Service>.<RPCMethod>`, `http: <METHOD> <path>`, or `consumer: <topic>` directly in the service container.
+- Each smaller operation box inside a multi-operation service container should be named by the triggered function/RPC method/HTTP handler itself, such as `<method-name>`, `<Service>.<RPCMethod>`, or `HTTP <METHOD> <path>`.
+- Operation boxes in the same service should stay at entrypoint/function level:
   - Same-level entrypoints, such as two RPC/HTTP handlers called by different upstreams, render side by side inside the service container when width allows.
-  - Sub-methods/helpers called inside one entrypoint render top-down under that entrypoint.
-  - If one entrypoint calls another local method, draw a small vertical internal arrow between those operation boxes.
+  - Internal helper/private functions are omitted unless explicitly requested.
 - Arrows must connect directly to the specific operation box they trigger, both for inbound and outbound calls. Do not terminate arrows at the outer service container unless the exact operation is unknown.
 - Arrows between operation boxes must include the protocol plus method/path/topic, such as `RPC: MethodAB`, `HTTP: POST /path`, or `MQ: topic-x`.
 - Always include what the user asked to look up directly in the diagram using the user's actual requested identifier/behavior, not a generic placeholder. If the user asks about a field, API, method, topic, condition, config, or value, use that exact code identifier/value when it is present in the code.
@@ -68,6 +70,7 @@ Report back in under 200 words:
 - Only annotate boxes/edges that are related to the user's request. Unrelated branches still appear in the graph but should not carry request-trace lines.
 - Draw boxes with consistent width within the same row and use continuous ASCII borders (`+-----+`, `| ... |`). Do not use fragmented or uneven box borders.
 - Nested operation boxes must have visible horizontal padding inside the service container: at least two spaces after the outer `|` before the inner `+`, and at least two spaces before the closing outer `|`. The inner method box must never visually touch or break the service container border.
+- Keep line width readable. If an RPC method, HTTP path, MQ topic, request trace, or code identifier is too long, split it across multiple aligned lines inside the box or edge label instead of widening the entire diagram. Prefer breaking after protocol, service name, path segment, or `|`.
 - Align connectors by box centers. The connector must leave from the horizontal center of the upstream box and the arrow head must land at the horizontal center of the downstream box whenever the layout width allows.
 - Branch from a centered spine: first draw a vertical line down from the source box center, then branch horizontally, then drop vertical lines into each target box center. Do not aim arrows at a target's left or right edge unless there is no room.
 - Prefer row-based layouts for branches and convergence: services at the same graph depth should appear on the same row when width allows, and a shared downstream service should be centered beneath its upstream callers. Keep connector columns aligned under each source and above the shared target.
@@ -76,9 +79,7 @@ Report back in under 200 words:
 +--------------------------------+        +--------------------------------+
 | service-a                      |        | service-c                      |
 | repo: repo-a                   |        | repo: repo-c                   |
-|  +--------------------------+  |        |  +--------------------------+  |
-|  | <caller-func-a>          |  |        |  | HTTP POST /to-b          |  |
-|  +--------------------------+  |        |  +--------------------------+  |
+| method: <caller-func-a>        |        | http: POST /to-b               |
 +--------------------------------+        +--------------------------------+
                 |                                     |
                 | RPC: MethodAB                       | HTTP: POST /to-b
@@ -90,12 +91,6 @@ Report back in under 200 words:
         |  +------------------------+  +------------------------+  |
         |  | MethodAB handler       |  | POST /to-b handler     |  |
         |  | **request:** <field>   |  | **passes:** <field>    |  |
-        |  | **mutates:** old->new  |  +------------------------+  |
-        |  +------------------------+             |                 |
-        |              |                          |                 |
-        |              v                          v                 |
-        |  +------------------------+  +------------------------+  |
-        |  | <local-helper-a>       |  | <local-helper-b>       |  |
         |  +------------------------+  +------------------------+  |
         +----------------------------------------------------------+
                        |                            |
@@ -105,10 +100,8 @@ Report back in under 200 words:
 +--------------------------------+  +--------------------------------+
 | service-d                      |  | service-e                      |
 | repo: repo-d                   |  | repo: repo-e                   |
-|  +--------------------------+  |  |  +--------------------------+  |
-|  | POST /to-d handler       |  |  |  | topic-x consumer          |  |
-|  | **passes:** <field>      |  |  |  | **value:** <payload>      |  |
-|  +--------------------------+  |  |  +--------------------------+  |
+| http: POST /to-d handler       |  | consumer: topic-x              |
+| **passes:** <field>            |  | **value:** <payload>           |
 +--------------------------------+  +--------------------------------+
                 |                                |
                 | RPC: MethodDF                  | HTTP: GET /to-g
@@ -116,9 +109,7 @@ Report back in under 200 words:
 +--------------------------------+  +--------------------------------+
 | service-f                      |  | service-g                      |
 | repo: repo-f                   |  | repo: repo-g                   |
-|  +--------------------------+  |  |  +--------------------------+  |
-|  | MethodDF handler         |  |  |  | GET /to-g handler         |  |
-|  +--------------------------+  |  |  +--------------------------+  |
+| rpc: MethodDF handler          |  | http: GET /to-g handler        |
 +--------------------------------+  +--------------------------------+
 ```
 - If the external service can not be found in the codebase, hightlight it
