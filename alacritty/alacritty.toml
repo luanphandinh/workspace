@@ -1,6 +1,9 @@
 # import = [
 #     "~/.config/alacritty/gruvbox.toml"
 # ]
+[window]
+decorations = "Buttonless"
+padding = { x = 8 }
 
 # macOS default binds Command+W to Quit. Override so it does nothing (avoids
 # accidental quit; use None — see alacritty(5) keyboard.bindings).
