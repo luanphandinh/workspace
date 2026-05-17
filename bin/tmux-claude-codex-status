@@ -8,32 +8,29 @@
 # Claude Code uses internally — not ccusage's dollar cost.
 #
 # Output format:
-#   claude [ session 45% | 7d-all 23% ] | codex [ 5h 13% | 7d 2% | tok 1.2M ]
+#   claude [ session 45% | 7d-all 23% ] | codex [ 5h 13% | 7d 2% ]
 #
-# When Claude Code hasn't been running recently, the cache is stale and
-# we annotate the line so the user knows the numbers are old.
+# When usage data is missing for either tool, that tool is omitted from
+# the status bar. Stale data is still shown with a marker.
 RATE_LIMITS_CACHE=/tmp/claude-rate-limits.json
 STALE_AFTER_SEC=900   # 15 minutes — flag the line as stale beyond this
 CODEX_STATE_DB="$HOME/.codex/state_5.sqlite"
 
-# Always print SOMETHING — the bar must never go blank.
-claude_fallback() { printf 'claude [ no data ]'; }
-codex_fallback() { printf 'codex [ no data ]'; }
+empty_status() { :; }
+
+join_status() {
+	case "$1:$2" in
+		:)  empty_status ;;
+		:*) printf '%s' "$2" ;;
+		*:) printf '%s' "$1" ;;
+		*)  printf '%s | %s' "$1" "$2" ;;
+	esac
+}
 
 fmt_pct() {
 	case "$1" in
 		n/a|"") printf 'n/a' ;;
 		*)      printf '%.0f%%' "$1" ;;
-	esac
-}
-
-fmt_count() {
-	case "$1" in
-		''|*[!0-9]*) printf 'n/a' ;;
-		??????????*) awk -v n="$1" 'BEGIN { printf "%.1fB", n / 1000000000 }' ;;
-		???????*)    awk -v n="$1" 'BEGIN { printf "%.1fM", n / 1000000 }' ;;
-		????*)       awk -v n="$1" 'BEGIN { printf "%.0fK", n / 1000 }' ;;
-		*)           printf '%s' "$1" ;;
 	esac
 }
 
@@ -56,37 +53,42 @@ fmt_window() {
 
 codex_status() {
 	if ! command -v sqlite3 >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
-		codex_fallback
+		empty_status
 		return
 	fi
 
 	if [ ! -f "$CODEX_STATE_DB" ]; then
-		codex_fallback
+		empty_status
 		return
 	fi
 
 	rollout_path=$(sqlite3 -readonly "$CODEX_STATE_DB" \
 		"select rollout_path from threads where rollout_path != '' order by updated_at desc limit 1;" 2>/dev/null)
 	if [ -z "$rollout_path" ] || [ ! -f "$rollout_path" ]; then
-		codex_fallback
+		empty_status
 		return
 	fi
 
-	read primary_pct secondary_pct primary_window secondary_window total_tokens <<EOF
+	read primary_pct secondary_pct primary_window secondary_window <<EOF
 $(tail -2000 "$rollout_path" | jq -r '
 	select(.type == "event_msg" and .payload.type == "token_count") |
 	[
 		(.payload.rate_limits.primary.used_percent // "n/a"),
 		(.payload.rate_limits.secondary.used_percent // "n/a"),
 		(.payload.rate_limits.primary.window_minutes // ""),
-		(.payload.rate_limits.secondary.window_minutes // ""),
-		(.payload.info.total_token_usage.total_tokens // "")
+		(.payload.rate_limits.secondary.window_minutes // "")
 	] | @tsv
 ' 2>/dev/null | tail -1)
 EOF
 
 	if [ -z "$primary_pct" ]; then
-		codex_fallback
+		empty_status
+		return
+	fi
+
+	if { [ -z "$primary_pct" ] || [ "$primary_pct" = "n/a" ]; } &&
+		{ [ -z "$secondary_pct" ] || [ "$secondary_pct" = "n/a" ]; }; then
+		empty_status
 		return
 	fi
 
@@ -97,14 +99,14 @@ EOF
 		stale_marker=" stale"
 	fi
 
-	printf 'codex [ %s %s | %s %s | tok %s%s ]' \
+	printf 'codex [ %s %s | %s %s%s ]' \
 		"$(fmt_window "$primary_window")" "$(fmt_pct "$primary_pct")" \
 		"$(fmt_window "$secondary_window")" "$(fmt_pct "$secondary_pct")" \
-		"$(fmt_count "$total_tokens")" "$stale_marker"
+		"$stale_marker"
 }
 
 if [ ! -f "$RATE_LIMITS_CACHE" ]; then
-	printf '%s | %s' "$(claude_fallback)" "$(codex_status)"
+	join_status "" "$(codex_status)"
 	exit 0
 fi
 
@@ -122,8 +124,14 @@ $(jq -r '
 ' "$RATE_LIMITS_CACHE" 2>/dev/null)
 EOF
 
-if [ -z "$updated" ]; then
-	printf '%s | %s' "$(claude_fallback)" "$(codex_status)"
+if [ -z "$updated" ] || [ "$updated" = "0" ]; then
+	join_status "" "$(codex_status)"
+	exit 0
+fi
+
+if { [ -z "$five_pct" ] || [ "$five_pct" = "n/a" ]; } &&
+	{ [ -z "$seven_pct" ] || [ "$seven_pct" = "n/a" ]; }; then
+	join_status "" "$(codex_status)"
 	exit 0
 fi
 
@@ -135,5 +143,7 @@ if [ "$age" -gt "$STALE_AFTER_SEC" ]; then
 	stale_marker=" (stale)"
 fi
 
-printf 'claude [ session %s | 7d-all %s%s ] | %s' \
-	"$(fmt_pct "$five_pct")" "$(fmt_pct "$seven_pct")" "$stale_marker" "$(codex_status)"
+claude_segment=$(printf 'claude [ session %s | 7d-all %s%s ]' \
+	"$(fmt_pct "$five_pct")" "$(fmt_pct "$seven_pct")" "$stale_marker")
+
+join_status "$claude_segment" "$(codex_status)"
