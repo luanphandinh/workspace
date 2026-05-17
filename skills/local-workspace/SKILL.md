@@ -1,6 +1,6 @@
 ---
 name: "local-workspace"
-description: "Use when the user wants to create, extend, migrate, or inspect a multi-repo git-worktree workspace. Drives the `mkws` command to bootstrap a new workspace with a default branch plus optional per-repo branch overrides, add repos to an existing workspace (from either the root or from inside the workspace), or read a workspace manifest (workspace.yml). Works in any folder containing multiple git repos as siblings. Does not touch go.work — per-module semantics (GOWORK=off) is the default here; cross-module navigation uses `<leader>gw` worktree switching instead."
+description: "Use when the user wants to create, extend, migrate, inspect, or open quick links for a multi-repo git-worktree workspace. Drives the `mkws` command to bootstrap a workspace with a default branch plus optional per-repo branch overrides, add repos to an existing workspace, manage workspace links, or read a workspace manifest (workspace.yml). Works in any folder containing multiple git repos as siblings. Does not touch go.work — per-module semantics (GOWORK=off) is the default here; cross-module navigation uses `<leader>gw` worktree switching instead."
 ---
 
 # About you
@@ -15,6 +15,7 @@ Drives `mkws` (installed on `$PATH`) to manage multi-repo git-worktree workspace
 # Command interface
 ```
 mkws [--name <name>] [--branch <branch>] [--add <repo>...]
+mkws [--name <workspace>] --link <name> <link> [<name> <link>...]
 mkws pull [<folder>...]
 mkws push [<folder>...]
 mkws master [<folder>...]
@@ -24,10 +25,13 @@ mkws sync [<folder>...]
 mkws drop <folder>
 mkws migrate [<workspace-folder>]
 mkws sync_tech_doc
+mkws open [<name-or-link>]
 ```
 - `--name` — workspace folder name, or a path to an existing workspace directory that contains `workspace.yml`. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). Plain names create/use `<root>/local_workspaces/<name>`; path values target that workspace directly.
 - `--branch` — default branch for repos that do not specify their own branch. **Required only when an added repo has no per-repo branch** (`--add repo-a`). **Optional** when every added repo uses `repo@branch`, when creating an empty workspace (no `--add`), or when extending an empty workspace with no repos. If the workspace already has a `branch_name` set, `--branch` is optional but, if passed, must match exactly. If the workspace was created empty (`branch_name:` in yml is empty) and you later pass `--branch`, the value is persisted into the yml. Once persisted, the existing-yml match-or-error rule kicks in.
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. Add `@<branch>` to any repo spec to override the default branch for that repo, e.g. `repo-a@feature/a`. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
+- `--link <name> <link> [<name> <link>...]` — add or update one or more quick-access workspace links in `workspace.yml`. Values are name/link pairs. Repeating `--link` also works. Run from inside a workspace dir/worktree, or pass `--name <workspace>` from the root. If an existing link URL is found, the latest provided name replaces the old name; if an existing name is found, its link is updated.
+- `open` — subcommand. Opens a recorded workspace link in the default browser. With no query, lists all workspace links. Query can match the link name or URL exactly, or a unique substring. Run from inside a workspace dir/worktree, or pass `--name <workspace>`. Examples: `mkws open`, `mkws open design-doc`, `mkws open design-doc --name myws`.
 - `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders. Rejects `--add`, `--branch`, `--name`.
   Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull ./local_workspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
 - `push` — subcommand. `git push origin HEAD` on the current branch of every matching repo. Parallel. Detached HEAD is skipped. Non-ff / auth failures are reported in the summary but do not halt the batch. Same folder-args form as `pull`. Rejects `--add`, `--branch`, `--name`.
@@ -64,6 +68,9 @@ At `<root>/local_workspaces/<name>/workspace.yml`:
 version: v2
 name: <workspace-name>
 branch_name: <default-branch>
+links:
+  - name: design-doc
+    link: https://example.com/design
 repos:
   - name: repo-a
     branch_name: feature/a
@@ -128,6 +135,26 @@ mkws migrate <root>/local_workspaces/X
 ```
 After migration, `repos` is a list of `{name, branch_name}` entries. Existing flat repo entries inherit the top-level `branch_name`.
 
+## Add and open workspace links
+User intent: "add a quick link to this workspace", "open the design doc", "show workspace links".
+```
+cd <root>/local_workspaces/X
+mkws --link design-doc https://example.com/design
+mkws --link design-doc https://example.com/design runbook https://example.com/runbook
+mkws --link design-doc https://example.com/design --link runbook https://example.com/runbook
+mkws open                    # list links
+mkws open design-doc         # open in default browser
+
+cd <root>/local_workspaces/X/repo-a
+mkws --link runbook https://example.com/runbook
+
+# or from the root
+cd <root>
+mkws --name X --link design-doc https://example.com/design
+mkws open design-doc --name X
+```
+Links are stored in `workspace.yml` under `links:` and are preserved by code-only operations such as `mkws drop`.
+
 ## Pull latest
 User intent: "refresh the repos", "pull latest", "bring all worktrees up to date", "update all source repos to master". `mkws pull` walks the immediate subfolders and runs `git pull --ff-only` on each git repo it finds, using that repo's own currently checked-out branch.
 ```
@@ -184,7 +211,7 @@ User intent: "drop workspace X", "clean up the worktrees for X", "remove the cod
 mkws drop <root>/local_workspaces/<name>
 mkws drop ./local_workspaces/<name>    # relative from the root
 ```
-After removing code worktrees, `mkws drop` rewrites `workspace.yml` with the same workspace name, blank `branch_name`, and an empty `repos:` list. Removing the workspace directory itself is a separate user decision.
+After removing code worktrees, `mkws drop` rewrites `workspace.yml` with the same workspace name, blank `branch_name`, preserved `links:`, and an empty `repos:` list. Removing the workspace directory itself is a separate user decision.
 
 **Warn the user** before running if there may be uncommitted changes in the worktrees — `mkws drop` runs `git worktree remove --force` without a confirmation prompt, so local edits inside code worktrees are lost. If unsure, ask the user to commit/push first (or inspect with `git -C <root>/<repo> worktree list`).
 
@@ -201,7 +228,7 @@ The command scans `<root>/local_workspaces/*/workspace.yml`. For every workspace
 If a workspace `tech_doc/` folder is removed, the matching generated symlink is removed on the next run. If `<root>/tech_doc/<workspace-name>/tech_doc` already exists as a real file or directory, `mkws sync_tech_doc` warns and skips it rather than deleting user content.
 
 ## Inspect a workspace
-Read `<root>/local_workspaces/<name>/workspace.yml` directly. Report `name`, default `branch_name`, and each repo's `name` and `branch_name`.
+Read `<root>/local_workspaces/<name>/workspace.yml` directly. Report `name`, default `branch_name`, quick links, and each repo's `name` and `branch_name`.
 
 ## List candidate repos
 Source repos are siblings of the root and have `.git` as a **directory** (worktrees have `.git` as a file). Use Glob `*/.git` filtered to directories. Don't guess repo names.
