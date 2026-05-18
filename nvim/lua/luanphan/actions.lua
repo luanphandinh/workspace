@@ -200,8 +200,8 @@ local actions = {
             hidden = true,
             file_ignore_patterns = ignore_dot_git,
             find_command = show_gitignore
-                and { "rg", "--files", "--hidden", "--no-ignore" }
-                or { "rg", "--files", "--hidden" },
+                and { "rg", "--files", "--hidden", "--follow", "--no-ignore" }
+                or { "rg", "--files", "--hidden", "--follow" },
           },
         },
       })

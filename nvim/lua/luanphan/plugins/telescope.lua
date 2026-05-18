@@ -42,6 +42,7 @@ return function(use)
         pickers = {
           find_files = {
             hidden = true, -- show dotfiles
+            find_command = { "rg", "--files", "--hidden", "--follow" },
             file_ignore_patterns = ignore_dot_git,
           },
           live_grep = {
