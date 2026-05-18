@@ -8,7 +8,7 @@
 # Claude Code uses internally — not ccusage's dollar cost.
 #
 # Output format:
-#   claude [ session 45% | 7d-all 23% ] | codex [ 5h 13% | 7d 2% ]
+#   claude[s 45%|7d 23%] | codex[5h 13%|7d 2%]
 #
 # When usage data is missing for either tool, that tool is omitted from
 # the status bar. Stale data is still shown with a marker.
@@ -99,7 +99,7 @@ EOF
 		stale_marker=" stale"
 	fi
 
-	printf 'codex [ %s %s | %s %s%s ]' \
+	printf 'codex[%s %s|%s %s%s]' \
 		"$(fmt_window "$primary_window")" "$(fmt_pct "$primary_pct")" \
 		"$(fmt_window "$secondary_window")" "$(fmt_pct "$secondary_pct")" \
 		"$stale_marker"
@@ -143,7 +143,7 @@ if [ "$age" -gt "$STALE_AFTER_SEC" ]; then
 	stale_marker=" (stale)"
 fi
 
-claude_segment=$(printf 'claude [ session %s | 7d-all %s%s ]' \
+claude_segment=$(printf 'claude[s %s|7d %s%s]' \
 	"$(fmt_pct "$five_pct")" "$(fmt_pct "$seven_pct")" "$stale_marker")
 
 join_status "$claude_segment" "$(codex_status)"
