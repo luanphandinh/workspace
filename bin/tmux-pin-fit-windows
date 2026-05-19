@@ -8,7 +8,9 @@
 #
 # Strategy: temporarily flip server option window-size to `manual` so
 # tmux honours our explicit `resize-window -x/-y`, then restore the
-# previous value at exit.
+# previous value at exit. `resize-window` also writes a per-window
+# `window-size manual` override, so each touched window has that local
+# override removed after it has been resized.
 set -e
 
 # Capture viewport from the current client. If the script is run outside
@@ -34,4 +36,5 @@ tmux set-option -g window-size manual >/dev/null 2>&1 || :
 
 tmux list-windows -aF '#{window_id}' 2>/dev/null | while IFS= read -r win; do
 	tmux resize-window -t "$win" -x "$client_w" -y "$client_h" >/dev/null 2>&1 || :
+	tmux set-window-option -u -t "$win" window-size >/dev/null 2>&1 || :
 done
