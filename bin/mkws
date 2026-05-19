@@ -670,6 +670,103 @@ def cmd_index() -> int:
     return 0
 
 
+def workstation_clone_branch(repo: dict) -> str:
+    upstream = repo.get("upstream", "")
+    remote = repo.get("remote", "")
+    if upstream and "/" in upstream:
+        up_remote, up_branch = upstream.split("/", 1)
+        if not remote or remote == up_remote:
+            return up_branch
+    branch = repo.get("branch", "")
+    return "" if branch == "HEAD" else branch
+
+
+def resolve_workstation_repo_path(root: Path, repo: dict) -> Path:
+    rel = repo.get("path") or repo.get("name") or ""
+    if not rel:
+        raise ValueError("missing repo path")
+    path = Path(rel)
+    if path.is_absolute():
+        raise ValueError(f"path must be relative to workstation root: {rel}")
+    resolved = (root / path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        raise ValueError(f"path escapes workstation root: {rel}")
+    return resolved
+
+
+def cmd_setup() -> int:
+    root = Path.cwd().resolve()
+    yml = root / WORKSTATION_FILE
+    if not yml.is_file():
+        die(f"no {WORKSTATION_FILE} at {root}; run `mkws index` first or create it")
+
+    data = read_workstation_manifest(yml)
+    repos = normalize_workstation_repos(data["repos"])
+    if not repos:
+        heading("workstation setup")
+        info("no repos recorded")
+        return 0
+
+    info(f"setting up {len(repos)} repo(s) from {WORKSTATION_FILE}...")
+
+    def worker(repo: dict, log: RepoLog) -> str:
+        label = repo.get("path") or repo.get("name") or "(unknown)"
+        log.heading(label)
+        try:
+            dest = resolve_workstation_repo_path(root, repo)
+        except ValueError as e:
+            log.fail(str(e))
+            return "failed"
+
+        if dest.exists():
+            if is_git_repo_path(dest):
+                log.info("already present")
+                return "skipped"
+            log.fail(f"path exists but is not a git repo: {dest}")
+            return "failed"
+
+        remote = repo.get("remote", "")
+        remote_url_value = repo.get("remote_url", "")
+        if not remote_url_value:
+            log.fail("missing remote_url in workstation.yml")
+            return "failed"
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        cmd = ["git", "clone"]
+        if remote:
+            cmd.extend(["--origin", remote])
+        branch = workstation_clone_branch(repo)
+        if branch:
+            cmd.extend(["--branch", branch])
+        cmd.extend([remote_url_value, str(dest)])
+
+        log.info("git clone")
+        proc = run(cmd)
+        log.raw((proc.stdout or "").rstrip())
+        log.raw((proc.stderr or "").rstrip())
+        if proc.returncode != 0:
+            log.fail(f"clone failed for {label}")
+            return "failed"
+        log.ok(f"cloned {label}")
+        return "cloned"
+
+    results = run_in_parallel(repos, worker, max_workers=4)
+    cloned = sum(1 for r in results if r == "cloned")
+    skipped = sum(1 for r in results if r == "skipped")
+    failed_repos = [repos[i].get("path") or repos[i].get("name") for i, r in enumerate(results) if r == "failed"]
+    failed = len(failed_repos)
+
+    heading("summary")
+    color = GREEN if failed == 0 else YELLOW
+    info(f"workstation: {BOLD}{root}{RESET}")
+    info(f"cloned: {color}{cloned}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
+    if failed_repos:
+        info(f"failed: {RED}{', '.join(failed_repos)}{RESET}")
+    return 0 if failed == 0 else 1
+
+
 # ---------------------------------------------------------------------------
 # pull mode: iterate every immediate subfolder of the target; for each one
 # that's a git repo (source repo or worktree — `.git` can be a dir or a file),
@@ -1755,6 +1852,7 @@ Usage:
   mkws [--name <name>] [--branch <branch>] [--add <repo>...]
   mkws [--name <workspace>] --link <name> <link> [<name> <link>...]
   mkws index
+  mkws setup
   mkws pull [<folder>...]
   mkws push [<folder>...]
   mkws master [<folder>...]
@@ -1776,6 +1874,12 @@ Modes:
              local_workspaces/.
              Example:
                mkws index
+  setup      Read workstation.yml in the current folder and clone any recorded
+             repo whose path is missing. Existing git repos are skipped.
+             Existing non-git paths fail. Uses remote_url and the recorded
+             upstream branch when available.
+             Example:
+               mkws setup
   pull       `git pull --ff-only` on the currently checked-out branch of every
              matching repo. Takes any number of folder args (absolute, relative,
              or a bare name under $PWD). Each arg is either a git repo (pulled
@@ -1924,6 +2028,9 @@ def parse_args(argv):
         if sub == "index":
             mode = "index"
             argv.pop(0)
+        elif sub == "setup":
+            mode = "setup"
+            argv.pop(0)
         elif sub == "pull":
             mode = "pull"
             argv.pop(0)
@@ -2027,6 +2134,10 @@ def main() -> None:
         if repos or branch or name or link_pairs or target_path or target_paths:
             die("'index' takes no args; --add/--branch/--name/--link are not accepted")
         sys.exit(cmd_index())
+    if mode == "setup":
+        if repos or branch or name or link_pairs or target_path or target_paths:
+            die("'setup' takes no args; --add/--branch/--name/--link are not accepted")
+        sys.exit(cmd_setup())
     if mode == "pull":
         if repos or branch or name or link_pairs:
             die("'pull' takes folder path(s) only; --add/--branch/--name/--link are not accepted")

@@ -17,6 +17,7 @@ Drives `mkws` (installed on `$PATH`) to manage multi-repo git-worktree workspace
 mkws [--name <name>] [--branch <branch>] [--add <repo>...]
 mkws [--name <workspace>] --link <name> <link> [<name> <link>...]
 mkws index
+mkws setup
 mkws pull [<folder>...]
 mkws push [<folder>...]
 mkws master [<folder>...]
@@ -33,6 +34,7 @@ mkws open [<name-or-link>]
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. Add `@<branch>` to any repo spec to override the default branch for that repo, e.g. `repo-a@feature/a`. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
 - `--link <name> <link> [<name> <link>...]` — add or update one or more quick-access workspace links in `workspace.yml`. Values are name/link pairs. Repeating `--link` also works. Run from inside a workspace dir/worktree, or pass `--name <workspace>` from the root. If an existing link URL is found, the latest provided name replaces the old name; if an existing name is found, its link is updated.
 - `index` — subcommand. Builds or refreshes `<root>/workstation.yml` for the current parent folder. Scans immediate child git repos, adds repos missing from the workstation index, and refreshes each repo's path, remote, upstream, and current branch metadata. It does not fetch, delete stale entries, or scan `local_workspaces/`.
+- `setup` — subcommand. Reads `<root>/workstation.yml` and clones any recorded repo whose path is missing. Existing git repos are skipped; existing non-git paths fail. Uses `remote_url` and the recorded upstream branch when available. It does not fetch or pull existing repos.
 - `open` — subcommand. Opens a recorded workspace link in the default browser. With no query, lists all workspace links. Query can match the link name or URL exactly, or a unique substring. Run from inside a workspace dir/worktree, or pass `--name <workspace>`. Examples: `mkws open`, `mkws open design-doc`, `mkws open design-doc --name myws`.
 - `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders. Rejects `--add`, `--branch`, `--name`.
   Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull ./local_workspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
@@ -105,6 +107,14 @@ cd <root>
 mkws index
 ```
 The command scans immediate child git repos only. It skips `local_workspaces/`, does not fetch from remotes, and does not remove stale entries.
+
+## Set up a workstation from the index
+User intent: "set up this workstation", "clone every missing repo from workstation.yml", "restore repos under this parent folder".
+```
+cd <root>
+mkws setup
+```
+The command reads `<root>/workstation.yml`, clones entries whose `path` does not exist, skips paths that are already git repos, and fails on existing non-git paths. It uses `remote_url` plus the recorded upstream branch when available. It does not fetch or pull existing repos.
 
 ## Create a new workspace
 User intent: "make a workspace called X with repos A, B on branch feature/Y".
