@@ -18,7 +18,7 @@ mkdir -p "$(dirname "$TICK_FILE")"
 # wherever the cached pane layout no longer matches the new viewport
 # (Alacritty zoom in/out, monitor change). Run with no delay so the
 # artifacts disappear within one frame.
-tmux refresh-client -S >/dev/null 2>&1 || :
+tmux refresh-client >/dev/null 2>&1 || :
 
 # Step 2 — DEBOUNCED sidebar snap. Each new event overwrites the token
 # in TICK_FILE; the detached wait re-reads it and only fires the actual

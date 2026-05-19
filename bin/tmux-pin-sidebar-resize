@@ -30,6 +30,6 @@ tmux list-panes -aF '#{pane_id} #{@pin_sidebar}' 2>/dev/null \
 
 # 4. Force a full client repaint to clear any `....` placeholder cells
 #    where the cached layout didn't match the new viewport.
-tmux refresh-client -S >/dev/null 2>&1 || :
+tmux refresh-client >/dev/null 2>&1 || :
 
 tmux display-message "viewport re-fit, sidebars snapped to ${WIDTH} cols"
