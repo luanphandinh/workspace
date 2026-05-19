@@ -1,0 +1,124 @@
+#!/bin/sh
+set -eu
+
+payload="${1:-}"
+if [ -z "$payload" ] && [ ! -t 0 ]; then
+	payload="$(cat)"
+fi
+
+cwd="$(pwd -P 2>/dev/null || pwd)"
+case "$cwd" in
+	"$HOME") display_path="~" ;;
+	"$HOME"/*) display_path="~/${cwd#"$HOME"/}" ;;
+	*) display_path="$cwd" ;;
+esac
+message="Task complete: $display_path"
+
+config_dir="${CODEX_HOME:-$HOME/.codex}"
+config_file="$config_dir/config.toml"
+script_path="$(CDPATH= cd "$(dirname "$0")" 2>/dev/null && pwd -P)/$(basename "$0")"
+
+if [ -n "$payload" ] && [ -r "$config_file" ] && command -v python3 >/dev/null 2>&1; then
+	python3 - "$config_file" "$script_path" "$payload" <<'PY' >/dev/null 2>&1 || :
+import ast
+import os
+import shutil
+import subprocess
+import sys
+
+config_file, script_path, payload = sys.argv[1:]
+
+
+def notify_from_toml(path):
+    try:
+        import tomllib
+
+        with open(path, "rb") as file:
+            value = tomllib.load(file).get("notify")
+        if isinstance(value, list):
+            return [str(item) for item in value]
+    except Exception:
+        pass
+    return []
+
+
+def notify_from_literal(path):
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines()
+    except OSError:
+        return []
+
+    collecting = False
+    chunks = []
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not collecting:
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() != "notify":
+                continue
+            chunks.append(value.strip())
+            collecting = "]" not in value
+        else:
+            chunks.append(line)
+            collecting = "]" not in line
+
+        if not collecting and chunks:
+            break
+
+    if not chunks:
+        return []
+
+    try:
+        value = ast.literal_eval(" ".join(chunks))
+    except Exception:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value]
+    return []
+
+
+notify = notify_from_toml(config_file) or notify_from_literal(config_file)
+if not notify:
+    raise SystemExit(0)
+
+notify[0] = os.path.expandvars(os.path.expanduser(notify[0]))
+current = os.path.realpath(script_path)
+target = os.path.realpath(notify[0])
+if target == current:
+    raise SystemExit(0)
+
+if os.sep in notify[0]:
+    if not os.access(notify[0], os.X_OK):
+        raise SystemExit(0)
+elif shutil.which(notify[0]) is None:
+    raise SystemExit(0)
+
+subprocess.run(notify + [payload], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+PY
+fi
+
+if command -v terminal-notifier >/dev/null 2>&1; then
+	terminal-notifier -title "Codex" -message "$message" >/dev/null 2>&1 || :
+elif command -v osascript >/dev/null 2>&1; then
+	osascript \
+		-e 'on run argv' \
+		-e 'display notification (item 1 of argv) with title "Codex"' \
+		-e 'end run' \
+		"$message" >/dev/null 2>&1 || :
+fi
+
+if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+	tmux display-message "Codex $message" >/dev/null 2>&1 || :
+	if [ -n "${TMUX_PANE:-}" ]; then
+		pane_tty="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_tty}' 2>/dev/null || :)"
+		if [ -n "$pane_tty" ] && [ -w "$pane_tty" ]; then
+			printf '\a' >"$pane_tty" 2>/dev/null || :
+		fi
+	fi
+fi
+
+if tty_path="$(tty 2>/dev/null)" && [ "$tty_path" != "not a tty" ]; then
+	printf '\a' >"$tty_path" 2>/dev/null || :
+fi
