@@ -186,7 +186,7 @@ return function(use)
       vim.keymap.set("n", "<leader>gD", toggle_branch_diff, { desc = "Git diff branch (vs base)" })
       vim.keymap.set("n", "<leader>gH", toggle_file_history, { desc = "File history (current)" })
       vim.keymap.set("n", "<leader>gA", toggle_all_file_history, { desc = "File history (all)" })
-      vim.keymap.set("n", "<leader>gc", toggle_all_file_history, { desc = "Repo commits (all)" })
+      vim.keymap.set("n", "<leader>gC", toggle_all_file_history, { desc = "Repo commits (all)" })
     end,
   }
 
