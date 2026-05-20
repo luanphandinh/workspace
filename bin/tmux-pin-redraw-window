@@ -1,0 +1,16 @@
+#!/bin/sh
+# Redraw only the pinned-sessions sidebar pane for one tmux window.
+win="${1:-}"
+
+if [ -z "$win" ]; then
+	win="$(tmux display-message -p '#{window_id}' 2>/dev/null || :)"
+fi
+[ -n "$win" ] || exit 0
+
+pane="$(tmux show-options -wqv -t "$win" '@pin_sidebar_pane' 2>/dev/null || :)"
+[ -n "$pane" ] || exit 0
+
+tmux list-panes -t "$win" -F '#{pane_id}' 2>/dev/null \
+	| grep -Fxq "$pane" || exit 0
+
+tmux send-keys -t "$pane" Enter 2>/dev/null || :
