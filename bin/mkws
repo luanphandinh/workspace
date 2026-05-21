@@ -849,6 +849,63 @@ def cmd_setup() -> int:
     return 0 if failed == 0 else 1
 
 
+def split_present_workstation_repos(root: Path, repos: list) -> tuple:
+    kept = []
+    removed = []
+    for repo in normalize_workstation_repos(repos):
+        label = repo.get("path") or repo.get("name") or "(unknown)"
+        try:
+            dest = resolve_workstation_repo_path(root, repo)
+        except ValueError as e:
+            removed.append((label, str(e)))
+            continue
+        if is_git_repo_path(dest):
+            kept.append(repo)
+        elif dest.exists():
+            removed.append((label, f"path exists but is not a git repo: {dest}"))
+        else:
+            removed.append((label, f"path missing: {dest}"))
+    return kept, removed
+
+
+def cmd_clean_workstation(folder: str = "") -> int:
+    path = Path(folder) if folder else Path.cwd()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    root = path.resolve()
+    yml = root / WORKSTATION_FILE
+    if not yml.is_file():
+        die(f"no {WORKSTATION_FILE} at {root}; run from a workstation root or pass one")
+
+    data = read_workstation_manifest(yml)
+    workstation_name = data["name"] or root.name
+    repos, removed = split_present_workstation_repos(root, data["repos"])
+    external_repos, external_removed = split_present_workstation_repos(
+        root,
+        data.get("_external", {}).get("repos", []),
+    )
+    changed = write_workstation_manifest(yml, workstation_name, repos, external_repos)
+
+    heading("workstation clean")
+    for label, reason in removed:
+        ok(f"removed stale repo metadata: {label} ({reason})")
+    for label, reason in external_removed:
+        ok(f"removed stale external repo metadata: {label} ({reason})")
+    if not removed and not external_removed:
+        info("no stale repo metadata found")
+
+    heading("summary")
+    info(f"workstation: {BOLD}{root}{RESET}")
+    info(f"manifest:    {BOLD}{yml}{RESET}")
+    info(f"repos kept: {len(repos)}, removed: {len(removed)}")
+    info(f"external kept: {len(external_repos)}, removed: {len(external_removed)}")
+    if changed:
+        ok("workstation.yml updated")
+    else:
+        ok("workstation.yml already current")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # pull mode: iterate every immediate subfolder of the target; for each one
 # that's a git repo (source repo or worktree — `.git` can be a dir or a file),
@@ -1522,13 +1579,15 @@ def cmd_sync(folders: list) -> int:
 
 
 # ---------------------------------------------------------------------------
-# drop mode: remove every code worktree listed in the manifest and prune the
+# clean workspace mode: remove every code worktree listed in the manifest and prune the
 # source repos, but keep the workspace folder and workspace-level files. The
 # manifest is reset to an empty branch/repo list so docs and other workspace
 # artifacts remain available for future reuse.
 # ---------------------------------------------------------------------------
-def cmd_drop(folder: str) -> int:
-    path = Path(folder)
+def cmd_clean_workspace(folder: str = "") -> int:
+    path = Path(folder) if folder else Path.cwd()
+    if not path.is_absolute():
+        path = Path.cwd() / path
     if not path.is_dir():
         die(f"not a directory: {folder}")
     workspace_dir = path.resolve()
@@ -1546,7 +1605,7 @@ def cmd_drop(folder: str) -> int:
     seen: set = set()
 
     for leaf in repos:
-        heading(f"drop {leaf}")
+        heading(f"clean {leaf}")
         source_path = repo_root / leaf
         worktree_path = workspace_dir / leaf
         source_is_git = (source_path / ".git").is_dir()
@@ -1596,8 +1655,28 @@ def cmd_drop(folder: str) -> int:
 
     heading("summary")
     info(f"workspace: {BOLD}{workspace_dir}{RESET} (kept)")
-    info(f"code repos dropped: {len(repos)}")
+    info(f"code repos cleaned: {len(repos)}")
     return 0
+
+
+def cmd_clean(folder: str = "") -> int:
+    if folder:
+        path = Path(folder)
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        target = path.resolve()
+        if (target / "workspace.yml").is_file():
+            return cmd_clean_workspace(str(target))
+        if (target / WORKSTATION_FILE).is_file():
+            return cmd_clean_workstation(str(target))
+        die(f"no workspace.yml or {WORKSTATION_FILE} at {target}")
+
+    pwd = Path.cwd().resolve()
+    if (pwd / "workspace.yml").is_file():
+        return cmd_clean_workspace(str(pwd))
+    if (pwd / WORKSTATION_FILE).is_file():
+        return cmd_clean_workstation(str(pwd))
+    die(f"no workspace.yml or {WORKSTATION_FILE} at {pwd}; pass a workspace or workstation folder")
 
 
 def cmd_migrate(folder: str) -> int:
@@ -1941,7 +2020,7 @@ Usage:
   mkws rebase [<folder>...]
   mkws merge <target> [<folder>...]
   mkws sync [<folder>...]
-  mkws drop <folder>
+  mkws clean [<workspace-or-workstation-folder>]
   mkws migrate [<workspace-folder>]
   mkws sync_tech_doc
   mkws open [<name-or-link>]
@@ -2013,7 +2092,7 @@ Modes:
                repo on master/main listed in the workspace's manifest: pull
                --ff-only base, then merge --no-ff <feature> into base. NO
                push — review and `git push origin master` yourself when
-               satisfied. Workspace is NOT dropped.
+               satisfied. Workspace is kept for further work.
              Context-aware cwd:
                - In root or workspace dir → operates on all matching repos.
                - In a single git repo → auto-scopes to that one repo (the
@@ -2037,14 +2116,18 @@ Modes:
              Examples:
                mkws sync                     # pull+rebase+push every repo
                mkws sync repo-a              # just one repo
-  drop       Remove every code worktree listed in the workspace and prune the
-             source repos. Keeps the workspace folder and workspace-level files,
-             then resets workspace.yml to an empty branch/repo list.
-             DESTRUCTIVE for code worktrees — uncommitted work there is lost
-             (runs `git worktree remove --force`). No confirmation prompt.
+  clean      Context-aware cleanup. In a workstation root, removes stale repo
+             metadata from workstation.yml when the recorded path is missing or
+             no longer a git repo. In a workspace folder, removes every code
+             worktree listed in workspace.yml, prunes the source repos, keeps
+             workspace-level files, and resets workspace.yml to an empty
+             branch/repo list. DESTRUCTIVE for code worktrees — uncommitted
+             work there is lost (runs `git worktree remove --force`). No
+             confirmation prompt.
              Examples:
-               mkws drop ./local_workspaces/myws
-               mkws drop /abs/path/to/ws
+               mkws clean                    # current workstation/workspace
+               mkws clean ./local_workspaces/myws
+               mkws clean /abs/path/to/workstation
   migrate    Rewrite an existing workspace.yml into the v2 manifest format.
              With no folder arg, migrates the current directory.
              Examples:
@@ -2147,13 +2230,11 @@ def parse_args(argv):
             target_path = argv.pop(0)
             while argv and not argv[0].startswith("-"):
                 target_paths.append(argv.pop(0))
-        elif sub == "drop":
-            mode = "drop"
+        elif sub == "clean":
+            mode = "clean"
             argv.pop(0)
             if argv and not argv[0].startswith("-"):
                 target_path = argv.pop(0)
-            else:
-                die(f"'drop' requires a workspace folder path\n\n{USAGE}")
         elif sub == "migrate":
             mode = "migrate"
             argv.pop(0)
@@ -2245,10 +2326,10 @@ def main() -> None:
         if repos or branch or name or link_pairs:
             die("'merge' takes a target + folder path(s) only; --add/--branch/--name/--link are not accepted")
         sys.exit(cmd_merge(target_path, target_paths))
-    if mode == "drop":
-        if repos or branch or name or link_pairs:
-            die("'drop' takes a folder path only; --add/--branch/--name/--link are not accepted")
-        sys.exit(cmd_drop(target_path))
+    if mode == "clean":
+        if repos or branch or name or link_pairs or target_paths:
+            die("'clean' takes an optional folder path only; --add/--branch/--name/--link are not accepted")
+        sys.exit(cmd_clean(target_path))
     if mode == "migrate":
         if repos or branch or name or link_pairs or target_paths:
             die("'migrate' takes an optional workspace folder only; --add/--branch/--name/--link are not accepted")

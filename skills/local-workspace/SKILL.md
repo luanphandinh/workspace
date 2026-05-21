@@ -24,7 +24,7 @@ mkws master [<folder>...]
 mkws rebase [<folder>...]
 mkws merge <target> [<folder>...]
 mkws sync [<folder>...]
-mkws drop <folder>
+mkws clean [<workspace-or-workstation-folder>]
 mkws migrate [<workspace-folder>]
 mkws sync_tech_doc
 mkws open [<name-or-link>]
@@ -35,6 +35,7 @@ mkws open [<name-or-link>]
 - `--link <name> <link> [<name> <link>...]` — add or update one or more quick-access workspace links in `workspace.yml`. Values are name/link pairs. Repeating `--link` also works. Run from inside a workspace dir/worktree, or pass `--name <workspace>` from the root. If an existing link URL is found, the latest provided name replaces the old name; if an existing name is found, its link is updated.
 - `index` — subcommand. Builds or refreshes `<root>/workstation.yml` for the current parent folder. Scans immediate child git repos into top-level `repos`, scans immediate child git repos under `<root>/_external/` into `_external.repos`, and refreshes each repo's path, remote, upstream, and current branch metadata. It does not fetch, delete stale entries, or scan `local_workspaces/`. External repos are index-only context; they are not workspace worktrees.
 - `setup` — subcommand. Reads `<root>/workstation.yml` and clones any recorded repo whose path is missing. Existing git repos are skipped; existing non-git paths fail. Uses `remote_url` and the recorded upstream branch when available. It does not fetch or pull existing repos.
+- `clean` — subcommand. Context-aware cleanup. From a workstation root, removes stale repo metadata from `workstation.yml` when a recorded path is missing or no longer a git repo. From a workspace folder, removes code worktrees listed in `workspace.yml`, prunes source repos, keeps workspace-level files such as `tech_doc/`, preserves links, and resets `workspace.yml` to an empty branch/repo list. No confirmation prompt.
 - `open` — subcommand. Opens a recorded workspace link in the default browser. With no query, lists all workspace links. Query can match the link name or URL exactly, or a unique substring. Run from inside a workspace dir/worktree, or pass `--name <workspace>`. Examples: `mkws open`, `mkws open design-doc`, `mkws open design-doc --name myws`.
 - `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders. Rejects `--add`, `--branch`, `--name`.
   Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull ./local_workspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
@@ -44,13 +45,12 @@ mkws open [<name-or-link>]
 - `rebase` — subcommand. For every matching repo on a feature branch: stash dirty edits (`git stash push -u`), `git fetch origin <base>`, `git merge origin/<base>` into the current branch, pop the stash. Serial — conflicts need attention. On conflict: **HALTS** — leaves the merge + stash in place, prints resolve-and-finish instructions, skips remaining repos. Non-conflict failures trigger `git merge --abort` + stash-pop. Already-on-base / detached HEAD repos are skipped. Same folder-args form as `pull`.
 - `merge` — subcommand. **Bidirectional** merge driven by the required `<target>` argument:
   - **`mkws merge master`** (or `main`) — *Case B: integrate latest base INTO the feature branch*. For each worktree: stash dirty edits, `git fetch origin <base>`, `git pull --ff-only origin <feature>` (only if `origin/<feature>` exists), `git merge --no-ff origin/<base>` into the feature branch, pop stash, `git push origin <feature>`. Halts on conflict (state left in place to resolve). **Replaces `mkws rebase`** with the added feature-pull and post-merge push.
-  - **`mkws merge <workspace-name>`** — *Case A: land each repo branch INTO base, locally only*. Reads the workspace's manifest, then for each source sibling repo (`<root>/<repo>`, NOT the worktree): verifies it's on master/main and clean, `git pull --ff-only`, `git merge --no-ff <repo-branch>`. **NO push** — review the merge commits, then `git push origin master` per repo when satisfied. **Workspace is NOT dropped** — it stays for further work.
+  - **`mkws merge <workspace-name>`** — *Case A: land each repo branch INTO base, locally only*. Reads the workspace's manifest, then for each source sibling repo (`<root>/<repo>`, NOT the worktree): verifies it's on master/main and clean, `git pull --ff-only`, `git merge --no-ff <repo-branch>`. **NO push** — review the merge commits, then `git push origin master` per repo when satisfied. **Workspace is kept** for further work.
   - **Context-aware cwd** — both cases honor `$PWD`:
     - Run from the **root** (Case A) or **workspace dir** (Case B) → operates on every matching repo.
     - Run from inside a **single git repo** → auto-scopes to that one repo (the source repo for Case A, the worktree for Case B). Same scoping behavior as `pull` / `push` / `rebase`.
   - Both cases: serial, halt on conflict, optional folder args to further scope by repo name. Rejects `--add` / `--branch` / `--name`.
 - `sync` — subcommand. Composite: for every matching repo, `pull` the current branch → `rebase` onto master (skipped if already on `master`/`main`) → `push`. Serial. **Halts on rebase conflict** (same behavior as `mkws rebase`). Pull/push failures for one repo are recorded but don't halt — the run continues to the next repo. Same folder-args form as `pull`.
-- `drop` — subcommand. **Destructive for code worktrees only.** Removes every worktree listed in the manifest via `git worktree remove --force`, prunes the source repos, keeps the workspace folder, and resets `workspace.yml` to an empty branch/repo list. Workspace-level files such as `tech_doc/` remain in place. No confirmation prompt. Takes a required positional **folder path** (relative or absolute). Rejects `--add`, `--branch`, and `--name`.
 - `migrate` — subcommand. Rewrites an existing `workspace.yml` into v2 format. Takes an optional workspace folder path; no arg means the current directory. Rejects `--add`, `--branch`, and `--name`.
 - `sync_tech_doc` — subcommand. Builds a root-level tech-doc index by symlinking each workspace tech doc into `<root>/tech_doc/<workspace-name>/tech_doc`. Creates links for newly created workspace tech docs and removes stale generated symlinks for workspace tech docs that disappeared. It never deletes real files or real directories. Takes no args and rejects `--add`, `--branch`, and `--name`.
 
@@ -104,7 +104,7 @@ _external:
       upstream: origin/main
       branch: main
 ```
-Run `mkws index` from the parent folder to create or refresh this file. Existing entries that are not currently present on disk are kept and reported as missing; they are not deleted automatically. `_external.repos` is for read-only context used by exploration/design skills; `mkws setup` and workspace code operations use only top-level `repos`.
+Run `mkws index` from the parent folder to create or refresh this file. Existing entries that are not currently present on disk are kept and reported as missing; they are not deleted automatically unless you run `mkws clean`. `_external.repos` is for read-only context used by exploration/design skills; `mkws setup` and workspace code operations use only top-level `repos`.
 
 # Playbook
 
@@ -116,6 +116,14 @@ mkws index
 ```
 The command scans immediate child git repos for top-level `repos`. It skips `local_workspaces/`, does not fetch from remotes, and does not remove stale entries.
 If `<root>/_external/` exists, the command also scans its immediate child git repos and records them under `_external.repos`. These external entries support read-only exploration/design context only.
+
+## Clean a workstation index
+User intent: "remove stale repos from workstation.yml", "clean the workstation metadata", "repo folder was deleted, remove it from the index".
+```
+cd <root>
+mkws clean
+```
+The command reads `<root>/workstation.yml` and removes entries whose recorded `path` is missing or no longer a git repo. It also applies the same stale-entry cleanup under `_external.repos`. It does not delete repo directories, fetch, pull, or add newly discovered repos; use `mkws index` for discovery.
 
 ## Set up a workstation from the index
 User intent: "set up this workstation", "clone every missing repo from workstation.yml", "restore repos under this parent folder".
@@ -197,7 +205,7 @@ cd <root>
 mkws --name X --link design-doc https://example.com/design
 mkws open design-doc --name X
 ```
-Links are stored in `workspace.yml` under `links:` and are preserved by code-only operations such as `mkws drop`.
+Links are stored in `workspace.yml` under `links:` and are preserved by code-only operations such as `mkws clean`.
 
 ## Pull latest
 User intent: "refresh the repos", "pull latest", "bring all worktrees up to date", "update all source repos to master". `mkws pull` walks the immediate subfolders and runs `git pull --ff-only` on each git repo it finds, using that repo's own currently checked-out branch.
@@ -234,7 +242,7 @@ mkws merge <workspace-name> repo-a     # scope to one repo
 cd <root>/repo-a
 mkws merge <workspace-name>
 ```
-Each source sibling repo (NOT the worktree) is pulled `--ff-only` on master/main, then `git merge --no-ff <repo-branch>` is run. **No push** — review the merge, then `git push origin master` (or `main`) per repo. The workspace stays intact for further work; drop it manually with `mkws drop` when fully done.
+Each source sibling repo (NOT the worktree) is pulled `--ff-only` on master/main, then `git merge --no-ff <repo-branch>` is run. **No push** — review the merge, then `git push origin master` (or `main`) per repo. The workspace stays intact for further work; clean its code worktrees with `mkws clean` when fully done.
 
 ## Bring latest master into the feature branch + push
 User intent: "merge master into my feature branch", "keep my workspace up to date with master and push the result". This replaces `mkws rebase` with auto-pull of the feature branch first and auto-push at the end.
@@ -249,15 +257,16 @@ mkws merge master
 ```
 Per worktree: stash → fetch origin/<base> → pull origin/<feature> if remote exists → merge --no-ff origin/<base> → pop stash → push origin <feature>. Halts on conflict.
 
-## Drop workspace code
-User intent: "drop workspace X", "clean up the worktrees for X", "remove the code from this workspace", "we're done with this feature branch". This is **destructive for code worktrees** — `mkws drop` removes every worktree in the manifest and prunes the source repos, but keeps the workspace folder and workspace-level files such as `tech_doc/`.
+## Clean workspace code
+User intent: "clean workspace X", "clean up the worktrees for X", "remove the code from this workspace", "we're done with this feature branch". This is **destructive for code worktrees** — `mkws clean` removes every worktree in the manifest and prunes the source repos, but keeps the workspace folder and workspace-level files such as `tech_doc/`.
 ```
-mkws drop <root>/local_workspaces/<name>
-mkws drop ./local_workspaces/<name>    # relative from the root
+mkws clean <root>/local_workspaces/<name>
+mkws clean ./local_workspaces/<name>    # relative from the root
+cd <root>/local_workspaces/<name> && mkws clean
 ```
-After removing code worktrees, `mkws drop` rewrites `workspace.yml` with the same workspace name, blank `branch_name`, preserved `links:`, and an empty `repos:` list. Removing the workspace directory itself is a separate user decision.
+After removing code worktrees, `mkws clean` rewrites `workspace.yml` with the same workspace name, blank `branch_name`, preserved `links:`, and an empty `repos:` list. Removing the workspace directory itself is a separate user decision.
 
-**Warn the user** before running if there may be uncommitted changes in the worktrees — `mkws drop` runs `git worktree remove --force` without a confirmation prompt, so local edits inside code worktrees are lost. If unsure, ask the user to commit/push first (or inspect with `git -C <root>/<repo> worktree list`).
+**Warn the user** before running if there may be uncommitted changes in the worktrees — `mkws clean` runs `git worktree remove --force` without a confirmation prompt, so local edits inside code worktrees are lost. If unsure, ask the user to commit/push first (or inspect with `git -C <root>/<repo> worktree list`).
 
 ## Sync workspace tech docs
 User intent: "preview all tech docs in one folder", "refresh the tech doc index", "link workspace tech docs into the root tech_doc folder".
@@ -299,4 +308,4 @@ Report the workspace path, the default branch, any per-repo branch overrides tha
 
 # Troubleshooting
 - `mkws: command not found` — run `make install-workspace-path` from the workspace repo root, then start a new shell (or `source ~/.zshrc`).
-- `error: --branch ... does not match workspace.yml branch ...` — the workspace already exists on a different branch. Either drop `--branch`, match the yml, or use a different `--name`.
+- `error: --branch ... does not match workspace.yml branch ...` — the workspace already exists on a different branch. Either omit `--branch`, match the yml, or use a different `--name`.
