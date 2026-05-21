@@ -62,12 +62,15 @@ Report back in under 200 words:
 - Arrows between operation boxes must include the protocol plus method/path/topic, such as `RPC: MethodAB`, `HTTP: POST /path`, or `MQ: topic-x`.
 - Always include what the user asked to look up directly in the diagram using the user's actual requested identifier/behavior, not a generic placeholder. If the user asks about a field, API, method, topic, condition, config, or value, use that exact code identifier/value when it is present in the code.
 - Do NOT use `FOCUS`, `USER FOCUS`, or repeated generic labels. Instead, add concise request-trace lines only on related boxes/edges:
-  - `**request:** <actual requested item>`
-  - `**value:** <observed value / condition / enum / payload field>` when known.
-  - `**mutates:** <from> -> <to>` when the service changes, maps, enriches, filters, or drops the value.
-  - `**passes:** <item>` when the service only forwards it unchanged.
-  - `**missing:** <item>` when expected propagation is not found.
-- Highlight means text style: use bold markdown (`**request:**`, `**value:**`, `**mutates:**`, `**passes:**`, `**missing:**`) and keep the highlighted line inside the box or next to the exact edge. Do not rely on words like "focus" to create emphasis.
+  - `request: <actual requested item>`
+  - `value: <observed value / condition / enum / payload field>` when known.
+  - `mutates: <from> -> <to>` when the service changes, maps, enriches, filters, or drops the value.
+  - `passes: <item>` when the service only forwards it unchanged.
+  - `missing: <item>` when expected propagation is not found.
+- Highlight means terminal color, not Markdown. Do NOT render request-trace labels with Markdown asterisks; those literal characters are noisy in CLI output.
+- Use ANSI SGR color in terminal diagrams when available, and color only the exact part the user asked to focus on: the requested identifier, value, condition, topic, method, or mutation payload. Keep labels such as `request:`, `value:`, `mutates:`, `passes:`, and `missing:` uncolored.
+- Suggested colors: cyan bold (`\x1b[1;36m...\x1b[0m`) for the requested item/value, yellow bold (`\x1b[1;33m...\x1b[0m`) for missing or unproven propagation of that same requested item, and green bold (`\x1b[1;32m...\x1b[0m`) for confirmed mutation of that item. Do not color unrelated branches or generic words.
+- If ANSI color is not supported by the rendering surface, fall back to plain text with no Markdown bold; keep the requested item easy to spot by placing it on the shortest possible trace line.
 - Only annotate boxes/edges that are related to the user's request. Unrelated branches still appear in the graph but should not carry request-trace lines.
 - Draw boxes with consistent width within the same row and use continuous ASCII borders (`+-----+`, `| ... |`). Do not use fragmented or uneven box borders.
 - Nested operation boxes must have visible horizontal padding inside the service container: at least two spaces after the outer `|` before the inner `+`, and at least two spaces before the closing outer `|`. The inner method box must never visually touch or break the service container border.
@@ -91,7 +94,7 @@ Report back in under 200 words:
         | repo: repo-b                                             |
         |  +------------------------+  +------------------------+  |
         |  | MethodAB handler       |  | POST /to-b handler     |  |
-        |  | **request:** <field>   |  | **passes:** <field>    |  |
+        |  | request: <field>       |  | passes: <field>        |  |
         |  +------------------------+  +------------------------+  |
         +----------------------------------------------------------+
                        |                            |
@@ -102,7 +105,7 @@ Report back in under 200 words:
 | service-d                      |  | service-e                      |
 | repo: repo-d                   |  | repo: repo-e                   |
 | http: POST /to-d handler       |  | consumer: topic-x              |
-| **passes:** <field>            |  | **value:** <payload>           |
+| passes: <field>                |  | value: <payload>               |
 +--------------------------------+  +--------------------------------+
                 |                                |
                 | RPC: MethodDF                  | HTTP: GET /to-g
