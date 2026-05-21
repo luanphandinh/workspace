@@ -14,6 +14,7 @@ description: "Exploring the code base"
 ## Explore phase
 - All the microservices codebase should be under the the current folder that you get invoked, can proceed to check the folder name, some of the code
 - **IGNORE the `local_workspaces/` container folder and any subfolder containing a `workspace.yml`** — these are `mkws`-managed git-worktree bundles that duplicate sibling repos already in the root. Skip the whole `local_workspaces/` tree and only explore the original sibling repos; otherwise you'll explore the same code twice and produce confused mappings.
+- Treat `<root>/_external/` as a separate read-only external repo index. Do NOT explore `_external/` by default while building the primary service graph. If a call points to an external service and a matching repo may exist under `_external/`, ask the user whether to explore that external repo. If the user explicitly asks to include/explore external services, you may inspect `_external/<repo>` and label those nodes as external context, not editable implementation repos.
 - Starting to explore the given code, either the function name or block of code, during exploration, if the codebase starting to call RPC or HTTP or any calls to external service, record it and look up the microservices that is being called, and also look up the codebase folder that is related to that microservice, then record the mapping between the microservice and its codebase folder, and also record the relationship between the microservices, such as which microservice is calling which microservice, and what is the protocol of the call, such as RPC or HTTP or any other protocol
 - Explore as deep as you can, if A calls B, then B call C, then C call D, so on and so forth, and you can find any microservices mapping in the codebase, proceed to explore those service also, the explore have to go as deep as possible
 - Also explore as high as you can, if service A call B, B call C, C call the current code block/ API that user asked for,  proceed to explore those service also, the explore have to go as high as possible, look up all the way up
@@ -113,6 +114,7 @@ Report back in under 200 words:
 +--------------------------------+  +--------------------------------+
 ```
 - If the external service can not be found in the codebase, hightlight it
+- If an explored node comes from `_external/`, mark it as `external: yes` inside the service box and include evidence from `_external/<repo>` only when the user approved or explicitly requested external exploration.
 - If user asks about a specific field or part of the logic, highlight it in the diagram and the logic summary so the user can easily spot it.
 - DO NOT OVER EXPLAIN, if the user want to drill down to the detail of the specfic part, user need to ask and you will support
 - Provide some key information under the diagram, such as when RPC function get calls, which file and line of code is that, the information should be provided follow the diagram call chains, so that user can easily understand the relationship between the diagram and the codebase

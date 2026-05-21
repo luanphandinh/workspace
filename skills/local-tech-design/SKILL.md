@@ -135,6 +135,8 @@ IDL-diff example (NEW method — show everything, no elision):
 ## Confirming microservices and their codebase/relationship
 - Microservice source repos live as **siblings of `local_workspaces/`** under the root the user invoked from (NOT inside the workspace itself — the workspace is initially empty by design). Walk the root folder, inspect candidate folder names, peek at code if needed, and map each microservice in the design to its sibling repo folder.
 - **IGNORE the `local_workspaces/` container folder and any subfolder containing a `workspace.yml`**: every workspace created by `mkws` lives at `<root>/local_workspaces/<name>/` and its contents are duplicates of sibling repos already in the root. Skip the entire `local_workspaces/` tree (and defensively any other `workspace.yml`-bearing folder); only consider the original sibling repos as candidates for the mapping.
+- Treat `<root>/_external/` as read-only external design context. Repos under `_external/` are not implementation repos and must not be added to the coding mapping file. Use them to understand external API contracts, upstream/downstream constraints, and compatibility risk when they are relevant to the design.
+- If the design touches behavior owned by a repo under `_external/`, document it in `# 5. External Technical Design` using that section's per-API structure. Keep implementation work for normal sibling repos in `# 6. Internal Technical Design`.
 - Provide the mapping and ask the user to confirm — wait for confirmation before proceeding.
 - If the user has any feedback on the mapping, update accordingly and re-ask for confirmation until approved.
 - Save the confirmed mapping as `<tech_doc_name>_mapping.md` inside the workspace's tech-doc folder: `<root>/local_workspaces/<workspace-name>/tech_doc/<tech_doc_name>_mapping.md`. Two-column Markdown table — column 1 = microservice name (as used in the design), column 2 = sibling-repo folder name (the source of truth for `mkws --add` later).
@@ -230,6 +232,7 @@ The "wide-angle lens" section: every reader should be able to grok the new archi
 
 ### 5. External Technical Design
 - Changes affecting external clients (mobile apps, web frontends, partner integrations, public APIs).
+- Changes or constraints discovered from `<root>/_external/` repos also belong here. Treat those repos as external contract owners: describe required request/response/logic/code-contract diffs, but do not list them as internal implementation repos.
 - For NEW APIs: full request/response schema.
 - For existing APIs: ONLY the diff fields.
 - If no external changes: write `N/A — internal-only change` and move on.

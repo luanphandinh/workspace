@@ -36,6 +36,7 @@ If the user already provides an approved design or an existing plan, verify that
 ## Working folder — workspace + co-located tech_doc
 - All coding for a tech design happens inside a **multi-repo git-worktree workspace** at `<root>/local_workspaces/<workspace-name>/`. This is the SAME workspace that the `local-tech-design` skill created during the tech-design phase — it already holds the tech doc and mapping file under `<workspace>/tech_doc/`, and implementation planning artifacts belong under `<workspace>/implementation_plan/`. **Never edit the original sibling source repos** outside the workspace.
 - Workspace creation/extension is owned by the `local-workspace` skill (via `mkws`). **Delegate to that skill** — do not reimplement the worktree/branch setup here.
+- `<root>/_external/` is read-only context only. Purposely ignore every folder under `_external/` for coding: do not attach it with `mkws --add`, do not create worktrees from it, do not edit it, do not run implementation tests there, and do not assign sub-agents to change it. If a tech design references external behavior, use it only as contract/context and implement changes in normal workspace repos.
 - **No `go.work` is created.** Each repo in the workspace builds/tests against its own `go.mod` / `go.sum` (tests and gopls run with `GOWORK=off`). For cross-module navigation, switch worktrees with `<leader>gw` instead.
 
 ### Before writing any code
@@ -44,6 +45,7 @@ If the user already provides an approved design or an existing plan, verify that
    - The tech design doc at `<root>/local_workspaces/<workspace-name>/tech_doc/<tech_doc_name>.md`.
    - The mapping file at `<root>/local_workspaces/<workspace-name>/tech_doc/<tech_doc_name>_mapping.md` — lists every microservice → sibling-repo folder.
    - Any existing implementation planning files under `<workspace>/implementation_plan/` (plans, execution notes, task records, sub-agent handoff notes).
+   - Ignore any mapping, note, or discovered path that points under `<root>/_external/`; external repos are not coding targets.
 3. Confirm the workspace state at `<root>/local_workspaces/<workspace-name>/workspace.yml`:
    - **Workspace exists but `branch_name` is empty AND no repos attached** (the typical handoff from `local-tech-design`, which creates the workspace empty without a branch) → ask the user for the **feature branch name** (suggested default: `feat/<workspace-name>`), then invoke `local-workspace` to run `mkws --branch <branch> --add <repo1> <repo2> …` for every repo in the mapping file. The `--branch` flag both persists the branch into the yml and attaches the worktrees in one shot.
    - **Workspace exists with `branch_name` already set and some repos attached** → diff against the mapping file; for any missing repos, run `mkws --add <repo>…` (no `--name` / `--branch` — they're already in the yml).

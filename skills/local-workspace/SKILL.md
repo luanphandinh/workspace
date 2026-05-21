@@ -33,7 +33,7 @@ mkws open [<name-or-link>]
 - `--branch` — default branch for repos that do not specify their own branch. **Required only when an added repo has no per-repo branch** (`--add repo-a`). **Optional** when every added repo uses `repo@branch`, when creating an empty workspace (no `--add`), or when extending an empty workspace with no repos. If the workspace already has a `branch_name` set, `--branch` is optional but, if passed, must match exactly. If the workspace was created empty (`branch_name:` in yml is empty) and you later pass `--branch`, the value is persisted into the yml. Once persisted, the existing-yml match-or-error rule kicks in.
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. Add `@<branch>` to any repo spec to override the default branch for that repo, e.g. `repo-a@feature/a`. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
 - `--link <name> <link> [<name> <link>...]` — add or update one or more quick-access workspace links in `workspace.yml`. Values are name/link pairs. Repeating `--link` also works. Run from inside a workspace dir/worktree, or pass `--name <workspace>` from the root. If an existing link URL is found, the latest provided name replaces the old name; if an existing name is found, its link is updated.
-- `index` — subcommand. Builds or refreshes `<root>/workstation.yml` for the current parent folder. Scans immediate child git repos, adds repos missing from the workstation index, and refreshes each repo's path, remote, upstream, and current branch metadata. It does not fetch, delete stale entries, or scan `local_workspaces/`.
+- `index` — subcommand. Builds or refreshes `<root>/workstation.yml` for the current parent folder. Scans immediate child git repos into top-level `repos`, scans immediate child git repos under `<root>/_external/` into `_external.repos`, and refreshes each repo's path, remote, upstream, and current branch metadata. It does not fetch, delete stale entries, or scan `local_workspaces/`. External repos are index-only context; they are not workspace worktrees.
 - `setup` — subcommand. Reads `<root>/workstation.yml` and clones any recorded repo whose path is missing. Existing git repos are skipped; existing non-git paths fail. Uses `remote_url` and the recorded upstream branch when available. It does not fetch or pull existing repos.
 - `open` — subcommand. Opens a recorded workspace link in the default browser. With no query, lists all workspace links. Query can match the link name or URL exactly, or a unique substring. Run from inside a workspace dir/worktree, or pass `--name <workspace>`. Examples: `mkws open`, `mkws open design-doc`, `mkws open design-doc --name myws`.
 - `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders. Rejects `--add`, `--branch`, `--name`.
@@ -95,8 +95,16 @@ repos:
     remote_url: https://example.com/repo-a.git
     upstream: origin/main
     branch: main
+_external:
+  repos:
+    - name: external-repo-a
+      path: _external/external-repo-a
+      remote: origin
+      remote_url: https://example.com/external-repo-a.git
+      upstream: origin/main
+      branch: main
 ```
-Run `mkws index` from the parent folder to create or refresh this file. Existing entries that are not currently present on disk are kept and reported as missing; they are not deleted automatically.
+Run `mkws index` from the parent folder to create or refresh this file. Existing entries that are not currently present on disk are kept and reported as missing; they are not deleted automatically. `_external.repos` is for read-only context used by exploration/design skills; `mkws setup` and workspace code operations use only top-level `repos`.
 
 # Playbook
 
@@ -106,7 +114,8 @@ User intent: "index this parent folder", "refresh workstation.yml", "record ever
 cd <root>
 mkws index
 ```
-The command scans immediate child git repos only. It skips `local_workspaces/`, does not fetch from remotes, and does not remove stale entries.
+The command scans immediate child git repos for top-level `repos`. It skips `local_workspaces/`, does not fetch from remotes, and does not remove stale entries.
+If `<root>/_external/` exists, the command also scans its immediate child git repos and records them under `_external.repos`. These external entries support read-only exploration/design context only.
 
 ## Set up a workstation from the index
 User intent: "set up this workstation", "clone every missing repo from workstation.yml", "restore repos under this parent folder".

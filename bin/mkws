@@ -18,6 +18,7 @@ from pathlib import Path
 
 WS_CONTAINER = "local_workspaces"
 WORKSTATION_FILE = "workstation.yml"
+EXTERNAL_DIR = "_external"
 
 # ---------------------------------------------------------------------------
 # Colored logging. Disabled when stdout isn't a TTY or NO_COLOR is set, so pipes
@@ -334,7 +335,7 @@ def quote_yml_scalar(value: str) -> str:
 
 
 def read_workstation_manifest(yml: Path) -> dict:
-    data = {"version": "v1", "name": "", "repos": []}
+    data = {"version": "v1", "name": "", "repos": [], "_external": {"repos": []}}
     section = ""
     current_repo = None
     if not yml.is_file():
@@ -350,6 +351,12 @@ def read_workstation_manifest(yml: Path) -> dict:
         elif line.startswith("repos:"):
             section = "repos"
             current_repo = None
+        elif line.startswith("_external:"):
+            section = "_external"
+            current_repo = None
+        elif section == "_external" and line.startswith("  repos:"):
+            section = "_external.repos"
+            current_repo = None
         elif section == "repos" and line.startswith("  - name:"):
             current_repo = {
                 "name": parse_yml_scalar(line.split(":", 1)[1]),
@@ -361,6 +368,20 @@ def read_workstation_manifest(yml: Path) -> dict:
             }
             data["repos"].append(current_repo)
         elif section == "repos" and current_repo is not None and line.startswith("    "):
+            key, sep, value = line.strip().partition(":")
+            if sep and key in current_repo:
+                current_repo[key] = parse_yml_scalar(value)
+        elif section == "_external.repos" and line.startswith("    - name:"):
+            current_repo = {
+                "name": parse_yml_scalar(line.split(":", 1)[1]),
+                "path": "",
+                "remote": "",
+                "remote_url": "",
+                "upstream": "",
+                "branch": "",
+            }
+            data["_external"]["repos"].append(current_repo)
+        elif section == "_external.repos" and current_repo is not None and line.startswith("      "):
             key, sep, value = line.strip().partition(":")
             if sep and key in current_repo:
                 current_repo[key] = parse_yml_scalar(value)
@@ -393,7 +414,7 @@ def normalize_workstation_repos(repos: list) -> list:
     return sorted(out, key=lambda r: (r["path"], r["name"]))
 
 
-def render_workstation_manifest(name: str, repos: list) -> str:
+def render_workstation_manifest(name: str, repos: list, external_repos: list = None) -> str:
     lines = ["version: v1", f"name: {quote_yml_scalar(name)}", "repos:"]
     for repo in normalize_workstation_repos(repos):
         lines.append(f"  - name: {quote_yml_scalar(repo['name'])}")
@@ -402,11 +423,22 @@ def render_workstation_manifest(name: str, repos: list) -> str:
         lines.append(f"    remote_url: {quote_yml_scalar(repo['remote_url'])}")
         lines.append(f"    upstream: {quote_yml_scalar(repo['upstream'])}")
         lines.append(f"    branch: {quote_yml_scalar(repo['branch'])}")
+    normalized_external = normalize_workstation_repos(external_repos or [])
+    if normalized_external:
+        lines.append("_external:")
+        lines.append("  repos:")
+        for repo in normalized_external:
+            lines.append(f"    - name: {quote_yml_scalar(repo['name'])}")
+            lines.append(f"      path: {quote_yml_scalar(repo['path'])}")
+            lines.append(f"      remote: {quote_yml_scalar(repo['remote'])}")
+            lines.append(f"      remote_url: {quote_yml_scalar(repo['remote_url'])}")
+            lines.append(f"      upstream: {quote_yml_scalar(repo['upstream'])}")
+            lines.append(f"      branch: {quote_yml_scalar(repo['branch'])}")
     return "\n".join(lines) + "\n"
 
 
-def write_workstation_manifest(yml: Path, name: str, repos: list) -> bool:
-    text = render_workstation_manifest(name, repos)
+def write_workstation_manifest(yml: Path, name: str, repos: list, external_repos: list = None) -> bool:
+    text = render_workstation_manifest(name, repos, external_repos)
     old = yml.read_text() if yml.is_file() else ""
     if old == text:
         return False
@@ -576,15 +608,15 @@ def resolve_existing_workspace_context(pwd: Path, name_flag: str) -> Path:
 
 # ---------------------------------------------------------------------------
 # index mode: build/update workstation.yml for the current parent folder.
-# Scans immediate child git repos, adds any repo missing from the index, and
-# refreshes remote/upstream/current-branch metadata for existing entries.
+# Scans immediate child git repos, plus immediate git repos under _external/,
+# and refreshes remote/upstream/current-branch metadata for existing entries.
 # ---------------------------------------------------------------------------
 def is_git_repo_path(path: Path) -> bool:
     return path.is_dir() and (path / ".git").exists()
 
 
 def discover_workstation_repos(root: Path) -> list:
-    skipped = {WS_CONTAINER, "tech_doc"}
+    skipped = {WS_CONTAINER, "tech_doc", EXTERNAL_DIR}
     repos = []
     for child in sorted(p for p in root.iterdir() if p.is_dir()):
         if child.name.startswith(".") or child.name in skipped:
@@ -592,6 +624,13 @@ def discover_workstation_repos(root: Path) -> list:
         if is_git_repo_path(child):
             repos.append(child)
     return repos
+
+
+def discover_external_workstation_repos(root: Path) -> list:
+    external_root = root / EXTERNAL_DIR
+    if not external_root.is_dir():
+        return []
+    return sorted(child for child in external_root.iterdir() if child.is_dir() and is_git_repo_path(child))
 
 
 def workstation_repo_record(root: Path, repo: Path) -> dict:
@@ -618,11 +657,16 @@ def cmd_index() -> int:
     data = read_workstation_manifest(yml)
     workstation_name = data["name"] or root.name
     indexed = normalize_workstation_repos(data["repos"])
+    external_indexed = normalize_workstation_repos(data.get("_external", {}).get("repos", []))
     by_path = {repo["path"]: repo for repo in indexed}
     by_name = {repo["name"]: repo for repo in indexed}
+    external_by_path = {repo["path"]: repo for repo in external_indexed}
+    external_by_name = {repo["name"]: repo for repo in external_indexed}
 
     added = updated = unchanged = missing_upstream = 0
+    external_added = external_updated = external_unchanged = external_missing_upstream = 0
     discovered = discover_workstation_repos(root)
+    external_discovered = discover_external_workstation_repos(root)
 
     heading("workstation index")
     for repo_path in discovered:
@@ -646,23 +690,61 @@ def cmd_index() -> int:
             missing_upstream += 1
             warn(f"{record['path']}: no upstream branch configured")
 
+    if external_discovered:
+        heading("external index")
+    for repo_path in external_discovered:
+        record = workstation_repo_record(root, repo_path)
+        current = external_by_path.get(record["path"]) or external_by_name.get(record["name"])
+        if current is None:
+            external_indexed.append(record)
+            external_by_path[record["path"]] = record
+            external_by_name[record["name"]] = record
+            external_added += 1
+            ok(f"added {record['path']}")
+        elif any(current.get(k, "") != record[k] for k in record):
+            current.update(record)
+            external_updated += 1
+            ok(f"updated {record['path']}")
+        else:
+            external_unchanged += 1
+            info(f"{record['path']}: already indexed")
+
+        if not record["upstream"]:
+            external_missing_upstream += 1
+            warn(f"{record['path']}: no upstream branch configured")
+
     existing_paths = {repo["path"] for repo in normalize_workstation_repos(indexed)}
     discovered_paths = {
         repo_path.relative_to(root).as_posix()
         for repo_path in discovered
     }
     missing = sorted(existing_paths - discovered_paths)
-    changed = write_workstation_manifest(yml, workstation_name, indexed)
+    external_existing_paths = {repo["path"] for repo in normalize_workstation_repos(external_indexed)}
+    external_discovered_paths = {
+        repo_path.relative_to(root).as_posix()
+        for repo_path in external_discovered
+    }
+    external_missing = sorted(external_existing_paths - external_discovered_paths)
+    changed = write_workstation_manifest(yml, workstation_name, indexed, external_indexed)
 
     heading("summary")
     info(f"workstation: {BOLD}{root}{RESET}")
     info(f"manifest:    {BOLD}{yml}{RESET}")
     info(f"discovered:  {len(discovered)}")
     info(f"added: {added}, updated: {updated}, unchanged: {unchanged}, missing: {len(missing)}")
+    info(
+        f"external:    {len(external_discovered)} "
+        f"(added: {external_added}, updated: {external_updated}, "
+        f"unchanged: {external_unchanged}, missing: {len(external_missing)})"
+    )
     if missing:
         info(f"kept missing entries: {YELLOW}{', '.join(missing)}{RESET}")
+    if external_missing:
+        info(f"kept missing external entries: {YELLOW}{', '.join(external_missing)}{RESET}")
     if missing_upstream:
         info(f"repos without upstream: {YELLOW}{missing_upstream}{RESET}")
+    if external_missing_upstream:
+        info(f"external repos without upstream: {YELLOW}{external_missing_upstream}{RESET}")
     if changed:
         ok("workstation.yml updated")
     else:
@@ -1870,8 +1952,9 @@ Modes:
   index      Build or refresh workstation.yml in the current folder. Scans
              immediate child git repos, adds repos not yet recorded, and
              refreshes each repo's path, remote, upstream, and current branch
-             metadata. Does not fetch, delete stale entries, or scan
-             local_workspaces/.
+             metadata. Also scans immediate git repos under `_external/` and
+             records them under `_external.repos`. Does not fetch, delete stale
+             entries, or scan local_workspaces/.
              Example:
                mkws index
   setup      Read workstation.yml in the current folder and clone any recorded
