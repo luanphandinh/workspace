@@ -33,6 +33,17 @@ If the user already provides an approved design or an existing plan, verify that
 - **No throat-clearing comments**: drop `// TODO: revisit this`, `// added per review`, `// updated for new flow`, `// helper`, `// constructor`, `// END OF FILE`, banner comments around blocks, etc.
 - **Apply this when planning too.** When you write the implementation plan via `superpowers:writing-plans` (or its variants), the plan MUST explicitly reuse this comment policy as a constraint — e.g. include a line like `Comments: minimal, business-context only — see local-coding rule. No redundant comments; only annotate tricky logic and business/domain context.` This keeps reviewers and future sub-agents aligned during execution.
 
+## Code change standards
+- **Minimal diff, maximum effect.** Make the smallest code change that fully solves the requested behavior. Avoid unrelated refactors, formatting churn, renames, or broad rewrites.
+- **Preserve the existing shape.** Do not wrap an entire existing block in a new `if/else` just to add one condition. Prefer guard clauses, early returns, small helper extraction, or narrow condition checks.
+- **Prefer early returns.** Keep the happy path shallow. Return early for error, invalid, empty, disabled, or no-op cases instead of nesting the main flow.
+- **Reuse before creating.** Search for existing helpers, validators, mappers, clients, constants, and test fixtures before writing new logic.
+- **Do not copy whole logic blocks.** If existing logic is needed in another package, extract a shared helper at the lowest sensible dependency layer.
+- **Handle import cycles by design.** If reuse creates a cyclic import, do not duplicate logic to avoid it. Move the reusable piece into a neutral package both callers can depend on.
+- **Keep behavior boundaries clear.** Put protocol/API/schema changes near the boundary layer; keep business logic in the existing service/domain layer unless the repo has a different established pattern.
+- **Test changed behavior, not implementation details.** Add or update focused tests around the observable behavior and edge cases touched by the change.
+- **Apply this when planning too.** Implementation plans MUST include these standards as constraints so execution sub-agents keep diffs small, avoid full-block indentation, prefer early returns, and reuse existing utilities.
+
 ## Working folder — workspace + co-located tech_doc
 - All coding for a tech design happens inside a **multi-repo git-worktree workspace** at `<root>/local_workspaces/<workspace-name>/`. This is the SAME workspace that the `local-tech-design` skill created during the tech-design phase — it already holds the tech doc and mapping file under `<workspace>/tech_doc/`, and implementation planning artifacts belong under `<workspace>/implementation_plan/`. **Never edit the original sibling source repos** outside the workspace.
 - Workspace creation/extension is owned by the `local-workspace` skill (via `mkws`). **Delegate to that skill** — do not reimplement the worktree/branch setup here.
