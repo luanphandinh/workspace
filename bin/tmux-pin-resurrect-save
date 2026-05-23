@@ -1,0 +1,35 @@
+#!/bin/sh
+# tmux-resurrect post-save hook. Patch saved sidebar pane records so the
+# sidebar process is restored instead of coming back as a plain shell pane.
+set -eu
+
+file="${1:-}"
+[ -n "$file" ] && [ -f "$file" ] || exit 0
+
+keys="$(mktemp -t tmux-pin-sidebar-keys.XXXXXX)"
+tmp="$(mktemp -t tmux-resurrect-pin.XXXXXX)"
+trap 'rm -f "$keys" "$tmp"' EXIT
+
+tmux list-panes -aF '#{session_name}	#{window_index}	#{pane_index}	#{@pin_sidebar}' 2>/dev/null \
+	| awk -F '\t' '$4 == "1" { print $1 "\t" $2 "\t" $3 }' > "$keys"
+
+[ -s "$keys" ] || exit 0
+
+awk -F '\t' -v OFS='\t' -v keys="$keys" -v cmd="${HOME}/bin/tmux-pin-sidebar" '
+	BEGIN {
+		while ((getline line < keys) > 0) {
+			sidebar[line] = 1
+		}
+		close(keys)
+	}
+	$1 == "pane" {
+		key = $2 "\t" $3 "\t" $6
+		if (key in sidebar) {
+			$10 = "tmux-pin-sidebar"
+			$11 = ":" cmd
+		}
+	}
+	{ print }
+' "$file" > "$tmp"
+
+mv "$tmp" "$file"
