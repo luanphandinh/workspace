@@ -1,0 +1,55 @@
+#!/bin/sh
+# tmux-resurrect post-restore hook. Rebuild sidebar pane/window markers after
+# pane ids changed during restore, then repaint and snap width.
+set -eu
+
+has_sidebar_process() {
+	pid="$1"
+	[ -n "$pid" ] || return 1
+
+	ps -o args= -p "$pid" 2>/dev/null | grep -q 'tmux-pin-sidebar' && return 0
+
+	ps -ao ppid=,args= 2>/dev/null \
+		| awk -v p="$pid" '
+			$1 == p {
+				$1 = ""
+				if ($0 ~ /tmux-pin-sidebar/) found = 1
+			}
+			END { exit found ? 0 : 1 }
+		'
+}
+
+repair_once() {
+	found_file="$1"
+	: > "$found_file"
+
+	tmux list-panes -aF '#{pane_id}	#{window_id}	#{pane_pid}	#{@pin_sidebar}' 2>/dev/null \
+		| while IFS="$(printf '\t')" read -r pane win pid marker; do
+			[ -n "$pane" ] || continue
+			if [ "$marker" = "1" ] || has_sidebar_process "$pid"; then
+				tmux set-option -pt "$pane" '@pin_sidebar' '1' >/dev/null 2>&1 || :
+				tmux set-option -wt "$win" '@pin_sidebar_pane' "$pane" >/dev/null 2>&1 || :
+				printf '%s\n' "$pane" >> "$found_file"
+			fi
+		done
+}
+
+found="$(mktemp -t tmux-pin-sidebar-found.XXXXXX)"
+trap 'rm -f "$found"' EXIT
+
+# Restored commands are sent into newly created panes near the end of
+# resurrect. Give the sidebar script a brief chance to appear as a child
+# process before rebuilding markers.
+i=0
+while [ "$i" -lt 10 ]; do
+	repair_once "$found"
+	[ -s "$found" ] && break
+	i=$((i + 1))
+	sleep 0.1
+done
+
+[ -s "$found" ] || exit 0
+
+tmux set-option -g '@pin_sidebar_open' '1' >/dev/null 2>&1 || :
+"$HOME/bin/tmux-pin-sidebar-resize" >/dev/null 2>&1 || :
+"$HOME/bin/tmux-pin-broadcast-redraw" >/dev/null 2>&1 || :

@@ -19,11 +19,16 @@ if [ -n "$existing" ] \
 	exit 0
 fi
 
+# Run through a parent shell so tmux-resurrect's default `ps` save strategy
+# can see `tmux-pin-sidebar` as a child process and restore it after a server
+# restart. Directly execing the script makes resurrect save only `bash`.
+cmd="/bin/sh -c '\"$HOME/bin/tmux-pin-sidebar\"'"
+
 # -hbdf : horizontal split, place to the LEFT ('b'), don't focus ('d'),
 #         FULL window-height anchored to the window edge ('f').
 # -l 22 : fixed 22-column width.
 new_pane="$(tmux split-window -hbdf -l 22 -t "$win" -P -F '#{pane_id}' \
-	"$HOME/bin/tmux-pin-sidebar")"
+	"$cmd")"
 tmux set-option -wt "$win" '@pin_sidebar_pane' "$new_pane"
 # Pane-level marker — durable identifier used by tmux-pin-sidebar-resize.
 # Survives even if @pin_sidebar_pane (window option) drifts.
