@@ -78,6 +78,12 @@ Use clear filenames such as `<tech_doc_name>_plan.md`, `<tech_doc_name>_tasks.md
 - Treat `<root>/local_workspaces/<workspace-name>/<repo>/` as the canonical path for each repo's source — never edit the original sibling repo outside the workspace.
 - Commits happen on the shared branch inside each worktree. `git status` / `git commit` from inside `<root>/local_workspaces/<workspace-name>/<repo>/` operates on that repo's worktree correctly — no special flags needed.
 
+## User-facing path format
+- In coding summaries, changed-file lists, execution notes, and final responses, state the workspace once: `Code changes are applied in workspace folder: <workspace>`.
+- After that line, reference code files relative to the workspace, starting with the repo folder: `<repo-name>/<path-to-file>`.
+- Do NOT repeat the full `<root>/local_workspaces/<workspace-name>/...` prefix for every changed file in user-facing output.
+- Absolute paths are still allowed inside tool commands and sub-agent prompts when needed to execute safely; convert them back to workspace-relative paths before reporting to the user.
+
 ## Testing — one sub-agent per repo, in parallel
 After changes land on a repo (unit tests, build, lint, whatever that repo uses), **dispatch one sub-agent per affected repo** to run its test suite. Do NOT run tests for all repos serially from the main agent — it wastes time and bloats the main context with test output.
 

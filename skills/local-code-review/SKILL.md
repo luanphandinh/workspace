@@ -21,6 +21,12 @@ description: "Use when reviewing code changes inside a local multi-repo git-work
 - Never review or edit original sibling source repos outside the workspace.
 - Use each repo's own git worktree state. Run git commands from `<workspace>/<repo>/`.
 
+## User-facing path format
+- In review output, state the workspace once: `Code changes are applied in workspace folder: <workspace>`.
+- After that line, reference code files relative to the workspace, starting with the repo folder: `<repo-name>/<path-to-file>:<line>`.
+- Do NOT repeat the full `<root>/local_workspaces/<workspace-name>/...` prefix for every finding, evidence entry, or changed file.
+- Absolute paths are still allowed in commands while inspecting; convert them back to workspace-relative paths before reporting to the user.
+
 ## Change discovery
 For each repo listed in `workspace.yml`:
 1. Run `git status --short --branch --untracked-files=all`.
