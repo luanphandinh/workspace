@@ -95,12 +95,6 @@ local actions = {
     end,
   },
   {
-    name = "Git Branches (Telescope)",
-    action = function()
-      require("telescope.builtin").git_branches()
-    end,
-  },
-  {
     name = "Change Agent Terminal Position",
     action = function()
       local pickers = require("telescope.pickers")
