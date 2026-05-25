@@ -75,6 +75,78 @@ return function(use)
         vim.cmd("DiffviewFileHistory")
       end
 
+      local function git_systemlist(args)
+        local output = vim.fn.systemlist(args)
+        if vim.v.shell_error ~= 0 then
+          return nil
+        end
+        return output
+      end
+
+      local function first_line(output)
+        if not output or not output[1] or output[1] == "" then
+          return nil
+        end
+        return output[1]
+      end
+
+      local function current_line_commit()
+        local file = vim.api.nvim_buf_get_name(0)
+        if file == "" or vim.fn.filereadable(file) ~= 1 then
+          vim.notify("No file under cursor for git blame", vim.log.levels.WARN)
+          return nil
+        end
+
+        local dir = vim.fn.fnamemodify(file, ":h")
+        local root = first_line(git_systemlist({ "git", "-C", dir, "rev-parse", "--show-toplevel" }))
+        if not root then
+          vim.notify("Not inside a git repository", vim.log.levels.WARN)
+          return nil
+        end
+
+        local rel = first_line(git_systemlist({ "git", "-C", root, "ls-files", "--full-name", "--", file }))
+        if not rel then
+          vim.notify("File is not tracked by git", vim.log.levels.WARN)
+          return nil
+        end
+
+        local line = vim.api.nvim_win_get_cursor(0)[1]
+        local blame = git_systemlist({
+          "git", "-C", root, "blame", "--porcelain",
+          "-L", line .. "," .. line,
+          "--", rel,
+        })
+        if not blame or not blame[1] then
+          vim.notify("Could not read git blame for current line", vim.log.levels.WARN)
+          return nil
+        end
+
+        local commit = blame[1]:match("^(%x+)")
+        if not commit or commit:match("^0+$") then
+          vim.notify("Current line is uncommitted", vim.log.levels.WARN)
+          return nil
+        end
+        return commit, root
+      end
+
+      local function open_current_line_commit()
+        local cur_buf = vim.api.nvim_buf_get_name(0)
+        if cur_buf:match("^diffview://") then
+          vim.cmd("DiffviewClose")
+          return
+        end
+
+        local commit = current_line_commit()
+        if not commit then return end
+
+        local existing_tab = find_diffview_tab()
+        if existing_tab then
+          vim.cmd("DiffviewClose")
+        end
+
+        vim.cmd("DiffviewOpen " .. commit .. "^!")
+      end
+
       -- Diff current branch with base branch (main or master)
       local function toggle_branch_diff()
         local cur_buf = vim.api.nvim_buf_get_name(0)
@@ -184,6 +256,7 @@ return function(use)
       -- Git diff globally
       vim.keymap.set("n", "<leader>gd", toggle_diffview, { desc = "Git diff (current changes)" })
       vim.keymap.set("n", "<leader>gD", toggle_branch_diff, { desc = "Git diff branch (vs base)" })
+      vim.keymap.set("n", "<leader>gb", open_current_line_commit, { desc = "Git blame commit at line" })
       vim.keymap.set("n", "<leader>gH", toggle_file_history, { desc = "File history (current)" })
       vim.keymap.set("n", "<leader>gA", toggle_all_file_history, { desc = "File history (all)" })
       vim.keymap.set("n", "<leader>gC", toggle_all_file_history, { desc = "Repo commits (all)" })
