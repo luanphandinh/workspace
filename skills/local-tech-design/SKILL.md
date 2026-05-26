@@ -137,6 +137,9 @@ IDL-diff example (NEW method — show everything, no elision):
 - **IGNORE the `local_workspaces/` container folder and any subfolder containing a `workspace.yml`**: every workspace created by `mkws` lives at `<root>/local_workspaces/<name>/` and its contents are duplicates of sibling repos already in the root. Skip the entire `local_workspaces/` tree (and defensively any other `workspace.yml`-bearing folder); only consider the original sibling repos as candidates for the mapping.
 - Treat `<root>/_external/` as read-only external design context. Repos under `_external/` are not implementation repos and must not be added to the coding mapping file. Use them to understand external API contracts, upstream/downstream constraints, and compatibility risk when they are relevant to the design.
 - If the design touches behavior owned by a repo under `_external/`, document it in `# 5. External Technical Design` using that section's per-API structure. Keep implementation work for normal sibling repos in `# 6. Internal Technical Design`.
+- Use `local-code-explore` for relationship discovery. After candidate repos are identified, invoke/use `local-code-explore` to trace the relevant entrypoints, downstream calls, upstream callers, storage, and queue edges across those repos.
+- Use the `local-code-explore` evidence map to confirm service relationships. Do not rely on folder names, stale docs, or separate hand-built call graphs when code evidence is available.
+- If `_external/` repos are needed to understand a relationship, ask the user before exploring them unless the user already explicitly requested external-repo exploration.
 - Provide the mapping and ask the user to confirm — wait for confirmation before proceeding.
 - If the user has any feedback on the mapping, update accordingly and re-ask for confirmation until approved.
 - Save the confirmed mapping as `<tech_doc_name>_mapping.md` inside the workspace's tech-doc folder: `<root>/local_workspaces/<workspace-name>/tech_doc/<tech_doc_name>_mapping.md`. Two-column Markdown table — column 1 = microservice name (as used in the design), column 2 = sibling-repo folder name (the source of truth for `mkws --add` later).
@@ -351,39 +354,25 @@ Multi-step example:
 ```
 If a service or config is already in §6 as a code change but doesn't need a separate prod action, it does NOT belong here. This is the deploy artefact, not a re-listing of the diff.
 
-## Diagrams — ASCII in chat, mermaid in tech doc
+## Diagrams — reuse local-code-explore ASCII, mermaid in tech doc
 - Every non-trivial design needs a diagram. Required at two points, BOTH in §4:
   1. **§4.1 Architecture flowchart** — a top-level service map + primary data flow that reflects EVERY decision picked in §3. This is the single most important diagram in the doc.
   2. **§4.2 Cross-service sequence diagrams** — a sequence diagram for each non-trivial cross-service interaction (≥2 hops, async edges, retries). Trivial single-RPC calls don't need one. These live with the overview, NOT inside per-service sections in §6 — readers see end-to-end flows before drilling in.
-- **In the terminal chat**: render the diagram as **plain ASCII art** — boxes drawn with `+--+` / `|`, arrows with `-->`, `<--`, `==>` (sync vs async), labels next to arrows. Sequence diagrams as left-to-right swim lanes with time flowing top-to-bottom. The chat client doesn't render mermaid, so source code is harder to scan than ASCII; the ASCII IS the readable overview.
-- **In the tech doc**: save the same diagram as a fenced ```mermaid``` block (`flowchart` / `sequenceDiagram` / `classDiagram` as appropriate). Mermaid-aware viewers render it inline.
-- **Keep both representations in sync**: ASCII and mermaid encode the same nodes/edges/labels. If you change one, change the other.
-- **Keep diagrams concise**: 5–10 nodes max per diagram. If you need more, split into multiple smaller diagrams (one per concern) rather than one mega-diagram.
+- **Code exploration source of truth**: before drafting §4 diagrams for a code-backed design, invoke/use `local-code-explore` to explore the existing entrypoints, call chains, branches, storage, queue edges, and service relationships. Treat its evidence map and merged service graph as the source for the design diagram.
+- **In the terminal chat**: reuse the `local-code-explore` terminal diagram format and rules. Do not invent a separate ASCII layout in this skill. The terminal diagram must stay as one merged graph with shared service boxes, RPC/API/function level nodes, centered connectors, and protocol/method/topic labels on arrows.
+- **In the tech doc**: convert the same `local-code-explore` graph into a fenced ```mermaid``` block (`flowchart` / `sequenceDiagram` / `classDiagram` as appropriate). Mermaid-aware viewers render it inline.
+- **Keep both representations in sync**: ASCII and mermaid encode the same nodes/edges/labels from the `local-code-explore` graph. If you change one, change the other.
+- **Keep diagrams concise**: target 5–10 primary nodes in the shared overview. For doc-only deep dives, add smaller §4.2 sequence diagrams by concern; do not split the terminal ASCII overview into per-service or per-repo charts.
 - **Update on revisions**: when the design changes, update the mermaid in the tech doc AND re-emit the updated ASCII in chat. Stale diagrams are worse than no diagram.
 - **Highlight what's NEW**: every diagram MUST visually distinguish new pieces (new services, new tables, new edges, new fields) from existing ones. Mermaid: green fill + green text via a `new` class (`classDef new fill:#bbf7d0,stroke:#16a34a,color:#16a34a,font-weight:bold`) applied to new nodes — this also colors any `(NEW)` marker inside the node label green; new edges styled with `linkStyle <idx> stroke:#16a34a,stroke-width:2px,color:#16a34a` (the trailing `color:` greens the edge-label text including its `(NEW)` tag). Tag new nodes/edges with a trailing `(NEW)` marker in BOTH ASCII and mermaid (use parentheses, never `[NEW]` — `[...]` is mermaid node syntax and breaks the parser inside edge labels). The `(NEW)` text must render green wherever it appears. Existing pieces stay default-styled — the contrast is the point.
-ASCII style example (chat) — placeholders only:
-```
-+----------+    <op A>      +-------------+
-| Service X| -------------> |  Service Y  |
-+----------+                +------+------+
-                                   |
-                                <op B>
-                                   |
-                         +---------+---------+
-                         v                   v
-                   +-----+-----+       +-----+-----+
-                   | Store A   |       | Store B   |
-                   |  (NEW)    |       |           |
-                   +-----------+       +-----------+
-```
-Mermaid equivalent (tech doc):
+Mermaid equivalent derived from the shared graph:
 ```mermaid
 flowchart LR
-  ServiceX -->|<op A>| ServiceY
-  ServiceY -->|<op B-1>| StoreA
-  ServiceY -->|<op B-2>| StoreB
+  service_a -->|RPC: <method-a>| service_b
+  service_b -->|MQ: <topic-name> (NEW)| service_c
+  service_b -->|SQL: <write-action>| store_a
   classDef new fill:#bbf7d0,stroke:#16a34a,color:#16a34a,font-weight:bold
-  class StoreA new
+  class service_c new
   linkStyle 1 stroke:#16a34a,stroke-width:2px,color:#16a34a
 ```
 ## Design loop (workflow — how to fill the 8 sections)
@@ -396,7 +385,8 @@ flowchart LR
   - **The user must confirm both buckets** before you continue. If the user wants something moved (table → omitted, or omitted → table), update accordingly and re-confirm.
   - **Omitted decisions MUST still be stated in the doc** — never leave them invisible. Add a one-line bullet for each omitted pick at the end of §3 under a small italic note: `*Omitted from the table (low-impact / forced / upstream-fixed):*` followed by a flat bullet list. Each line is `<short topic> — <picked option> (<one-phrase reason for omitting>)`. Example: `*Omitted from the table:*` `- Logger field name — picked snake_case (matches existing convention)` `- Retry backoff base — picked 100ms (framework default)`. This keeps the audit trail without bloating the table.
 - **Subsequent rounds**: only revise the sections that actually changed. Don't rewrite §1/§2/§7/§8 unless the requirement itself shifted. New questions that arise during §6 deep-dive get added back into the brainstorming bucket and re-classified (table vs omitted) — promote into §3 only if genuinely high-impact.
-- **For §6 (Internal Technical Design)**: dispatch one FOCUSED AGENT TASK per microservice IN PARALLEL — each agent explores its repo, computes the IDL/logic/code diff, and reports back. The main agent stitches the results into §6.
+- **For mapping, cross-service exploration, and diagrams**: invoke/use `local-code-explore` first so the confirmed mapping, §4, and §6 share one verified call graph instead of separately reconstructed flows.
+- **For §6 (Internal Technical Design)**: dispatch one FOCUSED AGENT TASK per microservice IN PARALLEL — each agent explores its repo, computes the IDL/logic/code diff, and reports back. The main agent stitches the results into §6 and reconciles it with the `local-code-explore` graph.
 - Use the codebase mapping from `<tech_doc_name>_mapping.md` as the canonical microservice list — never guess service boundaries.
 ## Sync to remote (when the user provides a URL)
 **HARD RULE — sync is ALWAYS user-invoked, NEVER automatic.** Do NOT push the tech doc (or any part of it) to a remote URL on your own initiative. This applies even when the user has previously synced. Every remote write — first upload, every incremental update, every section replacement — requires an **explicit, current-turn instruction** from the user (e.g. "sync to <URL>", "push the §6 update to Lark", "update the remote doc"). Until that instruction arrives, the local file under `tech_doc/` is the only artefact you touch. If you finish a revision round and notice a remote URL was previously provided, do NOT auto-push the new revision — wait for the user to ask. Surface a one-line reminder if useful (e.g. "Local doc updated. Want me to sync the changes to <URL>?"), then stop.
