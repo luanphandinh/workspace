@@ -52,43 +52,14 @@ For each repo listed in `workspace.yml`:
 ## Changed-flow diagram
 Always include exactly one merged terminal diagram when the change affects calls, handlers, storage, queues, or important internal logic.
 
-Diagram rules:
-- Text/ASCII only. No Mermaid, no external image.
-- One merged graph only. Do not create one diagram per repo or service.
-- Each service/repo gets its own box.
-- Mark changed service boxes, handlers, methods, fields, stores, queues, or edges with `<<< CHANGED`.
-- Mark risk hotspots found during review with `<<< REVIEW RISK`.
-- Arrows must include protocol + method/path/topic/action.
-- If a changed edge cannot be mapped to a repo, include it as `External / not found` in the same diagram.
-- Draw visible horizontal connector lines for branches; do not leave detached vertical lines.
-
-Preferred shape:
-```
-+-------------------------------+
-| <service-a>                   |
-| repo: <repo-a>                |
-| changed: <handler/method>     | <<< CHANGED
-+-------------------------------+
-              |
-              | RPC: <MethodName> <<< CHANGED
-              v
-+-------------------------------+
-| <service-b>                   |
-| repo: <repo-b>                |
-| changed: <field/logic/store>  | <<< CHANGED
-| risk: <short risk>            | <<< REVIEW RISK
-+-------------------------------+
-              |
-              +-----------------------------+
-              |                             |
-              | MQ: <topic-name> <<< CHANGED| SQL: UPDATE <table>
-              v                             v
-+-------------------------------+  +-------------------------------+
-| <service-c>                   |  | <store-name>                  |
-| repo: <repo-c>                |  | repo: <repo-b>                |
-| changed: consumer logic       |  | changed: write path           |
-+-------------------------------+  +-------------------------------+
-```
+Before drawing the diagram, use `local-code-explore` as the exploration and rendering source of truth:
+- Invoke/use `local-code-explore` to explore the changed entrypoints, changed downstream calls, and affected storage/queue edges.
+- Reuse the `local-code-explore` terminal diagram rules exactly: one merged graph, shared service boxes, RPC/API/function level, centered connectors, protocol/method/topic labels on arrows, and no per-repo or per-service split charts.
+- If `local-code-explore` output already exists in the current review context, reuse its graph after verifying the changed edges against the diff. Do not redraw with a review-specific ASCII format.
+- Overlay review annotations on that diagram:
+  - `<<< CHANGED` for changed service boxes, handlers, methods, fields, stores, queues, or edges.
+  - `<<< REVIEW RISK` for risk hotspots found during review.
+- If a changed edge cannot be mapped to a repo, keep it in the same diagram as `External / not found` and explain the missing evidence below the diagram.
 
 If the change is purely local and has no cross-service flow, still include a compact one-box diagram:
 ```
