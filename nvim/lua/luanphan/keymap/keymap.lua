@@ -26,6 +26,18 @@ vim.o.cmdheight = 1
 vim.o.laststatus = 2
 local lsp_progress_tokens = {} -- track active progress tokens
 
+local function redraw_statusline()
+  pcall(vim.cmd, "redrawstatus")
+end
+
+local function clear_lsp_progress_tokens()
+  if next(lsp_progress_tokens) == nil then
+    return
+  end
+  lsp_progress_tokens = {}
+  redraw_statusline()
+end
+
 local function copilot_statusline()
   local ok, copilot = pcall(require, "luanphan.copilot_toggle")
   if not ok or type(copilot.statusline) ~= "function" then
@@ -51,8 +63,17 @@ vim.api.nvim_create_autocmd("LspProgress", {
       local msg = val.message or ""
       lsp_progress_tokens[key] = string.format("[%s] %s %s %s", name, title, msg, pct)
     end
-    vim.cmd("redrawstatus")
+    redraw_statusline()
   end,
+})
+
+vim.api.nvim_create_autocmd("User", {
+  pattern = "LuanphanWorktreeSwitchPre",
+  callback = clear_lsp_progress_tokens,
+})
+
+vim.api.nvim_create_autocmd({ "DirChangedPre", "DirChanged" }, {
+  callback = clear_lsp_progress_tokens,
 })
 
 function _G.statusline()
