@@ -2,7 +2,7 @@ UNAME := $(shell uname)
 ifneq (,$(findstring Linux,$(UNAME)))
 	install := sudo apt install
 	install_nvim := sudo apt install neovim
-	deps := fd-find python3-pip nodejs npm glow
+	deps := fd-find python3-pip nodejs npm
 	os_name := linux
 	fonts_install := sudo apt install fonts-firacode
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
