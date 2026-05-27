@@ -31,7 +31,9 @@ jump_to_tmux_pane() {
 			done
 	fi
 
-	if [ -n "${CODEX_NOTIFY_ACTIVATE_APP:-}" ] && command -v osascript >/dev/null 2>&1; then
+	if [ -n "${CODEX_NOTIFY_ACTIVATE_APP:-}" ] && command -v open >/dev/null 2>&1; then
+		open -a "$CODEX_NOTIFY_ACTIVATE_APP" >/dev/null 2>&1 || :
+	elif [ -n "${CODEX_NOTIFY_ACTIVATE_APP:-}" ] && command -v osascript >/dev/null 2>&1; then
 		osascript \
 			-e 'on run argv' \
 			-e 'tell application (item 1 of argv) to activate' \
@@ -158,6 +160,9 @@ if command -v terminal-notifier >/dev/null 2>&1; then
 		click_cmd="$(shell_quote "$script_path") --jump-tmux $(shell_quote "$TMUX_PANE")"
 		if tmux_bin="$(command -v tmux 2>/dev/null)"; then
 			click_cmd="TMUX_BIN=$(shell_quote "$tmux_bin") $click_cmd"
+		fi
+		if [ -n "${CODEX_NOTIFY_ACTIVATE_APP:-}" ]; then
+			click_cmd="CODEX_NOTIFY_ACTIVATE_APP=$(shell_quote "$CODEX_NOTIFY_ACTIVATE_APP") $click_cmd"
 		fi
 		if [ -n "${TMUX:-}" ]; then
 			click_cmd="TMUX=$(shell_quote "$TMUX") $click_cmd"
