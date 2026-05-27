@@ -13,7 +13,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 else
 	install := brew install
 	install_nvim := brew install neovim --HEAD
-	deps := fd python3 node glow
+	deps := fd python3 node glow terminal-notifier
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
 	fonts_install := brew install --cask font-fira-code
