@@ -8,6 +8,10 @@ set -e
 win="${1:-}"
 [ -z "$win" ] && exit 0
 
+lock="pin-sidebar-attach-${win}"
+tmux wait-for -L "$lock" 2>/dev/null || :
+trap 'tmux wait-for -U "$lock" >/dev/null 2>&1 || :' EXIT
+
 # Skip if we don't currently want sidebars open.
 state="$(tmux show-options -gqv '@pin_sidebar_open' 2>/dev/null || :)"
 [ "$state" = "1" ] || exit 0
@@ -16,6 +20,15 @@ state="$(tmux show-options -gqv '@pin_sidebar_open' 2>/dev/null || :)"
 existing="$(tmux show-options -wqv -t "$win" '@pin_sidebar_pane' 2>/dev/null || :)"
 if [ -n "$existing" ] \
 	&& tmux list-panes -t "$win" -F '#{pane_id}' 2>/dev/null | grep -Fxq "$existing"; then
+	exit 0
+fi
+
+# If the window pointer drifted but a marked sidebar pane is already present,
+# repair the pointer instead of creating a second sidebar.
+marked="$(tmux list-panes -t "$win" -F '#{pane_id} #{@pin_sidebar}' 2>/dev/null \
+	| awk '$2 == "1" { print $1; exit }')"
+if [ -n "$marked" ]; then
+	tmux set-option -wt "$win" '@pin_sidebar_pane' "$marked"
 	exit 0
 fi
 
