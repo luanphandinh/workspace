@@ -1,6 +1,54 @@
 #!/bin/sh
 set -eu
 
+jump_to_tmux_pane() {
+	pane="${1:-}"
+	[ -n "$pane" ] || exit 0
+	tmux_cmd="${TMUX_BIN:-tmux}"
+	if [ "$tmux_cmd" = "tmux" ]; then
+		command -v tmux >/dev/null 2>&1 || exit 0
+	fi
+
+	target_window="$("$tmux_cmd" display-message -p -t "$pane" '#{session_name}:#{window_index}' 2>/dev/null || :)"
+	target_session="$("$tmux_cmd" display-message -p -t "$pane" '#{session_name}' 2>/dev/null || :)"
+	target_pane="$("$tmux_cmd" display-message -p -t "$pane" '#{pane_id}' 2>/dev/null || :)"
+	[ -n "$target_window" ] || exit 0
+	[ -n "$target_pane" ] || target_pane="$pane"
+
+	"$tmux_cmd" select-window -t "$target_window" >/dev/null 2>&1 || :
+	"$tmux_cmd" select-pane -t "$target_pane" >/dev/null 2>&1 || :
+	"$tmux_cmd" display-message -t "$target_pane" "Codex notification focused #{session_name}:#{window_index}.#{pane_index}" >/dev/null 2>&1 || :
+
+	if [ -n "$target_session" ]; then
+		tab="$(printf '\t')"
+		client_count="$("$tmux_cmd" list-clients 2>/dev/null | wc -l | tr -d ' ')"
+		"$tmux_cmd" list-clients -F '#{client_tty}	#{session_name}' 2>/dev/null |
+			while IFS="$tab" read -r client_tty client_session; do
+				[ -n "$client_tty" ] || continue
+				if [ "$client_session" = "$target_session" ] || [ "$client_count" = "1" ]; then
+					"$tmux_cmd" switch-client -c "$client_tty" -t "$target_pane" >/dev/null 2>&1 || :
+				fi
+			done
+	fi
+
+	if [ -n "${CODEX_NOTIFY_ACTIVATE_APP:-}" ] && command -v osascript >/dev/null 2>&1; then
+		osascript \
+			-e 'on run argv' \
+			-e 'tell application (item 1 of argv) to activate' \
+			-e 'end run' \
+			"$CODEX_NOTIFY_ACTIVATE_APP" >/dev/null 2>&1 || :
+	fi
+}
+
+shell_quote() {
+	printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
+}
+
+if [ "${1:-}" = "--jump-tmux" ]; then
+	jump_to_tmux_pane "${2:-}"
+	exit 0
+fi
+
 payload="${1:-}"
 if [ -z "$payload" ] && [ ! -t 0 ]; then
 	payload="$(cat)"
@@ -100,7 +148,28 @@ PY
 fi
 
 if command -v terminal-notifier >/dev/null 2>&1; then
-	terminal-notifier -title "Codex" -message "$message" >/dev/null 2>&1 || :
+	if [ -n "${TMUX_PANE:-}" ]; then
+		tmux_target=""
+		if tmux_target="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)"; then
+			:
+		else
+			tmux_target=""
+		fi
+		click_cmd="$(shell_quote "$script_path") --jump-tmux $(shell_quote "$TMUX_PANE")"
+		if tmux_bin="$(command -v tmux 2>/dev/null)"; then
+			click_cmd="TMUX_BIN=$(shell_quote "$tmux_bin") $click_cmd"
+		fi
+		if [ -n "${TMUX:-}" ]; then
+			click_cmd="TMUX=$(shell_quote "$TMUX") $click_cmd"
+		fi
+		if [ -n "$tmux_target" ]; then
+			terminal-notifier -title "Codex" -message "$message" -subtitle "tmux $tmux_target" -execute "$click_cmd" >/dev/null 2>&1 || :
+		else
+			terminal-notifier -title "Codex" -message "$message" -execute "$click_cmd" >/dev/null 2>&1 || :
+		fi
+	else
+		terminal-notifier -title "Codex" -message "$message" >/dev/null 2>&1 || :
+	fi
 elif command -v osascript >/dev/null 2>&1; then
 	osascript \
 		-e 'on run argv' \
