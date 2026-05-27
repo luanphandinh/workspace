@@ -26,6 +26,14 @@ vim.o.cmdheight = 1
 vim.o.laststatus = 2
 local lsp_progress_tokens = {} -- track active progress tokens
 
+local function copilot_statusline()
+  local ok, copilot = pcall(require, "luanphan.copilot_toggle")
+  if not ok or type(copilot.statusline) ~= "function" then
+    return ""
+  end
+  return copilot.statusline()
+end
+
 vim.api.nvim_create_autocmd("LspProgress", {
   callback = function(ev)
     local data = ev.data
@@ -57,12 +65,14 @@ function _G.statusline()
   for _, msg in pairs(lsp_progress_tokens) do
     progress = msg
   end
+  local copilot = copilot_statusline()
   local parts = {
     " %f",                  -- filename
     "%m",                   -- modified flag
     "%r",                   -- readonly flag
     "  %{&filetype}",       -- filetype
     "%=",                   -- right align
+    copilot ~= "" and (copilot .. "  ") or "",
     progress ~= "" and (progress .. "  ") or "",
     "%l:%c ",               -- line:col
   }
