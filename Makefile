@@ -103,7 +103,15 @@ install-workspace: ## Install ./bin scripts to ~/bin and ensure ~/bin is on PATH
 	@touch ~/.zshrc
 	@grep -qxF 'export PATH="$$HOME/bin:$$PATH"' ~/.zshrc || \
 		(echo 'export PATH="$$HOME/bin:$$PATH"' >> ~/.zshrc && echo "added PATH export to ~/.zshrc")
+	@alias_line="alias mcodex='codex -c '\''notify=[\"$$HOME/bin/codex-turn-ended-notify\"]'\'''" ; \
+		if ! grep -qxF "$$alias_line" ~/.zshrc; then \
+			tmp_file="$$(mktemp)" ; \
+			grep -v '^alias mcodex=' ~/.zshrc > "$$tmp_file" || true ; \
+			printf '%s\n' "$$alias_line" >> "$$tmp_file" ; \
+			cat "$$tmp_file" > ~/.zshrc ; \
+			rm -f "$$tmp_file" ; \
+			echo "installed mcodex alias in ~/.zshrc" ; \
+		fi
 
 cleanup: ## Clean up ./tmp folder
 	test -d ./tmp && rm -rf ./tmp
-
