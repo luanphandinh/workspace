@@ -11,6 +11,8 @@ return function(_use)
   --       active    = abs_path|nil,
   --     } }
   local BUFSTORE_KEY = "luanphan_workspace_buffers"
+  local LAST_CWD_KEY = "luanphan_workspace_last_cwd"
+  local WS_CONTAINER = "local_workspaces"
 
   -- Transient map of "apply this cursor when the file is first BufReadPost'd
   -- in the current nvim session". Populated by `restore_buffers`, consumed
@@ -217,6 +219,119 @@ return function(_use)
     return vim.startswith(path, dir .. "/")
   end
 
+  local function safe_getcwd()
+    local ok, cwd = pcall(vim.fn.getcwd)
+    if ok and cwd and cwd ~= "" then
+      cwd = cwd:gsub("/$", "")
+      vim.g[LAST_CWD_KEY] = cwd
+      return cwd
+    end
+    local last = vim.g[LAST_CWD_KEY]
+    if type(last) == "string" and last ~= "" then
+      return last:gsub("/$", "")
+    end
+    return ""
+  end
+
+  local function dir_exists(path)
+    if path == "" then
+      return false
+    end
+    local stat = (vim.uv or vim.loop).fs_stat(path)
+    return stat and stat.type == "directory" or false
+  end
+
+  local function git_repo_exists(path)
+    if not dir_exists(path) then
+      return false
+    end
+    return vim.fn.isdirectory(path .. "/.git") == 1 or vim.fn.filereadable(path .. "/.git") == 1
+  end
+
+  local function infer_source_repo_from_workspace_path(path)
+    local pattern = "^(.-)/" .. WS_CONTAINER .. "/([^/]+)/([^/]+)(/.*)$"
+    local root, _, repo, suffix = path:match(pattern)
+    if not root then
+      root, _, repo = path:match("^(.-)/" .. WS_CONTAINER .. "/([^/]+)/([^/]+)$")
+      suffix = ""
+    end
+    if not root or not repo then
+      return nil
+    end
+
+    local source = root .. "/" .. repo
+    if not git_repo_exists(source) then
+      return nil
+    end
+
+    if suffix and suffix ~= "" then
+      local nested = source .. suffix
+      if dir_exists(nested) then
+        return nested
+      end
+    end
+    return source
+  end
+
+  local function workspace_path_from_buffers()
+    local bufs = { vim.api.nvim_get_current_buf() }
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      bufs[#bufs + 1] = buf
+    end
+    for _, buf in ipairs(bufs) do
+      local name = vim.api.nvim_buf_get_name(buf)
+      if name ~= "" and name:find("/" .. WS_CONTAINER .. "/", 1, true) then
+        return vim.fn.fnamemodify(name, ":h"):gsub("/$", "")
+      end
+    end
+    return ""
+  end
+
+  local function nearest_existing_parent(path)
+    local p = path:gsub("/+$", "")
+    while p ~= "" and p ~= "/" do
+      p = vim.fn.fnamemodify(p, ":h")
+      if dir_exists(p) then
+        return p
+      end
+    end
+    return dir_exists("/") and "/" or nil
+  end
+
+  local switch_to
+
+  local function rescue_deleted_cwd()
+    local cwd = safe_getcwd()
+    if cwd == "" then
+      cwd = workspace_path_from_buffers()
+    end
+    if cwd == "" or dir_exists(cwd) then
+      return false
+    end
+
+    local source = infer_source_repo_from_workspace_path(cwd)
+    if source then
+      vim.notify("Current worktree was removed; switching to source repo: " .. source, vim.log.levels.WARN)
+      switch_to(source)
+      return true
+    end
+
+    local parent = nearest_existing_parent(cwd)
+    if parent then
+      vim.notify("Current cwd was removed; cd to nearest existing parent: " .. parent, vim.log.levels.WARN)
+      pcall(vim.cmd, "cd " .. vim.fn.fnameescape(parent))
+    end
+    return false
+  end
+
+  safe_getcwd()
+  vim.api.nvim_create_autocmd({ "VimEnter", "DirChanged" }, {
+    group = vim.api.nvim_create_augroup("LuanphanWorktreeLastCwd", { clear = true }),
+    callback = function()
+      safe_getcwd()
+    end,
+  })
+
   local function clear_all_jumplists()
     local original_tab = vim.api.nvim_get_current_tabpage()
     local original_win = vim.api.nvim_get_current_win()
@@ -389,7 +504,7 @@ return function(_use)
     return trees
   end
 
-  local function switch_to(path)
+  switch_to = function(path)
     if vim.fn.isdirectory(path) == 0 then
       vim.notify("worktree path not found: " .. path, vim.log.levels.ERROR)
       return
@@ -397,8 +512,10 @@ return function(_use)
 
     -- 1. Snapshot the OLD cwd's open file list before we touch anything else.
     --    Lets us restore the same buffer list when the user returns later.
-    local old_cwd = vim.fn.getcwd()
-    snapshot_buffers(old_cwd)
+    local old_cwd = safe_getcwd()
+    if old_cwd ~= "" then
+      snapshot_buffers(old_cwd)
+    end
 
     -- 2a. Close nvim-tree first if it's open. The tree pane has its own
     --     buffer-list / cwd-tracking quirks (auto-attach, change_root timing,
@@ -448,7 +565,7 @@ return function(_use)
     --    `buflisted OR loaded` so that listed-but-unloaded buffers from a
     --    previous restore (the ones we `:badd`'d under the old cwd) also get
     --    cleaned up — otherwise they'd pile up across repeated switches.
-    local cwd = vim.fn.getcwd()
+    local cwd = safe_getcwd()
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       local persist = vim.b[buf].luanphan_persist_term
       local relevant = vim.bo[buf].buflisted or vim.api.nvim_buf_is_loaded(buf)
@@ -511,6 +628,10 @@ return function(_use)
   end
 
   local function pick_worktree()
+    if rescue_deleted_cwd() then
+      return
+    end
+
     local ok_p, pickers = pcall(require, "telescope.pickers")
     local ok_f, finders = pcall(require, "telescope.finders")
     local ok_c, conf = pcall(require, "telescope.config")
@@ -526,7 +647,11 @@ return function(_use)
       vim.notify("no worktrees found (not a git repo?)", vim.log.levels.WARN)
       return
     end
-    local cur = vim.fn.getcwd()
+    local cur = safe_getcwd()
+    if cur == "" then
+      vim.notify("could not read current cwd", vim.log.levels.ERROR)
+      return
+    end
 
     local cur_root_lines = vim.fn.systemlist({ "git", "-C", cur, "rev-parse", "--show-toplevel" })
     local cur_root = cur

@@ -10,6 +10,14 @@ local function copilot_cmd_exists()
   return vim.fn.exists(":Copilot") == 2
 end
 
+local function redraw_statusline()
+  pcall(vim.cmd, "redrawstatus")
+end
+
+local function copilot_globally_on()
+  return vim.g.copilot_enabled ~= 0
+end
+
 --- Start LSP client when Copilot was loaded after VimEnter (lazy opt load).
 local function copilot_init_if_needed()
   pcall(vim.cmd, "call copilot#Init()")
@@ -37,18 +45,6 @@ local function load_copilot_plugin()
   return true, nil
 end
 
---- Delegates to |copilot#Enabled()| (plugin global + buffer/filetype gates).
-local function copilot_effective_on()
-  if not copilot_cmd_exists() then
-    return false
-  end
-  local ok, v = pcall(vim.call, "copilot#Enabled")
-  if not ok then
-    return false
-  end
-  return v ~= 0
-end
-
 function M.toggle()
   if not copilot_cmd_exists() then
     local ok, err = load_copilot_plugin()
@@ -59,14 +55,16 @@ function M.toggle()
       )
       return
     end
+    redraw_statusline()
     vim.schedule(function()
       copilot_init_if_needed()
       vim.notify("Copilot: loaded; starting in background", vim.log.levels.INFO)
+      redraw_statusline()
     end)
     return
   end
 
-  if copilot_effective_on() then
+  if copilot_globally_on() then
     pcall(vim.cmd, "Copilot disable")
     vim.notify("Copilot: disabled", vim.log.levels.INFO)
   else
@@ -74,6 +72,14 @@ function M.toggle()
     copilot_init_if_needed()
     vim.notify("Copilot: enabled", vim.log.levels.INFO)
   end
+  redraw_statusline()
+end
+
+function M.statusline()
+  if not copilot_cmd_exists() then
+    return ""
+  end
+  return copilot_globally_on() and "cp:on" or "cp:off"
 end
 
 return M
