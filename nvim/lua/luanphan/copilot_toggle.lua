@@ -28,7 +28,7 @@ end
 local function load_copilot_plugin()
   local last_err
   local ok, err = pcall(function()
-    require("packer").loader("copilot.vim")
+    require("lazy").load({ plugins = { "copilot.vim" } })
   end)
   if not ok then
     last_err = tostring(err)
@@ -50,7 +50,7 @@ function M.toggle()
     local ok, err = load_copilot_plugin()
     if not ok then
       vim.notify(
-        "Copilot: could not load — " .. (err or "?") .. " (run :PackerSync if the plugin is missing)",
+        "Copilot: could not load — " .. (err or "?") .. " (run :Lazy sync if the plugin is missing)",
         vim.log.levels.ERROR
       )
       return

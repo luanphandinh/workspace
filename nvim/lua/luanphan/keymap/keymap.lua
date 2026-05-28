@@ -177,7 +177,7 @@ vim.keymap.set("n", "<leader>kW", function()
 end, { desc = "Buffer: close other files (!) discard unsaved in closed buffers" })
 
 -- Full reload: luafile init (not :source — that is for Vimscript; init.lua needs :luafile).
--- Note: re-running init.lua also re-enters Packer startup; some plugins cache state — restart Neovim if maps stay wrong.
+-- Some plugins cache state after setup; restart Neovim if maps stay wrong.
 vim.keymap.set("n", "<leader>rc", function()
   for k in pairs(package.loaded) do
     if k:match("^luanphan") then

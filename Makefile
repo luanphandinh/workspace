@@ -48,8 +48,7 @@ nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	rm -rf ~/.config/nvim/*
 	cp -r ./nvim/. ~/.config/nvim/
-	nvim --headless +"autocmd User PackerComplete quitall" +PackerSync
-	# nvim --headless +"autocmd User PackerComplete quitall" +PackerClean
+	NVIM_INSTALL_TREESITTER=1 nvim --headless "+Lazy! sync" +qa
 
 tmux: ## Install tmux + configurations + plugins
 tmux: setup tmux-install tmux-config cleanup
