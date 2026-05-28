@@ -48,6 +48,8 @@ return {
   {
     "nvim-treesitter/nvim-treesitter",
     build = ":TSUpdate",
+    lazy = not parser_install_enabled,
+    event = { "BufReadPre", "BufNewFile" },
     config = function()
       -- Tree-sitter folds: use built-in foldexpr (|:help vim.treesitter.foldexpr()|).
       -- Legacy `nvim_treesitter#foldexpr()` can spin in foldUpdate when switching
