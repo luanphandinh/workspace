@@ -1,13 +1,16 @@
 UNAME := $(shell uname)
 ifneq (,$(findstring Linux,$(UNAME)))
 	install := sudo apt install
-	install_nvim := sudo apt install neovim
-	deps := fd-find python3-pip nodejs npm
+	nvim_linux_name := nvim-linux-x86_64
+	install_nvim := curl -fsSL https://github.com/neovim/neovim/releases/download/stable/$(nvim_linux_name).tar.gz -o ./tmp/$(nvim_linux_name).tar.gz \
+		&& sudo rm -rf /opt/$(nvim_linux_name) \
+		&& sudo tar -C /opt -xzf ./tmp/$(nvim_linux_name).tar.gz \
+		&& sudo ln -sf /opt/$(nvim_linux_name)/bin/nvim /usr/local/bin/nvim
+	deps := fd-find python3-pip nodejs npm curl
 	os_name := linux
 	fonts_install := sudo apt install fonts-firacode
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
 									&& sudo apt install software-properties-common -y \
-									&& sudo add-apt-repository ppa:neovim-ppa/stable -y \
 									&& sudo add-apt-repository ppa:aslatter/ppa -y \
 									&& sudo apt update -y
 else
@@ -43,6 +46,7 @@ nvim: setup nvim-install nvim-config cleanup
 nvim-install: ## Install neovim only, no config
 	@$(install_nvim)
 	@$(install) ripgrep
+	@nvim --version | head -n 1
 
 nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
