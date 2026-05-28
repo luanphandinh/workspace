@@ -33,7 +33,6 @@ return {
           local client = vim.lsp.get_client_by_id(args.data.client_id)
           local bufnr = args.buf
           local opts = { noremap = true, silent = true, buffer = bufnr }
-          local builtin = require("telescope.builtin")
 
           local previewOpts = {
             initial_mode = "normal",
@@ -58,17 +57,15 @@ return {
             end
           end
 
-          vim.keymap.set("n", "gd", with_lsp(function()
-            builtin.lsp_definitions(previewOpts)
-          end), opts)
+          local function telescope_lsp(method)
+            return function()
+              require("telescope.builtin")[method](previewOpts)
+            end
+          end
 
-          vim.keymap.set("n", "gi", with_lsp(function()
-            builtin.lsp_implementations(previewOpts)
-          end), opts)
-
-          vim.keymap.set("n", "gr", with_lsp(function()
-            builtin.lsp_references(previewOpts)
-          end), opts)
+          vim.keymap.set("n", "gd", with_lsp(telescope_lsp("lsp_definitions")), opts)
+          vim.keymap.set("n", "gi", with_lsp(telescope_lsp("lsp_implementations")), opts)
+          vim.keymap.set("n", "gr", with_lsp(telescope_lsp("lsp_references")), opts)
 
           vim.keymap.set("n", "gh", vim.lsp.buf.hover, opts)
           vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename, opts)
