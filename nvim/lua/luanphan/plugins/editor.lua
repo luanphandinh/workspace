@@ -14,6 +14,7 @@ return {
   -- auto pair brackets
   {
     "windwp/nvim-autopairs",
+    event = "InsertEnter",
     config = function()
       require("nvim-autopairs").setup({
         check_ts = true, -- enable Treesitter integration for smarter pairing
