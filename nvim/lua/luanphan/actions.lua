@@ -250,7 +250,4 @@ function M.show_command_palette()
   }):find()
 end
 
--- Set up the command palette keymaps (<C-p> is free in normal mode; cmp uses <C-p> in insert mode only)
-vim.keymap.set("n", "<leader>cp", M.show_command_palette, { desc = "Show commands" })
-
 return M

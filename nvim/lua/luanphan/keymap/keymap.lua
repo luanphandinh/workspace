@@ -142,11 +142,6 @@ vim.keymap.set("t", "<C-]>", function()
   end
 end, { desc = "Send Esc to terminal process" })
 
-vim.keymap.set("n", "<leader>p", "<cmd>Telescope find_files<cr>")
-vim.keymap.set("n", "g/", function()
-  require("luanphan.telescope_grep_opts").live_grep()
-end, { desc = "Telescope live_grep (honors <leader>t1 / t2 ripgrep toggles)" })
-
 vim.keymap.set("n", "<leader>t1", function()
   require("luanphan.telescope_grep_opts").toggle_case_sensitive()
 end, { desc = "live_grep: toggle strict case vs ignore-case (default: ignore-case on)" })
@@ -157,7 +152,6 @@ end, { desc = "live_grep: toggle regex vs fixed-string (default: fixed-string on
 vim.keymap.set("n", "<leader>sr", function()
   require("luanphan.qf_replace").prompt_cfdo_substitute()
 end, { desc = "Quickfix: replace in all listed files (use g/ then <C-q> first)" })
-vim.keymap.set("n", "<leader>lf", "<cmd>Telescope buffers<cr>", { desc = "Telescope: buffers" })
 
 vim.keymap.set("n", "<leader>d", function()
   vim.diagnostic.open_float(nil, { focus = false })
@@ -217,19 +211,6 @@ vim.keymap.set("n", "<leader>tc", function()
   require("luanphan.copilot_toggle").toggle()
 end, { desc = "Copilot: load if needed, then toggle on/off" })
 
--- List all symbols in current file
-vim.keymap.set("n", "gs", function()
-  require("telescope.builtin").lsp_document_symbols({
-    previewer = false,
-    symbol_width = 80,
-    layout_strategy = "vertical",
-    layout_config = {
-      width = 0.5,
-      height = 0.6,
-    },
-  })
-end, { desc = "List symbols in file" })
-
 -- Go test keymaps (only in Go files)
 vim.api.nvim_create_autocmd("FileType", {
   pattern = "go",
@@ -279,34 +260,6 @@ vim.keymap.set("n", "<leader>tW", function()
   vim.wo.wrap = not vim.wo.wrap
   vim.notify("wrap: " .. (vim.wo.wrap and "on" or "off"), vim.log.levels.INFO)
 end, { desc = "Toggle word wrap (window-local)" })
-
-vim.keymap.set("n", "<leader>ft", function()
-  local pickers = require("telescope.pickers")
-  local finders = require("telescope.finders")
-  local conf = require("telescope.config").values
-  local actions = require("telescope.actions")
-  local action_state = require("telescope.actions.state")
-
-  local filetypes = { "json", "sql", "txt", "md", "go", "lua", "python", "javascript", "yaml", "html", "css" }
-
-  pickers
-    .new({}, {
-      prompt_title = "Set Filetype",
-      finder = finders.new_table({ results = filetypes }),
-      sorter = conf.generic_sorter({}),
-      attach_mappings = function(prompt_bufnr, map)
-        actions.select_default:replace(function()
-          local selection = action_state.get_selected_entry()
-          actions.close(prompt_bufnr)
-          if selection then
-            vim.bo.filetype = selection[1]
-          end
-        end)
-        return true
-      end,
-    })
-    :find()
-end, { desc = "Set filetype" })
 
 -- Diff mode keybindings
 vim.keymap.set("n", "<leader>df", "<cmd>windo diffthis<cr>", { desc = "Diff compare (vertical split)" })

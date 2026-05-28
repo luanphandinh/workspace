@@ -1,14 +1,64 @@
-return function(use)
+local function cmp_opts(cmp)
+  return {
+    snippet = {
+      expand = function(args)
+        require("luasnip").lsp_expand(args.body)
+      end,
+    },
+    preselect = cmp.PreselectMode.Item,
+    completion = {
+      completeopt = "menu,menuone,noinsert",
+    },
+    mapping = cmp.mapping.preset.insert({
+      ["<C-Space>"] = cmp.mapping.complete(),
+      ["<CR>"] = cmp.mapping.confirm({ select = true }),
+      ["<C-n>"] = cmp.mapping.select_next_item(),
+      ["<C-p>"] = cmp.mapping.select_prev_item(),
+    }),
+    sources = cmp.config.sources({
+      { name = "nvim_lsp" },
+      { name = "luasnip" },
+      { name = "buffer" },
+      { name = "path" },
+    }),
+  }
+end
+
+local function restart_cmp()
+  require("lazy").load({ plugins = { "nvim-cmp" } })
+
+  local cmp = require("cmp")
+  local ok_lsp, cmp_nvim_lsp = pcall(require, "cmp_nvim_lsp")
+  if ok_lsp and cmp_nvim_lsp.client_source_map then
+    for _, source_id in pairs(cmp_nvim_lsp.client_source_map) do
+      pcall(cmp.unregister_source, source_id)
+    end
+    for k in pairs(cmp_nvim_lsp.client_source_map) do
+      cmp_nvim_lsp.client_source_map[k] = nil
+    end
+    cmp_nvim_lsp.setup()
+  end
+  cmp.core:reset()
+  cmp.setup(cmp_opts(cmp))
+  print("nvim-cmp restarted")
+end
+
+local function setup_cmp_restart_command()
+  vim.api.nvim_create_user_command("CmpRestart", restart_cmp, {})
+  vim.keymap.set("n", "<leader>rs", restart_cmp, { desc = "Restart completion" })
+end
+
+return {
   -- mason - load eagerly as it's a dependency for mason-lspconfig
-  use {
+  {
     "williamboman/mason.nvim",
     config = function()
       require("mason").setup()
     end,
-  }
+  },
 
   -- mason-lspconfig - lazy load with lspconfig
-  use {
+  {
     "williamboman/mason-lspconfig.nvim",
     event = "BufReadPre",
     config = function()
@@ -20,9 +70,9 @@ return function(use)
         automatic_enable = false,
       }
     end,
-  }
+  },
 
-  use {
+  {
     "neovim/nvim-lspconfig",
     event = "BufReadPre",
     config = function()
@@ -33,7 +83,6 @@ return function(use)
           local client = vim.lsp.get_client_by_id(args.data.client_id)
           local bufnr = args.buf
           local opts = { noremap = true, silent = true, buffer = bufnr }
-          local builtin = require("telescope.builtin")
 
           local previewOpts = {
             initial_mode = "normal",
@@ -58,17 +107,15 @@ return function(use)
             end
           end
 
-          vim.keymap.set("n", "gd", with_lsp(function()
-            builtin.lsp_definitions(previewOpts)
-          end), opts)
+          local function telescope_lsp(method)
+            return function()
+              require("telescope.builtin")[method](previewOpts)
+            end
+          end
 
-          vim.keymap.set("n", "gi", with_lsp(function()
-            builtin.lsp_implementations(previewOpts)
-          end), opts)
-
-          vim.keymap.set("n", "gr", with_lsp(function()
-            builtin.lsp_references(previewOpts)
-          end), opts)
+          vim.keymap.set("n", "gd", with_lsp(telescope_lsp("lsp_definitions")), opts)
+          vim.keymap.set("n", "gi", with_lsp(telescope_lsp("lsp_implementations")), opts)
+          vim.keymap.set("n", "gr", with_lsp(telescope_lsp("lsp_references")), opts)
 
           vim.keymap.set("n", "gh", vim.lsp.buf.hover, opts)
           vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename, opts)
@@ -216,12 +263,13 @@ return function(use)
       vim.lsp.enable("gopls")
       vim.lsp.enable("rust_analyzer")
     end,
-  }
+  },
 
   -- Autocompletion and suggestion.
-  use {
+  {
     "hrsh7th/nvim-cmp",
-    requires = {
+    event = "InsertEnter",
+    dependencies = {
       "hrsh7th/cmp-nvim-lsp",     -- LSP source
       "hrsh7th/cmp-buffer",       -- buffer words
       "hrsh7th/cmp-path",         -- filesystem paths
@@ -229,56 +277,10 @@ return function(use)
       "L3MON4D3/LuaSnip",         -- snippets engine
       "saadparwaiz1/cmp_luasnip", -- LuaSnip completion source
     },
+    init = setup_cmp_restart_command,
     config = function()
       local cmp = require("cmp")
-
-      local function cmp_opts()
-        return {
-          snippet = {
-            expand = function(args)
-              require("luasnip").lsp_expand(args.body)
-            end,
-          },
-          preselect = cmp.PreselectMode.Item,
-          completion = {
-            completeopt = "menu,menuone,noinsert",
-          },
-          mapping = cmp.mapping.preset.insert({
-            ["<C-Space>"] = cmp.mapping.complete(),
-            ["<CR>"] = cmp.mapping.confirm({ select = true }),
-            ["<C-n>"] = cmp.mapping.select_next_item(),
-            ["<C-p>"] = cmp.mapping.select_prev_item(),
-          }),
-          sources = cmp.config.sources({
-            { name = "nvim_lsp" },
-            { name = "luasnip" },
-            { name = "buffer" },
-            { name = "path" },
-          }),
-        }
-      end
-
-      cmp.setup(cmp_opts())
-
-      -- Command to restart cmp (clear cmp-nvim-lsp ↔ client registrations, then re-setup).
-      vim.api.nvim_create_user_command("CmpRestart", function()
-        local ok_lsp, cmp_nvim_lsp = pcall(require, "cmp_nvim_lsp")
-        if ok_lsp and cmp_nvim_lsp.client_source_map then
-          for _, source_id in pairs(cmp_nvim_lsp.client_source_map) do
-            pcall(cmp.unregister_source, source_id)
-          end
-          for k in pairs(cmp_nvim_lsp.client_source_map) do
-            cmp_nvim_lsp.client_source_map[k] = nil
-          end
-          cmp_nvim_lsp.setup()
-        end
-        cmp.core:reset()
-        cmp.setup(cmp_opts())
-        print("nvim-cmp restarted")
-      end, {})
-
-      -- Keymap to restart cmp
-      vim.keymap.set("n", "<leader>rs", "<cmd>CmpRestart<cr>", { desc = "Restart completion" })
+      cmp.setup(cmp_opts(cmp))
     end
-  }
-end
+  },
+}

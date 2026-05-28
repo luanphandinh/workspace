@@ -1,5 +1,5 @@
-return function(use)
-  use {
+return {
+  {
     "folke/which-key.nvim",
     event = "VimEnter",
     config = function()
@@ -20,5 +20,5 @@ return function(use)
         require("which-key").show({ global = true })
       end, { desc = "Show all keymaps" })
     end,
-  }
-end
+  },
+}
