@@ -21,7 +21,7 @@ endif
 
 go_version := 1.25.9
 
-.PHONY: help nvim tmux go scripts skills-sync install-workspace
+.PHONY: help nvim nvim-test tmux go scripts skills-sync install-workspace
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -49,6 +49,9 @@ nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	rm -rf ~/.config/nvim/*
 	cp -r ./nvim/. ~/.config/nvim/
 	NVIM_INSTALL_TREESITTER=1 nvim --headless "+Lazy! sync" +qa
+
+nvim-test: ## Run headless Neovim smoke tests
+	GOWORK=off nvim --headless "+luafile scripts/nvim-smoke-test.lua" +qa
 
 tmux: ## Install tmux + configurations + plugins
 tmux: setup tmux-install tmux-config cleanup
