@@ -24,6 +24,15 @@ return {
   -- comment plugin
   {
     "numToStr/Comment.nvim",
+    keys = {
+      { "gc", mode = { "n", "x" } },
+      { "gcc", mode = "n" },
+      { "gb", mode = { "n", "x" } },
+      { "gbc", mode = "n" },
+      { "gco", mode = "n" },
+      { "gcO", mode = "n" },
+      { "gcA", mode = "n" },
+    },
     config = function()
       require("Comment").setup()
     end,
