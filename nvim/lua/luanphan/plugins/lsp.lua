@@ -49,9 +49,17 @@ local function setup_cmp_restart_command()
 end
 
 return {
-  -- mason - load eagerly as it's a dependency for mason-lspconfig
+  -- Mason package manager
   {
     "williamboman/mason.nvim",
+    cmd = {
+      "Mason",
+      "MasonInstall",
+      "MasonUninstall",
+      "MasonUninstallAll",
+      "MasonLog",
+      "MasonUpdate",
+    },
     config = function()
       require("mason").setup()
     end,
@@ -61,6 +69,7 @@ return {
   {
     "williamboman/mason-lspconfig.nvim",
     event = "BufReadPre",
+    dependencies = { "williamboman/mason.nvim" },
     config = function()
       require("mason-lspconfig").setup {
         ensure_installed = {
