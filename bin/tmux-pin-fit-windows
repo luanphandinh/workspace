@@ -27,6 +27,25 @@ fi
 [ -z "$client_w" ] && exit 0
 [ -z "$client_h" ] && exit 0
 
+status_opt="$(tmux show-options -gqv status 2>/dev/null || :)"
+case "$status_opt" in
+	off|"")
+		status_lines=0
+		;;
+	on)
+		status_lines=1
+		;;
+	*[!0-9]*)
+		status_lines=1
+		;;
+	*)
+		status_lines="$status_opt"
+		;;
+esac
+
+window_h=$((client_h - status_lines))
+[ "$window_h" -gt 0 ] || window_h="$client_h"
+
 # Remember the previous window-size policy and restore on exit.
 prev_mode="$(tmux show-options -gqv window-size 2>/dev/null || :)"
 [ -z "$prev_mode" ] && prev_mode="latest"
@@ -35,6 +54,6 @@ trap 'tmux set-option -g window-size "$prev_mode" >/dev/null 2>&1 || :' EXIT
 tmux set-option -g window-size manual >/dev/null 2>&1 || :
 
 tmux list-windows -aF '#{window_id}' 2>/dev/null | while IFS= read -r win; do
-	tmux resize-window -t "$win" -x "$client_w" -y "$client_h" >/dev/null 2>&1 || :
+	tmux resize-window -t "$win" -x "$client_w" -y "$window_h" >/dev/null 2>&1 || :
 	tmux set-window-option -u -t "$win" window-size >/dev/null 2>&1 || :
 done
