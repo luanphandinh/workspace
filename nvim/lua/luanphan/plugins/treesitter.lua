@@ -1,5 +1,50 @@
 ---@diagnostic disable: missing-fields
 return function(use)
+  local parser_install_enabled = vim.env.NVIM_INSTALL_TREESITTER == "1"
+  local parser_install_list = {
+    "go",
+    "lua",
+    "c",
+    "vim",
+    "vimdoc",
+    "json",
+    "yaml",
+    "luadoc",
+  }
+  local parser_installing = {}
+  local parser_auto_install_disabled = {
+    markdown = true,
+    markdown_inline = true,
+    rmd = true,
+  }
+
+  local function install_missing_parser(ev)
+    local ft = vim.bo[ev.buf].filetype
+    if ft == "" or parser_auto_install_disabled[ft] then
+      return
+    end
+
+    local lang = vim.treesitter.language.get_lang(ft) or ft
+    if lang == "" or parser_auto_install_disabled[lang] then
+      return
+    end
+
+    local ok, parsers = pcall(require, "nvim-treesitter.parsers")
+    if not ok or parsers.has_parser(lang) or parser_installing[lang] then
+      return
+    end
+
+    local configs = parsers.get_parser_configs()
+    if not configs[lang] then
+      return
+    end
+
+    parser_installing[lang] = true
+    vim.schedule(function()
+      vim.cmd("silent! TSInstall " .. lang)
+    end)
+  end
+
   use {
     "nvim-treesitter/nvim-treesitter",
     run = ":TSUpdate",
@@ -14,25 +59,30 @@ return function(use)
 
       require("nvim-treesitter.configs").setup({
         sync_install = false,
-        auto_install = true,
+        auto_install = false,
         highlight = {
           enable = true,
+          disable = { "markdown", "markdown_inline" },
           additional_vim_regex_highlighting = false
         },
         indent = {
-          enable = true
+          enable = true,
+          disable = { "markdown" },
         },
-        ensure_installed = {
-          "go",
-          "lua",
-          "c",
-          "vim",
-          "vimdoc",
-          "json",
-          "yaml",
-          "luadoc",
-          "markdown",
-        },
+        ensure_installed = parser_install_enabled and parser_install_list or {},
+      })
+
+      vim.api.nvim_create_autocmd("FileType", {
+        callback = install_missing_parser,
+      })
+
+      vim.api.nvim_create_autocmd({ "FileType", "BufEnter", "BufWinEnter" }, {
+        pattern = { "markdown", "rmd" },
+        callback = function(ev)
+          pcall(vim.treesitter.stop, ev.buf)
+          vim.opt_local.foldmethod = "manual"
+          vim.opt_local.foldexpr = ""
+        end,
       })
 
       -- Large buffers + TS foldexpr can spin in foldUpdate on buffer switch / win_set_buf.
