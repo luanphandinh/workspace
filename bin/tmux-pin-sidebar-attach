@@ -40,7 +40,7 @@ cmd="/bin/sh -c '\"$HOME/bin/tmux-pin-sidebar\"'"
 # -hbdf : horizontal split, place to the LEFT ('b'), don't focus ('d'),
 #         FULL window-height anchored to the window edge ('f').
 # -l 22 : fixed 22-column width.
-new_pane="$(tmux split-window -hbdf -l 22 -t "$win" -P -F '#{pane_id}' \
+new_pane="$(tmux split-window -hbdf -l 22 -c "$HOME" -t "$win" -P -F '#{pane_id}' \
 	"$cmd")"
 tmux set-option -wt "$win" '@pin_sidebar_pane' "$new_pane"
 # Pane-level marker — durable identifier used by tmux-pin-sidebar-resize.
