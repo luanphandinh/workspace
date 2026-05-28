@@ -1,19 +1,19 @@
-return function(use)
-  -- use {
+return {
+  -- {
   --   'nvim-telescope/telescope-fzf-native.nvim',
-  --   run = 'cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release'
+  --   build = 'cmake -S. -Bbuild -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release'
   -- }
-  use {
+  {
     'nvim-telescope/telescope-fzy-native.nvim',
-    run = 'make',
+    build = 'make',
     config = function()
       require('telescope').load_extension('fzy_native')
     end,
-  }
+  },
 
-  use {
+  {
     "nvim-telescope/telescope.nvim",
-    requires = { "nvim-lua/plenary.nvim" },
+    dependencies = { "nvim-lua/plenary.nvim" },
     config = function()
       -- Lua patterns for string.find on paths (see :help lua-patterns)
       local ignore_dot_git = { "%.git[/\\]" }
@@ -60,5 +60,5 @@ return function(use)
         }
       })
     end,
-  }
-end
+  },
+}

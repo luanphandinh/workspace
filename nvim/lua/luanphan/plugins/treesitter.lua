@@ -1,53 +1,53 @@
 ---@diagnostic disable: missing-fields
-return function(use)
-  local parser_install_enabled = vim.env.NVIM_INSTALL_TREESITTER == "1"
-  local parser_install_list = {
-    "go",
-    "lua",
-    "c",
-    "vim",
-    "vimdoc",
-    "json",
-    "yaml",
-    "luadoc",
-  }
-  local parser_installing = {}
-  local parser_auto_install_disabled = {
-    markdown = true,
-    markdown_inline = true,
-    rmd = true,
-  }
+local parser_install_enabled = vim.env.NVIM_INSTALL_TREESITTER == "1"
+local parser_install_list = {
+  "go",
+  "lua",
+  "c",
+  "vim",
+  "vimdoc",
+  "json",
+  "yaml",
+  "luadoc",
+}
+local parser_installing = {}
+local parser_auto_install_disabled = {
+  markdown = true,
+  markdown_inline = true,
+  rmd = true,
+}
 
-  local function install_missing_parser(ev)
-    local ft = vim.bo[ev.buf].filetype
-    if ft == "" or parser_auto_install_disabled[ft] then
-      return
-    end
-
-    local lang = vim.treesitter.language.get_lang(ft) or ft
-    if lang == "" or parser_auto_install_disabled[lang] then
-      return
-    end
-
-    local ok, parsers = pcall(require, "nvim-treesitter.parsers")
-    if not ok or parsers.has_parser(lang) or parser_installing[lang] then
-      return
-    end
-
-    local configs = parsers.get_parser_configs()
-    if not configs[lang] then
-      return
-    end
-
-    parser_installing[lang] = true
-    vim.schedule(function()
-      vim.cmd("silent! TSInstall " .. lang)
-    end)
+local function install_missing_parser(ev)
+  local ft = vim.bo[ev.buf].filetype
+  if ft == "" or parser_auto_install_disabled[ft] then
+    return
   end
 
-  use {
+  local lang = vim.treesitter.language.get_lang(ft) or ft
+  if lang == "" or parser_auto_install_disabled[lang] then
+    return
+  end
+
+  local ok, parsers = pcall(require, "nvim-treesitter.parsers")
+  if not ok or parsers.has_parser(lang) or parser_installing[lang] then
+    return
+  end
+
+  local configs = parsers.get_parser_configs()
+  if not configs[lang] then
+    return
+  end
+
+  parser_installing[lang] = true
+  vim.schedule(function()
+    vim.cmd("silent! TSInstall " .. lang)
+  end)
+end
+
+return {
+  {
     "nvim-treesitter/nvim-treesitter",
-    run = ":TSUpdate",
+    build = ":TSUpdate",
     config = function()
       -- Tree-sitter folds: use built-in foldexpr (|:help vim.treesitter.foldexpr()|).
       -- Legacy `nvim_treesitter#foldexpr()` can spin in foldUpdate when switching
@@ -99,5 +99,5 @@ return function(use)
         end,
       })
     end
-  }
-end
+  },
+}

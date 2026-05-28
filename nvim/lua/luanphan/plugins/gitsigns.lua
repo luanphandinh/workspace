@@ -1,8 +1,8 @@
-return function(use)
-  use {
+return {
+  {
     'lewis6991/gitsigns.nvim',
     event    = { "BufReadPre", "BufNewFile" }, -- lazy load when opening a file
-    requires = { 'nvim-lua/plenary.nvim' },
+    dependencies = { 'nvim-lua/plenary.nvim' },
     config   = function()
       local gitsigns = require('gitsigns')
       gitsigns.setup({
@@ -117,5 +117,5 @@ return function(use)
         },
       })
     end
-  }
-end
+  },
+}

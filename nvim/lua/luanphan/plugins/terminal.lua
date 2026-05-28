@@ -1,8 +1,8 @@
-return function(use)
+return {
   -- Toggleable terminal, scoped per worktree (cwd). Switching worktrees hides the
   -- current terminal; toggling again in a new cwd spawns a fresh one; switching
   -- back re-shows the previous one.
-  use {
+  {
     "akinsho/toggleterm.nvim",
     config = function()
       require("toggleterm").setup({
@@ -85,5 +85,5 @@ return function(use)
 
       vim.cmd("autocmd! TermOpen * lua set_terminal_keymaps()")
     end,
-  }
-end
+  },
+}

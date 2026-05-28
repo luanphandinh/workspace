@@ -1,4 +1,4 @@
-return function(_use)
+local function setup()
   -- Pure telescope + git CLI; no external plugin.
   -- Requires are deferred into the function so module load doesn't touch
   -- telescope (which is loaded by the plugin manager).
@@ -736,3 +736,11 @@ return function(_use)
     store_key = BUFSTORE_KEY,
   }
 end
+
+return {
+  {
+    "luanphan-worktree",
+    virtual = true,
+    init = setup,
+  },
+}

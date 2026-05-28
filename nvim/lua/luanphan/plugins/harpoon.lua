@@ -1,8 +1,8 @@
-return function(use)
-  use {
+return {
+  {
     "ThePrimeagen/harpoon",
     branch = "harpoon2", -- use harpoon2 (latest version)
-    requires = { "nvim-lua/plenary.nvim" },
+    dependencies = { "nvim-lua/plenary.nvim" },
     config = function()
       local harpoon = require("harpoon")
 
@@ -18,5 +18,5 @@ return function(use)
       vim.keymap.set("n", "<C-P>", function() harpoon:list():prev() end)
       vim.keymap.set("n", "<C-N>", function() harpoon:list():next() end)
     end
-  }
-end
+  },
+}

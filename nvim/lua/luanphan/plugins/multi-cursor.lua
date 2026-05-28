@@ -1,8 +1,8 @@
-return function(use)
-  use {
+return {
+  {
     "mg979/vim-visual-multi",
     event = "BufReadPre",
-    setup = function()
+    init = function()
       -- Use visual mode as the main entry point
       vim.g.VM_maps = {
         -- Find and select all occurrences of the word under cursor
@@ -28,5 +28,5 @@ return function(use)
         ["Redo"] = "<C-r>",
       }
     end,
-  }
-end
+  },
+}

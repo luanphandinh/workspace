@@ -1,8 +1,8 @@
-return function(use)
+return {
   -- Global git diff viewer
-  use {
+  {
     "sindrets/diffview.nvim",
-    requires = "nvim-lua/plenary.nvim",
+    dependencies = "nvim-lua/plenary.nvim",
     config = function()
       local actions = require("diffview.actions")
       local diffview = require("diffview")
@@ -261,12 +261,12 @@ return function(use)
       vim.keymap.set("n", "<leader>gA", toggle_all_file_history, { desc = "File history (all)" })
       vim.keymap.set("n", "<leader>gC", toggle_all_file_history, { desc = "Repo commits (all)" })
     end,
-  }
+  },
 
   -- Git conflict navigation and resolution
-  use {
+  {
     "akinsho/git-conflict.nvim",
-    tag = "*",
+    version = "*",
     config = function()
       require("git-conflict").setup({
         -- Buffer-local only when conflict markers are present. Prefix <leader>gc + o/t/b/0 (none).
@@ -286,5 +286,5 @@ return function(use)
         },
       })
     end,
-  }
-end
+  },
+}

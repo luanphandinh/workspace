@@ -1,14 +1,14 @@
-return function(use)
+return {
   -- mason - load eagerly as it's a dependency for mason-lspconfig
-  use {
+  {
     "williamboman/mason.nvim",
     config = function()
       require("mason").setup()
     end,
-  }
+  },
 
   -- mason-lspconfig - lazy load with lspconfig
-  use {
+  {
     "williamboman/mason-lspconfig.nvim",
     event = "BufReadPre",
     config = function()
@@ -20,9 +20,9 @@ return function(use)
         automatic_enable = false,
       }
     end,
-  }
+  },
 
-  use {
+  {
     "neovim/nvim-lspconfig",
     event = "BufReadPre",
     config = function()
@@ -216,12 +216,12 @@ return function(use)
       vim.lsp.enable("gopls")
       vim.lsp.enable("rust_analyzer")
     end,
-  }
+  },
 
   -- Autocompletion and suggestion.
-  use {
+  {
     "hrsh7th/nvim-cmp",
-    requires = {
+    dependencies = {
       "hrsh7th/cmp-nvim-lsp",     -- LSP source
       "hrsh7th/cmp-buffer",       -- buffer words
       "hrsh7th/cmp-path",         -- filesystem paths
@@ -280,5 +280,5 @@ return function(use)
       -- Keymap to restart cmp
       vim.keymap.set("n", "<leader>rs", "<cmd>CmpRestart<cr>", { desc = "Restart completion" })
     end
-  }
-end
+  },
+}

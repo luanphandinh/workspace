@@ -1,7 +1,7 @@
-return function(use)
-  use {
+return {
+  {
     "nvim-tree/nvim-tree.lua",
-    requires = { "nvim-tree/nvim-web-devicons" },
+    dependencies = { "nvim-tree/nvim-web-devicons" },
     config = function()
       require("nvim-tree").setup({
         filters = {
@@ -31,5 +31,5 @@ return function(use)
         end
       end, { noremap = true, silent = true })
     end,
-  }
-end
+  },
+}
