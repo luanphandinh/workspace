@@ -2,11 +2,25 @@ name: workspace
 
 on: [push]
 
+env:
+  GO_VERSION: "1.25.x"
+
 jobs:
   workspace-macOS:
     runs-on: macOS-latest
     steps:
     - uses: actions/checkout@v1
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: false
+
+    - name: Install gopls
+      run: |
+        go install golang.org/x/tools/gopls@latest
+        echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
     - name: Workspace
       run: |
@@ -21,6 +35,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: false
+
+    - name: Install gopls
+      run: |
+        go install golang.org/x/tools/gopls@latest
+        echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
     - name: Workspace
       run: |
