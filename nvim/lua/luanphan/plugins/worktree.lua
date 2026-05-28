@@ -1,7 +1,7 @@
 return function(_use)
   -- Pure telescope + git CLI; no external plugin.
   -- Requires are deferred into the function so module load doesn't touch
-  -- telescope (which is lazy-loaded by packer).
+  -- telescope (which is loaded by the plugin manager).
 
   -- Per-cwd buffer state. In-memory only (vim.g key) so it survives the
   -- switch but not an nvim restart. Map shape:

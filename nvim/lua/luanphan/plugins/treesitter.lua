@@ -2,7 +2,7 @@
 return function(use)
   use {
     "nvim-treesitter/nvim-treesitter",
-    run = ":TSUpdate", -- or `run` if still using older packer
+    run = ":TSUpdate",
     config = function()
       -- Tree-sitter folds: use built-in foldexpr (|:help vim.treesitter.foldexpr()|).
       -- Legacy `nvim_treesitter#foldexpr()` can spin in foldUpdate when switching
