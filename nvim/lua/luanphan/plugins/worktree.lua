@@ -149,16 +149,14 @@ local function setup()
     return nil
   end
 
-  -- Visible agent float (claude_agent / cursor_agent) for the current cwd.
-  -- Identified by: floating window + buffer carries the
-  -- `luanphan_persist_term` marker (toggleterm splits also set this marker
-  -- but they're not floating, so the relative-config check excludes them).
+  -- Visible agent float for the current cwd. Toggleterm splits also set
+  -- `luanphan_persist_term`, so only floating windows qualify here.
   local function find_agent_float()
     for _, win in ipairs(vim.api.nvim_list_wins()) do
       local cfg = vim.api.nvim_win_get_config(win)
       if cfg.relative and cfg.relative ~= "" then
         local buf = vim.api.nvim_win_get_buf(win)
-        if vim.b[buf].luanphan_persist_term then
+        if vim.b[buf].luanphan_persist_term and not vim.b[buf].luanphan_toggleterm then
           return win
         end
       end
@@ -356,8 +354,19 @@ local function setup()
     end
   end
 
+  local function close_toggleterm_windows()
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_is_valid(win) then
+        local buf = vim.api.nvim_win_get_buf(win)
+        if vim.b[buf].luanphan_toggleterm or vim.b[buf].toggle_number then
+          pcall(vim.api.nvim_win_close, win, false)
+        end
+      end
+    end
+  end
+
   -- Focus priority after a switch:
-  --   1. visible agent float (<leader>cc / <leader>ac), enter terminal mode
+  --   1. visible agent float
   --   2. window showing the file we just re-opened
   --   3. nvim-tree
   -- If none match, focus stays wherever the last step left it.
@@ -537,9 +546,9 @@ local function setup()
     --     buffers that won't refresh against the new worktree.
     close_diffview_tabs()
 
-    -- 2c. Toggle off the <leader>tt terminal (terminal.lua listens for this
-    --     User event) so the cd doesn't have to race with a visible window.
+    -- 2c. Toggle off the right-side toggleterm terminal before changing cwd.
     pcall(vim.api.nvim_exec_autocmds, "User", { pattern = "LuanphanWorktreeSwitchPre" })
+    close_toggleterm_windows()
 
     -- 3. cd. Fires DirChangedPre/DirChanged for the persistent-terminal modules.
     vim.cmd("cd " .. vim.fn.fnameescape(path))
@@ -609,8 +618,6 @@ local function setup()
     end
 
     -- 9. Focus priority: agent float > reopened active file > nvim-tree.
-    --    The terminal_agent's DirChanged hook may have already opened the
-    --    agent float for this cwd; if so we want focus to land there.
     focus_after_switch(reopened)
 
     -- 10. Jumplists are window-local but not workspace-local; clear them after
