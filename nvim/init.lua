@@ -20,6 +20,7 @@ local specs = {
   { import = "luanphan.plugins.nvim-tree" },
   { import = "luanphan.plugins.treesitter" },
   { import = "luanphan.plugins.telescope" },
+  { import = "luanphan.plugins.actions" },
   { import = "luanphan.plugins.copilot" },
   { import = "luanphan.plugins.lsp" },
   { import = "luanphan.plugins.gitsigns" },
@@ -27,7 +28,10 @@ local specs = {
   { import = "luanphan.plugins.worktree" },
   { import = "luanphan.plugins.harpoon" },
   { import = "luanphan.plugins.editor" },
+  { import = "luanphan.plugins.file-configs" },
+  { import = "luanphan.plugins.qf-replace" },
   { import = "luanphan.plugins.terminal" },
+  { import = "luanphan.plugins.agents" },
   { import = "luanphan.plugins.multi-cursor" },
   { import = "luanphan.plugins.which-key" },
 }
@@ -71,11 +75,3 @@ require("lazy").setup(specs, {
 })
 
 require("luanphan.keymap.keymap")
-require("luanphan.cursor_agent").setup()
-require("luanphan.claude_agent").setup()
-require("luanphan.codex_agent").setup()
-require("luanphan.file_configs.go")
-require("luanphan.file_configs.lua")
-require("luanphan.file_configs.json")
-require("luanphan.actions")
-require("luanphan.qf_replace").setup()

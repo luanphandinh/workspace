@@ -149,10 +149,6 @@ vim.keymap.set("n", "<leader>t2", function()
   require("luanphan.telescope_grep_opts").toggle_regex()
 end, { desc = "live_grep: toggle regex vs fixed-string (default: fixed-string on)" })
 
-vim.keymap.set("n", "<leader>sr", function()
-  require("luanphan.qf_replace").prompt_cfdo_substitute()
-end, { desc = "Quickfix: replace in all listed files (use g/ then <C-q> first)" })
-
 vim.keymap.set("n", "<leader>d", function()
   vim.diagnostic.open_float(nil, { focus = false })
 end, { desc = "Show diagnostic at line" })
