@@ -1,4 +1,13 @@
 UNAME := $(shell uname)
+ARCH := $(shell uname -m)
+export PATH := $(HOME)/.local/bin:$(HOME)/bin:$(PATH)
+ifeq ($(ARCH),arm64)
+	go_arch := arm64
+else ifeq ($(ARCH),aarch64)
+	go_arch := arm64
+else
+	go_arch := amd64
+endif
 ifneq (,$(findstring Linux,$(UNAME)))
 	install := sudo apt install
 	nvim_linux_name := nvim-linux-x86_64
@@ -23,8 +32,10 @@ else
 endif
 
 go_version := 1.25.9
+go_archive := go$(go_version).$(os_name)-$(go_arch).tar.gz
+export PATH := /usr/local/go/bin:$(HOME)/go/bin:$(PATH)
 
-.PHONY: help nvim nvim-test tmux go scripts skills-sync install-workspace
+.PHONY: help nvim nvim-test tmux go go-install gopls-install scripts skills-sync install-workspace agent-clis verify-agent-clis
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -48,14 +59,22 @@ nvim-install: ## Install neovim only, no config
 	@$(install) ripgrep
 	@nvim --version | head -n 1
 
-nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
+nvim-config: agent-clis ## Install neovim configuration, theme + exentsion + plugins, ...
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	rm -rf ~/.config/nvim/*
 	cp -r ./nvim/. ~/.config/nvim/
 	NVIM_INSTALL_TREESITTER=1 nvim --headless "+Lazy! sync" +qa
 
-nvim-test: ## Run headless Neovim smoke tests
+nvim-test: verify-agent-clis ## Run headless Neovim smoke tests
 	GOWORK=off nvim --headless "+luafile scripts/nvim-smoke-test.lua" +qa
+
+agent-clis: ## Install terminal agent CLIs used by Neovim
+	chmod +x ./scripts/install-agent-clis.sh
+	./scripts/install-agent-clis.sh install
+
+verify-agent-clis: ## Verify terminal agent CLIs used by Neovim
+	chmod +x ./scripts/install-agent-clis.sh
+	./scripts/install-agent-clis.sh verify
 
 tmux: ## Install tmux + configurations + plugins
 tmux: setup tmux-install tmux-config cleanup
@@ -80,13 +99,24 @@ alacritty-config: ## Install alacritty + config + theme
 	cp -r ./alacritty/. ~/.config/alacritty/
 	@$(fonts_install)
 
-go: ## Install go with version from go_verion, currently $(go_verion)
-go: setup go-install cleanup
+go: ## Install Go with version from go_version, currently $(go_version), plus gopls
+go: setup go-install gopls-install cleanup
 go-install:
-	curl https://dl.google.com/go/go$(go_version).$(os_name)-amd64.tar.gz > ./tmp/go.tar.gz
+	curl -fsSL https://dl.google.com/go/$(go_archive) -o ./tmp/go.tar.gz
 	sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf ./tmp/go.tar.gz
 	chmod +x ./go.sh
 	./go.sh
+	@if [ -n "$${GITHUB_PATH:-}" ]; then \
+		printf '%s\n' "/usr/local/go/bin" "$(HOME)/go/bin" >> "$$GITHUB_PATH" ; \
+	fi
+
+gopls-install:
+	@if command -v gopls >/dev/null 2>&1; then \
+		gopls version | head -n 1 ; \
+	else \
+		GOWORK=off go install golang.org/x/tools/gopls@latest ; \
+		gopls version | head -n 1 ; \
+	fi
 
 aws-cli: ## Install aws-cli
 aws-cli: setup aws-cli-install cleanup

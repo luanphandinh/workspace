@@ -1,9 +1,8 @@
 name: workspace
 
-on: [push]
-
-env:
-  GO_VERSION: "1.25.x"
+on:
+  push:
+  pull_request:
 
 jobs:
   workspace-macOS:
@@ -11,22 +10,20 @@ jobs:
     steps:
     - uses: actions/checkout@v1
 
-    - name: Setup Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache: false
-
-    - name: Install gopls
+    - name: Install Go
       run: |
-        go install golang.org/x/tools/gopls@latest
-        echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+        export HOMEBREW_NO_AUTO_UPDATE=1
+        export HOMEBREW_NO_ENV_HINTS=1
+        make go
 
     - name: Workspace
       run: |
         export HOMEBREW_NO_AUTO_UPDATE=1
         export HOMEBREW_NO_ENV_HINTS=1
         make workspace
+
+    - name: Agent CLI verification
+      run: make verify-agent-clis
 
     - name: Neovim smoke tests
       run: make nvim-test
@@ -36,40 +33,16 @@ jobs:
     steps:
     - uses: actions/checkout@v1
 
-    - name: Setup Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache: false
-
-    - name: Install gopls
-      run: |
-        go install golang.org/x/tools/gopls@latest
-        echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+    - name: Install Go
+      run: make go
 
     - name: Workspace
       run: |
         which bash
         make workspace
 
+    - name: Agent CLI verification
+      run: make verify-agent-clis
+
     - name: Neovim smoke tests
       run: make nvim-test
-
-  go-ubuntu:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v1
-
-    - name: Install golang
-      run: make go
-
-  go-macOs:
-    runs-on: macOS-latest
-    steps:
-    - uses: actions/checkout@v1
-
-    - name: Install golang
-      run: |
-        export HOMEBREW_NO_AUTO_UPDATE=1
-        export HOMEBREW_NO_ENV_HINTS=1
-        make go
