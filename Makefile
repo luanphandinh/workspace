@@ -30,7 +30,7 @@ else
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
 	fonts_install := brew install --cask font-fira-code
-	mac_apps_install := brew install --cask alfred maccy
+	mac_apps_install := brew install --cask alfred arc maccy
 endif
 
 go_version := 1.25.9
