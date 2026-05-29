@@ -2,6 +2,7 @@ local uv = vim.uv or vim.loop
 
 local tests = {}
 local temp_root
+local cleanup_fixture_id = 0
 
 vim.notify = function(message, level)
   if level and level >= vim.log.levels.WARN then
@@ -147,8 +148,10 @@ local function make_fixture()
 end
 
 local function make_workspace_cleanup_fixture()
-  local repo = temp_root .. "/example-cleanup-repo"
-  local workspace = temp_root .. "/local_workspaces/example-workspace/example-cleanup-repo"
+  cleanup_fixture_id = cleanup_fixture_id + 1
+  local repo_name = "example-cleanup-repo-" .. cleanup_fixture_id
+  local repo = temp_root .. "/" .. repo_name
+  local workspace = temp_root .. "/local_workspaces/example-workspace-" .. cleanup_fixture_id .. "/" .. repo_name
   vim.fn.mkdir(repo, "p")
   vim.fn.mkdir(vim.fn.fnamemodify(workspace, ":h"), "p")
 
@@ -291,14 +294,36 @@ local function feed_normal(keys)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "xt", false)
 end
 
+local function worktree_plugin()
+  return require("lazy.core.config").plugins["luanphan-worktree"]
+end
+
+local function worktree_plugin_loaded()
+  local plugin = worktree_plugin()
+  return plugin and plugin._ and plugin._.loaded
+end
+
+local function worktree_test_api()
+  if not (_G._luanphan_wt_test and _G._luanphan_wt_test.switch_to) then
+    require("lazy").load({ plugins = { "luanphan-worktree" } })
+  end
+  assert_true(_G._luanphan_wt_test and _G._luanphan_wt_test.switch_to, "worktree test hook is missing")
+  return _G._luanphan_wt_test
+end
+
+local function test_worktree_plugin_starts_lazy()
+  local plugin = worktree_plugin()
+  assert_true(plugin and plugin.lazy == true, "worktree plugin is not lazy")
+  assert_true(not worktree_plugin_loaded(), "worktree plugin loaded during startup")
+end
+
 local function test_lsp_definition_and_references(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   assert_lsp_navigation(repo .. "/main.go")
 end
 
 local function test_worktree_switch_keeps_lsp(worktree)
-  assert_true(_G._luanphan_wt_test and _G._luanphan_wt_test.switch_to, "worktree test hook is missing")
-  _G._luanphan_wt_test.switch_to(worktree)
+  worktree_test_api().switch_to(worktree)
   local expected = realpath(worktree)
   wait_until("worktree cwd", function()
     return realpath(vim.fn.getcwd()) == expected
@@ -314,7 +339,7 @@ local function test_worktree_switch_hides_toggleterm(repo, worktree)
     return visible_toggleterm_window_count() > 0
   end, 3000)
 
-  _G._luanphan_wt_test.switch_to(worktree)
+  worktree_test_api().switch_to(worktree)
   local expected = realpath(worktree)
   wait_until("worktree cwd", function()
     return realpath(vim.fn.getcwd()) == expected
@@ -339,7 +364,7 @@ local function test_worktree_switch_restores_agent_terminal(repo, worktree)
     return visible_agent_float_count() == 1
   end, 1000)
 
-  _G._luanphan_wt_test.switch_to(worktree)
+  worktree_test_api().switch_to(worktree)
   local expected_worktree = realpath(worktree)
   wait_until("worktree cwd", function()
     return realpath(vim.fn.getcwd()) == expected_worktree
@@ -351,7 +376,7 @@ local function test_worktree_switch_restores_agent_terminal(repo, worktree)
     return visible_agent_float_count() == 1
   end, 1000)
 
-  _G._luanphan_wt_test.switch_to(repo)
+  worktree_test_api().switch_to(repo)
   local expected_repo = realpath(repo)
   wait_until("repo cwd", function()
     return realpath(vim.fn.getcwd()) == expected_repo
@@ -361,17 +386,50 @@ local function test_worktree_switch_restores_agent_terminal(repo, worktree)
   end, 1000)
 end
 
-local function test_deleted_workspace_falls_back_to_source_worktree()
+local function test_deleted_workspace_falls_back_to_master_worktree_from_lazy_key()
   local source, workspace = make_workspace_cleanup_fixture()
   vim.cmd("cd " .. vim.fn.fnameescape(workspace))
 
   run({ "git", "worktree", "remove", "--force", workspace }, source)
-  invoke_map("<leader>gw")
+  feed_normal((vim.g.mapleader or "\\") .. "gw")
 
   local expected = realpath(source)
-  wait_until("source worktree fallback", function()
+  wait_until("master worktree fallback", function()
     return realpath(vim.fn.getcwd()) == expected
   end, 10000)
+  assert_true(worktree_plugin_loaded(), "worktree plugin did not lazy-load from <leader>gw")
+end
+
+local function test_deleted_workspace_started_at_workspace_falls_back_to_master_worktree()
+  local source, workspace = make_workspace_cleanup_fixture()
+  local script = temp_root .. "/deleted-workspace-start.lua"
+  write(script, {
+    "local uv = vim.uv or vim.loop",
+    "local source = " .. string.format("%q", source),
+    "local workspace = " .. string.format("%q", workspace),
+    "local expected = " .. string.format("%q", realpath(source)),
+    "local function fail(message) error(message, 0) end",
+    "local function assert_true(value, message) if not value then fail(message) end end",
+    "local function realpath(path) return uv.fs_realpath(path) or path end",
+    "local function cwd() local ok, value = pcall(vim.fn.getcwd); return ok and value or '' end",
+    "local plugin = require('lazy.core.config').plugins['luanphan-worktree']",
+    "assert_true(plugin and plugin.lazy == true, 'worktree plugin is not lazy')",
+    "assert_true(not (plugin._ and plugin._.loaded), 'worktree plugin loaded before key')",
+    "local out = vim.fn.systemlist({ 'git', '-C', source, 'worktree', 'remove', '--force', workspace })",
+    "assert_true(vim.v.shell_error == 0, table.concat(out, '\\n'))",
+    "vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes((vim.g.mapleader or '\\\\') .. 'gw', true, false, true), 'xt', false)",
+    "local ok = vim.wait(10000, function() return realpath(cwd()) == expected end, 50, false)",
+    "assert_true(ok, 'cwd did not fall back to master: ' .. cwd())",
+    "assert_true(plugin._ and plugin._.loaded, 'worktree plugin did not load after key')",
+  })
+
+  local env = ""
+  if vim.env.XDG_CONFIG_HOME and vim.env.XDG_CONFIG_HOME ~= "" then
+    env = "XDG_CONFIG_HOME=" .. vim.fn.shellescape(vim.env.XDG_CONFIG_HOME) .. " "
+  end
+  local cmd = "cd " .. vim.fn.shellescape(workspace) .. " && " .. env .. "GOWORK=off nvim --headless '+luafile " .. vim.fn.shellescape(script) .. "' +qa"
+  local out = vim.fn.systemlist(cmd)
+  assert_true(vim.v.shell_error == 0, table.concat(out, "\n"))
 end
 
 local function test_git_diff_previews(worktree)
@@ -400,6 +458,18 @@ local setup_ok, setup_err = xpcall(function()
   local repo, worktree = make_fixture()
   vim.env.GOWORK = "off"
 
+  test("worktree plugin starts lazy", function()
+    test_worktree_plugin_starts_lazy()
+  end)
+
+  test("deleted startup workspace falls back to master worktree", function()
+    test_deleted_workspace_started_at_workspace_falls_back_to_master_worktree()
+  end)
+
+  test("deleted workspace lazy key falls back to master worktree", function()
+    test_deleted_workspace_falls_back_to_master_worktree_from_lazy_key()
+  end)
+
   test("lsp definition and references", function()
     test_lsp_definition_and_references(repo)
   end)
@@ -420,9 +490,6 @@ local setup_ok, setup_err = xpcall(function()
     test_worktree_switch_restores_agent_terminal(repo, worktree)
   end)
 
-  test("deleted workspace falls back to source worktree", function()
-    test_deleted_workspace_falls_back_to_source_worktree()
-  end)
 end, debug.traceback)
 
 if not setup_ok then
