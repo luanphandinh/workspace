@@ -1,5 +1,4 @@
--- Shared terminal agent (Cursor CLI, Claude CLI, etc.). Use |cursor_agent.lua| and |claude_agent.lua|
--- thin wrappers around |terminal_agent.create()|.
+-- Shared terminal agent factory used by the lazy agent specs.
 --
 -- Agent terminals are scoped per-worktree: each cwd owns its own agent buffer.
 -- Switching worktree (|worktree.lua|) hides but does not kill these buffers.
@@ -33,8 +32,6 @@ local BASE_DEFAULTS = {
 ---@field augroup_prefix string prefix for autocmd groups (CursorAgent / ClaudeAgent)
 ---@field hint_open string hint when no terminal (e.g. "<leader>cc")
 ---@field defaults? table merged into BASE_DEFAULTS (cmd, args, …)
----@field keymaps table keys: toggle, send, optional focus
----@field map_desc? table optional desc.toggle, desc.send, desc.focus
 function M.create(profile)
   profile = vim.tbl_extend("force", {
     g_bufnr = "terminal_agent_bufnr",
@@ -42,8 +39,6 @@ function M.create(profile)
     augroup_prefix = "TerminalAgent",
     hint_open = "<leader>xx",
     defaults = {},
-    keymaps = {},
-    map_desc = {},
   }, profile)
 
   local function nx(msg, level)
@@ -799,21 +794,6 @@ function API.setup(opts)
     end,
   })
 
-  local km = profile.keymaps
-  local md = profile.map_desc or {}
-  vim.keymap.set("n", km.toggle, function()
-    API.toggle()
-  end, { desc = md.toggle or "Toggle agent terminal" })
-
-  if km.focus then
-    vim.keymap.set("n", km.focus, function()
-      API.focus()
-    end, { desc = md.focus or "Focus agent terminal" })
-  end
-
-  vim.keymap.set("x", km.send, function()
-    API.send_selection()
-  end, { desc = md.send or "Send selection to agent" })
 end
 
   return API

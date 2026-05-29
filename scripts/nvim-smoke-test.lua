@@ -146,6 +146,24 @@ local function make_fixture()
   return repo, worktree
 end
 
+local function make_workspace_cleanup_fixture()
+  local repo = temp_root .. "/example-cleanup-repo"
+  local workspace = temp_root .. "/local_workspaces/example-workspace/example-cleanup-repo"
+  vim.fn.mkdir(repo, "p")
+  vim.fn.mkdir(vim.fn.fnamemodify(workspace, ":h"), "p")
+
+  run({ "git", "init", "-b", "main" }, repo)
+  run({ "git", "config", "user.name", "Example User" }, repo)
+  run({ "git", "config", "user.email", "example@example.invalid" }, repo)
+  write(repo .. "/README.md", { "source worktree" })
+  run({ "git", "add", "." }, repo)
+  run({ "git", "commit", "-m", "initial cleanup fixture" }, repo)
+  run({ "git", "branch", "feature-cleanup" }, repo)
+  run({ "git", "worktree", "add", workspace, "feature-cleanup" }, repo)
+
+  return repo, workspace
+end
+
 local function find_position(buf, needle, line_match)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   for i, line in ipairs(lines) do
@@ -240,10 +258,37 @@ local function close_diffview()
   end, 5000)
 end
 
+local function visible_toggleterm_window_count()
+  local count = 0
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local buf = vim.api.nvim_win_get_buf(win)
+    if vim.b[buf].luanphan_toggleterm or vim.b[buf].toggle_number then
+      count = count + 1
+    end
+  end
+  return count
+end
+
+local function visible_agent_float_count()
+  local count = 0
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local cfg = vim.api.nvim_win_get_config(win)
+    local buf = vim.api.nvim_win_get_buf(win)
+    if cfg.relative ~= "" and vim.bo[buf].buftype == "terminal" and vim.b[buf].luanphan_persist_term and not vim.b[buf].luanphan_toggleterm then
+      count = count + 1
+    end
+  end
+  return count
+end
+
 local function invoke_map(lhs)
   local map = vim.fn.maparg(lhs, "n", false, true)
   assert_true(type(map) == "table" and type(map.callback) == "function", lhs .. " is not a callback mapping")
   map.callback()
+end
+
+local function feed_normal(keys)
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "xt", false)
 end
 
 local function test_lsp_definition_and_references(repo)
@@ -259,6 +304,74 @@ local function test_worktree_switch_keeps_lsp(worktree)
     return realpath(vim.fn.getcwd()) == expected
   end, 10000)
   assert_lsp_navigation(worktree .. "/main.go")
+end
+
+local function test_worktree_switch_hides_toggleterm(repo, worktree)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+
+  feed_normal((vim.g.mapleader or "\\") .. "tt")
+  wait_until("toggleterm open", function()
+    return visible_toggleterm_window_count() > 0
+  end, 3000)
+
+  _G._luanphan_wt_test.switch_to(worktree)
+  local expected = realpath(worktree)
+  wait_until("worktree cwd", function()
+    return realpath(vim.fn.getcwd()) == expected
+  end, 10000)
+  assert_true(visible_toggleterm_window_count() == 0, "toggleterm window remained visible after worktree switch")
+end
+
+local function test_worktree_switch_restores_agent_terminal(repo, worktree)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+
+  local agent = require("luanphan.terminal_agent").create({
+    g_bufnr = "smoke_agent_bufnr",
+    notify_prefix = "smoke_agent",
+    augroup_prefix = "SmokeAgent",
+    hint_open = "<smoke>",
+    defaults = { cmd = "sh" },
+  })
+  agent.setup()
+  agent.toggle()
+
+  wait_until("repo agent terminal open", function()
+    return visible_agent_float_count() == 1
+  end, 1000)
+
+  _G._luanphan_wt_test.switch_to(worktree)
+  local expected_worktree = realpath(worktree)
+  wait_until("worktree cwd", function()
+    return realpath(vim.fn.getcwd()) == expected_worktree
+  end, 10000)
+  assert_true(visible_agent_float_count() == 0, "agent terminal unexpectedly visible in new worktree")
+
+  agent.toggle()
+  wait_until("worktree agent terminal open", function()
+    return visible_agent_float_count() == 1
+  end, 1000)
+
+  _G._luanphan_wt_test.switch_to(repo)
+  local expected_repo = realpath(repo)
+  wait_until("repo cwd", function()
+    return realpath(vim.fn.getcwd()) == expected_repo
+  end, 10000)
+  wait_until("repo agent terminal restored", function()
+    return visible_agent_float_count() == 1
+  end, 1000)
+end
+
+local function test_deleted_workspace_falls_back_to_source_worktree()
+  local source, workspace = make_workspace_cleanup_fixture()
+  vim.cmd("cd " .. vim.fn.fnameescape(workspace))
+
+  run({ "git", "worktree", "remove", "--force", workspace }, source)
+  invoke_map("<leader>gw")
+
+  local expected = realpath(source)
+  wait_until("source worktree fallback", function()
+    return realpath(vim.fn.getcwd()) == expected
+  end, 10000)
 end
 
 local function test_git_diff_previews(worktree)
@@ -295,8 +408,20 @@ local setup_ok, setup_err = xpcall(function()
     test_worktree_switch_keeps_lsp(worktree)
   end)
 
+  test("worktree switch hides toggleterm", function()
+    test_worktree_switch_hides_toggleterm(repo, worktree)
+  end)
+
   test("git diff previews", function()
     test_git_diff_previews(worktree)
+  end)
+
+  test("worktree switch restores agent terminal", function()
+    test_worktree_switch_restores_agent_terminal(repo, worktree)
+  end)
+
+  test("deleted workspace falls back to source worktree", function()
+    test_deleted_workspace_falls_back_to_source_worktree()
   end)
 end, debug.traceback)
 

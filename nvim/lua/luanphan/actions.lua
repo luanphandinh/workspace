@@ -128,12 +128,9 @@ local actions = {
             local sel = action_state.get_selected_entry()
             actions_telescope.close(prompt_bufnr)
             if not sel then return end
-            -- Apply to every known agent flavor so position stays consistent.
-            for _, mod in ipairs({ "luanphan.claude_agent", "luanphan.cursor_agent" }) do
-              local ok, agent = pcall(require, mod)
-              if ok and type(agent.set_float_position) == "function" then
-                agent.set_float_position(sel.value)
-              end
+            local ok, agents = pcall(require, "luanphan.plugins.agents")
+            if ok and type(agents.set_float_position) == "function" then
+              agents.set_float_position(sel.value)
             end
             vim.notify("Agent terminal position: " .. sel.value)
           end)

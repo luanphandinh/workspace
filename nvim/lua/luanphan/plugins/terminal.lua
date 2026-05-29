@@ -12,7 +12,10 @@ local function get_term()
     direction = "vertical",
     close_on_exit = false,
     on_open = function(term)
-      pcall(function() vim.b[term.bufnr].luanphan_persist_term = true end)
+      pcall(function()
+        vim.b[term.bufnr].luanphan_persist_term = true
+        vim.b[term.bufnr].luanphan_toggleterm = true
+      end)
     end,
   })
   terms[cwd] = t
