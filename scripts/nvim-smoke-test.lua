@@ -146,6 +146,24 @@ local function make_fixture()
   return repo, worktree
 end
 
+local function make_workspace_cleanup_fixture()
+  local repo = temp_root .. "/example-cleanup-repo"
+  local workspace = temp_root .. "/local_workspaces/example-workspace/example-cleanup-repo"
+  vim.fn.mkdir(repo, "p")
+  vim.fn.mkdir(vim.fn.fnamemodify(workspace, ":h"), "p")
+
+  run({ "git", "init", "-b", "main" }, repo)
+  run({ "git", "config", "user.name", "Example User" }, repo)
+  run({ "git", "config", "user.email", "example@example.invalid" }, repo)
+  write(repo .. "/README.md", { "source worktree" })
+  run({ "git", "add", "." }, repo)
+  run({ "git", "commit", "-m", "initial cleanup fixture" }, repo)
+  run({ "git", "branch", "feature-cleanup" }, repo)
+  run({ "git", "worktree", "add", workspace, "feature-cleanup" }, repo)
+
+  return repo, workspace
+end
+
 local function find_position(buf, needle, line_match)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   for i, line in ipairs(lines) do
@@ -343,6 +361,19 @@ local function test_worktree_switch_restores_agent_terminal(repo, worktree)
   end, 1000)
 end
 
+local function test_deleted_workspace_falls_back_to_source_worktree()
+  local source, workspace = make_workspace_cleanup_fixture()
+  vim.cmd("cd " .. vim.fn.fnameescape(workspace))
+
+  run({ "git", "worktree", "remove", "--force", workspace }, source)
+  invoke_map("<leader>gw")
+
+  local expected = realpath(source)
+  wait_until("source worktree fallback", function()
+    return realpath(vim.fn.getcwd()) == expected
+  end, 10000)
+end
+
 local function test_git_diff_previews(worktree)
   vim.cmd("cd " .. vim.fn.fnameescape(worktree))
   local status = table.concat(run({ "git", "status", "--short" }, worktree), "\n")
@@ -387,6 +418,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("worktree switch restores agent terminal", function()
     test_worktree_switch_restores_agent_terminal(repo, worktree)
+  end)
+
+  test("deleted workspace falls back to source worktree", function()
+    test_deleted_workspace_falls_back_to_source_worktree()
   end)
 end, debug.traceback)
 
