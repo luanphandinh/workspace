@@ -27,6 +27,7 @@ local specs = {
   { import = "luanphan.plugins.worktree" },
   { import = "luanphan.plugins.harpoon" },
   { import = "luanphan.plugins.editor" },
+  { import = "luanphan.plugins.file-configs" },
   { import = "luanphan.plugins.terminal" },
   { import = "luanphan.plugins.agents" },
   { import = "luanphan.plugins.multi-cursor" },
@@ -72,8 +73,5 @@ require("lazy").setup(specs, {
 })
 
 require("luanphan.keymap.keymap")
-require("luanphan.file_configs.go")
-require("luanphan.file_configs.lua")
-require("luanphan.file_configs.json")
 require("luanphan.actions")
 require("luanphan.qf_replace").setup()
