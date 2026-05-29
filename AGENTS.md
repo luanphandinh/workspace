@@ -10,9 +10,9 @@ This repo is the user's dotfiles / workspace tooling root: Neovim config, tmux, 
 - Use neutral placeholders such as `<user-focus>`, `<service-a>`, `<repo-a>`, `<method-name>`, `<field-name>`, `<topic-name>`, `example-service`, or `example-repo`.
 - Before editing or syncing this repo, scan new text for non-generic names and replace them with neutral placeholders.
 
-## Sync with CLAUDE.md — keep both files identical
+## Sync Runtime Instructions
 
-This file (`AGENTS.md`) and `CLAUDE.md` carry the **same instructions**, mirrored for different agent runtimes. Whenever you edit ONE of them, you MUST apply the **identical change** to the other in the same turn — no exceptions, no "I'll do the other one later". A reviewer should be able to `diff CLAUDE.md AGENTS.md` and see only the title-line difference (`# Claude instructions` vs. `# Agent instructions`). If the two files drift, agents on different runtimes will follow different rules — that's the bug this rule prevents.
+The runtime instruction files carry the **same instructions**, mirrored for different agent runtimes. Whenever you edit ONE of them, you MUST apply the **identical change** to the other in the same turn — no exceptions, no "I'll do the other one later". A reviewer should be able to `diff CLAUDE.md AGENTS.md` and see only the title-line difference (`# Claude instructions` vs. `# Agent instructions`). If the two files drift, agents on different runtimes will follow different rules — that's the bug this rule prevents.
 
 ## Neovim configuration
 
@@ -25,7 +25,7 @@ make nvim-config
 
 ## Skills
 
-- Reusable skills live under `skills/<skill-name>/SKILL.md`. The `skills-sync` target copies the folder into `~/.claude/skills/`, `~/.cursor/skills/`, and `~/.agents/skills/`.
+- Reusable skills live under `skills/<skill-name>/SKILL.md`. The `skills-sync` target uses `npx skills` to install all local skills into all supported local agent skill directories.
 - After adding or editing anything under `skills/**`, run:
 
 ```bash
@@ -47,5 +47,5 @@ make install-workspace
 
 ## General
 
-- Prefer editing in this repo, then running the install target — never edit the copies under `~/.config/`, `~/bin/`, or `~/.claude/skills/` directly, since they're overwritten on the next sync.
+- Prefer editing in this repo, then running the install target — never edit installed copies or symlinks under `~/.config/`, `~/bin/`, or agent skill directories directly, since they're overwritten or relinked on the next sync.
 - `make help` lists every target with its description.

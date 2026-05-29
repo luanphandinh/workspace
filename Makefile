@@ -133,7 +133,7 @@ aws-cli-install:
 scripts: ## chmod +x for all scripts
 	chmod -R +x ./scripts
 
-skills-sync: ## Copy ./skills to ~/.claude/skills, ~/.cursor/skills, ~/.agents/skills (Codex CLI), ~/.hermes/skills
+skills-sync: ## Install ./skills to all supported local AI agents via npx skills
 	chmod +x ./scripts/sync-skills.sh
 	./scripts/sync-skills.sh
 
