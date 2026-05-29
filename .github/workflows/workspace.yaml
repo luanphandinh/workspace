@@ -9,17 +9,11 @@ jobs:
     steps:
     - uses: actions/checkout@v1
 
-    - name: Install Go
+    - name: Setup
       run: |
         export HOMEBREW_NO_AUTO_UPDATE=1
         export HOMEBREW_NO_ENV_HINTS=1
-        make go
-
-    - name: Workspace
-      run: |
-        export HOMEBREW_NO_AUTO_UPDATE=1
-        export HOMEBREW_NO_ENV_HINTS=1
-        make workspace
+        make setup
 
     - name: Agent CLI verification
       run: make verify-agent-clis
@@ -32,13 +26,10 @@ jobs:
     steps:
     - uses: actions/checkout@v1
 
-    - name: Install Go
-      run: make go
-
-    - name: Workspace
+    - name: Setup
       run: |
         which bash
-        make workspace
+        make setup
 
     - name: Agent CLI verification
       run: make verify-agent-clis

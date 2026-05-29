@@ -9,12 +9,12 @@ make
 
 ### Opts
 ```
-workspace:  
-	 Install nvim + tmux + alacritty with configuration respectively.
+setup:
+	 Install all workspace tools, configs, and terminal agent CLIs.
+setup-deps:
+	 Setup deps
 workspace-config: 
 	 Install config for workspace
-setup: 
-	 Setup deps
 nvim: 
 	 Install neovim + all plugins
 nvim-install: 
@@ -33,6 +33,8 @@ alacritty-install:
 	 Install alacritty only, now config
 alacritty-config: 
 	 Install alacritty + config + theme
+workspace-bin:
+	 Install ./bin scripts and workspace shell setup
 cleanup: 
 	 Clean up ./tmp folder
 
