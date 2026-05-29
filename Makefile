@@ -35,12 +35,12 @@ go_version := 1.25.9
 go_archive := go$(go_version).$(os_name)-$(go_arch).tar.gz
 export PATH := /usr/local/go/bin:$(HOME)/go/bin:$(PATH)
 
-.PHONY: help nvim nvim-test tmux go go-install gopls-install scripts skills-sync install-workspace agent-clis verify-agent-clis
+.PHONY: help workspace workspace-config setup nvim nvim-install nvim-config nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config go go-install gopls-install aws-cli aws-cli-install scripts skills-sync install-workspace cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
-workspace:  ## Install nvim + tmux + alacritty with configuration respectively.
-workspace: setup nvim tmux alacritty cleanup
+workspace:  ## Install nvim, tmux, alacritty, and terminal agent CLIs.
+workspace: setup agent-clis nvim tmux alacritty cleanup
 
 workspace-config: ## Install config for workspace
 workspace-config:
@@ -59,7 +59,7 @@ nvim-install: ## Install neovim only, no config
 	@$(install) ripgrep
 	@nvim --version | head -n 1
 
-nvim-config: agent-clis ## Install neovim configuration, theme + exentsion + plugins, ...
+nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	rm -rf ~/.config/nvim/*
 	cp -r ./nvim/. ~/.config/nvim/
