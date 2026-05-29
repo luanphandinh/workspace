@@ -37,7 +37,7 @@ go_version := 1.25.9
 go_archive := go$(go_version).$(os_name)-$(go_arch).tar.gz
 export PATH := /usr/local/go/bin:$(HOME)/go/bin:$(PATH)
 
-.PHONY: help setup setup-deps workspace-config nvim nvim-install nvim-config nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install aws-cli aws-cli-install scripts skills-sync workspace-bin cleanup
+.PHONY: help setup setup-deps workspace-config nvim nvim-install nvim-config nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -122,13 +122,6 @@ gopls-install:
 		GOWORK=off go install golang.org/x/tools/gopls@latest ; \
 		gopls version | head -n 1 ; \
 	fi
-
-aws-cli: ## Install aws-cli
-aws-cli: setup-deps aws-cli-install cleanup
-aws-cli-install:
-	cd tmp && curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-	cd tmp && unzip awscliv2.zip
-	cd tmp && sudo ./aws/install
 
 scripts: ## chmod +x for all scripts
 	chmod -R +x ./scripts
