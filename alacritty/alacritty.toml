@@ -17,10 +17,14 @@ bindings = [
   # Ctrl+Shift+ArrowDown → next pinned session
   { key = "ArrowUp",    mods = "Control|Shift", chars = "\u001b[25~" },
   { key = "ArrowDown",  mods = "Control|Shift", chars = "\u001b[26~" },
+  { key = "K",          mods = "Control|Shift", chars = "\u001b[25~" },
+  { key = "J",          mods = "Control|Shift", chars = "\u001b[26~" },
   # Previous / next tmux WINDOW in the current session (User2 / User3).
   # F15 / F16 codes — nothing on macOS emits these naturally.
   { key = "ArrowLeft",  mods = "Control|Shift", chars = "\u001b[28~" },
   { key = "ArrowRight", mods = "Control|Shift", chars = "\u001b[29~" },
+  { key = "H",          mods = "Control|Shift", chars = "\u001b[28~" },
+  { key = "L",          mods = "Control|Shift", chars = "\u001b[29~" },
   # Jump to tmux WINDOW 1..9 in the current session (User4..User12).
   # Overrides Alacritty's default Cmd+number tab switching.
   { key = "1", mods = "Command", chars = "\u001b[31~" },
