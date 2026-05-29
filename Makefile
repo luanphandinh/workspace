@@ -37,25 +37,20 @@ go_version := 1.25.9
 go_archive := go$(go_version).$(os_name)-$(go_arch).tar.gz
 export PATH := /usr/local/go/bin:$(HOME)/go/bin:$(PATH)
 
-.PHONY: help workspace workspace-config setup nvim nvim-install nvim-config nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install aws-cli aws-cli-install scripts skills-sync install-workspace cleanup
+.PHONY: help setup setup-deps nvim nvim-install nvim-config nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
-workspace:  ## Install nvim, tmux, alacritty, and terminal agent CLIs.
-workspace: setup agent-clis nvim tmux alacritty mac-apps cleanup
+setup:  ## Install all workspace tools, configs, and terminal agent CLIs.
+setup: setup-deps go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config mac-apps cleanup
 
-workspace-config: ## Install config for workspace
-workspace-config:
-	chmod +x workspace.sh
-	./workspace.sh
-
-setup: ## Setup deps
+setup-deps: ## Setup deps
 	test -d ./tmp || mkdir -p ./tmp
 	@$(setup_script)
 	@yes Y | $(install) $(deps)
 
 nvim: ## Install neovim + all plugins
-nvim: setup nvim-install nvim-config cleanup
+nvim: setup-deps nvim-install nvim-config cleanup
 nvim-install: ## Install neovim only, no config
 	@$(install_nvim)
 	@$(install) ripgrep
@@ -79,7 +74,7 @@ verify-agent-clis: ## Verify terminal agent CLIs used by Neovim
 	./scripts/install-agent-clis.sh verify
 
 tmux: ## Install tmux + configurations + plugins
-tmux: setup tmux-install tmux-config cleanup
+tmux: setup-deps tmux-install tmux-config cleanup
 tmux-install: ## Install tmux only, no config nor plugins
 	@$(install) tmux
 	tmux new -d
@@ -105,12 +100,10 @@ mac-apps: ## Install macOS workspace GUI apps
 	@$(mac_apps_install)
 
 go: ## Install Go with version from go_version, currently $(go_version), plus gopls
-go: setup go-install gopls-install cleanup
+go: setup-deps go-install gopls-install cleanup
 go-install:
 	curl -fsSL https://dl.google.com/go/$(go_archive) -o ./tmp/go.tar.gz
 	sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf ./tmp/go.tar.gz
-	chmod +x ./go.sh
-	./go.sh
 	@if [ -n "$${GITHUB_PATH:-}" ]; then \
 		printf '%s\n' "/usr/local/go/bin" "$(HOME)/go/bin" >> "$$GITHUB_PATH" ; \
 	fi
@@ -123,13 +116,6 @@ gopls-install:
 		gopls version | head -n 1 ; \
 	fi
 
-aws-cli: ## Install aws-cli
-aws-cli: setup aws-cli-install cleanup
-aws-cli-install:
-	cd tmp && curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-	cd tmp && unzip awscliv2.zip
-	cd tmp && sudo ./aws/install
-
 scripts: ## chmod +x for all scripts
 	chmod -R +x ./scripts
 
@@ -137,22 +123,17 @@ skills-sync: ## Install ./skills to all supported local AI agents via npx skills
 	chmod +x ./scripts/sync-skills.sh
 	./scripts/sync-skills.sh
 
-install-workspace: ## Install ./bin scripts to ~/bin and ensure ~/bin is on PATH in ~/.zshrc
+workspace-bin: ## Install ./bin scripts and workspace shell setup
 	test -d ~/bin || mkdir -p ~/bin
 	cp -r ./bin/. ~/bin/
 	chmod +x ~/bin/*
-	@touch ~/.zshrc
-	@grep -qxF 'export PATH="$$HOME/bin:$$PATH"' ~/.zshrc || \
-		(echo 'export PATH="$$HOME/bin:$$PATH"' >> ~/.zshrc && echo "added PATH export to ~/.zshrc")
-	@alias_line="alias mcodex='codex -c '\''notify=[\"$$HOME/bin/codex-turn-ended-notify\"]'\'''" ; \
-		if ! grep -qxF "$$alias_line" ~/.zshrc; then \
-			tmp_file="$$(mktemp)" ; \
-			grep -v '^alias mcodex=' ~/.zshrc > "$$tmp_file" || true ; \
-			printf '%s\n' "$$alias_line" >> "$$tmp_file" ; \
-			cat "$$tmp_file" > ~/.zshrc ; \
-			rm -f "$$tmp_file" ; \
-			echo "installed mcodex alias in ~/.zshrc" ; \
-		fi
+	@for profile in "$$HOME/.zshrc" "$$HOME/.bashrc" "$$HOME/.profile"; do \
+		touch "$$profile" ; \
+		while IFS= read -r line || [ -n "$$line" ]; do \
+			[ -n "$$line" ] || continue ; \
+			grep -qxF "$$line" "$$profile" || { printf '%s\n' "$$line" >> "$$profile" ; echo "added to $$profile: $$line" ; } ; \
+		done < ./shell/workspace.sh ; \
+	done
 
 cleanup: ## Clean up ./tmp folder
 	test -d ./tmp && rm -rf ./tmp
