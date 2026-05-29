@@ -145,7 +145,7 @@ render() {
 		fi
 
 		# Aligned help: 8-col key field + 1 space + description.
-		# `⌥⌘↑/↓` / `⌥⌘←/→` are 5 visible cols, padded to 8 with 3 spaces.
+		# `C-S-↑/↓` / `C-S-←/→` are 7 visible cols, padded to 8 with 1 space.
 		# Blank spacer line above must be EOL-cleared (not just `\n`-skipped)
 		# so a previous longer render's content doesn't linger here.
 		printf '%s\n──%s\n' "$EOL" "$EOL"
@@ -154,8 +154,8 @@ render() {
 		printf 'prefix+e clear all%s\n' "$EOL"
 		printf 'prefix+P replace last%s\n' "$EOL"
 		printf 'prefix+S resize%s\n' "$EOL"
-		printf '⌥⌘↑/↓    cycle%s\n' "$EOL"
-		printf '⌥⌘←/→    window%s\n' "$EOL"
+		printf 'C-S-↑/↓  cycle%s\n' "$EOL"
+		printf 'C-S-←/→  window%s\n' "$EOL"
 
 		# Wipe any stale content below the new render (left over from a
 		# previous taller render — e.g. dropped pin, closed window).
