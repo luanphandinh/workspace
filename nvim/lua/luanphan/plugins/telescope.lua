@@ -64,13 +64,6 @@ return {
       { "<leader>lf", buffers, desc = "Telescope: buffers" },
       { "gs", document_symbols, desc = "Telescope: document symbols" },
       { "<leader>ft", filetypes, desc = "Telescope: set filetype" },
-      {
-        "<leader>cp",
-        function()
-          require("luanphan.actions").show_command_palette()
-        end,
-        desc = "Show commands",
-      },
     },
     dependencies = {
       "nvim-lua/plenary.nvim",

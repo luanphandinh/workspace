@@ -20,6 +20,7 @@ local specs = {
   { import = "luanphan.plugins.nvim-tree" },
   { import = "luanphan.plugins.treesitter" },
   { import = "luanphan.plugins.telescope" },
+  { import = "luanphan.plugins.actions" },
   { import = "luanphan.plugins.copilot" },
   { import = "luanphan.plugins.lsp" },
   { import = "luanphan.plugins.gitsigns" },
@@ -73,5 +74,4 @@ require("lazy").setup(specs, {
 })
 
 require("luanphan.keymap.keymap")
-require("luanphan.actions")
 require("luanphan.qf_replace").setup()
