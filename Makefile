@@ -104,8 +104,6 @@ go: setup-deps go-install gopls-install cleanup
 go-install:
 	curl -fsSL https://dl.google.com/go/$(go_archive) -o ./tmp/go.tar.gz
 	sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf ./tmp/go.tar.gz
-	chmod +x ./go.sh
-	./go.sh
 	@if [ -n "$${GITHUB_PATH:-}" ]; then \
 		printf '%s\n' "/usr/local/go/bin" "$(HOME)/go/bin" >> "$$GITHUB_PATH" ; \
 	fi
