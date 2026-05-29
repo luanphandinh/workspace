@@ -18,6 +18,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 	deps := fd-find python3-pip nodejs npm curl
 	os_name := linux
 	fonts_install := sudo apt install fonts-firacode
+	mac_apps_install := true
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
 									&& sudo apt install software-properties-common -y \
 									&& sudo add-apt-repository ppa:aslatter/ppa -y \
@@ -29,18 +30,19 @@ else
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
 	fonts_install := brew install --cask font-fira-code
+	mac_apps_install := brew install --cask alfred maccy
 endif
 
 go_version := 1.25.9
 go_archive := go$(go_version).$(os_name)-$(go_arch).tar.gz
 export PATH := /usr/local/go/bin:$(HOME)/go/bin:$(PATH)
 
-.PHONY: help workspace workspace-config setup nvim nvim-install nvim-config nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config go go-install gopls-install aws-cli aws-cli-install scripts skills-sync install-workspace cleanup
+.PHONY: help workspace workspace-config setup nvim nvim-install nvim-config nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install aws-cli aws-cli-install scripts skills-sync install-workspace cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
 workspace:  ## Install nvim, tmux, alacritty, and terminal agent CLIs.
-workspace: setup agent-clis nvim tmux alacritty cleanup
+workspace: setup agent-clis nvim tmux alacritty mac-apps cleanup
 
 workspace-config: ## Install config for workspace
 workspace-config:
@@ -98,6 +100,9 @@ alacritty-config: ## Install alacritty + config + theme
 	test -d ~/.config/alacritty || mkdir -p ~/.config/alacritty
 	cp -r ./alacritty/. ~/.config/alacritty/
 	@$(fonts_install)
+
+mac-apps: ## Install macOS workspace GUI apps
+	@$(mac_apps_install)
 
 go: ## Install Go with version from go_version, currently $(go_version), plus gopls
 go: setup go-install gopls-install cleanup
