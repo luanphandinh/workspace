@@ -1,5 +1,5 @@
 ---
-name: "local-coder"
+name: "local-coding"
 description: "Use when implementing code changes from a tech design, workspace plan, or user-requested feature or bugfix in a local multi-repo workspace."
 ---
 
