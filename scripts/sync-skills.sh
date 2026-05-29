@@ -9,19 +9,11 @@ if [[ ! -d "$SKILLS" ]]; then
   exit 1
 fi
 
-# Cursor / Claude: ~/.cursor/skills, ~/.claude/skills
-# Codex CLI (user scope): ~/.agents/skills — see https://developers.openai.com/codex/skills
-# Hermes agent (user scope): ~/.hermes/skills
-DESTS=(
-  "${HOME}/.claude/skills"
-  "${HOME}/.cursor/skills"
-  "${HOME}/.agents/skills"
-  "${HOME}/.hermes/skills"
-)
+if ! command -v npx >/dev/null 2>&1; then
+  echo "sync-skills: npx is required" >&2
+  exit 1
+fi
 
-for d in "${DESTS[@]}"; do
-  mkdir -p "$d"
-  cp -a "${SKILLS}/." "$d/"
-done
+npx --yes skills add "$ROOT" -g --all --full-depth
 
-echo "sync-skills: copied to ${DESTS[*]}"
+echo "sync-skills: installed all skills via npx skills"
