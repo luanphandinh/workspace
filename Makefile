@@ -127,11 +127,13 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	test -d ~/bin || mkdir -p ~/bin
 	cp -r ./bin/. ~/bin/
 	chmod +x ~/bin/*
-	@touch ~/.zshrc
-	@while IFS= read -r line || [ -n "$$line" ]; do \
-		[ -n "$$line" ] || continue ; \
-		grep -qxF "$$line" ~/.zshrc || { printf '%s\n' "$$line" >> ~/.zshrc ; echo "added to ~/.zshrc: $$line" ; } ; \
-	done < ./zsh/workspace.zsh
+	@for profile in "$$HOME/.zshrc" "$$HOME/.bashrc" "$$HOME/.profile"; do \
+		touch "$$profile" ; \
+		while IFS= read -r line || [ -n "$$line" ]; do \
+			[ -n "$$line" ] || continue ; \
+			grep -qxF "$$line" "$$profile" || { printf '%s\n' "$$line" >> "$$profile" ; echo "added to $$profile: $$line" ; } ; \
+		done < ./shell/workspace.sh ; \
+	done
 
 cleanup: ## Clean up ./tmp folder
 	test -d ./tmp && rm -rf ./tmp
