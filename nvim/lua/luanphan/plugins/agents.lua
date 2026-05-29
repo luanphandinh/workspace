@@ -8,7 +8,7 @@ local agent_defs = {
     g_bufnr = "cursor_agent_bufnr",
     notify_prefix = "cursor_agent",
     augroup_prefix = "CursorAgent",
-    defaults = { cmd = "agent" },
+    defaults = { cmd = "cursor-agent" },
     keys = {
       toggle = { lhs = "<leader>ac", mode = "n", desc = "Toggle Cursor agent terminal" },
       focus = { lhs = "<leader>af", mode = "n", desc = "Focus Cursor agent terminal" },

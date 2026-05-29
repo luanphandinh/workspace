@@ -1,18 +1,25 @@
 #!/bin/bash
 
 function addPath() {
-  path=$1
-  if [ -f $path ];then
-    echo "found ${path}"
-    exported=$(grep 'export PATH=$PATH:/usr/local/go/bin' $path | wc -l)
-    if [ $exported -eq 0 ]; then
-      echo "export PATH=$PATH:/usr/local/go/bin to $path"
-      echo 'export PATH=$PATH:/usr/local/go/bin' >> $path
+  profile=$1
+  line=$2
+  if [ -f "$profile" ]; then
+    echo "found ${profile}"
+    exported=$(grep -xF "$line" "$profile" | wc -l)
+    if [ "$exported" -eq 0 ]; then
+      echo "$line to $profile"
+      echo "$line" >> "$profile"
     fi
   fi
 }
 
-addPath ~/.zshrc
-addPath ~/.profile
-addPath ~/.bashrc
-addPath ~/.bash_profile
+function addGoPaths() {
+  profile=$1
+  addPath "$profile" 'export PATH=$PATH:/usr/local/go/bin'
+  addPath "$profile" 'export PATH=$PATH:$HOME/go/bin'
+}
+
+addGoPaths ~/.zshrc
+addGoPaths ~/.profile
+addGoPaths ~/.bashrc
+addGoPaths ~/.bash_profile

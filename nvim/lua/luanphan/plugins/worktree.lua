@@ -1,3 +1,22 @@
+local LAST_CWD_KEY = "luanphan_workspace_last_cwd"
+
+local api = nil
+
+local function remember_cwd()
+  local ok, cwd = pcall(vim.fn.getcwd)
+  if ok and cwd and cwd ~= "" then
+    vim.g[LAST_CWD_KEY] = cwd:gsub("/$", "")
+  end
+end
+
+local function init()
+  remember_cwd()
+  vim.api.nvim_create_autocmd({ "VimEnter", "DirChanged" }, {
+    group = vim.api.nvim_create_augroup("LuanphanWorktreeLastCwd", { clear = true }),
+    callback = remember_cwd,
+  })
+end
+
 local function setup()
   -- Pure telescope + git CLI; no external plugin.
   -- Requires are deferred into the function so module load doesn't touch
@@ -11,7 +30,6 @@ local function setup()
   --       active    = abs_path|nil,
   --     } }
   local BUFSTORE_KEY = "luanphan_workspace_buffers"
-  local LAST_CWD_KEY = "luanphan_workspace_last_cwd"
   local WS_CONTAINER = "local_workspaces"
 
   -- Transient map of "apply this cursor when the file is first BufReadPost'd
@@ -246,12 +264,11 @@ local function setup()
     return vim.fn.isdirectory(path .. "/.git") == 1 or vim.fn.filereadable(path .. "/.git") == 1
   end
 
-  local function infer_source_repo_from_workspace_path(path)
+  local function infer_master_worktree_from_workspace_path(path)
     local pattern = "^(.-)/" .. WS_CONTAINER .. "/([^/]+)/([^/]+)(/.*)$"
-    local root, _, repo, suffix = path:match(pattern)
+    local root, _, repo = path:match(pattern)
     if not root then
       root, _, repo = path:match("^(.-)/" .. WS_CONTAINER .. "/([^/]+)/([^/]+)$")
-      suffix = ""
     end
     if not root or not repo then
       return nil
@@ -262,12 +279,6 @@ local function setup()
       return nil
     end
 
-    if suffix and suffix ~= "" then
-      local nested = source .. suffix
-      if dir_exists(nested) then
-        return nested
-      end
-    end
     return source
   end
 
@@ -307,10 +318,10 @@ local function setup()
       return false
     end
 
-    local source = infer_source_repo_from_workspace_path(cwd)
-    if source then
-      vim.notify("Current worktree was removed; switching to source repo: " .. source, vim.log.levels.WARN)
-      switch_to(source)
+    local master = infer_master_worktree_from_workspace_path(cwd)
+    if master then
+      vim.notify("Current worktree was removed; switching to master worktree: " .. master, vim.log.levels.WARN)
+      switch_to(master)
       return true
     end
 
@@ -321,14 +332,6 @@ local function setup()
     end
     return false
   end
-
-  safe_getcwd()
-  vim.api.nvim_create_autocmd({ "VimEnter", "DirChanged" }, {
-    group = vim.api.nvim_create_augroup("LuanphanWorktreeLastCwd", { clear = true }),
-    callback = function()
-      safe_getcwd()
-    end,
-  })
 
   local function clear_all_jumplists()
     local original_tab = vim.api.nvim_get_current_tabpage()
@@ -720,34 +723,47 @@ local function setup()
   end
 
   local function register_keymap()
+    pcall(vim.api.nvim_del_user_command, "WorktreeSwitch")
     vim.api.nvim_create_user_command("WorktreeSwitch", pick_worktree, {
       desc = "Switch nvim instance to another git worktree",
     })
     vim.keymap.set("n", "<leader>gw", pick_worktree, { desc = "Git worktree switch" })
   end
 
-  -- Register at VimEnter so which-key (loaded on VimEnter) sees the mapping.
-  -- Also register immediately in case VimEnter has already fired.
   register_keymap()
-  vim.api.nvim_create_autocmd("VimEnter", {
-    callback = register_keymap,
-    once = true,
-  })
 
-  -- Test handles. Internal API; not for production use. The headless smoke
-  -- test in this repo drives switch_to / snapshot / restore through this.
-  _G._luanphan_wt_test = {
+  local test_api = {
     switch_to = switch_to,
+    pick_worktree = pick_worktree,
     snapshot = snapshot_buffers,
     restore = restore_buffers,
+    rescue_deleted_cwd = rescue_deleted_cwd,
     store_key = BUFSTORE_KEY,
   }
+  _G._luanphan_wt_test = test_api
+  return test_api
+end
+
+local function ensure_setup()
+  if not api then
+    api = setup()
+  end
+  return api
+end
+
+local function pick_worktree()
+  ensure_setup().pick_worktree()
 end
 
 return {
   {
     "luanphan-worktree",
     virtual = true,
-    init = setup,
+    init = init,
+    cmd = "WorktreeSwitch",
+    keys = {
+      { "<leader>gw", pick_worktree, desc = "Git worktree switch" },
+    },
+    config = ensure_setup,
   },
 }
