@@ -37,12 +37,12 @@ go_version := 1.25.9
 go_archive := go$(go_version).$(os_name)-$(go_arch).tar.gz
 export PATH := /usr/local/go/bin:$(HOME)/go/bin:$(PATH)
 
-.PHONY: help workspace workspace-config setup nvim nvim-install nvim-config nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install aws-cli aws-cli-install scripts skills-sync install-workspace cleanup
+.PHONY: help workspace workspace-config setup nvim nvim-install nvim-config nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install aws-cli aws-cli-install scripts skills-sync workspace-bin cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
-workspace:  ## Install nvim, tmux, alacritty, and terminal agent CLIs.
-workspace: setup agent-clis nvim tmux alacritty mac-apps cleanup
+workspace:  ## Install nvim, tmux, alacritty, workspace bin, and terminal agent CLIs.
+workspace: setup workspace-bin agent-clis nvim tmux alacritty mac-apps cleanup
 
 workspace-config: ## Install config for workspace
 workspace-config:
@@ -137,22 +137,15 @@ skills-sync: ## Install ./skills to all supported local AI agents via npx skills
 	chmod +x ./scripts/sync-skills.sh
 	./scripts/sync-skills.sh
 
-install-workspace: ## Install ./bin scripts to ~/bin and ensure ~/bin is on PATH in ~/.zshrc
+workspace-bin: ## Install ./bin scripts and workspace shell setup
 	test -d ~/bin || mkdir -p ~/bin
 	cp -r ./bin/. ~/bin/
 	chmod +x ~/bin/*
 	@touch ~/.zshrc
-	@grep -qxF 'export PATH="$$HOME/bin:$$PATH"' ~/.zshrc || \
-		(echo 'export PATH="$$HOME/bin:$$PATH"' >> ~/.zshrc && echo "added PATH export to ~/.zshrc")
-	@alias_line="alias mcodex='codex -c '\''notify=[\"$$HOME/bin/codex-turn-ended-notify\"]'\'''" ; \
-		if ! grep -qxF "$$alias_line" ~/.zshrc; then \
-			tmp_file="$$(mktemp)" ; \
-			grep -v '^alias mcodex=' ~/.zshrc > "$$tmp_file" || true ; \
-			printf '%s\n' "$$alias_line" >> "$$tmp_file" ; \
-			cat "$$tmp_file" > ~/.zshrc ; \
-			rm -f "$$tmp_file" ; \
-			echo "installed mcodex alias in ~/.zshrc" ; \
-		fi
+	@while IFS= read -r line || [ -n "$$line" ]; do \
+		[ -n "$$line" ] || continue ; \
+		grep -qxF "$$line" ~/.zshrc || { printf '%s\n' "$$line" >> ~/.zshrc ; echo "added to ~/.zshrc: $$line" ; } ; \
+	done < ./zsh/workspace.zsh
 
 cleanup: ## Clean up ./tmp folder
 	test -d ./tmp && rm -rf ./tmp
