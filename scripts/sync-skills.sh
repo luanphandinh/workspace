@@ -14,6 +14,6 @@ if ! command -v npx >/dev/null 2>&1; then
   exit 1
 fi
 
-npx --yes skills add "$ROOT" -g --all --full-depth
+npx --yes skills add "$ROOT" -g --skill '*' --agent claude-code codex cursor --full-depth -y
 
-echo "sync-skills: installed all skills via npx skills"
+echo "sync-skills: installed all skills for claude-code, codex, cursor via npx skills"
