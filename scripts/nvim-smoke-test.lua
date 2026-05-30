@@ -209,6 +209,15 @@ local function wait_for_lsp(buf)
   end, 20000)
 end
 
+local function active_lsp_client(buf, name)
+  for _, client in ipairs(vim.lsp.get_clients({ bufnr = buf, name = name })) do
+    if not client:is_stopped() then
+      return client
+    end
+  end
+  return nil
+end
+
 local function result_count(results)
   local count = 0
   for _, response in pairs(results or {}) do
@@ -418,6 +427,49 @@ local function test_lsp_definition_and_references(repo)
   assert_lsp_navigation(repo .. "/main.go")
 end
 
+local function test_lsp_restart_reattaches_all_buffers_for_current_server(repo)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  write(repo .. "/extra.go", {
+    "package main",
+    "",
+    "func extraValue() string {",
+    "	return targetValue()",
+    "}",
+  })
+
+  local main_buf = open_go_file(repo .. "/main.go")
+  local extra_buf = open_go_file(repo .. "/extra.go")
+  wait_for_lsp(main_buf)
+  wait_for_lsp(extra_buf)
+
+  local old_ids = {}
+  for _, bufnr in ipairs({ main_buf, extra_buf }) do
+    local client = active_lsp_client(bufnr, "gopls")
+    assert_true(client ~= nil, "gopls was not attached before restart")
+    old_ids[client.id] = true
+  end
+
+  local restart_map = vim.fn.maparg("<leader>rl", "n", false, true)
+  assert_true(type(restart_map) == "table" and restart_map.desc == "LSP", "<leader>rl should be the combined LSP restart")
+  assert_true(vim.fn.maparg("<leader>rb", "n") == "", "<leader>rb should be removed")
+  assert_true(vim.fn.maparg("<leader>rg", "n") == "", "<leader>rg should be removed")
+  invoke_map("<leader>rl")
+
+  wait_until("gopls restart reattach", function()
+    local main_client = active_lsp_client(main_buf, "gopls")
+    local extra_client = active_lsp_client(extra_buf, "gopls")
+    return main_client
+      and extra_client
+      and not old_ids[main_client.id]
+      and not old_ids[extra_client.id]
+  end, 20000)
+
+  for old_id in pairs(old_ids) do
+    local client = vim.lsp.get_client_by_id(old_id)
+    assert_true(not client or client:is_stopped(), "old gopls client is still running after restart")
+  end
+end
+
 local function test_worktree_switch_keeps_lsp(worktree)
   worktree_test_api().switch_to(worktree)
   local expected = realpath(worktree)
@@ -576,6 +628,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("lsp definition and references", function()
     test_lsp_definition_and_references(repo)
+  end)
+
+  test("lsp restart reattaches all buffers for current server", function()
+    test_lsp_restart_reattaches_all_buffers_for_current_server(repo)
   end)
 
   test("worktree switch keeps lsp", function()

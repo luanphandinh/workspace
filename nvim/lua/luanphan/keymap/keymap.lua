@@ -193,16 +193,8 @@ end, { desc = "Config" })
 -- LSP
 -- LSP: use vim.lsp.enable(false) then enable(true) — see :help lsp-restart
 vim.keymap.set("n", "<leader>rl", function()
-  lsp_restart.restart_all()
-end, { desc = "All LSP" })
-
-vim.keymap.set("n", "<leader>rg", function()
-  lsp_restart.restart_gopls()
-end, { desc = "gopls" })
-
-vim.keymap.set("n", "<leader>rb", function()
   lsp_restart.restart_buffer()
-end, { desc = "Buffer LSP" })
+end, { desc = "LSP" })
 
 -- AI
 vim.keymap.set("n", "<leader>tc", function()

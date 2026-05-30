@@ -26,6 +26,47 @@ local function has_registered_config(name)
   return vim.lsp.config[name] ~= nil
 end
 
+local function is_normal_loaded_buffer(bufnr)
+  return vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buftype == ""
+end
+
+local function client_attached_buffers(client)
+  local out = {}
+  if type(client.attached_buffers) == "table" then
+    for bufnr in pairs(client.attached_buffers) do
+      out[#out + 1] = bufnr
+    end
+    return out
+  end
+
+  local ok, bufs = pcall(vim.lsp.get_buffers_by_client_id, client.id)
+  if ok and type(bufs) == "table" then
+    return bufs
+  end
+  return out
+end
+
+local function buffers_for_client_names(names)
+  local wanted = {}
+  for _, name in ipairs(names) do
+    wanted[name] = true
+  end
+
+  local seen = {}
+  local out = {}
+  for _, client in ipairs(vim.lsp.get_clients()) do
+    if wanted[client.name] then
+      for _, bufnr in ipairs(client_attached_buffers(client)) do
+        if not seen[bufnr] and is_normal_loaded_buffer(bufnr) then
+          seen[bufnr] = true
+          out[#out + 1] = bufnr
+        end
+      end
+    end
+  end
+  return out
+end
+
 --- Servers started with |vim.lsp.start()| only (e.g. github/copilot.vim) — no vim.lsp.config entry.
 --- Calling |vim.lsp.enable(name, true)| for them adds a bogus _enabled_configs slot and triggers
 --- "config not found" in :checkhealth; each enable(true) also runs doautoall (duplicate gopls).
@@ -44,8 +85,21 @@ local function refire_filetype(bufnr)
     return
   end
   for _, b in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(b) and vim.bo[b].buftype == "" then
+    if is_normal_loaded_buffer(b) then
       vim.api.nvim_exec_autocmds("FileType", { buffer = b })
+    end
+  end
+end
+
+local function refire_buffers(bufnrs)
+  if not bufnrs then
+    refire_filetype(nil)
+    return
+  end
+
+  for _, bufnr in ipairs(bufnrs) do
+    if is_normal_loaded_buffer(bufnr) then
+      refire_filetype(bufnr)
     end
   end
 end
@@ -66,14 +120,14 @@ end
 --- restart plugin LSPs (Copilot), optional notify.
 ---@param managed string[]
 ---@param names string[] all server names in this restart (for plugin restarts)
----@param opts { on_done?: fun() }|nil
+---@param opts { bufnrs?: integer[], on_done?: fun() }|nil
 local function schedule_reenable_refire(managed, names, opts)
   vim.defer_fn(function()
     if #managed > 0 then
       vim.lsp.enable(managed, true)
     end
     vim.defer_fn(function()
-      refire_filetype(nil)
+      refire_buffers(opts and opts.bufnrs or nil)
       for _, name in ipairs(names) do
         if not has_registered_config(name) then
           restart_plugin_lsp(name)
@@ -86,7 +140,7 @@ local function schedule_reenable_refire(managed, names, opts)
   end, 50)
 end
 
---- Stop clients for {names}, cycle enable for managed configs, then re-attach on all normal buffers.
+--- Stop clients for {names}, cycle enable for managed configs, then re-attach buffers that used those clients.
 ---@param names string[]
 ---@param opts { on_done?: fun() }|nil
 function M.restart_servers(names, opts)
@@ -95,6 +149,7 @@ function M.restart_servers(names, opts)
   end
 
   local managed = managed_names(names)
+  local bufnrs = buffers_for_client_names(names)
 
   for _, name in ipairs(names) do
     for _, client in ipairs(vim.lsp.get_clients({ name = name })) do
@@ -106,7 +161,10 @@ function M.restart_servers(names, opts)
     vim.lsp.enable(managed, false)
   end
 
-  schedule_reenable_refire(managed, names, opts)
+  schedule_reenable_refire(managed, names, {
+    bufnrs = bufnrs,
+    on_done = opts and opts.on_done or nil,
+  })
   return true
 end
 
@@ -130,6 +188,7 @@ function M.restart_all()
   end
 
   schedule_reenable_refire(managed, names, {
+    bufnrs = nil,
     on_done = function()
       vim.notify("LSP restarted: " .. table.concat(names, ", "), vim.log.levels.INFO)
     end,
@@ -149,7 +208,7 @@ function M.restart_gopls()
   })
 end
 
---- Restart LSPs attached to the current buffer. Shared servers (e.g. gopls) get a full stop + all buffers refired.
+--- Restart LSPs attached to the current buffer. Shared servers (e.g. gopls) get a full stop + all attached buffers refired.
 --- If none attached, re-triggers FileType on this buffer only (recovery when attach failed).
 function M.restart_buffer()
   local bufnr = vim.api.nvim_get_current_buf()
@@ -172,7 +231,7 @@ end, { desc = "Stop all LSP clients, re-enable, re-attach on open buffers" })
 
 vim.api.nvim_create_user_command("LspRestartBuffer", function()
   M.restart_buffer()
-end, { desc = "Restart LSP for current buffer (or re-trigger FileType if none)" })
+end, { desc = "Restart current buffer LSPs and re-attach every buffer using those servers" })
 
 vim.api.nvim_create_user_command("GoplsRestart", function()
   M.restart_gopls()
