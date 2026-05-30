@@ -147,10 +147,10 @@ end, { desc = "Send Esc to terminal process" })
 -- Search
 vim.keymap.set("n", "<leader>t1", function()
   require("luanphan.telescope_grep_opts").toggle_case_sensitive()
-end, { desc = "live_grep: toggle strict case vs ignore-case (default: ignore-case on)" })
+end, { desc = "Live grep case sensitivity" })
 vim.keymap.set("n", "<leader>t2", function()
   require("luanphan.telescope_grep_opts").toggle_regex()
-end, { desc = "live_grep: toggle regex vs fixed-string (default: fixed-string on)" })
+end, { desc = "Live grep regex" })
 
 -- Diagnostics
 vim.keymap.set("n", "<leader>d", function()
@@ -207,7 +207,7 @@ end, { desc = "LspRestartBuffer: this buffer / recover attach" })
 -- AI
 vim.keymap.set("n", "<leader>tc", function()
   require("luanphan.copilot_toggle").toggle()
-end, { desc = "Copilot: load if needed, then toggle on/off" })
+end, { desc = "Copilot" })
 
 -- Go test keymaps (only in Go files)
 vim.api.nvim_create_autocmd("FileType", {
@@ -275,4 +275,4 @@ vim.keymap.set("n", "<leader>fl", "<cmd>edit!<cr>", { desc = "Reload from disk" 
 vim.keymap.set("n", "<leader>tW", function()
   vim.wo.wrap = not vim.wo.wrap
   vim.notify("wrap: " .. (vim.wo.wrap and "on" or "off"), vim.log.levels.INFO)
-end, { desc = "Toggle word wrap (window-local)" })
+end, { desc = "Word wrap (window-local)" })

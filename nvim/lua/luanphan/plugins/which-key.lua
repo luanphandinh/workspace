@@ -20,6 +20,7 @@ return {
         { "<leader>f", group = "Files" },
         { "<leader>g", group = "Git" },
         { "<leader>h", group = "Harpoon" },
+        { "<leader>t", group = "Toggle" },
       })
 
       -- Press ? to show all keymaps

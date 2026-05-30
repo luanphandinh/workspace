@@ -56,7 +56,7 @@ return {
   {
     "akinsho/toggleterm.nvim",
     keys = {
-      { "<leader>tt", toggle_terminal, desc = "Toggle terminal" },
+      { "<leader>tt", toggle_terminal, desc = "Terminal" },
     },
     init = setup_terminal_autocmds,
     config = function()
