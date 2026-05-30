@@ -309,6 +309,42 @@ local function close_diffview()
   end, 5000)
 end
 
+local function find_diffview_tab()
+  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+      local name = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win))
+      if name:match("^diffview://") then
+        return tab
+      end
+    end
+  end
+  return nil
+end
+
+local function focus_file_window_inside_diffview_tab(path)
+  local tab = find_diffview_tab()
+  assert_true(tab ~= nil, "Diffview tab was not found")
+  vim.api.nvim_set_current_tabpage(tab)
+
+  local fallback = nil
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    local buf = vim.api.nvim_win_get_buf(win)
+    local name = vim.api.nvim_buf_get_name(buf)
+    if not name:match("^diffview://") and vim.bo[buf].buftype == "" then
+      vim.api.nvim_set_current_win(win)
+      return
+    end
+    if not name:match("^diffview://") then
+      fallback = fallback or win
+    end
+  end
+
+  vim.api.nvim_set_current_win(fallback or vim.api.nvim_get_current_win())
+  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  assert_true(not vim.api.nvim_buf_get_name(0):match("^diffview://"), "focused buffer should be a normal file")
+  assert_true(has_visible_diffview(), "Diffview should remain visible beside the focused file")
+end
+
 local function visible_toggleterm_window_count()
   local count = 0
   for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -831,7 +867,11 @@ local function test_git_diff_previews(worktree)
 
   invoke_map("<leader>gd")
   wait_for_diffview()
-  close_diffview()
+  focus_file_window_inside_diffview_tab(worktree .. "/main.go")
+  invoke_map("<leader>gd")
+  wait_until("diffview closes from file window", function()
+    return not has_visible_diffview()
+  end, 5000)
 
   invoke_map("<leader>gD")
   wait_for_diffview()

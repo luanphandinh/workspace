@@ -11,16 +11,23 @@ local function find_diffview_tab()
   return nil
 end
 
-local function toggle_diffview()
-  local cur_buf = vim.api.nvim_buf_get_name(0)
-  if cur_buf:match("^diffview://") then
-    vim.cmd("DiffviewClose")
-    return
+local function close_or_focus_existing_diffview()
+  local existing_tab = find_diffview_tab()
+  if not existing_tab then
+    return false
   end
 
-  local existing_tab = find_diffview_tab()
-  if existing_tab then
+  if existing_tab == vim.api.nvim_get_current_tabpage() then
+    vim.cmd("DiffviewClose")
+  else
     vim.api.nvim_set_current_tabpage(existing_tab)
+  end
+
+  return true
+end
+
+local function toggle_diffview()
+  if close_or_focus_existing_diffview() then
     return
   end
 
@@ -28,15 +35,7 @@ local function toggle_diffview()
 end
 
 local function toggle_file_history()
-  local cur_buf = vim.api.nvim_buf_get_name(0)
-  if cur_buf:match("^diffview://") then
-    vim.cmd("DiffviewClose")
-    return
-  end
-
-  local existing_tab = find_diffview_tab()
-  if existing_tab then
-    vim.api.nvim_set_current_tabpage(existing_tab)
+  if close_or_focus_existing_diffview() then
     return
   end
 
@@ -44,15 +43,7 @@ local function toggle_file_history()
 end
 
 local function toggle_all_file_history()
-  local cur_buf = vim.api.nvim_buf_get_name(0)
-  if cur_buf:match("^diffview://") then
-    vim.cmd("DiffviewClose")
-    return
-  end
-
-  local existing_tab = find_diffview_tab()
-  if existing_tab then
-    vim.api.nvim_set_current_tabpage(existing_tab)
+  if close_or_focus_existing_diffview() then
     return
   end
 
@@ -132,15 +123,7 @@ local function open_current_line_commit()
 end
 
 local function toggle_branch_diff()
-  local cur_buf = vim.api.nvim_buf_get_name(0)
-  if cur_buf:match("^diffview://") then
-    vim.cmd("DiffviewClose")
-    return
-  end
-
-  local existing_tab = find_diffview_tab()
-  if existing_tab then
-    vim.api.nvim_set_current_tabpage(existing_tab)
+  if close_or_focus_existing_diffview() then
     return
   end
 
