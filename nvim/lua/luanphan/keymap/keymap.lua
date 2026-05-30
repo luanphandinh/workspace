@@ -238,7 +238,7 @@ local function toggle_file_diff()
   vim.cmd("windo diffthis")
 end
 
-vim.keymap.set("n", "<leader>fd", toggle_file_diff, { desc = "Toggle vertical diff" })
+vim.keymap.set("n", "<leader>td", toggle_file_diff, { desc = "File diff" })
 
 vim.keymap.set("n", "<leader>fp", function()
   require("luanphan.glow_preview").toggle()
@@ -261,7 +261,7 @@ vim.keymap.set("n", "<leader>fS", "<cmd>wa<cr>", { desc = "Save all files" })
 -- Force-reload the current buffer from disk. `:edit!` re-reads the file and
 -- discards any unsaved in-buffer changes — useful when an external tool
 -- (formatter, codegen, git checkout) has rewritten the file on disk.
-vim.keymap.set("n", "<leader>fl", "<cmd>edit!<cr>", { desc = "Reload from disk" })
+vim.keymap.set("n", "<leader>fL", "<cmd>edit!<cr>", { desc = "Reload from disk" })
 
 -- UI
 vim.keymap.set("n", "<leader>tW", function()
