@@ -602,6 +602,31 @@ local function test_worktree_switch_hides_toggleterm(repo, worktree)
   assert_true(visible_toggleterm_window_count() == 0, "toggleterm window remained visible after worktree switch")
 end
 
+local function test_toggleterm_hides_agent_terminal(repo)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+
+  local agent = require("luanphan.terminal_agent").create({
+    g_bufnr = "toggleterm_hide_agent_bufnr",
+    notify_prefix = "toggleterm_hide_agent",
+    augroup_prefix = "ToggletermHideAgent",
+    hint_open = "<smoke>",
+    defaults = { cmd = "sh" },
+  })
+  agent.setup()
+  agent.toggle()
+
+  wait_until("agent terminal open before toggleterm", function()
+    return visible_agent_float_count() == 1
+  end, 1000)
+
+  invoke_lazy_map("<leader>tt", "toggleterm.nvim")
+  wait_until("toggleterm open after agent terminal", function()
+    return visible_toggleterm_window_count() > 0
+  end, 3000)
+  assert_true(visible_agent_float_count() == 0, "agent terminal remained visible after <leader>tt")
+  close_agent_terminals()
+end
+
 local function test_worktree_switch_restores_agent_terminal(repo, worktree)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
 
@@ -751,6 +776,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("worktree switch hides toggleterm", function()
     test_worktree_switch_hides_toggleterm(repo, worktree)
+  end)
+
+  test("toggleterm hides agent terminal", function()
+    test_toggleterm_hides_agent_terminal(repo)
   end)
 
   test("git diff previews", function()
