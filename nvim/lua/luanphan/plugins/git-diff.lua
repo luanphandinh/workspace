@@ -169,9 +169,9 @@ local function with_diffview(fn)
 end
 
 local function setup_diffview_keymaps()
-  vim.keymap.set("n", "<leader>gd", with_diffview(toggle_diffview), { desc = "Git diff (current changes)" })
-  vim.keymap.set("n", "<leader>gD", with_diffview(toggle_branch_diff), { desc = "Git diff branch (vs base)" })
-  vim.keymap.set("n", "<leader>gb", with_diffview(open_current_line_commit), { desc = "Git blame commit at line" })
+  vim.keymap.set("n", "<leader>gd", with_diffview(toggle_diffview), { desc = "Diff current changes" })
+  vim.keymap.set("n", "<leader>gD", with_diffview(toggle_branch_diff), { desc = "Diff branch vs base" })
+  vim.keymap.set("n", "<leader>gb", with_diffview(open_current_line_commit), { desc = "Blame commit at line" })
   vim.keymap.set("n", "<leader>gH", with_diffview(toggle_file_history), { desc = "File history (current)" })
   vim.keymap.set("n", "<leader>gA", with_diffview(toggle_all_file_history), { desc = "File history (all)" })
   vim.keymap.set("n", "<leader>gC", with_diffview(toggle_all_file_history), { desc = "Repo commits (all)" })

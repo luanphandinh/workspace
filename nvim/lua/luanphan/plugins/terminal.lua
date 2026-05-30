@@ -1,5 +1,19 @@
 local terms = {}
 
+local function close_agent_floats()
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_is_valid(win) then
+      local cfg = vim.api.nvim_win_get_config(win)
+      if cfg.relative and cfg.relative ~= "" then
+        local buf = vim.api.nvim_win_get_buf(win)
+        if vim.b[buf].luanphan_persist_term and not vim.b[buf].luanphan_toggleterm then
+          pcall(vim.api.nvim_win_close, win, false)
+        end
+      end
+    end
+  end
+end
+
 local function get_term()
   local Terminal = require("toggleterm.terminal").Terminal
   local cwd = vim.fn.getcwd()
@@ -23,7 +37,11 @@ local function get_term()
 end
 
 local function toggle_terminal()
-  get_term():toggle()
+  local term = get_term()
+  if not term:is_open() then
+    close_agent_floats()
+  end
+  term:toggle()
 end
 
 local function hide_current()
@@ -56,7 +74,7 @@ return {
   {
     "akinsho/toggleterm.nvim",
     keys = {
-      { "<leader>tt", toggle_terminal, desc = "Toggle terminal" },
+      { "<leader>tt", toggle_terminal, desc = "Terminal" },
     },
     init = setup_terminal_autocmds,
     config = function()

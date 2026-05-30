@@ -20,7 +20,7 @@ return {
 
       vim.keymap.set("n", "<leader>b", function()
         require("nvim-tree.api").tree.toggle(false, true)
-      end)
+      end, { desc = "Toggle NvimTree" })
 
       vim.keymap.set("n", "<leader>e", function()
         -- If tree is already open and focused, switch back
@@ -29,7 +29,7 @@ return {
         else
           require("nvim-tree.api").tree.find_file({ open = true, focus = true })
         end
-      end, { noremap = true, silent = true })
+      end, { noremap = true, silent = true, desc = "Focus NvimTree" })
     end,
   },
 }

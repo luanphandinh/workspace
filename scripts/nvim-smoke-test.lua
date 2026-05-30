@@ -7,7 +7,7 @@ local cleanup_fixture_id = 0
 local agent_cli_commands = {
   { command = "cursor-agent", lhs = "<leader>ac", plugin = "luanphan-cursor-agent", g_bufnr = "cursor_agent_bufnr" },
   { command = "claude", lhs = "<leader>xc", plugin = "luanphan-claude-agent", g_bufnr = "claude_agent_bufnr" },
-  { command = "codex", lhs = "<leader>cc", plugin = "luanphan-codex-agent", g_bufnr = "codex_agent_bufnr" },
+  { command = "codex", lhs = "<leader>;", plugin = "luanphan-codex-agent", g_bufnr = "codex_agent_bufnr" },
 }
 
 vim.notify = function(message, level)
@@ -110,6 +110,15 @@ local function read_log(path)
   return read_lines(path)
 end
 
+local function log_has_prefix(path, prefix)
+  for _, line in ipairs(read_log(path)) do
+    if line:sub(1, #prefix) == prefix then
+      return true
+    end
+  end
+  return false
+end
+
 local function make_fixture()
   temp_root = vim.fn.tempname()
   vim.fn.delete(temp_root, "rf")
@@ -209,6 +218,15 @@ local function wait_for_lsp(buf)
   end, 20000)
 end
 
+local function active_lsp_client(buf, name)
+  for _, client in ipairs(vim.lsp.get_clients({ bufnr = buf, name = name })) do
+    if not client:is_stopped() then
+      return client
+    end
+  end
+  return nil
+end
+
 local function result_count(results)
   local count = 0
   for _, response in pairs(results or {}) do
@@ -252,6 +270,18 @@ local function assert_lsp_navigation(path)
   local def_pos = find_position(buf, "targetValue", "func targetValue")
   local refs = request(buf, "textDocument/references", def_pos)
   assert_true(result_count(refs) >= 2, "references request returned too few locations")
+end
+
+local function assert_lsp_code_action_keymaps()
+  local change_definition = vim.fn.maparg("<leader>cd", "n", false, true)
+  local code_action = vim.fn.maparg("<leader>ca", "n", false, true)
+
+  assert_true(
+    type(change_definition) == "table" and change_definition.desc == "Change Definition",
+    "<leader>cd should be Change Definition"
+  )
+  assert_true(type(code_action) == "table" and code_action.desc == "Code Action", "<leader>ca should be Code Action")
+  assert_true(vim.fn.maparg("<leader>rn", "n") == "", "<leader>rn should be removed")
 end
 
 local function has_visible_diffview()
@@ -325,23 +355,65 @@ local function close_agent_terminals()
   end
 end
 
-local function invoke_map(lhs)
-  local map = vim.fn.maparg(lhs, "n", false, true)
+local function invoke_map(lhs, mode)
+  mode = mode or "n"
+  local map = vim.fn.maparg(lhs, mode, false, true)
   assert_true(type(map) == "table" and type(map.callback) == "function", lhs .. " is not a callback mapping")
   map.callback()
+end
+
+local function agent_bufnr(global_name)
+  local stored = vim.g[global_name]
+  if type(stored) == "number" then
+    return stored
+  end
+  if type(stored) ~= "table" then
+    return nil
+  end
+
+  local cwd_bufnr = stored[vim.fn.getcwd()]
+  if type(cwd_bufnr) == "number" then
+    return cwd_bufnr
+  end
+
+  for _, bufnr in pairs(stored) do
+    if type(bufnr) == "number" then
+      return bufnr
+    end
+  end
+  return nil
 end
 
 local function feed_normal(keys)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "xt", false)
 end
 
-local function feed_lhs(lhs)
-  feed_normal(lhs:gsub("<leader>", vim.g.mapleader or "\\"))
-end
-
 local function plugin_loaded(name)
   local plugin = require("lazy.core.config").plugins[name]
   return plugin and plugin._ and plugin._.loaded
+end
+
+local function ensure_lazy_key_ready(lhs, plugin, mode)
+  mode = mode or "n"
+  if plugin_loaded(plugin) then
+    return
+  end
+  local lazy_map = vim.fn.maparg(lhs, mode, false, true)
+  assert_true(type(lazy_map) == "table" and type(lazy_map.callback) == "function", lhs .. " is not a lazy callback mapping")
+  local lazy_callback = lazy_map.callback
+  lazy_callback()
+  wait_until(plugin .. " lazy load", function()
+    return plugin_loaded(plugin)
+  end, 3000)
+  wait_until(lhs .. " real callback", function()
+    local map = vim.fn.maparg(lhs, mode, false, true)
+    return type(map) == "table" and type(map.callback) == "function" and map.callback ~= lazy_callback
+  end, 3000)
+end
+
+local function invoke_lazy_map(lhs, plugin, mode)
+  ensure_lazy_key_ready(lhs, plugin, mode)
+  invoke_map(lhs, mode)
 end
 
 local function worktree_plugin()
@@ -350,6 +422,105 @@ end
 
 local function worktree_plugin_loaded()
   return plugin_loaded("luanphan-worktree")
+end
+
+local function icon_char(value)
+  assert_true(type(value) == "table" and type(value.icon) == "string", "toggle icon must return an icon table")
+  return value.icon
+end
+
+local function assert_toggle_icon_changes(label, fn, off, on)
+  off()
+  local off_icon = icon_char(fn())
+  on()
+  local on_icon = icon_char(fn())
+  assert_true(off_icon ~= on_icon, label .. " icon did not change")
+  off()
+end
+
+local function test_toggle_icons_reflect_state()
+  local icons = require("luanphan.toggle_icons")
+  local old_case = vim.g.luanphan_live_grep_case_sensitive
+  local old_regex = vim.g.luanphan_live_grep_regex
+  local old_copilot = vim.g.copilot_enabled
+  local had_copilot_cmd = vim.fn.exists(":Copilot") == 2
+  local old_wrap = vim.wo.wrap
+
+  if not had_copilot_cmd then
+    vim.api.nvim_create_user_command("Copilot", function() end, { nargs = "*" })
+  end
+
+  local ok, err = xpcall(function()
+    assert_toggle_icon_changes("live grep case sensitivity", icons.live_grep_case_sensitive, function()
+      vim.g.luanphan_live_grep_case_sensitive = 0
+    end, function()
+      vim.g.luanphan_live_grep_case_sensitive = 1
+    end)
+
+    assert_toggle_icon_changes("live grep regex", icons.live_grep_regex, function()
+      vim.g.luanphan_live_grep_regex = 0
+    end, function()
+      vim.g.luanphan_live_grep_regex = 1
+    end)
+
+    assert_toggle_icon_changes("copilot", icons.copilot, function()
+      vim.g.copilot_enabled = 0
+    end, function()
+      vim.g.copilot_enabled = 1
+    end)
+
+    assert_toggle_icon_changes("file diff", icons.file_diff, function()
+      pcall(vim.cmd, "windo diffoff")
+    end, function()
+      vim.cmd("diffthis")
+    end)
+
+    assert_toggle_icon_changes("terminal", icons.terminal, function()
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        local buf = vim.api.nvim_win_get_buf(win)
+        vim.b[buf].luanphan_toggleterm = nil
+        vim.b[buf].toggle_number = nil
+      end
+    end, function()
+      vim.b[vim.api.nvim_get_current_buf()].luanphan_toggleterm = true
+    end)
+
+    assert_toggle_icon_changes("word wrap", icons.word_wrap, function()
+      vim.wo.wrap = false
+    end, function()
+      vim.wo.wrap = true
+    end)
+
+    require("lazy").load({ plugins = { "gitsigns.nvim" } })
+    local gitsigns = require("gitsigns")
+    assert_toggle_icon_changes("line blame", icons.line_blame, function()
+      gitsigns.toggle_current_line_blame(false)
+    end, function()
+      gitsigns.toggle_current_line_blame(true)
+    end)
+    assert_toggle_icon_changes("word diff", icons.word_diff, function()
+      gitsigns.toggle_word_diff(false)
+    end, function()
+      gitsigns.toggle_word_diff(true)
+    end)
+  end, debug.traceback)
+
+  vim.g.luanphan_live_grep_case_sensitive = old_case
+  vim.g.luanphan_live_grep_regex = old_regex
+  vim.g.copilot_enabled = old_copilot
+  vim.wo.wrap = old_wrap
+  pcall(vim.cmd, "windo diffoff")
+  vim.b[vim.api.nvim_get_current_buf()].luanphan_toggleterm = nil
+  if not had_copilot_cmd then
+    pcall(vim.api.nvim_del_user_command, "Copilot")
+  end
+  local ok_gitsigns, gitsigns = pcall(require, "gitsigns")
+  if ok_gitsigns then
+    pcall(gitsigns.toggle_current_line_blame, false)
+    pcall(gitsigns.toggle_word_diff, false)
+  end
+
+  assert_true(ok, tostring(err))
 end
 
 local function worktree_test_api()
@@ -393,14 +564,9 @@ local function test_agent_keys_invoke_cli_commands()
 
   local ok, err = xpcall(function()
     for _, item in ipairs(agent_cli_commands) do
-      feed_lhs(item.lhs)
+      invoke_lazy_map(item.lhs, item.plugin)
       wait_until(item.command .. " invocation", function()
-        for _, line in ipairs(read_log(log)) do
-          if line:sub(1, #item.command + 1) == item.command .. "|" then
-            return true
-          end
-        end
-        return false
+        return log_has_prefix(log, item.command .. "|")
       end, 3000)
       assert_true(plugin_loaded(item.plugin), item.plugin .. " did not lazy-load")
       close_agent_terminals()
@@ -413,9 +579,114 @@ local function test_agent_keys_invoke_cli_commands()
   assert_true(ok, tostring(err))
 end
 
+local function test_codex_leader_semicolon_sends_visual_selection()
+  local shim_dir = temp_root .. "/codex-send-shim"
+  local invoke_log = temp_root .. "/codex-send-invocations.log"
+  vim.fn.mkdir(shim_dir, "p")
+  write(invoke_log, {})
+  write_executable(shim_dir .. "/codex", {
+    "#!/bin/sh",
+    "printf '%s|%s|%s\\n' \"$(basename \"$0\")\" \"$PWD\" \"$*\" >> \"$NVIM_AGENT_SMOKE_LOG\"",
+    "sleep 30",
+  })
+
+  local old_cwd = vim.fn.getcwd()
+  local old_path = vim.env.PATH
+  local old_log = vim.env.NVIM_AGENT_SMOKE_LOG
+  vim.env.PATH = shim_dir .. ":" .. old_path
+  vim.env.NVIM_AGENT_SMOKE_LOG = invoke_log
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(temp_root))
+    local file = temp_root .. "/codex-send-buffer.txt"
+    write(file, {
+      "selected payload line",
+      "unselected payload line",
+    })
+    vim.cmd("edit " .. vim.fn.fnameescape(file))
+
+    local normal_map = vim.fn.maparg("<leader>;", "n", false, true)
+    local visual_map = vim.fn.maparg("<leader>;", "x", false, true)
+    local select_map = vim.fn.maparg("<leader>;", "s", false, true)
+    assert_true(type(normal_map) == "table" and normal_map.desc == "Toggle Codex", "<leader>; normal should toggle Codex")
+    assert_true(type(visual_map) == "table" and visual_map.desc == "Send to Codex", "<leader>; visual should send to Codex")
+    assert_true(type(select_map) == "table" and select_map.desc == "Send to Codex", "<leader>; select should send to Codex")
+    assert_true(vim.fn.maparg("<leader>cc", "n") == "", "<leader>cc should be removed")
+    assert_true(vim.fn.maparg("<leader>cs", "x") == "", "<leader>cs should be removed")
+
+    vim.cmd("normal! ggV")
+    ensure_lazy_key_ready("<leader>;", "luanphan-codex-agent", "x")
+    vim.cmd("normal! ggV")
+    invoke_map("<leader>;", "x")
+    wait_until("codex invocation", function()
+      return log_has_prefix(invoke_log, "codex|")
+    end, 3000)
+
+    wait_until("codex selection marker", function()
+      local bufnr = agent_bufnr("codex_agent_bufnr")
+      if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+        return false
+      end
+      local terminal_text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "")
+      return terminal_text:find("codex-send-buffer.txt:1-1", 1, true) ~= nil
+    end, 3000)
+    assert_true(plugin_loaded("luanphan-codex-agent"), "codex agent did not lazy-load")
+  end, debug.traceback)
+
+  vim.env.PATH = old_path
+  vim.env.NVIM_AGENT_SMOKE_LOG = old_log
+  pcall(vim.cmd, "cd " .. vim.fn.fnameescape(old_cwd))
+  close_agent_terminals()
+  assert_true(ok, tostring(err))
+end
+
 local function test_lsp_definition_and_references(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   assert_lsp_navigation(repo .. "/main.go")
+  assert_lsp_code_action_keymaps()
+end
+
+local function test_lsp_restart_reattaches_all_buffers_for_current_server(repo)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  write(repo .. "/extra.go", {
+    "package main",
+    "",
+    "func extraValue() string {",
+    "	return targetValue()",
+    "}",
+  })
+
+  local main_buf = open_go_file(repo .. "/main.go")
+  local extra_buf = open_go_file(repo .. "/extra.go")
+  wait_for_lsp(main_buf)
+  wait_for_lsp(extra_buf)
+
+  local old_ids = {}
+  for _, bufnr in ipairs({ main_buf, extra_buf }) do
+    local client = active_lsp_client(bufnr, "gopls")
+    assert_true(client ~= nil, "gopls was not attached before restart")
+    old_ids[client.id] = true
+  end
+
+  local restart_map = vim.fn.maparg("<leader>rl", "n", false, true)
+  assert_true(type(restart_map) == "table" and restart_map.desc == "LSP", "<leader>rl should be the combined LSP restart")
+  assert_true(vim.fn.maparg("<leader>rb", "n") == "", "<leader>rb should be removed")
+  assert_true(vim.fn.maparg("<leader>rg", "n") == "", "<leader>rg should be removed")
+  invoke_map("<leader>rl")
+
+  wait_until("gopls restart reattach", function()
+    local main_client = active_lsp_client(main_buf, "gopls")
+    local extra_client = active_lsp_client(extra_buf, "gopls")
+    return main_client
+      and extra_client
+      and not old_ids[main_client.id]
+      and not old_ids[extra_client.id]
+  end, 20000)
+
+  for old_id in pairs(old_ids) do
+    local client = vim.lsp.get_client_by_id(old_id)
+    assert_true(not client or client:is_stopped(), "old gopls client is still running after restart")
+  end
 end
 
 local function test_worktree_switch_keeps_lsp(worktree)
@@ -441,6 +712,31 @@ local function test_worktree_switch_hides_toggleterm(repo, worktree)
     return realpath(vim.fn.getcwd()) == expected
   end, 10000)
   assert_true(visible_toggleterm_window_count() == 0, "toggleterm window remained visible after worktree switch")
+end
+
+local function test_toggleterm_hides_agent_terminal(repo)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+
+  local agent = require("luanphan.terminal_agent").create({
+    g_bufnr = "toggleterm_hide_agent_bufnr",
+    notify_prefix = "toggleterm_hide_agent",
+    augroup_prefix = "ToggletermHideAgent",
+    hint_open = "<smoke>",
+    defaults = { cmd = "sh" },
+  })
+  agent.setup()
+  agent.toggle()
+
+  wait_until("agent terminal open before toggleterm", function()
+    return visible_agent_float_count() == 1
+  end, 1000)
+
+  invoke_lazy_map("<leader>tt", "toggleterm.nvim")
+  wait_until("toggleterm open after agent terminal", function()
+    return visible_toggleterm_window_count() > 0
+  end, 3000)
+  assert_true(visible_agent_float_count() == 0, "agent terminal remained visible after <leader>tt")
+  close_agent_terminals()
 end
 
 local function test_worktree_switch_restores_agent_terminal(repo, worktree)
@@ -558,12 +854,20 @@ local setup_ok, setup_err = xpcall(function()
     test_worktree_plugin_starts_lazy()
   end)
 
+  test("toggle icons reflect state", function()
+    test_toggle_icons_reflect_state()
+  end)
+
   test("agent cli commands are executable", function()
     test_agent_cli_commands_available()
   end)
 
   test("agent keys invoke cli commands inside nvim", function()
     test_agent_keys_invoke_cli_commands()
+  end)
+
+  test("codex leader semicolon sends visual selection", function()
+    test_codex_leader_semicolon_sends_visual_selection()
   end)
 
   test("deleted startup workspace falls back to master worktree", function()
@@ -578,12 +882,20 @@ local setup_ok, setup_err = xpcall(function()
     test_lsp_definition_and_references(repo)
   end)
 
+  test("lsp restart reattaches all buffers for current server", function()
+    test_lsp_restart_reattaches_all_buffers_for_current_server(repo)
+  end)
+
   test("worktree switch keeps lsp", function()
     test_worktree_switch_keeps_lsp(worktree)
   end)
 
   test("worktree switch hides toggleterm", function()
     test_worktree_switch_hides_toggleterm(repo, worktree)
+  end)
+
+  test("toggleterm hides agent terminal", function()
+    test_toggleterm_hides_agent_terminal(repo)
   end)
 
   test("git diff previews", function()

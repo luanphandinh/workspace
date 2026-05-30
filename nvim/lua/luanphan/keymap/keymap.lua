@@ -101,7 +101,8 @@ function _G.statusline()
 end
 
 vim.o.statusline = "%!v:lua.statusline()"
--- keymaps
+
+-- Navigation
 vim.keymap.set("n", "n", "nzzzv", { noremap = true, silent = true })
 vim.keymap.set("n", "N", "nzzzv", { noremap = true, silent = true })
 
@@ -111,13 +112,14 @@ vim.keymap.set("n", "J", "mzJ`z", { noremap = true, silent = true })
 vim.keymap.set("v", "J", ":m '>+1<CR>gv=gv")
 vim.keymap.set("v", "K", ":m '<-2<CR>gv=gv")
 
+-- Clipboard / edit operators
 vim.keymap.set("n", "<leader>y", "\"+y")
 vim.keymap.set("v", "<leader>y", "\"+y")
 
-vim.keymap.set("n", "<leader>d", "\"_d")
 vim.keymap.set("v", "<leader>d", "\"_d")
 vim.keymap.set("x", "<leader>p", "\"_dP")
 
+-- Window / terminal navigation
 vim.keymap.set("n", "<C-f>", "<cmd>slient !tmux neww tmux-sessionizer<CR>")
 vim.keymap.set("n", "<C-h>", "<C-w>h", { noremap = true, silent = true })
 vim.keymap.set("n", "<C-l>", "<C-w>l", { noremap = true, silent = true })
@@ -142,23 +144,20 @@ vim.keymap.set("t", "<C-]>", function()
   end
 end, { desc = "Send Esc to terminal process" })
 
+-- Search
 vim.keymap.set("n", "<leader>t1", function()
   require("luanphan.telescope_grep_opts").toggle_case_sensitive()
-end, { desc = "live_grep: toggle strict case vs ignore-case (default: ignore-case on)" })
+end, { desc = "Live grep case sensitivity" })
 vim.keymap.set("n", "<leader>t2", function()
   require("luanphan.telescope_grep_opts").toggle_regex()
-end, { desc = "live_grep: toggle regex vs fixed-string (default: fixed-string on)" })
+end, { desc = "Live grep regex" })
 
+-- Diagnostics
 vim.keymap.set("n", "<leader>d", function()
   vim.diagnostic.open_float(nil, { focus = false })
 end, { desc = "Show diagnostic at line" })
 
--- Markdown: floating `glow` preview (toggle). Requires `glow` on PATH.
-vim.keymap.set("n", "<leader>fp", function()
-  require("luanphan.glow_preview").toggle()
-end, { desc = "Markdown: toggle glow preview (float)" })
-
--- Close other file buffers only (keep NvimTree, terminals, AI agent terminals).
+-- Buffers
 vim.keymap.set("n", "<leader>kw", function()
   require("luanphan.buffer_only").close_other_file_buffers()
 end, { desc = "Buffer: close other files (keep active buffer, tree, terminals, AI)" })
@@ -166,6 +165,7 @@ vim.keymap.set("n", "<leader>kW", function()
   require("luanphan.buffer_only").close_other_file_buffers({ force = true })
 end, { desc = "Buffer: close other files (!) discard unsaved in closed buffers" })
 
+-- Config
 -- Full reload: luafile init (not :source — that is for Vimscript; init.lua needs :luafile).
 -- Some plugins cache state after setup; restart Neovim if maps stay wrong.
 vim.keymap.set("n", "<leader>rc", function()
@@ -188,24 +188,18 @@ vim.keymap.set("n", "<leader>rc", function()
   end
 
   print("Config reloaded!")
-end, { desc = "Reload config (full init.lua)" })
+end, { desc = "Config" })
 
+-- LSP
 -- LSP: use vim.lsp.enable(false) then enable(true) — see :help lsp-restart
 vim.keymap.set("n", "<leader>rl", function()
-  lsp_restart.restart_all()
-end, { desc = "LspRestart: full LSP restart" })
-
-vim.keymap.set("n", "<leader>rg", function()
-  lsp_restart.restart_gopls()
-end, { desc = "GoplsRestart: full gopls stop + re-attach all Go buffers" })
-
-vim.keymap.set("n", "<leader>rb", function()
   lsp_restart.restart_buffer()
-end, { desc = "LspRestartBuffer: this buffer / recover attach" })
+end, { desc = "LSP" })
 
+-- AI
 vim.keymap.set("n", "<leader>tc", function()
   require("luanphan.copilot_toggle").toggle()
-end, { desc = "Copilot: load if needed, then toggle on/off" })
+end, { desc = "Copilot" })
 
 -- Go test keymaps (only in Go files)
 vim.api.nvim_create_autocmd("FileType", {
@@ -230,8 +224,25 @@ vim.api.nvim_create_user_command("New", function(opts)
   vim.bo.filetype = opts.args
 end, { nargs = 1, desc = "Create new buffer with filetype" })
 
--- Keybindings for file/buffer management
-vim.keymap.set("n", "<leader>fn", "<cmd>enew<cr>", { desc = "New file" })
+-- Files
+vim.keymap.set("n", "<leader>fn", "<cmd>enew<cr>", { desc = "New buffer" })
+
+local function toggle_file_diff()
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_get_option_value("diff", { win = win }) then
+      vim.cmd("windo diffoff")
+      return
+    end
+  end
+
+  vim.cmd("windo diffthis")
+end
+
+vim.keymap.set("n", "<leader>td", toggle_file_diff, { desc = "File diff" })
+
+vim.keymap.set("n", "<leader>fp", function()
+  require("luanphan.glow_preview").toggle()
+end, { desc = "Preview Markdown" })
 
 vim.keymap.set("n", "<leader>fs", function()
   if vim.fn.bufname() == "" then
@@ -243,22 +254,17 @@ vim.keymap.set("n", "<leader>fs", function()
   else
     vim.cmd("w")
   end
-end, { desc = "Save file" })
+end, { desc = "Save current file" })
 
 vim.keymap.set("n", "<leader>fS", "<cmd>wa<cr>", { desc = "Save all files" })
 
 -- Force-reload the current buffer from disk. `:edit!` re-reads the file and
 -- discards any unsaved in-buffer changes — useful when an external tool
 -- (formatter, codegen, git checkout) has rewritten the file on disk.
-vim.keymap.set("n", "<leader>fl", "<cmd>edit!<cr>", { desc = "Reload File Content From Disk" })
+vim.keymap.set("n", "<leader>fL", "<cmd>edit!<cr>", { desc = "Reload from disk" })
 
+-- UI
 vim.keymap.set("n", "<leader>tW", function()
   vim.wo.wrap = not vim.wo.wrap
   vim.notify("wrap: " .. (vim.wo.wrap and "on" or "off"), vim.log.levels.INFO)
-end, { desc = "Toggle word wrap (window-local)" })
-
--- Diff mode keybindings
-vim.keymap.set("n", "<leader>df", "<cmd>windo diffthis<cr>", { desc = "Diff compare (vertical split)" })
-vim.keymap.set("n", "<leader>dF", "<cmd>windo diffoff<cr>", { desc = "Diff off" })
-vim.keymap.set("n", "<leader>do", "<cmd>diffget<cr>", { desc = "Diff obtain (get from other)" })
-vim.keymap.set("n", "<leader>dp", "<cmd>diffput<cr>", { desc = "Diff put (send to other)" })
+end, { desc = "Word wrap (window-local)" })

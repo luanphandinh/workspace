@@ -30,7 +30,7 @@ local BASE_DEFAULTS = {
 ---@field g_bufnr string vim.g key for buffer reuse after reload
 ---@field notify_prefix string prefix for :vim.notify
 ---@field augroup_prefix string prefix for autocmd groups (CursorAgent / ClaudeAgent)
----@field hint_open string hint when no terminal (e.g. "<leader>cc")
+---@field hint_open string hint when no terminal (e.g. "<leader>;")
 ---@field defaults? table merged into BASE_DEFAULTS (cmd, args, …)
 function M.create(profile)
   profile = vim.tbl_extend("force", {

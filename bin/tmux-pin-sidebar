@@ -144,20 +144,21 @@ render() {
 			fi
 		fi
 
-		# Aligned help: 8-col key field + 1 space + description.
-		# `C-S-↑/↓` / `C-S-←/→` are 7 visible cols, padded to 8 with 1 space.
-		# Blank spacer line above must be EOL-cleared (not just `\n`-skipped)
-		# so a previous longer render's content doesn't linger here.
-		printf '%s\n──%s\n' "$EOL" "$EOL"
+			# Compact help for macOS and cross-platform terminal bindings.
+			# Blank spacer line above must be EOL-cleared (not just `\n`-skipped)
+			# so a previous longer render's content doesn't linger here.
+			printf '%s\n──%s\n' "$EOL" "$EOL"
 		printf 'prefix+a pin/unpin%s\n' "$EOL"
 		printf 'prefix+A toggle%s\n' "$EOL"
-		printf 'prefix+e clear all%s\n' "$EOL"
-		printf 'prefix+P replace last%s\n' "$EOL"
-		printf 'prefix+S resize%s\n' "$EOL"
-		printf 'C-S-↑/↓  cycle%s\n' "$EOL"
-		printf 'C-S-j/k  cycle%s\n' "$EOL"
-		printf 'C-S-←/→  window%s\n' "$EOL"
-		printf 'C-S-h/l  window%s\n' "$EOL"
+			printf 'prefix+e clear all%s\n' "$EOL"
+			printf 'prefix+P replace last%s\n' "$EOL"
+			printf 'prefix+S resize%s\n' "$EOL"
+			printf 'O-C-↑/↓  cycle%s\n' "$EOL"
+			printf 'C-S-↑/↓  cycle%s\n' "$EOL"
+			printf 'C-S-j/k  cycle%s\n' "$EOL"
+			printf 'O-C-←/→  window%s\n' "$EOL"
+			printf 'C-S-←/→  window%s\n' "$EOL"
+			printf 'C-S-h/l  window%s\n' "$EOL"
 
 		# Wipe any stale content below the new render (left over from a
 		# previous taller render — e.g. dropped pin, closed window).

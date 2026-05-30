@@ -10,9 +10,9 @@ local agent_defs = {
     augroup_prefix = "CursorAgent",
     defaults = { cmd = "cursor-agent" },
     keys = {
-      toggle = { lhs = "<leader>ac", mode = "n", desc = "Toggle Cursor agent terminal" },
-      focus = { lhs = "<leader>af", mode = "n", desc = "Focus Cursor agent terminal" },
-      send = { lhs = "<leader>as", mode = "x", desc = "Send selection to Cursor agent" },
+      toggle = { lhs = "<leader>ac", mode = "n", desc = "Toggle terminal" },
+      focus = { lhs = "<leader>af", mode = "n", desc = "Focus terminal" },
+      send = { lhs = "<leader>as", mode = "x", desc = "Send selection" },
     },
   },
   claude = {
@@ -22,9 +22,9 @@ local agent_defs = {
     augroup_prefix = "ClaudeAgent",
     defaults = { cmd = "claude" },
     keys = {
-      toggle = { lhs = "<leader>xc", mode = "n", desc = "Toggle Claude Code terminal" },
-      focus = { lhs = "<leader>xf", mode = "n", desc = "Focus Claude Code terminal" },
-      send = { lhs = "<leader>xs", mode = "x", desc = "Send selection to Claude Code" },
+      toggle = { lhs = "<leader>xc", mode = "n", desc = "Toggle terminal" },
+      focus = { lhs = "<leader>xf", mode = "n", desc = "Focus terminal" },
+      send = { lhs = "<leader>xs", mode = "x", desc = "Send selection" },
     },
   },
   codex = {
@@ -38,9 +38,9 @@ local agent_defs = {
       return { cmd = "codex", args = { "-c", notify_arg } }
     end,
     keys = {
-      toggle = { lhs = "<leader>cc", mode = "n", desc = "Toggle Codex terminal" },
-      focus = { lhs = "<leader>cf", mode = "n", desc = "Focus Codex terminal" },
-      send = { lhs = "<leader>cs", mode = "x", desc = "Send selection to Codex" },
+      toggle = { lhs = "<leader>;", mode = "n", desc = "Toggle Codex" },
+      focus = { lhs = "<leader>cf", mode = "n", desc = "Focus terminal" },
+      send = { lhs = "<leader>;", mode = { "x", "s" }, desc = "Send to Codex" },
     },
   },
 }

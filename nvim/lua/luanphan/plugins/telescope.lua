@@ -59,11 +59,12 @@ return {
     "nvim-telescope/telescope.nvim",
     cmd = "Telescope",
     keys = {
+      { "<leader>ff", find_files, desc = "Find files" },
       { "<leader>p", find_files, desc = "Telescope: find files" },
       { "g/", live_grep, desc = "Telescope: live grep" },
-      { "<leader>lf", buffers, desc = "Telescope: buffers" },
+      { "<leader>fl", buffers, desc = "List open files" },
       { "gs", document_symbols, desc = "Telescope: document symbols" },
-      { "<leader>ft", filetypes, desc = "Telescope: set filetype" },
+      { "<leader>ft", filetypes, desc = "Set filetype" },
     },
     dependencies = {
       "nvim-lua/plenary.nvim",
