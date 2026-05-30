@@ -22,6 +22,7 @@ return {
         { "<leader>f", group = "Files" },
         { "<leader>g", group = "Git" },
         { "<leader>h", group = "Harpoon" },
+        { "<leader>r", group = "Restart" },
         { "<leader>t", group = "Toggle" },
         { "<leader>x", group = "Claude" },
       })

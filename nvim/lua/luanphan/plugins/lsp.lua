@@ -45,7 +45,7 @@ end
 
 local function setup_cmp_restart_command()
   vim.api.nvim_create_user_command("CmpRestart", restart_cmp, {})
-  vim.keymap.set("n", "<leader>rs", restart_cmp, { desc = "Restart completion" })
+  vim.keymap.set("n", "<leader>rs", restart_cmp, { desc = "Completion" })
 end
 
 return {

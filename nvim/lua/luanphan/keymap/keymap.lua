@@ -188,21 +188,21 @@ vim.keymap.set("n", "<leader>rc", function()
   end
 
   print("Config reloaded!")
-end, { desc = "Reload config (full init.lua)" })
+end, { desc = "Config" })
 
 -- LSP
 -- LSP: use vim.lsp.enable(false) then enable(true) — see :help lsp-restart
 vim.keymap.set("n", "<leader>rl", function()
   lsp_restart.restart_all()
-end, { desc = "LspRestart: full LSP restart" })
+end, { desc = "All LSP" })
 
 vim.keymap.set("n", "<leader>rg", function()
   lsp_restart.restart_gopls()
-end, { desc = "GoplsRestart: full gopls stop + re-attach all Go buffers" })
+end, { desc = "gopls" })
 
 vim.keymap.set("n", "<leader>rb", function()
   lsp_restart.restart_buffer()
-end, { desc = "LspRestartBuffer: this buffer / recover attach" })
+end, { desc = "Buffer LSP" })
 
 -- AI
 vim.keymap.set("n", "<leader>tc", function()
