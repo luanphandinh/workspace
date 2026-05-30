@@ -36,9 +36,9 @@ local function attach(buf)
       format_json(ev.buf)
     end,
   })
-  vim.keymap.set("n", "<leader>fj", function()
+  vim.keymap.set("n", "<leader>kf", function()
     format_json(buf)
-  end, { buffer = buf, desc = "Format JSON" })
+  end, { buffer = buf, desc = "Format" })
 end
 
 function M.setup()
