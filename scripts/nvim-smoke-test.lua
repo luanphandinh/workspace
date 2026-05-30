@@ -412,6 +412,105 @@ local function worktree_plugin_loaded()
   return plugin_loaded("luanphan-worktree")
 end
 
+local function icon_char(value)
+  assert_true(type(value) == "table" and type(value.icon) == "string", "toggle icon must return an icon table")
+  return value.icon
+end
+
+local function assert_toggle_icon_changes(label, fn, off, on)
+  off()
+  local off_icon = icon_char(fn())
+  on()
+  local on_icon = icon_char(fn())
+  assert_true(off_icon ~= on_icon, label .. " icon did not change")
+  off()
+end
+
+local function test_toggle_icons_reflect_state()
+  local icons = require("luanphan.toggle_icons")
+  local old_case = vim.g.luanphan_live_grep_case_sensitive
+  local old_regex = vim.g.luanphan_live_grep_regex
+  local old_copilot = vim.g.copilot_enabled
+  local had_copilot_cmd = vim.fn.exists(":Copilot") == 2
+  local old_wrap = vim.wo.wrap
+
+  if not had_copilot_cmd then
+    vim.api.nvim_create_user_command("Copilot", function() end, { nargs = "*" })
+  end
+
+  local ok, err = xpcall(function()
+    assert_toggle_icon_changes("live grep case sensitivity", icons.live_grep_case_sensitive, function()
+      vim.g.luanphan_live_grep_case_sensitive = 0
+    end, function()
+      vim.g.luanphan_live_grep_case_sensitive = 1
+    end)
+
+    assert_toggle_icon_changes("live grep regex", icons.live_grep_regex, function()
+      vim.g.luanphan_live_grep_regex = 0
+    end, function()
+      vim.g.luanphan_live_grep_regex = 1
+    end)
+
+    assert_toggle_icon_changes("copilot", icons.copilot, function()
+      vim.g.copilot_enabled = 0
+    end, function()
+      vim.g.copilot_enabled = 1
+    end)
+
+    assert_toggle_icon_changes("file diff", icons.file_diff, function()
+      pcall(vim.cmd, "windo diffoff")
+    end, function()
+      vim.cmd("diffthis")
+    end)
+
+    assert_toggle_icon_changes("terminal", icons.terminal, function()
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        local buf = vim.api.nvim_win_get_buf(win)
+        vim.b[buf].luanphan_toggleterm = nil
+        vim.b[buf].toggle_number = nil
+      end
+    end, function()
+      vim.b[vim.api.nvim_get_current_buf()].luanphan_toggleterm = true
+    end)
+
+    assert_toggle_icon_changes("word wrap", icons.word_wrap, function()
+      vim.wo.wrap = false
+    end, function()
+      vim.wo.wrap = true
+    end)
+
+    require("lazy").load({ plugins = { "gitsigns.nvim" } })
+    local gitsigns = require("gitsigns")
+    assert_toggle_icon_changes("line blame", icons.line_blame, function()
+      gitsigns.toggle_current_line_blame(false)
+    end, function()
+      gitsigns.toggle_current_line_blame(true)
+    end)
+    assert_toggle_icon_changes("word diff", icons.word_diff, function()
+      gitsigns.toggle_word_diff(false)
+    end, function()
+      gitsigns.toggle_word_diff(true)
+    end)
+  end, debug.traceback)
+
+  vim.g.luanphan_live_grep_case_sensitive = old_case
+  vim.g.luanphan_live_grep_regex = old_regex
+  vim.g.copilot_enabled = old_copilot
+  vim.wo.wrap = old_wrap
+  pcall(vim.cmd, "windo diffoff")
+  vim.b[vim.api.nvim_get_current_buf()].luanphan_toggleterm = nil
+  if not had_copilot_cmd then
+    pcall(vim.api.nvim_del_user_command, "Copilot")
+  end
+  local ok_gitsigns, gitsigns = pcall(require, "gitsigns")
+  if ok_gitsigns then
+    pcall(gitsigns.toggle_current_line_blame, false)
+    pcall(gitsigns.toggle_word_diff, false)
+  end
+
+  assert_true(ok, tostring(err))
+end
+
 local function worktree_test_api()
   if not (_G._luanphan_wt_test and _G._luanphan_wt_test.switch_to) then
     require("lazy").load({ plugins = { "luanphan-worktree" } })
@@ -740,6 +839,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("worktree plugin starts lazy", function()
     test_worktree_plugin_starts_lazy()
+  end)
+
+  test("toggle icons reflect state", function()
+    test_toggle_icons_reflect_state()
   end)
 
   test("agent cli commands are executable", function()
