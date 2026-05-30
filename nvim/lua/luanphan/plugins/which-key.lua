@@ -17,10 +17,13 @@ return {
       })
 
       wk.add({
+        { "<leader>a", group = "Cursor" },
+        { "<leader>c", group = "Codex" },
         { "<leader>f", group = "Files" },
         { "<leader>g", group = "Git" },
         { "<leader>h", group = "Harpoon" },
         { "<leader>t", group = "Toggle" },
+        { "<leader>x", group = "Claude" },
       })
 
       -- Press ? to show all keymaps
