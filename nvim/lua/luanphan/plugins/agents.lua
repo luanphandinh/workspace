@@ -38,9 +38,9 @@ local agent_defs = {
       return { cmd = "codex", args = { "-c", notify_arg } }
     end,
     keys = {
-      toggle = { lhs = "<leader>cc", mode = "n", desc = "Toggle terminal" },
+      toggle = { lhs = "<leader>;", mode = "n", desc = "Toggle Codex" },
       focus = { lhs = "<leader>cf", mode = "n", desc = "Focus terminal" },
-      send = { lhs = "<leader>cs", mode = "x", desc = "Send selection" },
+      send = { lhs = "<leader>;", mode = { "x", "s" }, desc = "Send to Codex" },
     },
   },
 }

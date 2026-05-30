@@ -7,7 +7,7 @@ local cleanup_fixture_id = 0
 local agent_cli_commands = {
   { command = "cursor-agent", lhs = "<leader>ac", plugin = "luanphan-cursor-agent", g_bufnr = "cursor_agent_bufnr" },
   { command = "claude", lhs = "<leader>xc", plugin = "luanphan-claude-agent", g_bufnr = "claude_agent_bufnr" },
-  { command = "codex", lhs = "<leader>cc", plugin = "luanphan-codex-agent", g_bufnr = "codex_agent_bufnr" },
+  { command = "codex", lhs = "<leader>;", plugin = "luanphan-codex-agent", g_bufnr = "codex_agent_bufnr" },
 }
 
 vim.notify = function(message, level)
@@ -108,6 +108,15 @@ local function read_log(path)
     return {}
   end
   return read_lines(path)
+end
+
+local function log_has_prefix(path, prefix)
+  for _, line in ipairs(read_log(path)) do
+    if line:sub(1, #prefix) == prefix then
+      return true
+    end
+  end
+  return false
 end
 
 local function make_fixture()
@@ -334,23 +343,65 @@ local function close_agent_terminals()
   end
 end
 
-local function invoke_map(lhs)
-  local map = vim.fn.maparg(lhs, "n", false, true)
+local function invoke_map(lhs, mode)
+  mode = mode or "n"
+  local map = vim.fn.maparg(lhs, mode, false, true)
   assert_true(type(map) == "table" and type(map.callback) == "function", lhs .. " is not a callback mapping")
   map.callback()
+end
+
+local function agent_bufnr(global_name)
+  local stored = vim.g[global_name]
+  if type(stored) == "number" then
+    return stored
+  end
+  if type(stored) ~= "table" then
+    return nil
+  end
+
+  local cwd_bufnr = stored[vim.fn.getcwd()]
+  if type(cwd_bufnr) == "number" then
+    return cwd_bufnr
+  end
+
+  for _, bufnr in pairs(stored) do
+    if type(bufnr) == "number" then
+      return bufnr
+    end
+  end
+  return nil
 end
 
 local function feed_normal(keys)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "xt", false)
 end
 
-local function feed_lhs(lhs)
-  feed_normal(lhs:gsub("<leader>", vim.g.mapleader or "\\"))
-end
-
 local function plugin_loaded(name)
   local plugin = require("lazy.core.config").plugins[name]
   return plugin and plugin._ and plugin._.loaded
+end
+
+local function ensure_lazy_key_ready(lhs, plugin, mode)
+  mode = mode or "n"
+  if plugin_loaded(plugin) then
+    return
+  end
+  local lazy_map = vim.fn.maparg(lhs, mode, false, true)
+  assert_true(type(lazy_map) == "table" and type(lazy_map.callback) == "function", lhs .. " is not a lazy callback mapping")
+  local lazy_callback = lazy_map.callback
+  lazy_callback()
+  wait_until(plugin .. " lazy load", function()
+    return plugin_loaded(plugin)
+  end, 3000)
+  wait_until(lhs .. " real callback", function()
+    local map = vim.fn.maparg(lhs, mode, false, true)
+    return type(map) == "table" and type(map.callback) == "function" and map.callback ~= lazy_callback
+  end, 3000)
+end
+
+local function invoke_lazy_map(lhs, plugin, mode)
+  ensure_lazy_key_ready(lhs, plugin, mode)
+  invoke_map(lhs, mode)
 end
 
 local function worktree_plugin()
@@ -402,14 +453,9 @@ local function test_agent_keys_invoke_cli_commands()
 
   local ok, err = xpcall(function()
     for _, item in ipairs(agent_cli_commands) do
-      feed_lhs(item.lhs)
+      invoke_lazy_map(item.lhs, item.plugin)
       wait_until(item.command .. " invocation", function()
-        for _, line in ipairs(read_log(log)) do
-          if line:sub(1, #item.command + 1) == item.command .. "|" then
-            return true
-          end
-        end
-        return false
+        return log_has_prefix(log, item.command .. "|")
       end, 3000)
       assert_true(plugin_loaded(item.plugin), item.plugin .. " did not lazy-load")
       close_agent_terminals()
@@ -418,6 +464,67 @@ local function test_agent_keys_invoke_cli_commands()
 
   vim.env.PATH = old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = old_log
+  close_agent_terminals()
+  assert_true(ok, tostring(err))
+end
+
+local function test_codex_leader_semicolon_sends_visual_selection()
+  local shim_dir = temp_root .. "/codex-send-shim"
+  local invoke_log = temp_root .. "/codex-send-invocations.log"
+  vim.fn.mkdir(shim_dir, "p")
+  write(invoke_log, {})
+  write_executable(shim_dir .. "/codex", {
+    "#!/bin/sh",
+    "printf '%s|%s|%s\\n' \"$(basename \"$0\")\" \"$PWD\" \"$*\" >> \"$NVIM_AGENT_SMOKE_LOG\"",
+    "sleep 30",
+  })
+
+  local old_cwd = vim.fn.getcwd()
+  local old_path = vim.env.PATH
+  local old_log = vim.env.NVIM_AGENT_SMOKE_LOG
+  vim.env.PATH = shim_dir .. ":" .. old_path
+  vim.env.NVIM_AGENT_SMOKE_LOG = invoke_log
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(temp_root))
+    local file = temp_root .. "/codex-send-buffer.txt"
+    write(file, {
+      "selected payload line",
+      "unselected payload line",
+    })
+    vim.cmd("edit " .. vim.fn.fnameescape(file))
+
+    local normal_map = vim.fn.maparg("<leader>;", "n", false, true)
+    local visual_map = vim.fn.maparg("<leader>;", "x", false, true)
+    local select_map = vim.fn.maparg("<leader>;", "s", false, true)
+    assert_true(type(normal_map) == "table" and normal_map.desc == "Toggle Codex", "<leader>; normal should toggle Codex")
+    assert_true(type(visual_map) == "table" and visual_map.desc == "Send to Codex", "<leader>; visual should send to Codex")
+    assert_true(type(select_map) == "table" and select_map.desc == "Send to Codex", "<leader>; select should send to Codex")
+    assert_true(vim.fn.maparg("<leader>cc", "n") == "", "<leader>cc should be removed")
+    assert_true(vim.fn.maparg("<leader>cs", "x") == "", "<leader>cs should be removed")
+
+    vim.cmd("normal! ggV")
+    ensure_lazy_key_ready("<leader>;", "luanphan-codex-agent", "x")
+    vim.cmd("normal! ggV")
+    invoke_map("<leader>;", "x")
+    wait_until("codex invocation", function()
+      return log_has_prefix(invoke_log, "codex|")
+    end, 3000)
+
+    wait_until("codex selection marker", function()
+      local bufnr = agent_bufnr("codex_agent_bufnr")
+      if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+        return false
+      end
+      local terminal_text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "")
+      return terminal_text:find("codex-send-buffer.txt:1-1", 1, true) ~= nil
+    end, 3000)
+    assert_true(plugin_loaded("luanphan-codex-agent"), "codex agent did not lazy-load")
+  end, debug.traceback)
+
+  vim.env.PATH = old_path
+  vim.env.NVIM_AGENT_SMOKE_LOG = old_log
+  pcall(vim.cmd, "cd " .. vim.fn.fnameescape(old_cwd))
   close_agent_terminals()
   assert_true(ok, tostring(err))
 end
@@ -616,6 +723,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("agent keys invoke cli commands inside nvim", function()
     test_agent_keys_invoke_cli_commands()
+  end)
+
+  test("codex leader semicolon sends visual selection", function()
+    test_codex_leader_semicolon_sends_visual_selection()
   end)
 
   test("deleted startup workspace falls back to master worktree", function()
