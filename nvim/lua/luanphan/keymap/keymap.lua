@@ -160,10 +160,10 @@ end, { desc = "Show diagnostic at line" })
 -- Buffers
 vim.keymap.set("n", "<leader>kw", function()
   require("luanphan.buffer_only").close_other_file_buffers()
-end, { desc = "Buffer: close other files (keep active buffer, tree, terminals, AI)" })
+end, { desc = "Close other files (keep active buffer, tree, terminals, AI)" })
 vim.keymap.set("n", "<leader>kW", function()
   require("luanphan.buffer_only").close_other_file_buffers({ force = true })
-end, { desc = "Buffer: close other files (!) discard unsaved in closed buffers" })
+end, { desc = "Close other files (!) discard unsaved in closed buffers" })
 
 -- Config
 -- Full reload: luafile init (not :source — that is for Vimscript; init.lua needs :luafile).

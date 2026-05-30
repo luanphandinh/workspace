@@ -25,6 +25,7 @@ return {
         { "<leader>f", group = "Files" },
         { "<leader>g", group = "Git" },
         { "<leader>h", group = "Harpoon", icon = { icon = "󰛢 ", color = "azure" } },
+        { "<leader>k", group = "Editor" },
         { "<leader>r", group = "Restart", icon = { icon = " ", color = "cyan" } },
         { "<leader>t", group = "Toggle" },
         { "<leader>x", group = "Claude", icon = { icon = " ", color = "green" } },

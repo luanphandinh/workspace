@@ -284,6 +284,18 @@ local function assert_lsp_code_action_keymaps()
   assert_true(vim.fn.maparg("<leader>rn", "n") == "", "<leader>rn should be removed")
 end
 
+local function test_json_format_keymap()
+  local file = temp_root .. "/format-keymap.json"
+  write(file, { '{"name":"example"}' })
+  vim.cmd("edit " .. vim.fn.fnameescape(file))
+  vim.bo.filetype = "json"
+
+  wait_until("json format keymap", function()
+    local map = vim.fn.maparg("<leader>kf", "n", false, true)
+    return type(map) == "table" and map.desc == "Format"
+  end, 3000)
+end
+
 local function has_visible_diffview()
   for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
@@ -920,6 +932,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("lsp definition and references", function()
     test_lsp_definition_and_references(repo)
+  end)
+
+  test("json format keymap uses editor group", function()
+    test_json_format_keymap()
   end)
 
   test("lsp restart reattaches all buffers for current server", function()
