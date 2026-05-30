@@ -272,6 +272,18 @@ local function assert_lsp_navigation(path)
   assert_true(result_count(refs) >= 2, "references request returned too few locations")
 end
 
+local function assert_lsp_code_action_keymaps()
+  local change_definition = vim.fn.maparg("<leader>cd", "n", false, true)
+  local code_action = vim.fn.maparg("<leader>ca", "n", false, true)
+
+  assert_true(
+    type(change_definition) == "table" and change_definition.desc == "Change Definition",
+    "<leader>cd should be Change Definition"
+  )
+  assert_true(type(code_action) == "table" and code_action.desc == "Code Action", "<leader>ca should be Code Action")
+  assert_true(vim.fn.maparg("<leader>rn", "n") == "", "<leader>rn should be removed")
+end
+
 local function has_visible_diffview()
   for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
@@ -631,6 +643,7 @@ end
 local function test_lsp_definition_and_references(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   assert_lsp_navigation(repo .. "/main.go")
+  assert_lsp_code_action_keymaps()
 end
 
 local function test_lsp_restart_reattaches_all_buffers_for_current_server(repo)

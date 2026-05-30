@@ -127,8 +127,18 @@ return {
           vim.keymap.set("n", "gr", with_lsp(telescope_lsp("lsp_references")), opts)
 
           vim.keymap.set("n", "gh", vim.lsp.buf.hover, opts)
-          vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename, opts)
-          vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, opts)
+          vim.keymap.set(
+            "n",
+            "<leader>cd",
+            vim.lsp.buf.rename,
+            vim.tbl_extend("force", opts, { desc = "Change Definition" })
+          )
+          vim.keymap.set(
+            "n",
+            "<leader>ca",
+            vim.lsp.buf.code_action,
+            vim.tbl_extend("force", opts, { desc = "Code Action" })
+          )
 
           -- Auto format on save
           if client:supports_method("textDocument/formatting") then
