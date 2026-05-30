@@ -15,9 +15,12 @@ ifneq (,$(findstring Linux,$(UNAME)))
 		&& sudo rm -rf /opt/$(nvim_linux_name) \
 		&& sudo tar -C /opt -xzf ./tmp/$(nvim_linux_name).tar.gz \
 		&& sudo ln -sf /opt/$(nvim_linux_name)/bin/nvim /usr/local/bin/nvim
-	deps := fd-find python3-pip nodejs npm curl
+	deps := fd-find python3-pip nodejs npm curl unzip fontconfig
 	os_name := linux
-	fonts_install := sudo apt install fonts-firacode
+	fonts_install := test -f "$(HOME)/.local/share/fonts/FiraCodeNerdFont-Regular.ttf" || (mkdir -p "$(HOME)/.local/share/fonts" ./tmp \
+		&& curl -fsSL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/FiraCode.zip -o ./tmp/FiraCode.zip \
+		&& unzip -o -q ./tmp/FiraCode.zip "FiraCodeNerdFont*.ttf" -d "$(HOME)/.local/share/fonts" \
+		&& fc-cache -f "$(HOME)/.local/share/fonts")
 	mac_apps_install := true
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
 									&& sudo apt install software-properties-common -y \
@@ -29,7 +32,7 @@ else
 	deps := fd python3 node glow terminal-notifier
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
-	fonts_install := brew install --cask font-fira-code
+	fonts_install := brew install --cask font-fira-code-nerd-font
 	mac_apps_install := brew install --cask alfred arc maccy
 endif
 
