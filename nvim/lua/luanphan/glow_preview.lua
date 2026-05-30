@@ -131,7 +131,7 @@ function M.toggle()
   })
 
   -- Close keymaps: <leader>fp toggles, q is a fast normal-mode close.
-  local close_opts = { buffer = bufnr, silent = true, desc = "Close glow preview" }
+  local close_opts = { buffer = bufnr, silent = true, desc = "Close Markdown preview" }
   vim.keymap.set("n", "<leader>fp", function() M.toggle() end, close_opts)
   vim.keymap.set("n", "q", function() M.toggle() end, close_opts)
   vim.keymap.set(

@@ -6,7 +6,8 @@ return {
       vim.o.timeout = true
       vim.o.timeoutlen = 300
 
-      require("which-key").setup({
+      local wk = require("which-key")
+      wk.setup({
         plugins = {
           spelling = { enabled = true },
         },
@@ -15,9 +16,13 @@ return {
         },
       })
 
+      wk.add({
+        { "<leader>f", group = "Files" },
+      })
+
       -- Press ? to show all keymaps
       vim.keymap.set("n", "?", function()
-        require("which-key").show({ global = true })
+        wk.show({ global = true })
       end, { desc = "Show all keymaps" })
     end,
   },
