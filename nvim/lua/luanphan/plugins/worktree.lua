@@ -727,7 +727,7 @@ local function setup()
     vim.api.nvim_create_user_command("WorktreeSwitch", pick_worktree, {
       desc = "Switch nvim instance to another git worktree",
     })
-    vim.keymap.set("n", "<leader>gw", pick_worktree, { desc = "Git worktree switch" })
+    vim.keymap.set("n", "<leader>gw", pick_worktree, { desc = "Switch worktree" })
   end
 
   register_keymap()
@@ -762,7 +762,7 @@ return {
     init = init,
     cmd = "WorktreeSwitch",
     keys = {
-      { "<leader>gw", pick_worktree, desc = "Git worktree switch" },
+      { "<leader>gw", pick_worktree, desc = "Switch worktree" },
     },
     config = ensure_setup,
   },

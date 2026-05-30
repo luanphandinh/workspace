@@ -18,6 +18,7 @@ return {
 
       wk.add({
         { "<leader>f", group = "Files" },
+        { "<leader>g", group = "Git" },
       })
 
       -- Press ? to show all keymaps
