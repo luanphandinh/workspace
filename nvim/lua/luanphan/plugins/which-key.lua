@@ -19,6 +19,7 @@ return {
       wk.add({
         { "<leader>f", group = "Files" },
         { "<leader>g", group = "Git" },
+        { "<leader>h", group = "Harpoon" },
       })
 
       -- Press ? to show all keymaps
