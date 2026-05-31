@@ -1,7 +1,9 @@
 UNAME := $(shell uname)
 ARCH := $(shell uname -m)
 export PATH := $(HOME)/.local/bin:$(HOME)/bin:$(PATH)
-ifeq ($(ARCH),arm64)
+ifeq ($(UNAME),Darwin)
+	go_arch := amd64
+else ifeq ($(ARCH),arm64)
 	go_arch := arm64
 else ifeq ($(ARCH),aarch64)
 	go_arch := arm64
