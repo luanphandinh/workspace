@@ -39,13 +39,24 @@ endif
 go_version := 1.25.9
 go_archive := go$(go_version).$(os_name)-$(go_arch).tar.gz
 export PATH := /usr/local/go/bin:$(HOME)/go/bin:$(PATH)
+MODE ?= locked
+ifeq ($(MODE),latest)
+	lazy_command := sync
+else ifeq ($(MODE),locked)
+	lazy_command := restore
+else
+$(error MODE must be locked or latest)
+endif
 
-.PHONY: help setup setup-deps nvim nvim-install nvim-config nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin cleanup
+.PHONY: help setup update setup-deps nvim nvim-install nvim-config nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
 setup:  ## Install all workspace tools, configs, and terminal agent CLIs.
 setup: setup-deps go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config mac-apps cleanup
+
+update: ## Install all workspace tools while updating Neovim plugins to latest.
+	$(MAKE) MODE=latest setup
 
 setup-deps: ## Setup deps
 	test -d ./tmp || mkdir -p ./tmp
@@ -63,7 +74,10 @@ nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	rm -rf ~/.config/nvim/*
 	cp -r ./nvim/. ~/.config/nvim/
-	NVIM_INSTALL_TREESITTER=1 nvim --headless "+Lazy! sync" +qa
+	NVIM_INSTALL_TREESITTER=1 nvim --headless "+Lazy! $(lazy_command)" +qa
+
+nvim-lock: ## Refresh nvim/lazy-lock.json from the installed Neovim config.
+	cp ~/.config/nvim/lazy-lock.json ./nvim/lazy-lock.json
 
 nvim-test: verify-agent-clis ## Run headless Neovim smoke tests
 	GOWORK=off nvim --headless "+luafile scripts/nvim-smoke-test.lua" +qa
