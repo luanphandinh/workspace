@@ -17,7 +17,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 		&& sudo rm -rf /opt/$(nvim_linux_name) \
 		&& sudo tar -C /opt -xzf ./tmp/$(nvim_linux_name).tar.gz \
 		&& sudo ln -sf /opt/$(nvim_linux_name)/bin/nvim /usr/local/bin/nvim
-	deps := fd-find python3-pip nodejs npm curl unzip fontconfig jq
+	deps := fd-find python3-pip nodejs npm curl unzip fontconfig jq btop
 	os_name := linux
 	fonts_install := test -f "$(HOME)/.local/share/fonts/FiraCodeNerdFont-Regular.ttf" || (mkdir -p "$(HOME)/.local/share/fonts" ./tmp \
 		&& curl -fsSL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/FiraCode.zip -o ./tmp/FiraCode.zip \
@@ -31,7 +31,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 else
 	install := brew install
 	install_nvim := brew install neovim --HEAD
-	deps := fd python3 node glow terminal-notifier jq
+	deps := fd python3 node glow terminal-notifier jq btop
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
 	fonts_install := brew install --cask font-fira-code-nerd-font
