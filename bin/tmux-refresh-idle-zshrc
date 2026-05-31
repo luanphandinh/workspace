@@ -1,0 +1,51 @@
+#!/bin/sh
+set -eu
+
+tmux_cmd="${TMUX_BIN:-tmux}"
+if [ "$tmux_cmd" = "tmux" ] && ! command -v tmux >/dev/null 2>&1; then
+	exit 0
+fi
+
+panes="$("$tmux_cmd" list-panes -aF '#{pane_id}	#{pane_pid}	#{pane_current_command}	#{pane_dead}	#{pane_in_mode}	#{@pin_sidebar}' 2>/dev/null || :)"
+[ -n "$panes" ] || exit 0
+
+has_child_process() {
+	pid="${1:-}"
+	[ -n "$pid" ] || return 1
+
+	if command -v pgrep >/dev/null 2>&1; then
+		[ -n "$(pgrep -P "$pid" 2>/dev/null || :)" ]
+		return
+	fi
+
+	ps -axo ppid=,pid= 2>/dev/null | awk -v pid="$pid" '$1 == pid { found = 1 } END { exit found ? 0 : 1 }'
+}
+
+timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
+tab="$(printf '\t')"
+refreshed=0
+skipped=0
+
+while IFS="$tab" read -r pane pid command dead in_mode pin_sidebar; do
+	[ -n "$pane" ] || continue
+	if [ "$dead" = "1" ] || [ "$in_mode" = "1" ] || [ "$pin_sidebar" = "1" ]; then
+		skipped=$((skipped + 1))
+		continue
+	fi
+	if [ "$command" != "zsh" ] || has_child_process "$pid"; then
+		skipped=$((skipped + 1))
+		continue
+	fi
+
+	refresh_cmd="source \"\$HOME/.zshrc\"; printf '\\n[workspace-bin] refreshed ~/.zshrc at %s\\n' '$timestamp'"
+	"$tmux_cmd" send-keys -t "$pane" "$refresh_cmd" Enter >/dev/null 2>&1 || :
+	refreshed=$((refreshed + 1))
+done <<EOF
+$panes
+EOF
+
+if [ "$refreshed" -gt 0 ]; then
+	printf 'workspace-bin: refreshed ~/.zshrc in %s idle tmux pane(s); skipped %s pane(s)\n' "$refreshed" "$skipped"
+else
+	printf 'workspace-bin: no idle zsh tmux panes to refresh; skipped %s pane(s)\n' "$skipped"
+fi

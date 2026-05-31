@@ -1,0 +1,62 @@
+#!/bin/sh
+set -eu
+
+workspace_file="${1:-./shell/workspace.sh}"
+[ -f "$workspace_file" ] || {
+	printf 'workspace-shell-sync: missing %s\n' "$workspace_file" >&2
+	exit 1
+}
+
+remove_file="$(mktemp -t workspace-shell-lines.XXXXXX)"
+trap 'rm -f "$remove_file"' EXIT
+
+while IFS= read -r line || [ -n "$line" ]; do
+	[ -n "$line" ] || continue
+	printf '%s\n' "$line"
+done < "$workspace_file" > "$remove_file"
+printf '%s\n' 'alias mcodex='"'"'codex -c notify=["$HOME/bin/codex-turn-ended-notify"]'"'" >> "$remove_file"
+
+for profile in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
+	touch "$profile"
+	tmp="$(mktemp -t workspace-shell-profile.XXXXXX)"
+	awk -v remove_file="$remove_file" '
+		BEGIN {
+			while ((getline line < remove_file) > 0) {
+				remove[line] = 1
+			}
+			close(remove_file)
+		}
+		$0 == "# >>> workspace-bin" {
+			in_block = 1
+			next
+		}
+		$0 == "# <<< workspace-bin" {
+			in_block = 0
+			next
+		}
+		in_block {
+			next
+		}
+		($0 in remove) {
+			next
+		}
+		{
+			print
+		}
+	' "$profile" > "$tmp"
+
+	cat "$tmp" > "$profile"
+	rm -f "$tmp"
+
+	if [ -s "$profile" ]; then
+		last_hex="$(tail -c 1 "$profile" | od -An -tx1 | tr -d ' \n')"
+		[ "$last_hex" = "0a" ] || printf '\n' >> "$profile"
+	fi
+
+	printf '# >>> workspace-bin\n' >> "$profile"
+	while IFS= read -r line || [ -n "$line" ]; do
+		printf '%s\n' "$line"
+	done < "$workspace_file" >> "$profile"
+	printf '# <<< workspace-bin\n' >> "$profile"
+	printf 'workspace-bin: updated %s\n' "$profile"
+done
