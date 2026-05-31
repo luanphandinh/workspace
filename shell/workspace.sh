@@ -3,4 +3,4 @@ export PATH="$PATH:/usr/local/go/bin"
 export PATH="$PATH:$HOME/go/bin"
 export COLORTERM=truecolor
 export FORCE_COLOR=1
-alias mcodex='codex -c notify=["$HOME/bin/codex-turn-ended-notify"]'
+mcodex() { codex -c "notify=[\"$HOME/bin/codex-turn-ended-notify\"]" "$@"; }
