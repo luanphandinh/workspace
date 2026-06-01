@@ -17,7 +17,8 @@ ifneq (,$(findstring Linux,$(UNAME)))
 		&& sudo rm -rf /opt/$(nvim_linux_name) \
 		&& sudo tar -C /opt -xzf ./tmp/$(nvim_linux_name).tar.gz \
 		&& sudo ln -sf /opt/$(nvim_linux_name)/bin/nvim /usr/local/bin/nvim
-	deps := fd-find python3-pip nodejs npm curl unzip fontconfig jq btop
+	deps := fd-find python3-pip nodejs npm curl unzip fontconfig
+	optional_deps := jq btop newsboat
 	os_name := linux
 	fonts_install := test -f "$(HOME)/.local/share/fonts/FiraCodeNerdFont-Regular.ttf" || (mkdir -p "$(HOME)/.local/share/fonts" ./tmp \
 		&& curl -fsSL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/FiraCode.zip -o ./tmp/FiraCode.zip \
@@ -31,7 +32,8 @@ ifneq (,$(findstring Linux,$(UNAME)))
 else
 	install := brew install
 	install_nvim := brew install neovim --HEAD
-	deps := fd python3 node glow terminal-notifier jq btop
+	deps := fd python3 node glow terminal-notifier
+	optional_deps := jq btop newsboat
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
 	fonts_install := brew install --cask font-fira-code-nerd-font
@@ -50,12 +52,12 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update setup-deps nvim nvim-install nvim-config nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin cleanup
+.PHONY: help setup update setup-deps optional-deps newsboat-config nvim nvim-install nvim-config nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
 setup:  ## Install all workspace tools, configs, and terminal agent CLIs.
-setup: setup-deps go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config mac-apps cleanup
+setup: setup-deps go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config optional-deps newsboat-config mac-apps cleanup
 
 update: ## Install all workspace tools while updating Neovim plugins to latest.
 	$(MAKE) MODE=latest setup
@@ -64,6 +66,15 @@ setup-deps: ## Setup deps
 	test -d ./tmp || mkdir -p ./tmp
 	@$(setup_script)
 	@yes Y | $(install) $(deps)
+
+optional-deps: ## Setup optional CLI deps
+	@yes Y | $(install) $(optional_deps)
+
+newsboat-config: ## Install Newsboat feed URLs from newsboat/urls.local
+	test -d ./newsboat || mkdir -p ./newsboat
+	test -f ./newsboat/urls.local
+	test -d ~/.newsboat || mkdir -p ~/.newsboat
+	cp ./newsboat/urls.local ~/.newsboat/urls
 
 nvim: ## Install neovim + all plugins
 nvim: setup-deps nvim-install nvim-config cleanup
