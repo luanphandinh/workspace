@@ -8,7 +8,7 @@ if [ "$state" = "1" ]; then
 	tmux list-windows -aF '#{window_id}' 2>/dev/null |
 		while IFS= read -r win; do
 			[ -n "$win" ] || continue
-			"$HOME/bin/tmux-pin-sidebar-attach" "$win" >/dev/null 2>&1 || :
+			"$HOME/bin/tmux/session-sidebar/tmux-pin-sidebar-attach" "$win" >/dev/null 2>&1 || :
 		done
 
 	tmux list-panes -aF '#{pane_id} #{@pin_sidebar}' 2>/dev/null |
@@ -19,5 +19,5 @@ if [ "$state" = "1" ]; then
 		done
 fi
 
-"$HOME/bin/tmux-pin-broadcast-redraw" >/dev/null 2>&1 || :
+"$HOME/bin/tmux/session-sidebar/tmux-pin-broadcast-redraw" >/dev/null 2>&1 || :
 tmux refresh-client >/dev/null 2>&1 || :

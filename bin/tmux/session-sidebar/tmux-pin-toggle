@@ -43,4 +43,4 @@ else
 fi
 
 # Trigger an in-place redraw of every open sidebar (no respawn = no flicker).
-"$HOME/bin/tmux-pin-broadcast-redraw" >/dev/null 2>&1 || :
+"$HOME/bin/tmux/session-sidebar/tmux-pin-broadcast-redraw" >/dev/null 2>&1 || :

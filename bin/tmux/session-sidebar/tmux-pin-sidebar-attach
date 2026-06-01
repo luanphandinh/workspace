@@ -35,7 +35,7 @@ fi
 # Run through a parent shell so tmux-resurrect's default `ps` save strategy
 # can see `tmux-pin-sidebar` as a child process and restore it after a server
 # restart. Directly execing the script makes resurrect save only `bash`.
-cmd="/bin/sh -c '\"$HOME/bin/tmux-pin-sidebar\"'"
+cmd="/bin/sh -c '\"$HOME/bin/tmux/session-sidebar/tmux-pin-sidebar\"'"
 
 # -hbdf : horizontal split, place to the LEFT ('b'), don't focus ('d'),
 #         FULL window-height anchored to the window edge ('f').
