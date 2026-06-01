@@ -1,6 +1,11 @@
 # General settings
 auto-reload yes
 max-items 50
+text-width 0
+
+# Compact lists leave more room for titles in narrow tmux panes.
+feedlist-format "%4i %n %t"
+articlelist-format "%4i %f %t"
 
 # Open article URLs with the macOS default browser.
 browser "open %u"
