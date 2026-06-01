@@ -106,7 +106,7 @@ render() {
 					printf '  %s%s\n' "$name" "$EOL"
 				fi
 
-				# Children — windows in that session. 4-col indent. Last
+				# Children — windows in that session. 2-col indent. Last
 				# entry uses `└`, others use `├`. The active window uses
 				# `▸` regardless of session. GREEN colour is reserved for
 				# the active window of the CURRENT session (i.e. parent is
@@ -124,11 +124,11 @@ render() {
 								wname  = p[2]
 								tree   = (i == n) ? "└" : "├"
 								if (active == 1 && cur == 1)
-									printf "    %s▸ %s%s%s\n", g, wname, r, eol
+									printf "  %s▸ %s%s%s\n", g, wname, r, eol
 								else if (active == 1)
-									printf "    ▸ %s%s\n", wname, eol
+									printf "  ▸ %s%s\n", wname, eol
 								else
-									printf "    %s %s%s\n", tree, wname, eol
+									printf "  %s %s%s\n", tree, wname, eol
 							}
 						}
 					'
