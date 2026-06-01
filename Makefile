@@ -12,6 +12,7 @@ else
 endif
 ifneq (,$(findstring Linux,$(UNAME)))
 	install := sudo apt install
+	newsboat_config := ./newsboat/config.linux
 	nvim_linux_name := nvim-linux-x86_64
 	install_nvim := curl -fsSL https://github.com/neovim/neovim/releases/download/stable/$(nvim_linux_name).tar.gz -o ./tmp/$(nvim_linux_name).tar.gz \
 		&& sudo rm -rf /opt/$(nvim_linux_name) \
@@ -31,6 +32,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 									&& sudo apt update -y
 else
 	install := brew install
+	newsboat_config := ./newsboat/config.darwin
 	install_nvim := brew install neovim --HEAD
 	deps := fd python3 node glow terminal-notifier
 	optional_deps := jq btop newsboat
@@ -73,7 +75,9 @@ optional-deps: ## Setup optional CLI deps
 newsboat-config: ## Install Newsboat feed URLs from newsboat/urls.local
 	test -d ./newsboat || mkdir -p ./newsboat
 	test -f ./newsboat/urls.local
+	test -f $(newsboat_config)
 	test -d ~/.newsboat || mkdir -p ~/.newsboat
+	cp $(newsboat_config) ~/.newsboat/config
 	cp ./newsboat/urls.local ~/.newsboat/urls
 
 nvim: ## Install neovim + all plugins
