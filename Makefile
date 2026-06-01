@@ -145,6 +145,7 @@ skills-sync: ## Install ./skills to all supported local AI agents via npx skills
 workspace-bin: ## Install ./bin scripts and workspace shell setup
 	test -d ~/bin || mkdir -p ~/bin
 	rm -f ~/bin/tmux-pin-*
+	rm -f ~/bin/tmux/session-sidebar/tmux-pin-*
 	cp -r ./bin/. ~/bin/
 	chmod +x ~/bin/*
 	find ~/bin/tmux -type f -exec chmod +x {} + 2>/dev/null || true

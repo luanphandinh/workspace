@@ -1,8 +1,8 @@
 #!/bin/sh
 # Idempotently open a pinned-sessions sidebar pane in a single window. Used
-# by tmux-pin-sidebar-toggle and by the new-window hook so sessions that
+# by sidebar-toggle and by the new-window hook so sessions that
 # get new windows after the sidebar is "on" still get one automatically.
-# Usage: tmux-pin-sidebar-attach <window-id>
+# Usage: sidebar-attach <window-id>
 set -e
 
 win="${1:-}"
@@ -33,9 +33,9 @@ if [ -n "$marked" ]; then
 fi
 
 # Run through a parent shell so tmux-resurrect's default `ps` save strategy
-# can see `tmux-pin-sidebar` as a child process and restore it after a server
+# can see `sidebar` as a child process and restore it after a server
 # restart. Directly execing the script makes resurrect save only `bash`.
-cmd="/bin/sh -c '\"$HOME/bin/tmux/session-sidebar/tmux-pin-sidebar\"'"
+cmd="/bin/sh -c '\"$HOME/bin/tmux/session-sidebar/sidebar\"'"
 
 # -hbdf : horizontal split, place to the LEFT ('b'), don't focus ('d'),
 #         FULL window-height anchored to the window edge ('f').
@@ -43,6 +43,6 @@ cmd="/bin/sh -c '\"$HOME/bin/tmux/session-sidebar/tmux-pin-sidebar\"'"
 new_pane="$(tmux split-window -hbdf -l 22 -c "$HOME" -t "$win" -P -F '#{pane_id}' \
 	"$cmd")"
 tmux set-option -wt "$win" '@pin_sidebar_pane' "$new_pane"
-# Pane-level marker — durable identifier used by tmux-pin-sidebar-resize.
+# Pane-level marker — durable identifier used by sidebar-resize.
 # Survives even if @pin_sidebar_pane (window option) drifts.
 tmux set-option -pt "$new_pane" '@pin_sidebar' '1' >/dev/null 2>&1 || :

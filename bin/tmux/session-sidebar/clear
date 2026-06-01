@@ -13,4 +13,4 @@ count="$(awk 'NF' "$PIN_FILE" | wc -l | tr -d ' ')"
 tmux display-message "cleared ${count} pinned session(s)"
 
 # Trigger an in-place redraw of every open sidebar (no respawn = no flicker).
-"$HOME/bin/tmux/session-sidebar/tmux-pin-broadcast-redraw" >/dev/null 2>&1 || :
+"$HOME/bin/tmux/session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :

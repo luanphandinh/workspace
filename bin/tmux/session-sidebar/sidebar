@@ -4,7 +4,7 @@
 # happens in-place — no respawn-pane, no flicker.
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
 
-# Mark this pane as a sidebar so tmux-pin-sidebar-resize can find it across
+# Mark this pane as a sidebar so sidebar-resize can find it across
 # every session/window without relying on the window-level pointer
 # (@pin_sidebar_pane). Idempotent — safe to set on every render. Also
 # self-heals existing live sidebars on first redraw after a script update.
@@ -25,7 +25,7 @@ RESET="$(printf '\033[0m')"
 # previous (longer) render is wiped without blanking the whole pane.
 EOL="$(printf '\033[K')"
 
-# Sidebar geometry. Keep in sync with `-l 22` in tmux-pin-sidebar-attach.
+# Sidebar geometry. Keep in sync with `-l 22` in sidebar-attach.
 WIDTH=22
 # A 22-col `─` rule used as section divider. Generated once at startup.
 RULE="$(awk -v w="$WIDTH" 'BEGIN { for (i=0; i<w; i++) printf "─"; print "" }')"
@@ -170,7 +170,7 @@ render() {
 
 render
 
-# Block waiting for stdin; each Enter sent by tmux-pin-broadcast-redraw
+# Block waiting for stdin; each Enter sent by broadcast-redraw
 # unblocks `read` and triggers a re-render. When the pane is killed,
 # `read` returns non-zero and we exit cleanly.
 while IFS= read -r _; do

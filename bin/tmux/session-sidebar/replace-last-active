@@ -59,4 +59,4 @@ awk -v old="$last_id" -v new="$current_id" '
 mv "$tmp" "$PIN_FILE"
 
 tmux display-message "pin slot ${last_name:-$last_id} → $current_name"
-"$HOME/bin/tmux/session-sidebar/tmux-pin-broadcast-redraw" >/dev/null 2>&1 || :
+"$HOME/bin/tmux/session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :
