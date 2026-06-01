@@ -1,6 +1,6 @@
 #!/bin/sh
 # Switch the attached client to the next/previous pinned session (wraps).
-# Usage: tmux-pin-cycle [next|prev]   (default: next)
+# Usage: cycle [next|prev]   (default: next)
 # Pin file holds session IDs; legacy name entries are still resolved against
 # live sessions before cycling. Dead pins are skipped.
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"

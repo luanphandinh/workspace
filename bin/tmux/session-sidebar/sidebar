@@ -4,7 +4,7 @@
 # happens in-place — no respawn-pane, no flicker.
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
 
-# Mark this pane as a sidebar so tmux-pin-sidebar-resize can find it across
+# Mark this pane as a sidebar so sidebar-resize can find it across
 # every session/window without relying on the window-level pointer
 # (@pin_sidebar_pane). Idempotent — safe to set on every render. Also
 # self-heals existing live sidebars on first redraw after a script update.
@@ -25,7 +25,7 @@ RESET="$(printf '\033[0m')"
 # previous (longer) render is wiped without blanking the whole pane.
 EOL="$(printf '\033[K')"
 
-# Sidebar geometry. Keep in sync with `-l 22` in tmux-pin-sidebar-attach.
+# Sidebar geometry. Keep in sync with `-l 22` in sidebar-attach.
 WIDTH=22
 # A 22-col `─` rule used as section divider. Generated once at startup.
 RULE="$(awk -v w="$WIDTH" 'BEGIN { for (i=0; i<w; i++) printf "─"; print "" }')"
@@ -57,7 +57,7 @@ render() {
 		printf '%s%s\n%s\n' "$HEADER" "$EOL" "$EOL"
 
 		if [ ! -s "$PIN_FILE" ]; then
-			printf '(none — prefix+a to pin)%s\n' "$EOL"
+			printf '(none: prefix + a)%s\n' "$EOL"
 		else
 			current="$(tmux display-message -p '#{session_id}' 2>/dev/null)"
 			mapping="$(tmux list-sessions -F '#{session_id}|#{session_name}' 2>/dev/null || :)"
@@ -144,21 +144,23 @@ render() {
 			fi
 		fi
 
-			# Compact help for macOS and cross-platform terminal bindings.
-			# Blank spacer line above must be EOL-cleared (not just `\n`-skipped)
-			# so a previous longer render's content doesn't linger here.
-			printf '%s\n──%s\n' "$EOL" "$EOL"
-		printf 'prefix+a pin/unpin%s\n' "$EOL"
-		printf 'prefix+A toggle%s\n' "$EOL"
-			printf 'prefix+e clear all%s\n' "$EOL"
-			printf 'prefix+P replace last%s\n' "$EOL"
-			printf 'prefix+S resize%s\n' "$EOL"
-			printf 'O-C-↑/↓  cycle%s\n' "$EOL"
-			printf 'C-S-↑/↓  cycle%s\n' "$EOL"
-			printf 'C-S-j/k  cycle%s\n' "$EOL"
-			printf 'O-C-←/→  window%s\n' "$EOL"
-			printf 'C-S-←/→  window%s\n' "$EOL"
-			printf 'C-S-h/l  window%s\n' "$EOL"
+		# Compact help for macOS and cross-platform terminal bindings.
+		# Blank spacer line above must be EOL-cleared (not just `\n`-skipped)
+		# so a previous longer render's content doesn't linger here.
+		printf '%s\n──%s\n' "$EOL" "$EOL"
+		printf 'prefix +%s\n' "$EOL"
+		printf '  a pin/unpin%s\n' "$EOL"
+		printf '  A sidebar%s\n' "$EOL"
+		printf '  e clear%s\n' "$EOL"
+		printf '  P replace%s\n' "$EOL"
+		printf 'O-C/C-S +%s\n' "$EOL"
+		printf '  ↑/↓ session%s\n' "$EOL"
+		printf '  ←/→ window%s\n' "$EOL"
+		printf 'C-S +%s\n' "$EOL"
+		printf '  j/k session%s\n' "$EOL"
+		printf '  h/l window%s\n' "$EOL"
+		printf 'Cmd +%s\n' "$EOL"
+		printf '  1..9 window%s\n' "$EOL"
 
 		# Wipe any stale content below the new render (left over from a
 		# previous taller render — e.g. dropped pin, closed window).
@@ -168,7 +170,7 @@ render() {
 
 render
 
-# Block waiting for stdin; each Enter sent by tmux-pin-broadcast-redraw
+# Block waiting for stdin; each Enter sent by broadcast-redraw
 # unblocks `read` and triggers a re-render. When the pane is killed,
 # `read` returns non-zero and we exit cleanly.
 while IFS= read -r _; do

@@ -6,7 +6,7 @@ set -eu
 file="${1:-}"
 [ -n "$file" ] && [ -f "$file" ] || exit 0
 
-keys="$(mktemp -t tmux-pin-sidebar-keys.XXXXXX)"
+keys="$(mktemp -t sidebar-keys.XXXXXX)"
 tmp="$(mktemp -t tmux-resurrect-pin.XXXXXX)"
 trap 'rm -f "$keys" "$tmp"' EXIT
 
@@ -15,7 +15,7 @@ tmux list-panes -aF '#{session_name}	#{window_index}	#{pane_index}	#{@pin_sideba
 
 [ -s "$keys" ] || exit 0
 
-awk -F '\t' -v OFS='\t' -v keys="$keys" -v cmd="${HOME}/bin/tmux-pin-sidebar" '
+awk -F '\t' -v OFS='\t' -v keys="$keys" -v cmd="${HOME}/bin/tmux/session-sidebar/sidebar" '
 	BEGIN {
 		while ((getline line < keys) > 0) {
 			sidebar[line] = 1
@@ -25,7 +25,7 @@ awk -F '\t' -v OFS='\t' -v keys="$keys" -v cmd="${HOME}/bin/tmux-pin-sidebar" '
 	$1 == "pane" {
 		key = $2 "\t" $3 "\t" $6
 		if (key in sidebar) {
-			$10 = "tmux-pin-sidebar"
+			$10 = "sidebar"
 			$11 = ":" cmd
 		}
 	}

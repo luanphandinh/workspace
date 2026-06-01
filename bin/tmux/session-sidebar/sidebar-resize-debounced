@@ -1,5 +1,5 @@
 #!/bin/sh
-# Debounced wrapper around tmux-pin-sidebar-resize. Wired to tmux's
+# Debounced wrapper around sidebar-resize. Wired to tmux's
 # client-resized hook. Only fires the actual resize after a 500 ms quiet
 # period — so a long monitor-drag or rapid zoom keypresses don't trigger
 # N back-to-back kill+recreate passes.
@@ -31,6 +31,6 @@ printf '%s\n' "$token" > "$TICK_FILE"
 	sleep "$DEBOUNCE_SEC"
 	current="$(cat "$TICK_FILE" 2>/dev/null || :)"
 	if [ "$current" = "$token" ]; then
-		"$HOME/bin/tmux-pin-sidebar-resize" >/dev/null 2>&1 || :
+		"$HOME/bin/tmux/session-sidebar/sidebar-resize" >/dev/null 2>&1 || :
 	fi
 ) >/dev/null 2>&1 </dev/null &
