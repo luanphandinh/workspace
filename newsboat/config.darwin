@@ -9,6 +9,7 @@ articlelist-format "%4i %f %t"
 
 # Open article URLs with the macOS default browser.
 browser "open %u"
+bind a everywhere set browser "open 'https://archive.is/%u'" ; open-in-browser ; set browser "open %u" -- "Open archive copy"
 
 # Vim-style movement
 unbind-key ENTER
