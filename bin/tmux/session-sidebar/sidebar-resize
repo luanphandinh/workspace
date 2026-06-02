@@ -1,23 +1,25 @@
 #!/bin/sh
 # Re-fit every window to the current client viewport AND snap each
-# pinned sidebar back to 22 cols — without ever rearranging panes.
+# pinned sidebar back to the configured width without rearranging panes.
 # Layout topology (which splits are vertical vs horizontal, weights
 # between siblings) is preserved end-to-end:
 #   - fit-windows  → resize-window -x W -y H per window. tmux
 #                             scales the existing pane structure
 #                             proportionally to the new dimensions.
-#   - resize-pane -x 22     → force the sidebar pane back to canonical
-#                             width; tmux redistributes the freed/
-#                             absorbed columns across siblings using
-#                             their existing weights.
+#   - resize-pane -x WIDTH  → force the sidebar pane back to canonical
+#                             width; tmux redistributes the freed/absorbed
+#                             columns across siblings using existing weights.
 # No kill+recreate, no select-layout. Both would clobber topology.
-WIDTH=22
+WIDTH="$(tmux show-options -gqv '@pin_sidebar_width' 2>/dev/null || :)"
+case "$WIDTH" in
+	''|*[!0-9]*) WIDTH=20 ;;
+esac
 
 # 1. Fit every window to the live viewport (handles inactive sessions
 #    whose cached size diverged from the current client).
 "$HOME/bin/tmux/session-sidebar/fit-windows" >/dev/null 2>&1 || :
 
-# 2. Snap every tagged sidebar pane back to 22 cols.
+# 2. Snap every tagged sidebar pane back to configured width.
 tmux list-panes -aF '#{pane_id} #{@pin_sidebar}' 2>/dev/null \
 	| awk '$2 == "1" { print $1 }' \
 	| while IFS= read -r pane; do

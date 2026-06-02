@@ -3,7 +3,7 @@
 # session. State:
 #   - server-option @pin_sidebar_open  : "1" while open, unset otherwise
 #   - window-option @pin_sidebar_pane  : tracks the sidebar pane id per window
-# Sidebar pane: 22-col fixed-width left split, full window height (-f),
+# Sidebar pane: configured-width left split, full window height (-f),
 # running ~/bin/tmux/session-sidebar/sidebar.
 set -e
 
@@ -47,5 +47,5 @@ done
 
 # Always finish with a server-wide resize so every sidebar — including ones
 # created by hooks for windows we don't directly own here — is forced to
-# the canonical 22-col width. This is the same logic prefix+S runs.
+# the configured width.
 "$HOME/bin/tmux/session-sidebar/sidebar-resize" >/dev/null 2>&1 || :
