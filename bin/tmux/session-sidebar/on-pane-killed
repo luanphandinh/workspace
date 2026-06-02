@@ -11,7 +11,10 @@
 # We deliberately do NOT call `select-layout` here. select-layout
 # (`tiled`, `even-horizontal`, etc.) collapses the existing topology
 # into a uniform shape — the user explicitly does not want that.
-WIDTH=22
+WIDTH="$(tmux show-options -gqv '@pin_sidebar_width' 2>/dev/null || :)"
+case "$WIDTH" in
+	''|*[!0-9]*) WIDTH=20 ;;
+esac
 
 win="${1:-}"
 [ -z "$win" ] && exit 0

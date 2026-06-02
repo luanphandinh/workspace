@@ -36,11 +36,15 @@ fi
 # can see `sidebar` as a child process and restore it after a server
 # restart. Directly execing the script makes resurrect save only `bash`.
 cmd="/bin/sh -c '\"$HOME/bin/tmux/session-sidebar/sidebar\"'"
+width="$(tmux show-options -gqv '@pin_sidebar_width' 2>/dev/null || :)"
+case "$width" in
+	''|*[!0-9]*) width=20 ;;
+esac
 
 # -hbdf : horizontal split, place to the LEFT ('b'), don't focus ('d'),
 #         FULL window-height anchored to the window edge ('f').
-# -l 22 : fixed 22-column width.
-new_pane="$(tmux split-window -hbdf -l 22 -c "$HOME" -t "$win" -P -F '#{pane_id}' \
+# -l    : fixed configured width.
+new_pane="$(tmux split-window -hbdf -l "$width" -c "$HOME" -t "$win" -P -F '#{pane_id}' \
 	"$cmd")"
 tmux set-option -wt "$win" '@pin_sidebar_pane' "$new_pane"
 # Pane-level marker — durable identifier used by sidebar-resize.

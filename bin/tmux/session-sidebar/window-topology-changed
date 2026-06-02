@@ -1,7 +1,10 @@
 #!/bin/sh
 # Window/session topology changed. Ensure every window has a sidebar when the
 # global sidebar is open, then redraw every live sidebar across the tmux server.
-WIDTH=22
+WIDTH="$(tmux show-options -gqv '@pin_sidebar_width' 2>/dev/null || :)"
+case "$WIDTH" in
+	''|*[!0-9]*) WIDTH=20 ;;
+esac
 
 state="$(tmux show-options -gqv '@pin_sidebar_open' 2>/dev/null || :)"
 if [ "$state" = "1" ]; then

@@ -25,27 +25,30 @@ RESET="$(printf '\033[0m')"
 # previous (longer) render is wiped without blanking the whole pane.
 EOL="$(printf '\033[K')"
 
-# Sidebar geometry. Keep in sync with `-l 22` in sidebar-attach.
-WIDTH=22
-# A 22-col `─` rule used as section divider. Generated once at startup.
-RULE="$(awk -v w="$WIDTH" 'BEGIN { for (i=0; i<w; i++) printf "─"; print "" }')"
-# Header line: `─── pinned ───` centered to WIDTH. " pinned " = 8 visible
-# cols → side count = (WIDTH - 8) / 2 each. WIDTH must be even for clean
-# centering; if odd, the right side gets the extra dash.
-HEADER="$(awk -v w="$WIDTH" '
-	BEGIN {
-		label = " pinned "
-		side  = int((w - length(label)) / 2)
-		extra = (w - length(label)) - 2 * side
-		out   = ""
-		for (i=0; i<side;        i++) out = out "─"
-		out = out label
-		for (i=0; i<side+extra;  i++) out = out "─"
-		print out
-	}
-')"
+sidebar_width() {
+	width="$(tmux show-options -gqv '@pin_sidebar_width' 2>/dev/null || :)"
+	case "$width" in
+		''|*[!0-9]*) width=20 ;;
+	esac
+	printf '%s\n' "$width"
+}
 
 render() {
+	WIDTH="$(sidebar_width)"
+	RULE="$(awk -v w="$WIDTH" 'BEGIN { for (i=0; i<w; i++) printf "─"; print "" }')"
+	HEADER="$(awk -v w="$WIDTH" '
+		BEGIN {
+			label = " pinned "
+			side  = int((w - length(label)) / 2)
+			extra = (w - length(label)) - 2 * side
+			out   = ""
+			for (i=0; i<side;        i++) out = out "─"
+			out = out label
+			for (i=0; i<side+extra;  i++) out = out "─"
+			print out
+		}
+	')"
+
 	{
 		# Hide cursor + go home. NO full-screen clear — that's the source
 		# of the visible blank flicker. Each line below ends with EOL to
@@ -147,7 +150,7 @@ render() {
 		# Compact help for macOS and cross-platform terminal bindings.
 		# Blank spacer line above must be EOL-cleared (not just `\n`-skipped)
 		# so a previous longer render's content doesn't linger here.
-		printf '%s\n──%s\n' "$EOL" "$EOL"
+		printf '%s\n%s%s\n' "$EOL" "$RULE" "$EOL"
 		printf 'prefix +%s\n' "$EOL"
 		printf '  a pin/unpin%s\n' "$EOL"
 		printf '  A sidebar%s\n' "$EOL"
