@@ -3,7 +3,7 @@
 
 Every workspace lives at `<root>/local_workspaces/<name>/` and is a set of git
 worktrees (one per source repo) on a default branch, with optional per-repo
-branch overrides, glued together by a small `workspace.yml` manifest. Go
+branch and base-branch overrides, glued together by a small `workspace.yml` manifest. Go
 workspaces (`go.work`) are intentionally NOT created — per-module semantics
 (GOWORK=off everywhere) is the standard here; cross-module navigation happens
 via `<leader>gw` worktree switching instead.
@@ -192,6 +192,8 @@ def run(cmd, cwd=None, capture=True):
 #   repos:
 #     - name: repo-a
 #       branch_name: <repo-branch>
+#       base_branch: <optional-base-branch>
+# Omit base_branch to use the default main/master detection.
 # ---------------------------------------------------------------------------
 def read_manifest(yml: Path) -> dict:
     data = {"version": "v1", "name": "", "branch_name": "", "repos": [], "links": []}
@@ -220,12 +222,22 @@ def read_manifest(yml: Path) -> dict:
         elif section == "links" and line.startswith("    link:") and current_link is not None:
             current_link["link"] = line.split(":", 1)[1].strip()
         elif section == "repos" and line.startswith("  - name:"):
-            current_repo = {"name": line.split(":", 1)[1].strip(), "branch_name": ""}
+            current_repo = {
+                "name": line.split(":", 1)[1].strip(),
+                "branch_name": "",
+                "base_branch": "",
+            }
             data["repos"].append(current_repo)
         elif section == "repos" and line.startswith("    branch_name:") and current_repo is not None:
             current_repo["branch_name"] = line.split(":", 1)[1].strip()
+        elif section == "repos" and line.startswith("    base_branch:") and current_repo is not None:
+            current_repo["base_branch"] = line.split(":", 1)[1].strip()
         elif section == "repos" and line.startswith("  - "):
-            data["repos"].append({"name": line[4:].strip(), "branch_name": data["branch_name"]})
+            data["repos"].append({
+                "name": line[4:].strip(),
+                "branch_name": data["branch_name"],
+                "base_branch": "",
+            })
     return data
 
 
@@ -241,6 +253,8 @@ def write_manifest(yml: Path, name: str, branch: str, repos: list, links: list =
     for repo in normalize_repos(repos, branch):
         lines.append(f"  - name: {repo['name']}")
         lines.append(f"    branch_name: {repo['branch_name']}")
+        if repo["base_branch"]:
+            lines.append(f"    base_branch: {repo['base_branch']}")
     yml.write_text("\n".join(lines) + "\n")
 
 
@@ -250,11 +264,17 @@ def normalize_repos(repos: list, default_branch: str = "") -> list:
         if isinstance(repo, dict):
             name = str(repo.get("name") or "").strip()
             branch = str(repo.get("branch_name") or default_branch or "").strip()
+            base_branch = str(repo.get("base_branch") or "").strip()
         else:
             name = str(repo).strip()
             branch = default_branch or ""
+            base_branch = ""
         if name:
-            out.append({"name": name, "branch_name": branch})
+            out.append({
+                "name": name,
+                "branch_name": branch,
+                "base_branch": base_branch,
+            })
     return out
 
 
@@ -281,10 +301,24 @@ def repo_branch(repos: list, name: str, default_branch: str = "") -> str:
     return default_branch
 
 
-def append_repo(yml: Path, leaf: str, branch: str) -> None:
+def repo_base_branch(repos: list, name: str) -> str:
+    for repo in normalize_repos(repos):
+        if repo["name"] == name:
+            return repo["base_branch"]
+    return ""
+
+
+def repo_entry(repos: list, name: str, default_branch: str = ""):
+    for repo in normalize_repos(repos, default_branch):
+        if repo["name"] == name:
+            return repo
+    return None
+
+
+def append_repo(yml: Path, leaf: str, branch: str, base_branch: str = "") -> None:
     data = read_manifest(yml)
     repos = normalize_repos(data["repos"], data["branch_name"])
-    repos.append({"name": leaf, "branch_name": branch})
+    repos.append({"name": leaf, "branch_name": branch, "base_branch": base_branch})
     write_manifest(yml, data["name"], data["branch_name"], repos, data["links"])
 
 
@@ -449,6 +483,9 @@ def write_workstation_manifest(yml: Path, name: str, repos: list, external_repos
 # ---------------------------------------------------------------------------
 # Git helpers
 # ---------------------------------------------------------------------------
+DEFAULT_BASE_BRANCHES = ("main", "master")
+
+
 def has_ref(repo: Path, ref: str) -> bool:
     return run(["git", "-C", str(repo), "show-ref", "--verify", "--quiet", ref]).returncode == 0
 
@@ -480,11 +517,55 @@ def remote_url(repo: Path, remote: str) -> str:
     return git_output(repo, ["remote", "get-url", remote])
 
 
+def has_local_branch(repo: Path, branch: str) -> bool:
+    return has_ref(repo, f"refs/heads/{branch}")
+
+
+def has_remote_branch(repo: Path, branch: str) -> bool:
+    return has_ref(repo, f"refs/remotes/origin/{branch}")
+
+
 def detect_base(repo: Path):
-    for b in ("master", "main"):
+    for b in DEFAULT_BASE_BRANCHES:
         if has_ref(repo, f"refs/heads/{b}") or has_ref(repo, f"refs/remotes/origin/{b}"):
             return b
     return None
+
+
+def resolve_base(repo: Path, base_branch: str = ""):
+    if base_branch:
+        if has_local_branch(repo, base_branch) or has_remote_branch(repo, base_branch):
+            return base_branch
+        if "origin" in remote_names(repo):
+            run(["git", "-C", str(repo), "fetch", "--quiet", "origin", base_branch])
+            if has_remote_branch(repo, base_branch):
+                return base_branch
+        return None
+    return detect_base(repo)
+
+
+def base_ref(repo: Path, base: str, explicit_base: bool = False) -> str:
+    if explicit_base and has_local_branch(repo, base):
+        return base
+    if has_remote_branch(repo, base):
+        return f"origin/{base}"
+    return base
+
+
+def fetch_base_if_remote(repo: Path, base: str, ref: str) -> bool:
+    if ref != f"origin/{base}":
+        info(f"using local base branch {base}")
+        return True
+    info(f"git fetch origin {base}")
+    return run(["git", "-C", str(repo), "fetch", "origin", base]).returncode == 0
+
+
+def workspace_base_branch_for_repo(repo_path: Path) -> str:
+    workspace_yml = repo_path.parent / "workspace.yml"
+    if not workspace_yml.is_file():
+        return ""
+    data = read_manifest(workspace_yml)
+    return repo_base_branch(data["repos"], repo_path.name)
 
 
 def resolve_source(raw: str, repo_root: Path):
@@ -957,8 +1038,8 @@ def cmd_pull(folders: list) -> int:
 
 # ---------------------------------------------------------------------------
 # master mode: for every git repo in the immediate subfolders, nuke untracked
-# files, discard local changes on the current branch, switch to master
-# (falling back to main), and fast-forward pull. Explicitly BLOCKED inside
+# files, discard local changes on the current branch, switch to the detected
+# default base branch, and fast-forward pull. Explicitly BLOCKED inside
 # workspace folders — worktrees live on feature branches and this would
 # clobber the feature work.
 # ---------------------------------------------------------------------------
@@ -970,13 +1051,13 @@ def cmd_master(folders: list) -> int:
         info("no git repos found")
         return 0
 
-    info(f"resetting {len(repos)} repo(s) to master in parallel...")
+    info(f"resetting {len(repos)} repo(s) to default base in parallel...")
 
     def worker(sub: Path, log: RepoLog) -> str:
         log.heading(sub.name)
         base = detect_base(sub)
         if base is None:
-            log.warn("no master/main branch, skipping")
+            log.warn("no main/master branch, skipping")
             return "skipped"
 
         cur = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
@@ -1036,11 +1117,11 @@ def cmd_master(folders: list) -> int:
 # Shared rebase helper used by both `mkws rebase` and `mkws sync`.
 #
 # Flow:
-#   1. Detect base (master/main) and current branch. Skip repos on base,
-#      detached, or without a base branch.
+#   1. Resolve base (configured base_branch, otherwise main/master) and current
+#      branch. Skip repos on base, detached, or without a base branch.
 #   2. If working tree is dirty, `git stash push -u` (untracked included).
-#   3. `git fetch origin <base>` (non-zero → pop stash, return "failed")
-#   4. `git merge --no-edit origin/<base>`
+#   3. Fetch origin/<base> when using a remote base.
+#   4. `git merge --no-edit <base-ref>`
 #        - clean merge   → pop stash, return "rebased"
 #        - conflict      → leave the merge + stash in place, print resolve
 #                          instructions, return "conflict"
@@ -1053,10 +1134,13 @@ def cmd_master(folders: list) -> int:
 #   "failed"   — non-conflict failure; state restored; caller should halt
 #   "conflict" — merge conflict; state left in place; caller MUST halt
 # ---------------------------------------------------------------------------
-def _rebase_one(sub: Path) -> str:
-    base = detect_base(sub)
+def _rebase_one(sub: Path, base_branch: str = "") -> str:
+    base = resolve_base(sub, base_branch)
     if base is None:
-        warn("no master/main branch, skipping rebase")
+        if base_branch:
+            warn(f"base_branch '{base_branch}' not found, skipping rebase")
+        else:
+            warn("no main/master branch, skipping rebase")
         return "skipped"
 
     cur = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
@@ -1086,17 +1170,16 @@ def _rebase_one(sub: Path) -> str:
         if pp.returncode != 0:
             warn("stash pop had conflicts — resolve manually")
 
-    info(f"git fetch origin {base}")
-    fp = run(["git", "-C", str(sub), "fetch", "origin", base])
-    if fp.returncode != 0:
+    merge_ref = base_ref(sub, base, explicit_base=bool(base_branch))
+    if not fetch_base_if_remote(sub, base, merge_ref):
         fail("fetch failed")
         pop_stash()
         return "failed"
 
-    info(f"git merge origin/{base} (into {cur_branch})")
-    mp = run(["git", "-C", str(sub), "merge", "--no-edit", f"origin/{base}"], capture=False)
+    info(f"git merge {merge_ref} (into {cur_branch})")
+    mp = run(["git", "-C", str(sub), "merge", "--no-edit", merge_ref], capture=False)
     if mp.returncode == 0:
-        ok(f"merged origin/{base} into {cur_branch}")
+        ok(f"merged {merge_ref} into {cur_branch}")
         pop_stash()
         return "rebased"
 
@@ -1117,18 +1200,21 @@ def _rebase_one(sub: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# merge — Case B per-repo: bring base (master/main) INTO the feature branch
+# merge — Case B per-repo: bring base INTO the feature branch
 # in a workspace worktree. Like _rebase_one but with two extras:
 #   1. Pulls origin/<feature> first if a remote-tracking branch exists.
 #   2. Pushes the feature branch after a clean merge.
 # Returns the same status strings as _rebase_one.
 # ---------------------------------------------------------------------------
-def _merge_base_to_feature_one(sub: Path, requested_base: str) -> str:
-    base = detect_base(sub)
+def _merge_base_to_feature_one(sub: Path, requested_base: str, base_branch: str = "") -> str:
+    base = resolve_base(sub, base_branch)
     if base is None:
-        warn("no master/main branch, skipping")
+        if base_branch:
+            warn(f"base_branch '{base_branch}' not found, skipping")
+        else:
+            warn("no main/master branch, skipping")
         return "skipped"
-    if requested_base not in (base, "master", "main"):
+    if not base_branch and requested_base not in (base, "master", "main"):
         warn(f"requested base '{requested_base}' is not the repo's base ('{base}'), skipping")
         return "skipped"
 
@@ -1159,9 +1245,8 @@ def _merge_base_to_feature_one(sub: Path, requested_base: str) -> str:
         if pp.returncode != 0:
             warn("stash pop had conflicts — resolve manually")
 
-    info(f"git fetch origin {base}")
-    fp = run(["git", "-C", str(sub), "fetch", "origin", base])
-    if fp.returncode != 0:
+    merge_ref = base_ref(sub, base, explicit_base=bool(base_branch))
+    if not fetch_base_if_remote(sub, base, merge_ref):
         fail("fetch failed")
         pop_stash()
         return "failed"
@@ -1175,10 +1260,10 @@ def _merge_base_to_feature_one(sub: Path, requested_base: str) -> str:
             pop_stash()
             return "failed"
 
-    info(f"git merge --no-ff origin/{base} (into {cur_branch})")
-    mp = run(["git", "-C", str(sub), "merge", "--no-ff", "--no-edit", f"origin/{base}"], capture=False)
+    info(f"git merge --no-ff {merge_ref} (into {cur_branch})")
+    mp = run(["git", "-C", str(sub), "merge", "--no-ff", "--no-edit", merge_ref], capture=False)
     if mp.returncode == 0:
-        ok(f"merged origin/{base} into {cur_branch}")
+        ok(f"merged {merge_ref} into {cur_branch}")
         pop_stash()
         info(f"git push origin {cur_branch}")
         pp = run(["git", "-C", str(sub), "push", "origin", cur_branch], capture=False)
@@ -1206,17 +1291,20 @@ def _merge_base_to_feature_one(sub: Path, requested_base: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# merge — Case A per-repo: bring the feature branch INTO base (master/main)
+# merge — Case A per-repo: bring the feature branch INTO base
 # in the SOURCE repo (sibling of local_workspaces/, not the worktree). No push.
 # ---------------------------------------------------------------------------
-def _merge_feature_to_base_one(source_repo: Path, feature_branch: str) -> str:
+def _merge_feature_to_base_one(source_repo: Path, feature_branch: str, base_branch: str = "") -> str:
     if not (source_repo / ".git").is_dir():
         warn(f"not a source repo (no .git dir): {source_repo}")
         return "skipped"
 
-    base = detect_base(source_repo)
+    base = resolve_base(source_repo, base_branch)
     if base is None:
-        warn("no master/main branch, skipping")
+        if base_branch:
+            warn(f"base_branch '{base_branch}' not found, skipping")
+        else:
+            warn("no main/master branch, skipping")
         return "skipped"
 
     cur = run(["git", "-C", str(source_repo), "rev-parse", "--abbrev-ref", "HEAD"])
@@ -1230,11 +1318,14 @@ def _merge_feature_to_base_one(source_repo: Path, feature_branch: str) -> str:
         fail(f"source repo has uncommitted changes — clean up before merge")
         return "failed"
 
-    info(f"git pull --ff-only (on {base})")
-    pl = run(["git", "-C", str(source_repo), "pull", "--ff-only"], capture=False)
-    if pl.returncode != 0:
-        fail("pull of base failed (non-ff or other)")
-        return "failed"
+    if has_remote_branch(source_repo, base):
+        info(f"git pull --ff-only origin {base}")
+        pl = run(["git", "-C", str(source_repo), "pull", "--ff-only", "origin", base], capture=False)
+        if pl.returncode != 0:
+            fail("pull of base failed (non-ff or other)")
+            return "failed"
+    else:
+        info(f"using local base branch {base}")
 
     if not has_ref(source_repo, f"refs/heads/{feature_branch}"):
         warn(f"feature branch '{feature_branch}' not found in this repo, skipping")
@@ -1265,7 +1356,8 @@ def _merge_feature_to_base_one(source_repo: Path, feature_branch: str) -> str:
 #   - target == "master" or "main" → Case B: pull base, pull feature, merge
 #     base INTO feature, push feature. Must run from inside a workspace.
 #   - target == <workspace-name>   → Case A: in each source sibling repo on
-#     master/main, pull base, merge feature INTO base. NO push.
+#     its configured base or default base, pull base, merge feature INTO base.
+#     NO push.
 # Both serial; halts on conflict. Replaces `mkws rebase` for Case B.
 # ---------------------------------------------------------------------------
 def cmd_merge(target: str, folders: list) -> int:
@@ -1295,11 +1387,15 @@ def cmd_merge(target: str, folders: list) -> int:
             info("no git repos found")
             return 0
 
-        info(f"merging origin/{target} into {len(repos)} feature-branch worktree(s) (serial)...")
+        info(f"merging base into {len(repos)} feature-branch worktree(s) (serial)...")
         rebased = skipped = failed = 0
         for sub in repos:
             heading(sub.name)
-            status = _merge_base_to_feature_one(sub, target)
+            status = _merge_base_to_feature_one(
+                sub,
+                target,
+                workspace_base_branch_for_repo(sub),
+            )
             if status == "rebased":
                 rebased += 1
             elif status in ("already", "skipped"):
@@ -1356,7 +1452,7 @@ def cmd_merge(target: str, folders: list) -> int:
         info("no repos to merge")
         return 0
 
-    info(f"merging workspace feature branches INTO base (master/main) across {len(repo_names_list)} source repo(s) (serial, no push)...")
+    info(f"merging workspace feature branches INTO base across {len(repo_names_list)} source repo(s) (serial, no push)...")
     rebased = skipped = failed = 0
     for r in repo_names_list:
         source_repo = repo_root / r
@@ -1366,7 +1462,11 @@ def cmd_merge(target: str, folders: list) -> int:
             skipped += 1
             continue
         heading(r)
-        status = _merge_feature_to_base_one(source_repo, feature_branch)
+        status = _merge_feature_to_base_one(
+            source_repo,
+            feature_branch,
+            repo_base_branch(data["repos"], r),
+        )
         if status == "rebased":
             rebased += 1
         elif status in ("already", "skipped"):
@@ -1388,12 +1488,12 @@ def cmd_merge(target: str, folders: list) -> int:
     heading("summary")
     color = GREEN if failed == 0 else YELLOW
     info(f"merged: {color}{rebased}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
-    info(f"NOT pushed — review the merge commits, then run `git push origin master` (or main) per repo")
+    info("NOT pushed — review the merge commits, then run `git push origin <base>` per repo")
     return 0 if failed == 0 else 1
 
 
 # ---------------------------------------------------------------------------
-# rebase mode: bring every matching repo's feature branch up to master/main
+# rebase mode: bring every matching repo's feature branch up to its base
 # via merge. Serial, halts on conflict. Uses `_rebase_one` above.
 # ---------------------------------------------------------------------------
 def cmd_rebase(folders: list) -> int:
@@ -1403,12 +1503,12 @@ def cmd_rebase(folders: list) -> int:
         info("no git repos found")
         return 0
 
-    info(f"rebasing {len(repos)} repo(s) onto master (serial)...")
+    info(f"rebasing {len(repos)} repo(s) onto base (serial)...")
     rebased = skipped = failed = 0
 
     for sub in repos:
         heading(sub.name)
-        status = _rebase_one(sub)
+        status = _rebase_one(sub, workspace_base_branch_for_repo(sub))
         if status == "rebased":
             rebased += 1
         elif status in ("already", "skipped"):
@@ -1479,11 +1579,11 @@ def cmd_push(folders: list) -> int:
 
 
 # ---------------------------------------------------------------------------
-# sync mode: pull → rebase → push, per repo, serial. Halts on rebase
+# sync mode: pull → merge base → push, per repo, serial. Halts on base-merge
 # conflict (like `mkws rebase`). Pull/push failures are recorded but the
-# command continues to the next repo — only rebase halts the batch.
+# command continues to the next repo — only the base merge halts the batch.
 #
-# Why serial: a conflict during rebase needs the user's attention. Parallel
+# Why serial: a conflict during the base merge needs the user's attention. Parallel
 # pulls + parallel pushes would also work but would obscure which repo
 # halted.
 # ---------------------------------------------------------------------------
@@ -1494,7 +1594,7 @@ def cmd_sync(folders: list) -> int:
         info("no git repos found")
         return 0
 
-    info(f"syncing {len(repos)} repo(s) — pull → rebase → push (serial)...")
+    info(f"syncing {len(repos)} repo(s) — pull → base merge → push (serial)...")
     synced = skipped = 0
     pull_fails: list = []
     push_fails: list = []
@@ -1502,6 +1602,7 @@ def cmd_sync(folders: list) -> int:
 
     for sub in repos:
         heading(sub.name)
+        base_branch = workspace_base_branch_for_repo(sub)
 
         cur = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
         cur_branch = cur.stdout.strip() if cur.returncode == 0 else ""
@@ -1514,7 +1615,7 @@ def cmd_sync(folders: list) -> int:
         #    on the remote side resolves to the default branch, not the same-
         #    named one). If `origin/<branch>` doesn't exist yet (brand-new
         #    local branch), that's not a failure — we just skip straight to
-        #    the rebase+push steps so the first push creates the remote ref.
+        #    the base-merge+push steps so the first push creates the remote ref.
         has_remote = run(
             ["git", "-C", str(sub), "ls-remote", "--exit-code",
              "--heads", "origin", cur_branch]
@@ -1528,30 +1629,30 @@ def cmd_sync(folders: list) -> int:
                 capture=False,
             )
             if pp.returncode != 0:
-                fail("pull failed — skipping rebase/push for this repo")
+                fail("pull failed — skipping base-merge/push for this repo")
                 pull_fails.append(sub.name)
                 continue
 
-        # 2. rebase (unless already on base)
-        status = _rebase_one(sub)
+        # 2. merge base (unless already on base)
+        status = _rebase_one(sub, base_branch)
         if status == "conflict":
             info("")
             info("halted; remaining repos not processed")
             heading("summary")
-            info(f"synced: {synced}, skipped: {skipped}, halted at: {BOLD}{sub.name}{RESET} (rebase conflict)")
+            info(f"synced: {synced}, skipped: {skipped}, halted at: {BOLD}{sub.name}{RESET} (base-merge conflict)")
             if pull_fails:
                 info(f"pull failed before halt: {RED}{', '.join(pull_fails)}{RESET}")
             return 1
         if status == "failed":
             rebase_fails.append(sub.name)
             heading("summary")
-            info(f"synced: {synced}, skipped: {skipped}, halted at: {BOLD}{sub.name}{RESET} (rebase failed)")
+            info(f"synced: {synced}, skipped: {skipped}, halted at: {BOLD}{sub.name}{RESET} (base merge failed)")
             return 1
 
-        # 3. push — but NOT when we're on master/main. Pushing master from a
-        # dev machine is almost never what you want; the feature-branch sync
-        # flow is what this command is really for. `_rebase_one` returns
-        # "already" exactly when cur_branch equals the base branch.
+        # 3. push — but NOT when we're on the base branch. Pushing base from a
+        # dev machine is almost never what you want; the feature-branch sync flow
+        # is what this command is really for. `_rebase_one` returns "already"
+        # exactly when cur_branch equals the base branch.
         if status == "already":
             info(f"on {BOLD}{cur_branch}{RESET}, skipping push")
             ok(f"synced {cur_branch} (pull only)")
@@ -1885,10 +1986,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
                 # User is filling in the branch now; persist it.
                 write_manifest(yml, name=name, branch=branch_flag, repos=data["repos"], links=data["links"])
                 branch = branch_flag
-            elif repos_arg and specs_need_default_branch:
-                die(f"workspace.yml at {yml} has no branch_name; re-run with --branch <branch> to add repos")
             else:
-                # No-op extension on an empty workspace — report and exit clean.
                 branch = ""
     else:
         if not branch_flag and repos_arg and specs_need_default_branch:
@@ -1900,13 +1998,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
     added = skipped = failed = 0
 
     for repo, repo_branch_override in repo_specs:
-        branch_for_repo = repo_branch_override or branch
         heading(repo)
-        if not branch_for_repo:
-            fail(f"no branch for {repo}; pass --branch <branch> or use {repo}@<branch>")
-            failed += 1
-            continue
-
         repo_path = resolve_source(repo, repo_root)
         if repo_path is None:
             fail(f"not a git repo: {repo}")
@@ -1917,20 +2009,45 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
         if leaf != repo:
             info(f"source: {repo_path} (recorded as '{leaf}')")
 
-        if leaf in repo_names(read_manifest(yml)["repos"]):
-            info(f"'{leaf}' already in workspace, skipping")
-            skipped += 1
+        manifest_data = read_manifest(yml)
+        existing_repo = repo_entry(manifest_data["repos"], leaf, manifest_data["branch_name"])
+        if (
+            existing_repo
+            and repo_branch_override
+            and existing_repo["branch_name"]
+            and existing_repo["branch_name"] != repo_branch_override
+        ):
+            fail(
+                f"{leaf} is recorded on branch '{existing_repo['branch_name']}', "
+                f"not '{repo_branch_override}'"
+            )
+            failed += 1
+            continue
+
+        branch_for_repo = (
+            (existing_repo or {}).get("branch_name")
+            or repo_branch_override
+            or branch
+        )
+        base_for_repo = (existing_repo or {}).get("base_branch", "")
+        already_recorded = existing_repo is not None
+        if not branch_for_repo:
+            fail(f"no branch for {repo}; pass --branch <branch> or use {repo}@<branch>")
+            failed += 1
             continue
 
         wt_path = workspace_dir / leaf
         if wt_path.exists():
-            info("worktree path already exists, recording in yml")
-            append_repo(yml, leaf, branch_for_repo)
+            if already_recorded:
+                info(f"'{leaf}' already in workspace, skipping")
+            else:
+                info("worktree path already exists, recording in yml")
+                append_repo(yml, leaf, branch_for_repo, base_for_repo)
             skipped += 1
             continue
 
         info("fetching latest from origin")
-        if run(["git", "-C", str(repo_path), "fetch", "origin", "--quiet"]).returncode != 0:
+        if run(["git", "-C", str(repo_path), "fetch", "--quiet", "origin"]).returncode != 0:
             warn("fetch failed, falling back to local refs")
 
         remote_branch = f"origin/{branch_for_repo}"
@@ -1951,7 +2068,8 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
                         ok(f"tracking {remote_branch}")
                     else:
                         warn(f"failed to set upstream to {remote_branch}")
-                append_repo(yml, leaf, branch_for_repo)
+                if not already_recorded:
+                    append_repo(yml, leaf, branch_for_repo, base_for_repo)
                 added += 1
                 continue
             fail("existing branch worktree add failed")
@@ -1969,20 +2087,24 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             )
             if proc.returncode == 0:
                 ok(f"worktree added at {wt_path}")
-                append_repo(yml, leaf, branch_for_repo)
+                if not already_recorded:
+                    append_repo(yml, leaf, branch_for_repo, base_for_repo)
                 added += 1
                 continue
             fail("tracking worktree add failed")
             failed += 1
             continue
 
-        base = detect_base(repo_path)
+        base = resolve_base(repo_path, base_for_repo)
         if base is None:
-            fail("could not detect base branch (master/main)")
+            if base_for_repo:
+                fail(f"configured base_branch '{base_for_repo}' not found")
+            else:
+                fail("could not detect base branch (main/master)")
             failed += 1
             continue
 
-        start_ref = f"origin/{base}" if has_ref(repo_path, f"refs/remotes/origin/{base}") else base
+        start_ref = base_ref(repo_path, base, explicit_base=bool(base_for_repo))
         info(f"creating new branch {branch_for_repo} from {start_ref}")
         proc = run(
             ["git", "-C", str(repo_path), "worktree", "add", "-b", branch_for_repo, str(wt_path), start_ref],
@@ -1990,7 +2112,8 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
         )
         if proc.returncode == 0:
             ok(f"worktree added at {wt_path}")
-            append_repo(yml, leaf, branch_for_repo)
+            if not already_recorded:
+                append_repo(yml, leaf, branch_for_repo, base_for_repo)
             added += 1
         else:
             fail("worktree add failed")
@@ -2054,8 +2177,8 @@ Modes:
                mkws pull ./local_workspaces/myws    # every worktree in a workspace
                mkws pull /abs/repo-a ./repo-b   # mix absolute and relative
   master     For every matching repo: `git clean -d -f`, optional
-             `git checkout -- .` to discard local changes, switch to master
-             (fallback main), and `git pull --ff-only`. DESTRUCTIVE to
+             `git checkout -- .` to discard local changes, switch to the
+             detected default base branch, and `git pull --ff-only`. DESTRUCTIVE to
              uncommitted work. Takes the same folder-args form as `pull`.
              BLOCKED when any target folder itself contains a workspace.yml —
              running it in a workspace would wipe feature-branch state.
@@ -2070,29 +2193,33 @@ Modes:
                mkws push                     # push every repo under $PWD
                mkws push repo-a repo-b       # two specific repos
   rebase     For every matching repo on a feature branch: stash dirty edits,
-             `git fetch origin <base>`, `git merge origin/<base>` into the
-             current branch, then pop the stash. Runs serial (conflicts need
+             merge that repo's base into the current branch, then pop the
+             stash. Inside a workspace, per-repo `base_branch` in
+             workspace.yml overrides the default main/master base detection;
+             local base branches are supported. Runs serial (conflicts need
              attention). On conflict: HALTS — leaves the merge + stash in
              place for you to resolve, prints resolve-and-finish instructions,
              and does NOT process remaining repos. Non-conflict failures
              trigger `git merge --abort` + stash-pop to restore state.
              Takes the same folder-args form as pull/master.
              Examples:
-               mkws rebase                   # merge master into every feature
-                                             #   branch in $PWD's repos
+               mkws rebase                   # merge each repo's base into
+                                             #   feature branches under $PWD
                mkws rebase repo-a
   merge      Bidirectional merge driven by <target>:
              • `mkws merge master` (or `main`) — Case B: for each worktree on
-               a feature branch: fetch origin/<base>, pull origin/<feature>
-               if a remote exists, merge origin/<base> --no-ff into the
-               feature branch, then push the feature branch. Replaces
-               `mkws rebase` with the added feature-pull and post-merge push.
-               Halts on conflict.
+               a feature branch: use the configured per-repo base_branch when
+               present, otherwise main/master; pull origin/<feature> if a
+               remote exists, merge the base --no-ff into the feature branch,
+               then push the feature branch. Replaces `mkws rebase` with the
+               added feature-pull and post-merge push. Halts on conflict.
              • `mkws merge <workspace-name>` — Case A: for each source sibling
-               repo on master/main listed in the workspace's manifest: pull
-               --ff-only base, then merge --no-ff <feature> into base. NO
-               push — review and `git push origin master` yourself when
-               satisfied. Workspace is kept for further work.
+               repo listed in the workspace's manifest: switch to the
+               configured per-repo base_branch when present, otherwise
+               main/master; pull --ff-only when the base exists on origin,
+               then merge --no-ff <feature> into base. NO push — review and
+               `git push origin <base>` yourself when satisfied. Workspace is
+               kept for further work.
              Context-aware cwd:
                - In root or workspace dir → operates on all matching repos.
                - In a single git repo → auto-scopes to that one repo (the
@@ -2100,21 +2227,22 @@ Modes:
              Folder args optional to further scope by repo name. Both cases
              serial; halt on conflict (state left in place to resolve).
              Examples:
-               # inside workspace: integrate latest master into all worktrees
+               # inside workspace: integrate latest base into all worktrees
                cd local_workspaces/myws && mkws merge master
                # inside ONE worktree: integrate just that one
                cd local_workspaces/myws/repo-a && mkws merge master
-               # at root: land feature → master locally across all repos
+               # at root: land feature branches into base locally across all repos
                mkws merge myws
                # inside ONE source repo: land just that one
                cd repo-a && mkws merge myws
   sync       Composite: for every matching repo, pull the current branch,
-             rebase onto master (skipped if already on master/main), then
-             push. Serial. Rebase conflicts halt the whole run with the same
-             instructions as `mkws rebase`. Pull/push failures for one repo
-             don't halt — they're recorded and the run continues.
+             merge its configured base_branch (or default main/master) into
+             the current branch, then push. Serial. Merge conflicts halt the
+             whole run with the same instructions as `mkws rebase`. Pull/push
+             failures for one repo don't halt — they're recorded and the run
+             continues.
              Examples:
-               mkws sync                     # pull+rebase+push every repo
+               mkws sync                     # pull+base-merge+push every repo
                mkws sync repo-a              # just one repo
   clean      Context-aware cleanup. In a workstation root, removes stale repo
              metadata from workstation.yml when the recorded path is missing or
