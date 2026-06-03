@@ -1,6 +1,6 @@
 ---
 name: "local-workspace"
-description: "Use when the user wants to create, extend, migrate, inspect, or open quick links for a multi-repo git-worktree workspace, or index/setup/clean a parent-folder workstation. Drives `mkws` for workspace operations and `mkwst` for workstation.yml operations. Works in any folder containing multiple git repos as siblings. Does not touch go.work — per-module semantics (GOWORK=off) is the default here; cross-module navigation uses `<leader>gw` worktree switching instead."
+description: "Use when the user wants to create, extend, migrate, inspect, or open quick links for a multi-repo git-worktree workspace, index/setup/clean a parent-folder workstation, or index multiple workstation manifests. Drives `mkws` for workspace operations, `mkwst` for workstation.yml operations, and `mkwsts` for workstations.yml operations. Works in any folder containing multiple git repos as siblings. Does not touch go.work — per-module semantics (GOWORK=off) is the default here; cross-module navigation uses `<leader>gw` worktree switching instead."
 ---
 
 # About you
@@ -8,7 +8,7 @@ description: "Use when the user wants to create, extend, migrate, inspect, or op
 - You are a very cost efficient engineer, you don't want to waste too much tokens, so your response is extremely concise.
 
 # What this skill does
-Drives `mkws` and `mkwst` (installed on `$PATH`). `mkws` manages multi-repo git-worktree workspaces. `mkwst` manages parent-folder workstation indexes in `workstation.yml`. Both commands operate on `$PWD` unless a supported folder argument is passed. A workspace is a subfolder of the root containing one worktree per repo, a default branch plus optional per-repo branch and base-branch overrides, and a `workspace.yml` manifest. A workstation is the parent folder index recorded in `workstation.yml`.
+Drives `mkws`, `mkwst`, and `mkwsts` (installed on `$PATH`). `mkws` manages multi-repo git-worktree workspaces. `mkwst` manages one parent-folder workstation index in `workstation.yml`. `mkwsts` manages a plural registry of workstation manifests in `workstations.yml`. These commands operate on `$PWD` unless a supported folder argument is passed. A workspace is a subfolder of the root containing one worktree per repo, a default branch plus optional per-repo branch and base-branch overrides, and a `workspace.yml` manifest. A workstation is the parent folder index recorded in `workstation.yml`.
 
 **Go note:** `mkws` does NOT create a `go.work`. Per-module semantics (`GOWORK=off`) is the standard; the `bin/go` wrapper and gopls `cmd_env` both force `GOWORK=off` so tests/diagnostics run against each module's own deps. For cross-module navigation, use `<leader>gw` to switch worktrees instead of stitching modules with `go.work`.
 
@@ -29,6 +29,7 @@ mkws open [<name-or-link>]
 mkwst index
 mkwst setup
 mkwst clean [<workstation-folder>]
+mkwsts index
 ```
 - `--name` — workspace folder name, or a path to an existing workspace directory that contains `workspace.yml`. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). Plain names create/use `<root>/local_workspaces/<name>`; path values target that workspace directly.
 - `--branch` — default branch for repos that do not specify their own branch. **Required only when an added repo has no per-repo branch** (`--add repo-a`). **Optional** when every added repo uses `repo@branch`, when creating an empty workspace (no `--add`), or when extending an empty workspace with no repos. If the workspace already has a `branch_name` set, `--branch` is optional but, if passed, must match exactly. If the workspace was created empty (`branch_name:` in yml is empty) and you later pass `--branch`, the value is persisted into the yml. Once persisted, the existing-yml match-or-error rule kicks in.
@@ -38,6 +39,7 @@ mkwst clean [<workstation-folder>]
 - `mkwst setup` — reads `<root>/workstation.yml` and clones any recorded repo whose path is missing. Existing git repos are skipped; existing non-git paths fail. Uses `remote_url` and the recorded upstream branch when available. It does not fetch or pull existing repos.
 - `mkws clean` — removes code worktrees listed in `workspace.yml`, prunes source repos, keeps workspace-level files such as `tech_doc/`, preserves links, and resets `workspace.yml` to an empty branch/repo list. No confirmation prompt.
 - `mkwst clean` — removes stale repo metadata from `workstation.yml` when a recorded path is missing or no longer a git repo. It does not delete repo directories.
+- `mkwsts index` — builds or refreshes `<root>/workstations.yml` for the current folder. Scans the current folder and immediate child folders for `workstation.yml`, skips hidden directories and `local_workspaces/`, and records workstation-level details only: `name`, `root`, and `manifest`.
 - `open` — subcommand. Opens a recorded workspace link in the default browser. With no query, lists all workspace links. Query can match the link name or URL exactly, or a unique substring. Run from inside a workspace dir/worktree, or pass `--name <workspace>`. Examples: `mkws open`, `mkws open design-doc`, `mkws open design-doc --name myws`.
 - `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders. Rejects `--add`, `--branch`, `--name`.
   Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull ./local_workspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
@@ -110,7 +112,27 @@ _external:
 ```
 Run `mkwst index` from the parent folder to create or refresh this file. Existing entries that are not currently present on disk are kept and reported as missing; they are not deleted automatically unless you run `mkwst clean`. `_external.repos` is for read-only context used by exploration/design skills; `mkwst setup` uses only top-level `repos`.
 
+# Workstations registry format (workstations.yml)
+At `<root>/workstations.yml`:
+```yaml
+version: v1
+name: <workstations-name>
+workstations:
+  - name: <workstation-name>
+    root: <relative-path-to-workstation-root>
+    manifest: <relative-path-to-workstation-root>/workstation.yml
+```
+Run `mkwsts index` from a parent folder to create or refresh this file. The registry is intentionally thin: it does not include repo, remote, upstream, or branch details. Each listed `workstation.yml` remains the source of truth for its own repos.
+
 # Playbook
+
+## Index all workstations
+User intent: "index all workstation manifests", "refresh workstations.yml", "record every workstation under this folder".
+```
+cd <root>
+mkwsts index
+```
+The command scans the current folder and immediate child folders for `workstation.yml`, skips hidden directories and `local_workspaces/`, reads each workstation `name`, and writes `<root>/workstations.yml`. It does not scan grandchildren. If the scan root itself has `workstation.yml`, the entry uses `root: .` and `manifest: workstation.yml`.
 
 ## Index a workstation
 User intent: "index this parent folder", "refresh workstation.yml", "record every repo under this folder".
@@ -327,5 +349,5 @@ Gather these from the user if unclear — don't guess:
 Report the workspace path, the default branch, any per-repo branch/base overrides that matter, and the added/skipped/failed summary.
 
 # Troubleshooting
-- `mkws: command not found` or `mkwst: command not found` — run `make workspace-bin` from this repo root, then start a new shell (or `source ~/.zshrc`).
+- `mkws: command not found`, `mkwst: command not found`, or `mkwsts: command not found` — run `make workspace-bin` from this repo root, then start a new shell (or `source ~/.zshrc`).
 - `error: --branch ... does not match workspace.yml branch ...` — the workspace already exists on a different branch. Either omit `--branch`, match the yml, or use a different `--name`.
