@@ -8,7 +8,7 @@
 # Claude Code uses internally — not ccusage's dollar cost.
 #
 # Output format:
-#   claude[s 45%|7d 23%] | codex[5h 13%|7d 2%]
+#   claude[s 45%|7d 23%] | codex[5h 13% @ 18:43|7d 2% @ 08-06 10:38]
 #
 # When usage data is missing for either tool, that tool is omitted from
 # the status bar. Stale data is still shown with a marker.
@@ -51,6 +51,28 @@ fmt_window() {
 	esac
 }
 
+fmt_epoch() {
+	ts="${1:-}"
+	format="${2:-%H:%M}"
+	case "$ts" in
+		''|*[!0-9.]*)
+			return
+			;;
+	esac
+	ts="${ts%.*}"
+	date -r "$ts" +"$format" 2>/dev/null || date -d "@$ts" +"$format" 2>/dev/null || :
+}
+
+fmt_usage() {
+	pct="$(fmt_pct "$1")"
+	reset="$(fmt_epoch "${2:-}" "${3:-%H:%M}")"
+	if [ -n "$reset" ]; then
+		printf '%s @ %s' "$pct" "$reset"
+	else
+		printf '%s' "$pct"
+	fi
+}
+
 codex_status() {
 	if ! command -v sqlite3 >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
 		empty_status
@@ -69,14 +91,16 @@ codex_status() {
 		return
 	fi
 
-	read primary_pct secondary_pct primary_window secondary_window <<EOF
+	read primary_pct secondary_pct primary_window secondary_window primary_reset secondary_reset <<EOF
 $(tail -2000 "$rollout_path" | jq -r '
 	select(.type == "event_msg" and .payload.type == "token_count") |
 	[
 		(.payload.rate_limits.primary.used_percent // "n/a"),
 		(.payload.rate_limits.secondary.used_percent // "n/a"),
 		(.payload.rate_limits.primary.window_minutes // ""),
-		(.payload.rate_limits.secondary.window_minutes // "")
+		(.payload.rate_limits.secondary.window_minutes // ""),
+		(.payload.rate_limits.primary.resets_at // ""),
+		(.payload.rate_limits.secondary.resets_at // "")
 	] | @tsv
 ' 2>/dev/null | tail -1)
 EOF
@@ -100,8 +124,8 @@ EOF
 	fi
 
 	printf 'codex[%s %s|%s %s%s]' \
-		"$(fmt_window "$primary_window")" "$(fmt_pct "$primary_pct")" \
-		"$(fmt_window "$secondary_window")" "$(fmt_pct "$secondary_pct")" \
+		"$(fmt_window "$primary_window")" "$(fmt_usage "$primary_pct" "$primary_reset" "%H:%M")" \
+		"$(fmt_window "$secondary_window")" "$(fmt_usage "$secondary_pct" "$secondary_reset" "%d-%m %H:%M")" \
 		"$stale_marker"
 }
 
