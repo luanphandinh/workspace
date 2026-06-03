@@ -61,6 +61,24 @@ assert_not_contains() {
 	fi
 }
 
+assert_remote_branch_exists() {
+	repo=$1
+	branch=$2
+	git -C "$repo" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 || {
+		printf 'missing expected remote branch: %s\n' "$branch" >&2
+		exit 1
+	}
+}
+
+assert_remote_branch_not_exists() {
+	repo=$1
+	branch=$2
+	if git -C "$repo" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+		printf 'unexpected remote branch exists: %s\n' "$branch" >&2
+		exit 1
+	fi
+}
+
 assert_eq() {
 	if [ "$1" != "$2" ]; then
 		printf 'expected [%s], got [%s]\n' "$1" "$2" >&2
@@ -103,6 +121,12 @@ test_mkws() {
 
 	(
 		cd "$root"
+		EXPECT='`mkws master` was removed' expect_fail_contains mkws master
+		EXPECT='`mkws rebase` was removed' expect_fail_contains mkws rebase
+	)
+
+	(
+		cd "$root"
 		mkws --name feature-a --branch feature/a --add repo-a repo-b >/dev/null
 	)
 
@@ -130,6 +154,35 @@ test_mkws() {
 	assert_contains "$workspace/workspace.yml" "branch_name:"
 	assert_exists "$root/repo-a/.git"
 	assert_exists "$root/repo-b/.git"
+
+	sync_root="$TMP/mkws-sync-root"
+	sync_source="$TMP/mkws-sync-source"
+	sync_remote="$TMP/mkws-sync-remote.git"
+	mkdir -p "$sync_root"
+	init_repo "$sync_source"
+	git clone -q --bare "$sync_source" "$sync_remote"
+	git clone -q "$sync_remote" "$sync_root/repo-sync"
+	git -C "$sync_root/repo-sync" config user.name "Example User"
+	git -C "$sync_root/repo-sync" config user.email "user@example.com"
+
+	(
+		cd "$sync_root"
+		mkws --name feature-sync --branch feature/sync --add repo-sync >/dev/null
+	)
+	sync_workspace="$sync_root/local_workspaces/feature-sync"
+	printf 'local sync\n' > "$sync_workspace/repo-sync/sync.txt"
+	git -C "$sync_workspace/repo-sync" add sync.txt
+	git -C "$sync_workspace/repo-sync" commit -q -m "local sync"
+	(
+		cd "$sync_workspace"
+		mkws sync repo-sync >/dev/null
+	)
+	assert_remote_branch_not_exists "$sync_root/repo-sync" "feature/sync"
+	(
+		cd "$sync_workspace"
+		mkws sync --push repo-sync >/dev/null
+	)
+	assert_remote_branch_exists "$sync_root/repo-sync" "feature/sync"
 
 	pass "mkws"
 }
