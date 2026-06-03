@@ -17,8 +17,6 @@ import sys
 from pathlib import Path
 
 WS_CONTAINER = "local_workspaces"
-WORKSTATION_FILE = "workstation.yml"
-EXTERNAL_DIR = "_external"
 
 # ---------------------------------------------------------------------------
 # Colored logging. Disabled when stdout isn't a TTY or NO_COLOR is set, so pipes
@@ -350,137 +348,6 @@ def parse_repo_spec(spec: str) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# workstation.yml I/O. A workstation is the parent folder that owns many
-# sibling repos plus local_workspaces/. The index records repo metadata only;
-# workspace worktrees remain managed by workspace.yml.
-# ---------------------------------------------------------------------------
-def parse_yml_scalar(value: str) -> str:
-    value = value.strip()
-    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
-        body = value[1:-1]
-        return body.replace('\\"', '"').replace("\\\\", "\\")
-    return value
-
-
-def quote_yml_scalar(value: str) -> str:
-    text = str(value or "")
-    text = text.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{text}"'
-
-
-def read_workstation_manifest(yml: Path) -> dict:
-    data = {"version": "v1", "name": "", "repos": [], "_external": {"repos": []}}
-    section = ""
-    current_repo = None
-    if not yml.is_file():
-        return data
-
-    for line in yml.read_text().splitlines():
-        if line.startswith("version:"):
-            data["version"] = parse_yml_scalar(line.split(":", 1)[1]) or "v1"
-            section = ""
-        elif line.startswith("name:"):
-            data["name"] = parse_yml_scalar(line.split(":", 1)[1])
-            section = ""
-        elif line.startswith("repos:"):
-            section = "repos"
-            current_repo = None
-        elif line.startswith("_external:"):
-            section = "_external"
-            current_repo = None
-        elif section == "_external" and line.startswith("  repos:"):
-            section = "_external.repos"
-            current_repo = None
-        elif section == "repos" and line.startswith("  - name:"):
-            current_repo = {
-                "name": parse_yml_scalar(line.split(":", 1)[1]),
-                "path": "",
-                "remote": "",
-                "remote_url": "",
-                "upstream": "",
-                "branch": "",
-            }
-            data["repos"].append(current_repo)
-        elif section == "repos" and current_repo is not None and line.startswith("    "):
-            key, sep, value = line.strip().partition(":")
-            if sep and key in current_repo:
-                current_repo[key] = parse_yml_scalar(value)
-        elif section == "_external.repos" and line.startswith("    - name:"):
-            current_repo = {
-                "name": parse_yml_scalar(line.split(":", 1)[1]),
-                "path": "",
-                "remote": "",
-                "remote_url": "",
-                "upstream": "",
-                "branch": "",
-            }
-            data["_external"]["repos"].append(current_repo)
-        elif section == "_external.repos" and current_repo is not None and line.startswith("      "):
-            key, sep, value = line.strip().partition(":")
-            if sep and key in current_repo:
-                current_repo[key] = parse_yml_scalar(value)
-    return data
-
-
-def normalize_workstation_repos(repos: list) -> list:
-    out = []
-    seen = set()
-    for repo in repos or []:
-        if not isinstance(repo, dict):
-            continue
-        item = {
-            "name": str(repo.get("name") or "").strip(),
-            "path": str(repo.get("path") or "").strip(),
-            "remote": str(repo.get("remote") or "").strip(),
-            "remote_url": str(repo.get("remote_url") or "").strip(),
-            "upstream": str(repo.get("upstream") or "").strip(),
-            "branch": str(repo.get("branch") or "").strip(),
-        }
-        if not item["name"]:
-            continue
-        if not item["path"]:
-            item["path"] = item["name"]
-        key = item["path"]
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(item)
-    return sorted(out, key=lambda r: (r["path"], r["name"]))
-
-
-def render_workstation_manifest(name: str, repos: list, external_repos: list = None) -> str:
-    lines = ["version: v1", f"name: {quote_yml_scalar(name)}", "repos:"]
-    for repo in normalize_workstation_repos(repos):
-        lines.append(f"  - name: {quote_yml_scalar(repo['name'])}")
-        lines.append(f"    path: {quote_yml_scalar(repo['path'])}")
-        lines.append(f"    remote: {quote_yml_scalar(repo['remote'])}")
-        lines.append(f"    remote_url: {quote_yml_scalar(repo['remote_url'])}")
-        lines.append(f"    upstream: {quote_yml_scalar(repo['upstream'])}")
-        lines.append(f"    branch: {quote_yml_scalar(repo['branch'])}")
-    normalized_external = normalize_workstation_repos(external_repos or [])
-    if normalized_external:
-        lines.append("_external:")
-        lines.append("  repos:")
-        for repo in normalized_external:
-            lines.append(f"    - name: {quote_yml_scalar(repo['name'])}")
-            lines.append(f"      path: {quote_yml_scalar(repo['path'])}")
-            lines.append(f"      remote: {quote_yml_scalar(repo['remote'])}")
-            lines.append(f"      remote_url: {quote_yml_scalar(repo['remote_url'])}")
-            lines.append(f"      upstream: {quote_yml_scalar(repo['upstream'])}")
-            lines.append(f"      branch: {quote_yml_scalar(repo['branch'])}")
-    return "\n".join(lines) + "\n"
-
-
-def write_workstation_manifest(yml: Path, name: str, repos: list, external_repos: list = None) -> bool:
-    text = render_workstation_manifest(name, repos, external_repos)
-    old = yml.read_text() if yml.is_file() else ""
-    if old == text:
-        return False
-    yml.write_text(text)
-    return True
-
-
-# ---------------------------------------------------------------------------
 # Git helpers
 # ---------------------------------------------------------------------------
 DEFAULT_BASE_BRANCHES = ("main", "master")
@@ -500,21 +367,6 @@ def git_output(repo: Path, args: list) -> str:
 def remote_names(repo: Path) -> list:
     out = git_output(repo, ["remote"])
     return [line.strip() for line in out.splitlines() if line.strip()]
-
-
-def preferred_remote(repo: Path, upstream: str) -> str:
-    if "/" in upstream:
-        return upstream.split("/", 1)[0]
-    remotes = remote_names(repo)
-    if "origin" in remotes:
-        return "origin"
-    return remotes[0] if remotes else ""
-
-
-def remote_url(repo: Path, remote: str) -> str:
-    if not remote:
-        return ""
-    return git_output(repo, ["remote", "get-url", remote])
 
 
 def has_local_branch(repo: Path, branch: str) -> bool:
@@ -685,306 +537,6 @@ def resolve_existing_workspace_context(pwd: Path, name_flag: str) -> Path:
             return candidate
 
     die("--name required (or run from inside a workspace dir/worktree)")
-
-
-# ---------------------------------------------------------------------------
-# index mode: build/update workstation.yml for the current parent folder.
-# Scans immediate child git repos, plus immediate git repos under _external/,
-# and refreshes remote/upstream/current-branch metadata for existing entries.
-# ---------------------------------------------------------------------------
-def is_git_repo_path(path: Path) -> bool:
-    return path.is_dir() and (path / ".git").exists()
-
-
-def discover_workstation_repos(root: Path) -> list:
-    skipped = {WS_CONTAINER, "tech_doc", EXTERNAL_DIR}
-    repos = []
-    for child in sorted(p for p in root.iterdir() if p.is_dir()):
-        if child.name.startswith(".") or child.name in skipped:
-            continue
-        if is_git_repo_path(child):
-            repos.append(child)
-    return repos
-
-
-def discover_external_workstation_repos(root: Path) -> list:
-    external_root = root / EXTERNAL_DIR
-    if not external_root.is_dir():
-        return []
-    return sorted(child for child in external_root.iterdir() if child.is_dir() and is_git_repo_path(child))
-
-
-def workstation_repo_record(root: Path, repo: Path) -> dict:
-    branch = git_output(repo, ["rev-parse", "--abbrev-ref", "HEAD"])
-    upstream = git_output(repo, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])
-    remote = preferred_remote(repo, upstream)
-    try:
-        rel_path = repo.relative_to(root).as_posix()
-    except ValueError:
-        rel_path = repo.name
-    return {
-        "name": repo.name,
-        "path": rel_path,
-        "remote": remote,
-        "remote_url": remote_url(repo, remote),
-        "upstream": upstream,
-        "branch": branch,
-    }
-
-
-def cmd_index() -> int:
-    root = Path.cwd().resolve()
-    yml = root / WORKSTATION_FILE
-    data = read_workstation_manifest(yml)
-    workstation_name = data["name"] or root.name
-    indexed = normalize_workstation_repos(data["repos"])
-    external_indexed = normalize_workstation_repos(data.get("_external", {}).get("repos", []))
-    by_path = {repo["path"]: repo for repo in indexed}
-    by_name = {repo["name"]: repo for repo in indexed}
-    external_by_path = {repo["path"]: repo for repo in external_indexed}
-    external_by_name = {repo["name"]: repo for repo in external_indexed}
-
-    added = updated = unchanged = missing_upstream = 0
-    external_added = external_updated = external_unchanged = external_missing_upstream = 0
-    discovered = discover_workstation_repos(root)
-    external_discovered = discover_external_workstation_repos(root)
-
-    heading("workstation index")
-    for repo_path in discovered:
-        record = workstation_repo_record(root, repo_path)
-        current = by_path.get(record["path"]) or by_name.get(record["name"])
-        if current is None:
-            indexed.append(record)
-            by_path[record["path"]] = record
-            by_name[record["name"]] = record
-            added += 1
-            ok(f"added {record['path']}")
-        elif any(current.get(k, "") != record[k] for k in record):
-            current.update(record)
-            updated += 1
-            ok(f"updated {record['path']}")
-        else:
-            unchanged += 1
-            info(f"{record['path']}: already indexed")
-
-        if not record["upstream"]:
-            missing_upstream += 1
-            warn(f"{record['path']}: no upstream branch configured")
-
-    if external_discovered:
-        heading("external index")
-    for repo_path in external_discovered:
-        record = workstation_repo_record(root, repo_path)
-        current = external_by_path.get(record["path"]) or external_by_name.get(record["name"])
-        if current is None:
-            external_indexed.append(record)
-            external_by_path[record["path"]] = record
-            external_by_name[record["name"]] = record
-            external_added += 1
-            ok(f"added {record['path']}")
-        elif any(current.get(k, "") != record[k] for k in record):
-            current.update(record)
-            external_updated += 1
-            ok(f"updated {record['path']}")
-        else:
-            external_unchanged += 1
-            info(f"{record['path']}: already indexed")
-
-        if not record["upstream"]:
-            external_missing_upstream += 1
-            warn(f"{record['path']}: no upstream branch configured")
-
-    existing_paths = {repo["path"] for repo in normalize_workstation_repos(indexed)}
-    discovered_paths = {
-        repo_path.relative_to(root).as_posix()
-        for repo_path in discovered
-    }
-    missing = sorted(existing_paths - discovered_paths)
-    external_existing_paths = {repo["path"] for repo in normalize_workstation_repos(external_indexed)}
-    external_discovered_paths = {
-        repo_path.relative_to(root).as_posix()
-        for repo_path in external_discovered
-    }
-    external_missing = sorted(external_existing_paths - external_discovered_paths)
-    changed = write_workstation_manifest(yml, workstation_name, indexed, external_indexed)
-
-    heading("summary")
-    info(f"workstation: {BOLD}{root}{RESET}")
-    info(f"manifest:    {BOLD}{yml}{RESET}")
-    info(f"discovered:  {len(discovered)}")
-    info(f"added: {added}, updated: {updated}, unchanged: {unchanged}, missing: {len(missing)}")
-    info(
-        f"external:    {len(external_discovered)} "
-        f"(added: {external_added}, updated: {external_updated}, "
-        f"unchanged: {external_unchanged}, missing: {len(external_missing)})"
-    )
-    if missing:
-        info(f"kept missing entries: {YELLOW}{', '.join(missing)}{RESET}")
-    if external_missing:
-        info(f"kept missing external entries: {YELLOW}{', '.join(external_missing)}{RESET}")
-    if missing_upstream:
-        info(f"repos without upstream: {YELLOW}{missing_upstream}{RESET}")
-    if external_missing_upstream:
-        info(f"external repos without upstream: {YELLOW}{external_missing_upstream}{RESET}")
-    if changed:
-        ok("workstation.yml updated")
-    else:
-        ok("workstation.yml already current")
-    return 0
-
-
-def workstation_clone_branch(repo: dict) -> str:
-    upstream = repo.get("upstream", "")
-    remote = repo.get("remote", "")
-    if upstream and "/" in upstream:
-        up_remote, up_branch = upstream.split("/", 1)
-        if not remote or remote == up_remote:
-            return up_branch
-    branch = repo.get("branch", "")
-    return "" if branch == "HEAD" else branch
-
-
-def resolve_workstation_repo_path(root: Path, repo: dict) -> Path:
-    rel = repo.get("path") or repo.get("name") or ""
-    if not rel:
-        raise ValueError("missing repo path")
-    path = Path(rel)
-    if path.is_absolute():
-        raise ValueError(f"path must be relative to workstation root: {rel}")
-    resolved = (root / path).resolve()
-    try:
-        resolved.relative_to(root)
-    except ValueError:
-        raise ValueError(f"path escapes workstation root: {rel}")
-    return resolved
-
-
-def cmd_setup() -> int:
-    root = Path.cwd().resolve()
-    yml = root / WORKSTATION_FILE
-    if not yml.is_file():
-        die(f"no {WORKSTATION_FILE} at {root}; run `mkws index` first or create it")
-
-    data = read_workstation_manifest(yml)
-    repos = normalize_workstation_repos(data["repos"])
-    if not repos:
-        heading("workstation setup")
-        info("no repos recorded")
-        return 0
-
-    info(f"setting up {len(repos)} repo(s) from {WORKSTATION_FILE}...")
-
-    def worker(repo: dict, log: RepoLog) -> str:
-        label = repo.get("path") or repo.get("name") or "(unknown)"
-        log.heading(label)
-        try:
-            dest = resolve_workstation_repo_path(root, repo)
-        except ValueError as e:
-            log.fail(str(e))
-            return "failed"
-
-        if dest.exists():
-            if is_git_repo_path(dest):
-                log.info("already present")
-                return "skipped"
-            log.fail(f"path exists but is not a git repo: {dest}")
-            return "failed"
-
-        remote = repo.get("remote", "")
-        remote_url_value = repo.get("remote_url", "")
-        if not remote_url_value:
-            log.fail("missing remote_url in workstation.yml")
-            return "failed"
-
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        cmd = ["git", "clone"]
-        if remote:
-            cmd.extend(["--origin", remote])
-        branch = workstation_clone_branch(repo)
-        if branch:
-            cmd.extend(["--branch", branch])
-        cmd.extend([remote_url_value, str(dest)])
-
-        log.info("git clone")
-        proc = run(cmd)
-        log.raw((proc.stdout or "").rstrip())
-        log.raw((proc.stderr or "").rstrip())
-        if proc.returncode != 0:
-            log.fail(f"clone failed for {label}")
-            return "failed"
-        log.ok(f"cloned {label}")
-        return "cloned"
-
-    results = run_in_parallel(repos, worker, max_workers=4)
-    cloned = sum(1 for r in results if r == "cloned")
-    skipped = sum(1 for r in results if r == "skipped")
-    failed_repos = [repos[i].get("path") or repos[i].get("name") for i, r in enumerate(results) if r == "failed"]
-    failed = len(failed_repos)
-
-    heading("summary")
-    color = GREEN if failed == 0 else YELLOW
-    info(f"workstation: {BOLD}{root}{RESET}")
-    info(f"cloned: {color}{cloned}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
-    if failed_repos:
-        info(f"failed: {RED}{', '.join(failed_repos)}{RESET}")
-    return 0 if failed == 0 else 1
-
-
-def split_present_workstation_repos(root: Path, repos: list) -> tuple:
-    kept = []
-    removed = []
-    for repo in normalize_workstation_repos(repos):
-        label = repo.get("path") or repo.get("name") or "(unknown)"
-        try:
-            dest = resolve_workstation_repo_path(root, repo)
-        except ValueError as e:
-            removed.append((label, str(e)))
-            continue
-        if is_git_repo_path(dest):
-            kept.append(repo)
-        elif dest.exists():
-            removed.append((label, f"path exists but is not a git repo: {dest}"))
-        else:
-            removed.append((label, f"path missing: {dest}"))
-    return kept, removed
-
-
-def cmd_clean_workstation(folder: str = "") -> int:
-    path = Path(folder) if folder else Path.cwd()
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    root = path.resolve()
-    yml = root / WORKSTATION_FILE
-    if not yml.is_file():
-        die(f"no {WORKSTATION_FILE} at {root}; run from a workstation root or pass one")
-
-    data = read_workstation_manifest(yml)
-    workstation_name = data["name"] or root.name
-    repos, removed = split_present_workstation_repos(root, data["repos"])
-    external_repos, external_removed = split_present_workstation_repos(
-        root,
-        data.get("_external", {}).get("repos", []),
-    )
-    changed = write_workstation_manifest(yml, workstation_name, repos, external_repos)
-
-    heading("workstation clean")
-    for label, reason in removed:
-        ok(f"removed stale repo metadata: {label} ({reason})")
-    for label, reason in external_removed:
-        ok(f"removed stale external repo metadata: {label} ({reason})")
-    if not removed and not external_removed:
-        info("no stale repo metadata found")
-
-    heading("summary")
-    info(f"workstation: {BOLD}{root}{RESET}")
-    info(f"manifest:    {BOLD}{yml}{RESET}")
-    info(f"repos kept: {len(repos)}, removed: {len(removed)}")
-    info(f"external kept: {len(external_repos)}, removed: {len(external_removed)}")
-    if changed:
-        ok("workstation.yml updated")
-    else:
-        ok("workstation.yml already current")
-    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -1768,16 +1320,12 @@ def cmd_clean(folder: str = "") -> int:
         target = path.resolve()
         if (target / "workspace.yml").is_file():
             return cmd_clean_workspace(str(target))
-        if (target / WORKSTATION_FILE).is_file():
-            return cmd_clean_workstation(str(target))
-        die(f"no workspace.yml or {WORKSTATION_FILE} at {target}")
+        die(f"no workspace.yml at {target}; use `mkwst clean` for workstation.yml")
 
     pwd = Path.cwd().resolve()
     if (pwd / "workspace.yml").is_file():
         return cmd_clean_workspace(str(pwd))
-    if (pwd / WORKSTATION_FILE).is_file():
-        return cmd_clean_workstation(str(pwd))
-    die(f"no workspace.yml or {WORKSTATION_FILE} at {pwd}; pass a workspace or workstation folder")
+    die(f"no workspace.yml at {pwd}; use `mkwst clean` for workstation.yml")
 
 
 def cmd_migrate(folder: str) -> int:
@@ -2135,15 +1683,13 @@ USAGE = """\
 Usage:
   mkws [--name <name>] [--branch <branch>] [--add <repo>...]
   mkws [--name <workspace>] --link <name> <link> [<name> <link>...]
-  mkws index
-  mkws setup
   mkws pull [<folder>...]
   mkws push [<folder>...]
   mkws master [<folder>...]
   mkws rebase [<folder>...]
   mkws merge <target> [<folder>...]
   mkws sync [<folder>...]
-  mkws clean [<workspace-or-workstation-folder>]
+  mkws clean [<workspace-folder>]
   mkws migrate [<workspace-folder>]
   mkws sync_tech_doc
   mkws open [<name-or-link>]
@@ -2151,20 +1697,6 @@ Usage:
 Modes:
   (default)  Create or extend a workspace. Run from the root folder that
              contains the source repos, or from inside a workspace dir.
-  index      Build or refresh workstation.yml in the current folder. Scans
-             immediate child git repos, adds repos not yet recorded, and
-             refreshes each repo's path, remote, upstream, and current branch
-             metadata. Also scans immediate git repos under `_external/` and
-             records them under `_external.repos`. Does not fetch, delete stale
-             entries, or scan local_workspaces/.
-             Example:
-               mkws index
-  setup      Read workstation.yml in the current folder and clone any recorded
-             repo whose path is missing. Existing git repos are skipped.
-             Existing non-git paths fail. Uses remote_url and the recorded
-             upstream branch when available.
-             Example:
-               mkws setup
   pull       `git pull --ff-only` on the currently checked-out branch of every
              matching repo. Takes any number of folder args (absolute, relative,
              or a bare name under $PWD). Each arg is either a git repo (pulled
@@ -2244,18 +1776,15 @@ Modes:
              Examples:
                mkws sync                     # pull+base-merge+push every repo
                mkws sync repo-a              # just one repo
-  clean      Context-aware cleanup. In a workstation root, removes stale repo
-             metadata from workstation.yml when the recorded path is missing or
-             no longer a git repo. In a workspace folder, removes every code
-             worktree listed in workspace.yml, prunes the source repos, keeps
-             workspace-level files, and resets workspace.yml to an empty
-             branch/repo list. DESTRUCTIVE for code worktrees — uncommitted
-             work there is lost (runs `git worktree remove --force`). No
-             confirmation prompt.
+  clean      Remove every code worktree listed in workspace.yml, prune the
+             source repos, keep workspace-level files, and reset workspace.yml
+             to an empty branch/repo list. DESTRUCTIVE for code worktrees —
+             uncommitted work there is lost (runs `git worktree remove
+             --force`). No confirmation prompt. Use `mkwst clean` for
+             workstation.yml metadata cleanup.
              Examples:
-               mkws clean                    # current workstation/workspace
+               mkws clean                    # current workspace
                mkws clean ./local_workspaces/myws
-               mkws clean /abs/path/to/workstation
   migrate    Rewrite an existing workspace.yml into the v2 manifest format.
              With no folder arg, migrates the current directory.
              Examples:
@@ -2320,11 +1849,9 @@ def parse_args(argv):
     if argv and not argv[0].startswith("-"):
         sub = argv[0]
         if sub == "index":
-            mode = "index"
-            argv.pop(0)
+            die("`mkws index` moved to `mkwst index`")
         elif sub == "setup":
-            mode = "setup"
-            argv.pop(0)
+            die("`mkws setup` moved to `mkwst setup`")
         elif sub == "pull":
             mode = "pull"
             argv.pop(0)
@@ -2422,14 +1949,6 @@ def main() -> None:
 
     mode, name, branch, repos, link_pairs, target_path, target_paths = parse_args(sys.argv[1:])
 
-    if mode == "index":
-        if repos or branch or name or link_pairs or target_path or target_paths:
-            die("'index' takes no args; --add/--branch/--name/--link are not accepted")
-        sys.exit(cmd_index())
-    if mode == "setup":
-        if repos or branch or name or link_pairs or target_path or target_paths:
-            die("'setup' takes no args; --add/--branch/--name/--link are not accepted")
-        sys.exit(cmd_setup())
     if mode == "pull":
         if repos or branch or name or link_pairs:
             die("'pull' takes folder path(s) only; --add/--branch/--name/--link are not accepted")
