@@ -38,7 +38,7 @@ while IFS="$tab" read -r pane pid command dead in_mode pin_sidebar; do
 	fi
 
 	refresh_cmd="source \"\$HOME/.zshrc\"; printf '\\n[workspace-bin] refreshed ~/.zshrc at %s\\n' '$timestamp'"
-	"$tmux_cmd" send-keys -t "$pane" "$refresh_cmd" Enter >/dev/null 2>&1 || :
+	"$tmux_cmd" send-keys -t "$pane" "$refresh_cmd" Enter C-l >/dev/null 2>&1 || :
 	refreshed=$((refreshed + 1))
 done <<EOF
 $panes
