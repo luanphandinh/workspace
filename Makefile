@@ -19,7 +19,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 		&& sudo tar -C /opt -xzf ./tmp/$(nvim_linux_name).tar.gz \
 		&& sudo ln -sf /opt/$(nvim_linux_name)/bin/nvim /usr/local/bin/nvim
 	deps := fd-find python3-pip nodejs npm curl unzip fontconfig
-	optional_deps := jq btop newsboat
+	optional_deps := jq btop
 	os_name := linux
 	fonts_install := test -f "$(HOME)/.local/share/fonts/FiraCodeNerdFont-Regular.ttf" || (mkdir -p "$(HOME)/.local/share/fonts" ./tmp \
 		&& curl -fsSL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/FiraCode.zip -o ./tmp/FiraCode.zip \
@@ -114,7 +114,7 @@ tmux-install: ## Install tmux only, no config nor plugins
 	tmux new -d
 	test -d ~/.tmux/plugins/tpm || git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
 
-tmux-config: ## Install tmux-config
+tmux-config: workspace-bin ## Install tmux-config
 	cp ./tmux/.tmux.conf ~/.tmux.conf
 	tmux source ~/.tmux.conf
 	~/.tmux/plugins/tpm/scripts/install_plugins.sh
@@ -159,13 +159,9 @@ skills-sync: ## Install ./skills to all supported local AI agents via npx skills
 
 workspace-bin: ## Install ./bin scripts and workspace shell setup
 	test -d ~/bin || mkdir -p ~/bin
-	rm -f ~/bin/tmux-pin-*
-	rm -f ~/bin/tmux-session-sidebar/tmux-pin-*
-	rm -rf ~/bin/tmux/session-sidebar
-	rmdir ~/bin/tmux 2>/dev/null || true
+	find ~/bin -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 	cp -r ./bin/. ~/bin/
-	chmod +x ~/bin/*
-	find ~/bin/tmux-session-sidebar -type f -exec chmod +x {} + 2>/dev/null || true
+	find ~/bin -type f -exec chmod +x {} +
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
 
