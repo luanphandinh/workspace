@@ -1,6 +1,6 @@
 ---
 name: "local-workspace"
-description: "Use when the user wants to create, extend, migrate, inspect, index, or open quick links for a multi-repo git-worktree workspace or workstation. Drives the `mkws` command to bootstrap a workspace with a default branch plus optional per-repo branch and base-branch overrides, add repos to an existing workspace, manage workspace links, build a workstation.yml repo index, or read a workspace manifest (workspace.yml). Works in any folder containing multiple git repos as siblings. Does not touch go.work — per-module semantics (GOWORK=off) is the default here; cross-module navigation uses `<leader>gw` worktree switching instead."
+description: "Use when the user wants to create, extend, migrate, inspect, or open quick links for a multi-repo git-worktree workspace, or index/setup/clean a parent-folder workstation. Drives `mkws` for workspace operations and `mkwst` for workstation.yml operations. Works in any folder containing multiple git repos as siblings. Does not touch go.work — per-module semantics (GOWORK=off) is the default here; cross-module navigation uses `<leader>gw` worktree switching instead."
 ---
 
 # About you
@@ -8,7 +8,7 @@ description: "Use when the user wants to create, extend, migrate, inspect, index
 - You are a very cost efficient engineer, you don't want to waste too much tokens, so your response is extremely concise.
 
 # What this skill does
-Drives `mkws` (installed on `$PATH`) to manage multi-repo git-worktree workspaces and parent-folder workstation indexes. The command always operates on `$PWD` — whichever folder you run it from is the "root", and its sibling git repos are the pool of candidates. A workspace is a subfolder of that root containing one worktree per repo, a default branch plus optional per-repo branch and base-branch overrides, and a `workspace.yml` manifest. A workstation is the parent folder index recorded in `workstation.yml`.
+Drives `mkws` and `mkwst` (installed on `$PATH`). `mkws` manages multi-repo git-worktree workspaces. `mkwst` manages parent-folder workstation indexes in `workstation.yml`. Both commands operate on `$PWD` unless a supported folder argument is passed. A workspace is a subfolder of the root containing one worktree per repo, a default branch plus optional per-repo branch and base-branch overrides, and a `workspace.yml` manifest. A workstation is the parent folder index recorded in `workstation.yml`.
 
 **Go note:** `mkws` does NOT create a `go.work`. Per-module semantics (`GOWORK=off`) is the standard; the `bin/go` wrapper and gopls `cmd_env` both force `GOWORK=off` so tests/diagnostics run against each module's own deps. For cross-module navigation, use `<leader>gw` to switch worktrees instead of stitching modules with `go.work`.
 
@@ -16,26 +16,28 @@ Drives `mkws` (installed on `$PATH`) to manage multi-repo git-worktree workspace
 ```
 mkws [--name <name>] [--branch <branch>] [--add <repo>...]
 mkws [--name <workspace>] --link <name> <link> [<name> <link>...]
-mkws index
-mkws setup
 mkws pull [<folder>...]
 mkws push [<folder>...]
 mkws master [<folder>...]
 mkws rebase [<folder>...]
 mkws merge <target> [<folder>...]
 mkws sync [<folder>...]
-mkws clean [<workspace-or-workstation-folder>]
+mkws clean [<workspace-folder>]
 mkws migrate [<workspace-folder>]
 mkws sync_tech_doc
 mkws open [<name-or-link>]
+mkwst index
+mkwst setup
+mkwst clean [<workstation-folder>]
 ```
 - `--name` — workspace folder name, or a path to an existing workspace directory that contains `workspace.yml`. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). Plain names create/use `<root>/local_workspaces/<name>`; path values target that workspace directly.
 - `--branch` — default branch for repos that do not specify their own branch. **Required only when an added repo has no per-repo branch** (`--add repo-a`). **Optional** when every added repo uses `repo@branch`, when creating an empty workspace (no `--add`), or when extending an empty workspace with no repos. If the workspace already has a `branch_name` set, `--branch` is optional but, if passed, must match exactly. If the workspace was created empty (`branch_name:` in yml is empty) and you later pass `--branch`, the value is persisted into the yml. Once persisted, the existing-yml match-or-error rule kicks in.
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. Add `@<branch>` to any repo spec to override the default branch for that repo, e.g. `repo-a@feature/a`. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
 - `--link <name> <link> [<name> <link>...]` — add or update one or more quick-access workspace links in `workspace.yml`. Values are name/link pairs. Repeating `--link` also works. Run from inside a workspace dir/worktree, or pass `--name <workspace>` from the root. If an existing link URL is found, the latest provided name replaces the old name; if an existing name is found, its link is updated.
-- `index` — subcommand. Builds or refreshes `<root>/workstation.yml` for the current parent folder. Scans immediate child git repos into top-level `repos`, scans immediate child git repos under `<root>/_external/` into `_external.repos`, and refreshes each repo's path, remote, upstream, and current branch metadata. It does not fetch, delete stale entries, or scan `local_workspaces/`. External repos are index-only context; they are not workspace worktrees.
-- `setup` — subcommand. Reads `<root>/workstation.yml` and clones any recorded repo whose path is missing. Existing git repos are skipped; existing non-git paths fail. Uses `remote_url` and the recorded upstream branch when available. It does not fetch or pull existing repos.
-- `clean` — subcommand. Context-aware cleanup. From a workstation root, removes stale repo metadata from `workstation.yml` when a recorded path is missing or no longer a git repo. From a workspace folder, removes code worktrees listed in `workspace.yml`, prunes source repos, keeps workspace-level files such as `tech_doc/`, preserves links, and resets `workspace.yml` to an empty branch/repo list. No confirmation prompt.
+- `mkwst index` — builds or refreshes `<root>/workstation.yml` for the current parent folder. Scans immediate child git repos into top-level `repos`, scans immediate child git repos under `<root>/_external/` into `_external.repos`, and refreshes each repo's path, remote, upstream, and current branch metadata. It does not fetch, delete stale entries, or scan `local_workspaces/`. External repos are index-only context; they are not workspace worktrees.
+- `mkwst setup` — reads `<root>/workstation.yml` and clones any recorded repo whose path is missing. Existing git repos are skipped; existing non-git paths fail. Uses `remote_url` and the recorded upstream branch when available. It does not fetch or pull existing repos.
+- `mkws clean` — removes code worktrees listed in `workspace.yml`, prunes source repos, keeps workspace-level files such as `tech_doc/`, preserves links, and resets `workspace.yml` to an empty branch/repo list. No confirmation prompt.
+- `mkwst clean` — removes stale repo metadata from `workstation.yml` when a recorded path is missing or no longer a git repo. It does not delete repo directories.
 - `open` — subcommand. Opens a recorded workspace link in the default browser. With no query, lists all workspace links. Query can match the link name or URL exactly, or a unique substring. Run from inside a workspace dir/worktree, or pass `--name <workspace>`. Examples: `mkws open`, `mkws open design-doc`, `mkws open design-doc --name myws`.
 - `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders. Rejects `--add`, `--branch`, `--name`.
   Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull ./local_workspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
@@ -106,7 +108,7 @@ _external:
       upstream: origin/main
       branch: main
 ```
-Run `mkws index` from the parent folder to create or refresh this file. Existing entries that are not currently present on disk are kept and reported as missing; they are not deleted automatically unless you run `mkws clean`. `_external.repos` is for read-only context used by exploration/design skills; `mkws setup` and workspace code operations use only top-level `repos`.
+Run `mkwst index` from the parent folder to create or refresh this file. Existing entries that are not currently present on disk are kept and reported as missing; they are not deleted automatically unless you run `mkwst clean`. `_external.repos` is for read-only context used by exploration/design skills; `mkwst setup` uses only top-level `repos`.
 
 # Playbook
 
@@ -114,7 +116,7 @@ Run `mkws index` from the parent folder to create or refresh this file. Existing
 User intent: "index this parent folder", "refresh workstation.yml", "record every repo under this folder".
 ```
 cd <root>
-mkws index
+mkwst index
 ```
 The command scans immediate child git repos for top-level `repos`. It skips `local_workspaces/`, does not fetch from remotes, and does not remove stale entries.
 If `<root>/_external/` exists, the command also scans its immediate child git repos and records them under `_external.repos`. These external entries support read-only exploration/design context only.
@@ -123,15 +125,15 @@ If `<root>/_external/` exists, the command also scans its immediate child git re
 User intent: "remove stale repos from workstation.yml", "clean the workstation metadata", "repo folder was deleted, remove it from the index".
 ```
 cd <root>
-mkws clean
+mkwst clean
 ```
-The command reads `<root>/workstation.yml` and removes entries whose recorded `path` is missing or no longer a git repo. It also applies the same stale-entry cleanup under `_external.repos`. It does not delete repo directories, fetch, pull, or add newly discovered repos; use `mkws index` for discovery.
+The command reads `<root>/workstation.yml` and removes entries whose recorded `path` is missing or no longer a git repo. It also applies the same stale-entry cleanup under `_external.repos`. It does not delete repo directories, fetch, pull, or add newly discovered repos; use `mkwst index` for discovery.
 
 ## Set up a workstation from the index
 User intent: "set up this workstation", "clone every missing repo from workstation.yml", "restore repos under this parent folder".
 ```
 cd <root>
-mkws setup
+mkwst setup
 ```
 The command reads `<root>/workstation.yml`, clones entries whose `path` does not exist, skips paths that are already git repos, and fails on existing non-git paths. It uses `remote_url` plus the recorded upstream branch when available. It does not fetch or pull existing repos.
 
@@ -325,5 +327,5 @@ Gather these from the user if unclear — don't guess:
 Report the workspace path, the default branch, any per-repo branch/base overrides that matter, and the added/skipped/failed summary.
 
 # Troubleshooting
-- `mkws: command not found` — run `make install-workspace-path` from the workspace repo root, then start a new shell (or `source ~/.zshrc`).
+- `mkws: command not found` or `mkwst: command not found` — run `make workspace-bin` from this repo root, then start a new shell (or `source ~/.zshrc`).
 - `error: --branch ... does not match workspace.yml branch ...` — the workspace already exists on a different branch. Either omit `--branch`, match the yml, or use a different `--name`.
