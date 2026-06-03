@@ -442,7 +442,7 @@ def resolve_source(raw: str, repo_root: Path):
 
 
 # ---------------------------------------------------------------------------
-# Target expansion for pull/master: take a list of user-provided folder args
+# Target expansion for batch repo commands: take a list of user-provided folder args
 # and flatten into a deduped list of git-repo paths.
 #
 # Per arg:
@@ -453,7 +453,7 @@ def resolve_source(raw: str, repo_root: Path):
 # its immediate subfolders are scanned and each one with .git is included.
 # Empty input → default to [$PWD].
 # ---------------------------------------------------------------------------
-def expand_targets(folders: list, block_workspace: bool = False) -> list:
+def expand_targets(folders: list) -> list:
     if not folders:
         folders = [os.getcwd()]
 
@@ -468,13 +468,6 @@ def expand_targets(folders: list, block_workspace: bool = False) -> list:
 
         if not p.is_dir():
             die(f"not a directory: {raw}")
-
-        if block_workspace and (p / "workspace.yml").is_file():
-            die(
-                f"'master' is blocked inside a workspace ({p} contains "
-                f"workspace.yml). Use `mkws pull` there instead, or run "
-                f"`mkws master` on the repo root."
-            )
 
         if (p / ".git").exists():
             candidates = [p]
@@ -588,85 +581,7 @@ def cmd_pull(folders: list) -> int:
     return 0 if failed == 0 else 1
 
 
-# ---------------------------------------------------------------------------
-# master mode: for every git repo in the immediate subfolders, nuke untracked
-# files, discard local changes on the current branch, switch to the detected
-# default base branch, and fast-forward pull. Explicitly BLOCKED inside
-# workspace folders — worktrees live on feature branches and this would
-# clobber the feature work.
-# ---------------------------------------------------------------------------
-def cmd_master(folders: list) -> int:
-    repos = expand_targets(folders, block_workspace=True)
-
-    if not repos:
-        heading("summary")
-        info("no git repos found")
-        return 0
-
-    info(f"resetting {len(repos)} repo(s) to default base in parallel...")
-
-    def worker(sub: Path, log: RepoLog) -> str:
-        log.heading(sub.name)
-        base = detect_base(sub)
-        if base is None:
-            log.warn("no main/master branch, skipping")
-            return "skipped"
-
-        cur = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
-        cur_branch = cur.stdout.strip() if cur.returncode == 0 else ""
-
-        log.info("git clean -d -f")
-        p = run(["git", "-C", str(sub), "clean", "-d", "-f"])
-        log.raw((p.stdout or "").rstrip())
-        log.raw((p.stderr or "").rstrip())
-
-        # Discard local changes to tracked files before anything else so the
-        # branch switch below can't fail with "would be overwritten". Only run
-        # when the tree is actually dirty — `git checkout -- .` on a clean
-        # tree prints a noisy "pathspec '.' did not match" error.
-        status = run(["git", "-C", str(sub), "status", "--porcelain"])
-        if status.stdout.strip():
-            log.info("git checkout -- . (discard local changes)")
-            p = run(["git", "-C", str(sub), "checkout", "--", "."])
-            log.raw((p.stdout or "").rstrip())
-            log.raw((p.stderr or "").rstrip())
-
-        if cur_branch != base:
-            log.info(f"git checkout {base} (was on {cur_branch or 'unknown'})")
-            p = run(["git", "-C", str(sub), "checkout", base])
-            log.raw((p.stdout or "").rstrip())
-            log.raw((p.stderr or "").rstrip())
-            if p.returncode != 0:
-                log.fail(f"failed to checkout {base}")
-                return "failed"
-
-        log.info(f"pull latest from {BOLD}{base}{RESET}")
-        p = run(["git", "-C", str(sub), "pull", "--ff-only"])
-        log.raw((p.stdout or "").rstrip())
-        log.raw((p.stderr or "").rstrip())
-        if p.returncode != 0:
-            log.fail("pull failed")
-            return "failed"
-
-        log.ok(f"on {base} and updated")
-        return "reset"
-
-    results = run_in_parallel(repos, worker)
-    reset = sum(1 for r in results if r == "reset")
-    skipped = sum(1 for r in results if r == "skipped")
-    failed_repos = [repos[i].name for i, r in enumerate(results) if r == "failed"]
-    failed = len(failed_repos)
-
-    heading("summary")
-    color = GREEN if failed == 0 else YELLOW
-    info(f"reset: {color}{reset}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
-    if failed_repos:
-        info(f"failed: {RED}{', '.join(failed_repos)}{RESET}")
-    return 0 if failed == 0 else 1
-
-
-# ---------------------------------------------------------------------------
-# Shared rebase helper used by both `mkws rebase` and `mkws sync`.
+# Shared base-merge helper used by `mkws sync`.
 #
 # Flow:
 #   1. Resolve base (configured base_branch, otherwise main/master) and current
@@ -674,41 +589,41 @@ def cmd_master(folders: list) -> int:
 #   2. If working tree is dirty, `git stash push -u` (untracked included).
 #   3. Fetch origin/<base> when using a remote base.
 #   4. `git merge --no-edit <base-ref>`
-#        - clean merge   → pop stash, return "rebased"
+#        - clean merge   → pop stash, return "merged"
 #        - conflict      → leave the merge + stash in place, print resolve
 #                          instructions, return "conflict"
 #        - other failure → `git merge --abort`, pop stash, return "failed"
 #
 # Returns one of:
-#   "rebased"  — merge succeeded
+#   "merged"   — merge succeeded
 #   "already"  — already on base, nothing to do (informational; not a failure)
 #   "skipped"  — no base branch or detached HEAD
 #   "failed"   — non-conflict failure; state restored; caller should halt
 #   "conflict" — merge conflict; state left in place; caller MUST halt
 # ---------------------------------------------------------------------------
-def _rebase_one(sub: Path, base_branch: str = "") -> str:
+def _sync_base_merge_one(sub: Path, base_branch: str = "") -> str:
     base = resolve_base(sub, base_branch)
     if base is None:
         if base_branch:
-            warn(f"base_branch '{base_branch}' not found, skipping rebase")
+            warn(f"base_branch '{base_branch}' not found, skipping base merge")
         else:
-            warn("no main/master branch, skipping rebase")
+            warn("no main/master branch, skipping base merge")
         return "skipped"
 
     cur = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
     cur_branch = cur.stdout.strip() if cur.returncode == 0 else ""
     if not cur_branch or cur_branch == "HEAD":
-        warn("detached HEAD, skipping rebase")
+        warn("detached HEAD, skipping base merge")
         return "skipped"
     if cur_branch == base:
-        info(f"already on {base}, skipping rebase")
+        info(f"already on {base}, skipping base merge")
         return "already"
 
     stashed = False
     status = run(["git", "-C", str(sub), "status", "--porcelain"])
     if status.stdout.strip():
         info("git stash push -u (autosaving local changes)")
-        sp = run(["git", "-C", str(sub), "stash", "push", "-u", "-m", "mkws rebase autostash"])
+        sp = run(["git", "-C", str(sub), "stash", "push", "-u", "-m", "mkws sync autostash"])
         if sp.returncode != 0:
             fail("stash failed")
             return "failed"
@@ -733,7 +648,7 @@ def _rebase_one(sub: Path, base_branch: str = "") -> str:
     if mp.returncode == 0:
         ok(f"merged {merge_ref} into {cur_branch}")
         pop_stash()
-        return "rebased"
+        return "merged"
 
     unmerged = run(["git", "-C", str(sub), "ls-files", "--unmerged"])
     if unmerged.stdout.strip():
@@ -742,7 +657,7 @@ def _rebase_one(sub: Path, base_branch: str = "") -> str:
         info("  1. fix conflicted files")
         info("  2. git add <files> && git commit")
         if stashed:
-            info(f"  3. {BOLD}git stash pop{RESET} (your pre-rebase changes are in the stash)")
+            info(f"  3. {BOLD}git stash pop{RESET} (your pre-sync changes are in the stash)")
         return "conflict"
 
     fail("merge failed (non-conflict)")
@@ -753,10 +668,10 @@ def _rebase_one(sub: Path, base_branch: str = "") -> str:
 
 # ---------------------------------------------------------------------------
 # merge — Case B per-repo: bring base INTO the feature branch
-# in a workspace worktree. Like _rebase_one but with two extras:
+# in a workspace worktree. Like the sync base-merge helper but with two extras:
 #   1. Pulls origin/<feature> first if a remote-tracking branch exists.
 #   2. Pushes the feature branch after a clean merge.
-# Returns the same status strings as _rebase_one.
+# Returns the same status strings as the sync base-merge helper.
 # ---------------------------------------------------------------------------
 def _merge_base_to_feature_one(sub: Path, requested_base: str, base_branch: str = "") -> str:
     base = resolve_base(sub, base_branch)
@@ -910,7 +825,7 @@ def _merge_feature_to_base_one(source_repo: Path, feature_branch: str, base_bran
 #   - target == <workspace-name>   → Case A: in each source sibling repo on
 #     its configured base or default base, pull base, merge feature INTO base.
 #     NO push.
-# Both serial; halts on conflict. Replaces `mkws rebase` for Case B.
+# Both serial; halt on conflict.
 # ---------------------------------------------------------------------------
 def cmd_merge(target: str, folders: list) -> int:
     if not target:
@@ -1044,48 +959,6 @@ def cmd_merge(target: str, folders: list) -> int:
     return 0 if failed == 0 else 1
 
 
-# ---------------------------------------------------------------------------
-# rebase mode: bring every matching repo's feature branch up to its base
-# via merge. Serial, halts on conflict. Uses `_rebase_one` above.
-# ---------------------------------------------------------------------------
-def cmd_rebase(folders: list) -> int:
-    repos = expand_targets(folders)
-    if not repos:
-        heading("summary")
-        info("no git repos found")
-        return 0
-
-    info(f"rebasing {len(repos)} repo(s) onto base (serial)...")
-    rebased = skipped = failed = 0
-
-    for sub in repos:
-        heading(sub.name)
-        status = _rebase_one(sub, workspace_base_branch_for_repo(sub))
-        if status == "rebased":
-            rebased += 1
-        elif status in ("already", "skipped"):
-            skipped += 1
-        elif status == "failed":
-            failed += 1
-            heading("summary")
-            info(f"rebased: {rebased}, skipped: {skipped}, failed: 1")
-            info(f"halted at: {BOLD}{sub.name}{RESET}")
-            return 1
-        elif status == "conflict":
-            info("")
-            info("halted; other repos not processed")
-            heading("summary")
-            info(f"rebased: {rebased}, skipped: {skipped}, conflict: 1")
-            info(f"halted at: {BOLD}{sub.name}{RESET}")
-            return 1
-
-    heading("summary")
-    color = GREEN if failed == 0 else YELLOW
-    info(f"rebased: {color}{rebased}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
-    return 0 if failed == 0 else 1
-
-
-# ---------------------------------------------------------------------------
 # push mode: `git push origin HEAD` for every matching repo, in parallel.
 # Detached HEAD is skipped. Non-ff / auth failures are reported as failures
 # but don't halt — user can inspect the list and retry individually.
@@ -1131,22 +1004,23 @@ def cmd_push(folders: list) -> int:
 
 
 # ---------------------------------------------------------------------------
-# sync mode: pull → merge base → push, per repo, serial. Halts on base-merge
-# conflict (like `mkws rebase`). Pull/push failures are recorded but the
-# command continues to the next repo — only the base merge halts the batch.
+# sync mode: pull -> merge base, per repo, serial. With --push, also push the
+# current branch after the base merge. Pull/push failures are recorded but the
+# command continues to the next repo; only the base merge halts the batch.
 #
 # Why serial: a conflict during the base merge needs the user's attention. Parallel
 # pulls + parallel pushes would also work but would obscure which repo
 # halted.
 # ---------------------------------------------------------------------------
-def cmd_sync(folders: list) -> int:
+def cmd_sync(folders: list, push: bool = False) -> int:
     repos = expand_targets(folders)
     if not repos:
         heading("summary")
         info("no git repos found")
         return 0
 
-    info(f"syncing {len(repos)} repo(s) — pull → base merge → push (serial)...")
+    flow = "pull -> base merge -> push" if push else "pull -> base merge"
+    info(f"syncing {len(repos)} repo(s) - {flow} (serial)...")
     synced = skipped = 0
     pull_fails: list = []
     push_fails: list = []
@@ -1186,7 +1060,7 @@ def cmd_sync(folders: list) -> int:
                 continue
 
         # 2. merge base (unless already on base)
-        status = _rebase_one(sub, base_branch)
+        status = _sync_base_merge_one(sub, base_branch)
         if status == "conflict":
             info("")
             info("halted; remaining repos not processed")
@@ -1201,13 +1075,15 @@ def cmd_sync(folders: list) -> int:
             info(f"synced: {synced}, skipped: {skipped}, halted at: {BOLD}{sub.name}{RESET} (base merge failed)")
             return 1
 
-        # 3. push — but NOT when we're on the base branch. Pushing base from a
-        # dev machine is almost never what you want; the feature-branch sync flow
-        # is what this command is really for. `_rebase_one` returns "already"
-        # exactly when cur_branch equals the base branch.
+        # 3. Optional push, but not when the current branch is the base branch.
         if status == "already":
             info(f"on {BOLD}{cur_branch}{RESET}, skipping push")
             ok(f"synced {cur_branch} (pull only)")
+            synced += 1
+            continue
+
+        if not push:
+            ok(f"synced {cur_branch} (local only)")
             synced += 1
             continue
 
@@ -1685,10 +1561,8 @@ Usage:
   mkws [--name <workspace>] --link <name> <link> [<name> <link>...]
   mkws pull [<folder>...]
   mkws push [<folder>...]
-  mkws master [<folder>...]
-  mkws rebase [<folder>...]
   mkws merge <target> [<folder>...]
-  mkws sync [<folder>...]
+  mkws sync [--push] [<folder>...]
   mkws clean [<workspace-folder>]
   mkws migrate [<workspace-folder>]
   mkws sync_tech_doc
@@ -1708,43 +1582,18 @@ Modes:
                mkws pull repo-a repo-b          # two repos
                mkws pull ./local_workspaces/myws    # every worktree in a workspace
                mkws pull /abs/repo-a ./repo-b   # mix absolute and relative
-  master     For every matching repo: `git clean -d -f`, optional
-             `git checkout -- .` to discard local changes, switch to the
-             detected default base branch, and `git pull --ff-only`. DESTRUCTIVE to
-             uncommitted work. Takes the same folder-args form as `pull`.
-             BLOCKED when any target folder itself contains a workspace.yml —
-             running it in a workspace would wipe feature-branch state.
-             Examples:
-               mkws master                      # all source repos under $PWD
-               mkws master repo-a repo-b        # two specific repos
-               mkws master /abs/path/to/root
   push       `git push origin HEAD` on the current branch of every matching
              repo. Parallel. Detached HEAD is skipped. Non-ff / auth failures
              are reported at the end; the batch does not halt.
              Examples:
                mkws push                     # push every repo under $PWD
                mkws push repo-a repo-b       # two specific repos
-  rebase     For every matching repo on a feature branch: stash dirty edits,
-             merge that repo's base into the current branch, then pop the
-             stash. Inside a workspace, per-repo `base_branch` in
-             workspace.yml overrides the default main/master base detection;
-             local base branches are supported. Runs serial (conflicts need
-             attention). On conflict: HALTS — leaves the merge + stash in
-             place for you to resolve, prints resolve-and-finish instructions,
-             and does NOT process remaining repos. Non-conflict failures
-             trigger `git merge --abort` + stash-pop to restore state.
-             Takes the same folder-args form as pull/master.
-             Examples:
-               mkws rebase                   # merge each repo's base into
-                                             #   feature branches under $PWD
-               mkws rebase repo-a
   merge      Bidirectional merge driven by <target>:
              • `mkws merge master` (or `main`) — Case B: for each worktree on
                a feature branch: use the configured per-repo base_branch when
                present, otherwise main/master; pull origin/<feature> if a
                remote exists, merge the base --no-ff into the feature branch,
-               then push the feature branch. Replaces `mkws rebase` with the
-               added feature-pull and post-merge push. Halts on conflict.
+               then push the feature branch. Halts on conflict.
              • `mkws merge <workspace-name>` — Case A: for each source sibling
                repo listed in the workspace's manifest: switch to the
                configured per-repo base_branch when present, otherwise
@@ -1767,15 +1616,16 @@ Modes:
                mkws merge myws
                # inside ONE source repo: land just that one
                cd repo-a && mkws merge myws
-  sync       Composite: for every matching repo, pull the current branch,
+  sync       Composite: for every matching repo, pull the current branch and
              merge its configured base_branch (or default main/master) into
-             the current branch, then push. Serial. Merge conflicts halt the
-             whole run with the same instructions as `mkws rebase`. Pull/push
-             failures for one repo don't halt — they're recorded and the run
-             continues.
+             the current branch. With --push, push the current branch after
+             the base merge. Serial. Merge conflicts halt the whole run.
+             Pull/push failures for one repo don't halt; they're recorded and
+             the run continues.
              Examples:
-               mkws sync                     # pull+base-merge+push every repo
-               mkws sync repo-a              # just one repo
+               mkws sync                     # pull+base-merge every repo
+               mkws sync --push              # pull+base-merge+push every repo
+               mkws sync repo-a              # just one repo, local only
   clean      Remove every code worktree listed in workspace.yml, prune the
              source repos, keep workspace-level files, and reset workspace.yml
              to an empty branch/repo list. DESTRUCTIVE for code worktrees —
@@ -1825,6 +1675,8 @@ Flags:
                       add or update one or more quick-access workspace links.
                       Values are name/link pairs. Repeating --link is also
                       accepted. Run inside a workspace, or pass --name.
+  --push              with `mkws sync`, push the current branch after local
+                      pull+base-merge.
   -h, --help          show this message
 
 Layout:
@@ -1843,6 +1695,7 @@ def parse_args(argv):
     link_pairs: list = []
     target_path = ""
     target_paths: list = []
+    sync_push = False
 
     argv = list(argv)
 
@@ -1865,18 +1718,18 @@ def parse_args(argv):
         elif sub == "sync":
             mode = "sync"
             argv.pop(0)
-            while argv and not argv[0].startswith("-"):
-                target_paths.append(argv.pop(0))
+            while argv:
+                if argv[0] == "--push":
+                    sync_push = True
+                    argv.pop(0)
+                elif argv[0].startswith("-"):
+                    break
+                else:
+                    target_paths.append(argv.pop(0))
         elif sub == "master":
-            mode = "master"
-            argv.pop(0)
-            while argv and not argv[0].startswith("-"):
-                target_paths.append(argv.pop(0))
+            die("`mkws master` was removed; use direct git commands for destructive base resets")
         elif sub == "rebase":
-            mode = "rebase"
-            argv.pop(0)
-            while argv and not argv[0].startswith("-"):
-                target_paths.append(argv.pop(0))
+            die("`mkws rebase` was removed; use `mkws sync` or `mkws sync --push`")
         elif sub == "merge":
             mode = "merge"
             argv.pop(0)
@@ -1940,14 +1793,14 @@ def parse_args(argv):
         else:
             die(f"unknown flag: {a}\n\n{USAGE}")
 
-    return mode, name, branch, repos, link_pairs, target_path, target_paths
+    return mode, name, branch, repos, link_pairs, target_path, target_paths, sync_push
 
 
 def main() -> None:
     if not has_cmd("git"):
         die("git not installed")
 
-    mode, name, branch, repos, link_pairs, target_path, target_paths = parse_args(sys.argv[1:])
+    mode, name, branch, repos, link_pairs, target_path, target_paths, sync_push = parse_args(sys.argv[1:])
 
     if mode == "pull":
         if repos or branch or name or link_pairs:
@@ -1959,16 +1812,8 @@ def main() -> None:
         sys.exit(cmd_push(target_paths))
     if mode == "sync":
         if repos or branch or name or link_pairs:
-            die("'sync' takes folder path(s) only; --add/--branch/--name/--link are not accepted")
-        sys.exit(cmd_sync(target_paths))
-    if mode == "master":
-        if repos or branch or name or link_pairs:
-            die("'master' takes folder path(s) only; --add/--branch/--name/--link are not accepted")
-        sys.exit(cmd_master(target_paths))
-    if mode == "rebase":
-        if repos or branch or name or link_pairs:
-            die("'rebase' takes folder path(s) only; --add/--branch/--name/--link are not accepted")
-        sys.exit(cmd_rebase(target_paths))
+            die("'sync' takes [--push] and folder path(s) only; --add/--branch/--name/--link are not accepted")
+        sys.exit(cmd_sync(target_paths, push=sync_push))
     if mode == "merge":
         if repos or branch or name or link_pairs:
             die("'merge' takes a target + folder path(s) only; --add/--branch/--name/--link are not accepted")
