@@ -31,6 +31,6 @@ printf '%s\n' "$token" > "$TICK_FILE"
 	sleep "$DEBOUNCE_SEC"
 	current="$(cat "$TICK_FILE" 2>/dev/null || :)"
 	if [ "$current" = "$token" ]; then
-		"$HOME/bin/tmux/session-sidebar/sidebar-resize" >/dev/null 2>&1 || :
+		"$HOME/bin/tmux-session-sidebar/sidebar-resize" >/dev/null 2>&1 || :
 	fi
 ) >/dev/null 2>&1 </dev/null &

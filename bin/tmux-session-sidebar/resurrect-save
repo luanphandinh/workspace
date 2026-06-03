@@ -15,7 +15,7 @@ tmux list-panes -aF '#{session_name}	#{window_index}	#{pane_index}	#{@pin_sideba
 
 [ -s "$keys" ] || exit 0
 
-awk -F '\t' -v OFS='\t' -v keys="$keys" -v cmd="${HOME}/bin/tmux/session-sidebar/sidebar" '
+awk -F '\t' -v OFS='\t' -v keys="$keys" -v cmd="${HOME}/bin/tmux-session-sidebar/sidebar" '
 	BEGIN {
 		while ((getline line < keys) > 0) {
 			sidebar[line] = 1

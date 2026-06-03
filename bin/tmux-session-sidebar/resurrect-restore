@@ -7,13 +7,13 @@ has_sidebar_process() {
 	pid="$1"
 	[ -n "$pid" ] || return 1
 
-	ps -o args= -p "$pid" 2>/dev/null | grep -q 'tmux/session-sidebar/sidebar' && return 0
+	ps -o args= -p "$pid" 2>/dev/null | grep -q 'tmux-session-sidebar/sidebar' && return 0
 
 	ps -ao ppid=,args= 2>/dev/null \
 		| awk -v p="$pid" '
 			$1 == p {
 				$1 = ""
-				if ($0 ~ /tmux\/session-sidebar\/sidebar/) found = 1
+				if ($0 ~ /tmux-session-sidebar\/sidebar/) found = 1
 			}
 			END { exit found ? 0 : 1 }
 		'
@@ -51,5 +51,5 @@ done
 [ -s "$found" ] || exit 0
 
 tmux set-option -g '@pin_sidebar_open' '1' >/dev/null 2>&1 || :
-"$HOME/bin/tmux/session-sidebar/sidebar-resize" >/dev/null 2>&1 || :
-"$HOME/bin/tmux/session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :
+"$HOME/bin/tmux-session-sidebar/sidebar-resize" >/dev/null 2>&1 || :
+"$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :

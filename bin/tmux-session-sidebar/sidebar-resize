@@ -17,7 +17,7 @@ esac
 
 # 1. Fit every window to the live viewport (handles inactive sessions
 #    whose cached size diverged from the current client).
-"$HOME/bin/tmux/session-sidebar/fit-windows" >/dev/null 2>&1 || :
+"$HOME/bin/tmux-session-sidebar/fit-windows" >/dev/null 2>&1 || :
 
 # 2. Snap every tagged sidebar pane back to configured width.
 tmux list-panes -aF '#{pane_id} #{@pin_sidebar}' 2>/dev/null \
@@ -28,7 +28,7 @@ tmux list-panes -aF '#{pane_id} #{@pin_sidebar}' 2>/dev/null \
 	done
 
 # 3. Repaint sidebar contents (line widths may have changed).
-"$HOME/bin/tmux/session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :
+"$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :
 
 # 4. Force a full client repaint to clear any `....` placeholder cells
 #    where the cached layout didn't match the new viewport.

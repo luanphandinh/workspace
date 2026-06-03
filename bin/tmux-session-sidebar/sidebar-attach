@@ -35,7 +35,7 @@ fi
 # Run through a parent shell so tmux-resurrect's default `ps` save strategy
 # can see `sidebar` as a child process and restore it after a server
 # restart. Directly execing the script makes resurrect save only `bash`.
-cmd="/bin/sh -c '\"$HOME/bin/tmux/session-sidebar/sidebar\"'"
+cmd="/bin/sh -c '\"$HOME/bin/tmux-session-sidebar/sidebar\"'"
 width="$(tmux show-options -gqv '@pin_sidebar_width' 2>/dev/null || :)"
 case "$width" in
 	''|*[!0-9]*) width=20 ;;
