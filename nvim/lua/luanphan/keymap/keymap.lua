@@ -249,10 +249,10 @@ vim.keymap.set("n", "<leader>fs", function()
     -- New buffer without name - prompt for filename
     local filename = vim.fn.input("Save as: ")
     if filename ~= "" then
-      vim.cmd("w " .. vim.fn.fnameescape(filename))
+      vim.cmd("noautocmd write " .. vim.fn.fnameescape(filename))
     end
   else
-    vim.cmd("w")
+    vim.cmd("noautocmd write")
   end
 end, { desc = "Save current file" })
 
