@@ -256,6 +256,18 @@ def write_manifest(yml: Path, name: str, branch: str, repos: list, links: list =
     yml.write_text("\n".join(lines) + "\n")
 
 
+def ensure_tech_doc_repo(workspace_dir: Path) -> None:
+    tech_doc = workspace_dir / "tech_doc"
+    if tech_doc.exists() and not tech_doc.is_dir():
+        die(f"tech_doc path exists and is not a directory: {tech_doc}")
+    tech_doc.mkdir(parents=True, exist_ok=True)
+    if (tech_doc / ".git").exists():
+        return
+    proc = run(["git", "-C", str(tech_doc), "init", "-q"])
+    if proc.returncode != 0:
+        die(f"failed to initialize tech_doc git repo at {tech_doc}")
+
+
 def normalize_repos(repos: list, default_branch: str = "") -> list:
     out = []
     for repo in repos or []:
@@ -1419,6 +1431,8 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
         write_manifest(yml, name=name, branch=branch_flag or "", repos=[], links=[])
         branch = branch_flag or ""
 
+    ensure_tech_doc_repo(workspace_dir)
+
     added = skipped = failed = 0
 
     for repo, repo_branch_override in repo_specs:
@@ -1681,6 +1695,8 @@ Flags:
 
 Layout:
   All workspaces live inside `$PWD/local_workspaces/<name>/`.
+  Each workspace has `tech_doc/` initialized as its own git repo for design
+  milestone commits.
 
 Environment:
   NO_COLOR      set to any value to disable colored output.

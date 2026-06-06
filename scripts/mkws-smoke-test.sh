@@ -43,6 +43,14 @@ assert_not_exists() {
 	}
 }
 
+assert_git_repo() {
+	git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+		printf 'expected git repo: %s\n' "$1" >&2
+		exit 1
+	}
+	assert_exists "$1/.git"
+}
+
 assert_contains() {
 	grep -F "$2" "$1" >/dev/null || {
 		printf 'expected %s to contain: %s\n' "$1" "$2" >&2
@@ -134,8 +142,18 @@ test_mkws() {
 	assert_exists "$workspace/workspace.yml"
 	assert_exists "$workspace/repo-a/.git"
 	assert_exists "$workspace/repo-b/.git"
+	assert_exists "$workspace/tech_doc"
+	assert_git_repo "$workspace/tech_doc"
 	assert_contains "$workspace/workspace.yml" "branch_name: feature/a"
 	assert_eq "feature/a" "$(git -C "$workspace/repo-a" branch --show-current)"
+
+	(
+		cd "$root"
+		mkws --name design-only >/dev/null
+	)
+	empty_workspace="$root/local_workspaces/design-only"
+	assert_exists "$empty_workspace/workspace.yml"
+	assert_git_repo "$empty_workspace/tech_doc"
 
 	(
 		cd "$root"
@@ -151,6 +169,7 @@ test_mkws() {
 	)
 	assert_not_exists "$workspace/repo-a"
 	assert_not_exists "$workspace/repo-b"
+	assert_git_repo "$workspace/tech_doc"
 	assert_contains "$workspace/workspace.yml" "branch_name:"
 	assert_exists "$root/repo-a/.git"
 	assert_exists "$root/repo-b/.git"
