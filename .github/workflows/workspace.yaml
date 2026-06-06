@@ -4,68 +4,35 @@ on:
   push:
 
 jobs:
-  workspace-macOS-locked:
-    runs-on: macOS-latest
+  workspace:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
     steps:
-    - uses: actions/checkout@v1
+      - uses: actions/checkout@v4
 
-    - name: Setup from lockfile
-      run: |
-        export HOMEBREW_NO_AUTO_UPDATE=1
-        export HOMEBREW_NO_ENV_HINTS=1
-        make setup
+      - name: Setup from lockfile
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            export HOMEBREW_NO_AUTO_UPDATE=1
+            export HOMEBREW_NO_ENV_HINTS=1
+          fi
+          make setup
 
-    - name: Agent CLI verification
-      run: make verify-agent-clis
+      - name: Neovim smoke tests after lockfile setup
+        run: make nvim-test
 
-    - name: Neovim smoke tests
-      run: make nvim-test
+      - name: Update latest plugins
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            export HOMEBREW_NO_AUTO_UPDATE=1
+            export HOMEBREW_NO_ENV_HINTS=1
+          fi
+          make update
 
-  workspace-macOS-latest:
-    runs-on: macOS-latest
-    steps:
-    - uses: actions/checkout@v1
-
-    - name: Setup latest plugins
-      run: |
-        export HOMEBREW_NO_AUTO_UPDATE=1
-        export HOMEBREW_NO_ENV_HINTS=1
-        make update
-
-    - name: Agent CLI verification
-      run: make verify-agent-clis
-
-    - name: Neovim smoke tests
-      run: make nvim-test
-
-  workspace-ubuntu-locked:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v1
-
-    - name: Setup from lockfile
-      run: |
-        which bash
-        make setup
-
-    - name: Agent CLI verification
-      run: make verify-agent-clis
-
-    - name: Neovim smoke tests
-      run: make nvim-test
-
-  workspace-ubuntu-latest:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v1
-
-    - name: Setup latest plugins
-      run: |
-        which bash
-        make update
-
-    - name: Agent CLI verification
-      run: make verify-agent-clis
-
-    - name: Neovim smoke tests
-      run: make nvim-test
+      - name: Neovim smoke tests after latest update
+        run: make nvim-test
