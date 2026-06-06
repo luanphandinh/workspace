@@ -40,7 +40,7 @@ return {
         { "<leader>tw", desc = "Word diff", icon = toggle_icons.word_diff, cond = function()
           return toggle_icons.mapping_exists("<leader>tw")
         end },
-        { "<leader>tW", desc = "Word wrap (window-local)", icon = toggle_icons.word_wrap },
+        { "<leader>tW", desc = "Word wrap (all windows)", icon = toggle_icons.word_wrap },
       })
 
       -- Press ? to show all keymaps

@@ -8,7 +8,7 @@ description: "Use when the user wants to create, extend, migrate, inspect, or op
 - You are a very cost efficient engineer, you don't want to waste too much tokens, so your response is extremely concise.
 
 # What this skill does
-Drives `mkws`, `mkwst`, and `mkwsts` (installed on `$PATH`). `mkws` manages multi-repo git-worktree workspaces. `mkwst` manages one parent-folder workstation index in `workstation.yml`. `mkwsts` manages a plural registry of workstation manifests in `workstations.yml`. These commands operate on `$PWD` unless a supported folder argument is passed. A workspace is a subfolder of the root containing one worktree per repo, a default branch plus optional per-repo branch and base-branch overrides, and a `workspace.yml` manifest. A workstation is the parent folder index recorded in `workstation.yml`.
+Drives `mkws`, `mkwst`, and `mkwsts` (installed on `$PATH`). `mkws` manages multi-repo git-worktree workspaces. `mkwst` manages one parent-folder workstation index in `workstation.yml`. `mkwsts` manages a plural registry of workstation manifests in `workstations.yml`. These commands operate on `$PWD` unless a supported folder argument is passed. A workspace is a subfolder of the root containing one worktree per repo, a default branch plus optional per-repo branch and base-branch overrides, a `workspace.yml` manifest, and a `tech_doc/` folder initialized as its own git repo. A workstation is the parent folder index recorded in `workstation.yml`.
 
 **Go note:** `mkws` does NOT create a `go.work`. Per-module semantics (`GOWORK=off`) is the standard; the `bin/go` wrapper and gopls `cmd_env` both force `GOWORK=off` so tests/diagnostics run against each module's own deps. For cross-module navigation, use `<leader>gw` to switch worktrees instead of stitching modules with `go.work`.
 
@@ -54,7 +54,7 @@ mkwsts index
 - `sync_tech_doc` — subcommand. Builds a root-level tech-doc index by symlinking each workspace tech doc into `<root>/tech_doc/<workspace-name>/tech_doc`. Creates links for newly created workspace tech docs and removes stale generated symlinks for workspace tech docs that disappeared. It never deletes real files or real directories. Takes no args and rejects `--add`, `--branch`, and `--name`.
 
 ## Layout — all workspaces live under `local_workspaces/`
-Every workspace is placed at `<root>/local_workspaces/<name>/` instead of directly under the root. This keeps the root folder clean even when many workspaces accumulate. `mkws` creates the `local_workspaces/` container on demand.
+Every workspace is placed at `<root>/local_workspaces/<name>/` instead of directly under the root. This keeps the root folder clean even when many workspaces accumulate. `mkws` creates the `local_workspaces/` container on demand and initializes `<workspace>/tech_doc/` as a standalone git repo for technical-design milestone commits.
 
 ## Context detection (important!)
 `mkws` detects its context from `$PWD`:
@@ -178,6 +178,7 @@ cd <root>
 mkws --name X                    # no --add, no --branch — empty workspace, blank branch
 mkws --name X --branch feature/Y # later: persist the branch into the yml
 ```
+The workspace includes `<root>/local_workspaces/X/tech_doc/`, already initialized with `git init`.
 
 ## Add repos to an existing workspace
 User intent: "add repo C to workspace X". Two equivalent ways:

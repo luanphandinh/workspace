@@ -9,7 +9,7 @@ description: "Tech Design Genius"
 
 # About the tech design that you work on
 ## Workspace setup — FIRST STEP, before any tech-design work
-Every tech design lives inside a **multi-repo git-worktree workspace** built by the `local-workspace` skill (via `mkws`). The tech doc, mapping file, and any implementation plans (e.g. those produced by `superpowers:writing-plans`) all live under the workspace folder so they travel with the feature branch and stay version-controlled alongside the eventual code changes.
+Every tech design lives inside a **multi-repo git-worktree workspace** built by the `local-workspace` skill (via `mkws`). The tech doc, mapping file, and any implementation plans (e.g. those produced by `superpowers:writing-plans`) all live under the workspace folder. `mkws` creates `<workspace>/tech_doc/` as its own git repo so design milestones can be committed before code worktrees are attached.
 **Before drafting the tech design, do the following in order:**
 1. Ask the user for the **workspace name** (suggested default: a short slug derived from the tech-design topic, with `/` replaced by `_`).
 2. Ask the user whether the workspace **already exists**:
@@ -19,6 +19,7 @@ Every tech design lives inside a **multi-repo git-worktree workspace** built by 
 ## Where to put the tech design?
 - All tech-design artefacts live under the workspace at `<root>/local_workspaces/<workspace-name>/tech_doc/`. Create the `tech_doc/` folder there if it doesn't already exist.
 - Ask the user to confirm the tech design document name and format, then create the tech design document inside `<root>/local_workspaces/<workspace-name>/tech_doc/`, and save all changes as you work on it so nothing is lost on unexpected interruption.
+- Commit meaningful design milestones inside `<root>/local_workspaces/<workspace-name>/tech_doc/` using local git commits. Good commit points include the first draft, mapping confirmation, approved decision revisions, and final local draft. Do not push or sync remote documents unless the user explicitly asks in the current turn.
 - The microservice mapping file (`<tech_doc_name>_mapping.md`) and any implementation plans (e.g. plan files produced by `superpowers:writing-plans`) ALSO live under `<root>/local_workspaces/<workspace-name>/tech_doc/`. Keeping the doc, the mapping, and the plans co-located means future sessions can pick up the full context by looking inside the workspace folder.
 ## Format of the tech design
 - Do NOT PUT ANY empty line in between lines, just new line is enough, no empty line
