@@ -47,6 +47,7 @@ alacritty_config_dir := $(HOME)/.config/alacritty
 ifeq ($(is_wsl),1)
 windows_appdata := $(shell cmd.exe /C echo %APPDATA% 2>/dev/null | tr -d '\r')
 alacritty_config_dir := $(shell wslpath -u '$(windows_appdata)')/alacritty
+fonts_install := sh ./scripts/install-windows-firacode-nerd-font.sh
 endif
 
 go_version := 1.25.9
