@@ -486,6 +486,58 @@ local function assert_toggle_icon_changes(label, fn, off, on)
   off()
 end
 
+local function assert_all_windows_wrap(expected)
+  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+      assert_true(vim.wo[win].wrap == expected, "window " .. win .. " wrap should be " .. tostring(expected))
+    end
+  end
+end
+
+local function set_all_windows_wrap(value)
+  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+      vim.wo[win].wrap = value
+    end
+  end
+end
+
+local function reset_window_layout()
+  if #vim.api.nvim_list_tabpages() > 1 then
+    pcall(vim.cmd, "tabonly!")
+  end
+  if #vim.api.nvim_tabpage_list_wins(0) > 1 then
+    pcall(vim.cmd, "only!")
+  end
+end
+
+local function test_word_wrap_keymap_applies_to_all_windows()
+  local old_wrap = vim.wo.wrap
+
+  local ok, err = xpcall(function()
+    reset_window_layout()
+    vim.cmd("enew")
+    vim.cmd("vsplit")
+    vim.cmd("split")
+    vim.cmd("tabnew")
+    vim.cmd("vsplit")
+
+    set_all_windows_wrap(false)
+    invoke_map("<leader>tW")
+    assert_all_windows_wrap(true)
+
+    vim.cmd("split")
+    assert_true(vim.wo.wrap == true, "new split should inherit enabled wrap")
+
+    invoke_map("<leader>tW")
+    assert_all_windows_wrap(false)
+  end, debug.traceback)
+
+  reset_window_layout()
+  vim.wo.wrap = old_wrap
+  assert_true(ok, tostring(err))
+end
+
 local function test_toggle_icons_reflect_state()
   local icons = require("luanphan.toggle_icons")
   local old_case = vim.g.luanphan_live_grep_case_sensitive
@@ -908,6 +960,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("toggle icons reflect state", function()
     test_toggle_icons_reflect_state()
+  end)
+
+  test("word wrap keymap applies to all windows", function()
+    test_word_wrap_keymap_applies_to_all_windows()
   end)
 
   test("agent cli commands are executable", function()

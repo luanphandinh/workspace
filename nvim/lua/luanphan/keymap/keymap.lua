@@ -18,7 +18,7 @@ vim.o.incsearch = true
 vim.o.cursorline = true
 vim.o.scrolloff = 8
 vim.o.signcolumn = "yes" -- always show the signcolumn on the left side
-vim.o.wrap = false       -- no soft-wrap by default; toggle with <leader>tw
+vim.o.wrap = false       -- no soft-wrap by default; toggle with <leader>tW
 vim.o.linebreak = true   -- when wrap is on, break at word boundaries, not mid-word
 vim.o.cmdheight = 1
 
@@ -265,6 +265,14 @@ vim.keymap.set("n", "<leader>fL", "<cmd>edit!<cr>", { desc = "Reload from disk" 
 
 -- UI
 vim.keymap.set("n", "<leader>tW", function()
-  vim.wo.wrap = not vim.wo.wrap
-  vim.notify("wrap: " .. (vim.wo.wrap and "on" or "off"), vim.log.levels.INFO)
-end, { desc = "Word wrap (window-local)" })
+  local enabled = not vim.wo.wrap
+  vim.o.wrap = enabled
+
+  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+      vim.wo[win].wrap = enabled
+    end
+  end
+
+  vim.notify("wrap: " .. (enabled and "on" or "off") .. " (all windows)", vim.log.levels.INFO)
+end, { desc = "Word wrap (all windows)" })
