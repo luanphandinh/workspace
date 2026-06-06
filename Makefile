@@ -42,6 +42,13 @@ else
 	mac_apps_install := brew install --cask alfred arc maccy
 endif
 
+is_wsl := $(shell test -r /proc/sys/kernel/osrelease && grep -qi microsoft /proc/sys/kernel/osrelease && echo 1 || echo 0)
+alacritty_config_dir := $(HOME)/.config/alacritty
+ifeq ($(is_wsl),1)
+windows_appdata := $(shell cmd.exe /C echo %APPDATA% 2>/dev/null | tr -d '\r')
+alacritty_config_dir := $(shell wslpath -u '$(windows_appdata)')/alacritty
+endif
+
 go_version := 1.25.9
 go_archive := go$(go_version).$(os_name)-$(go_arch).tar.gz
 export PATH := /usr/local/go/bin:$(HOME)/go/bin:$(PATH)
@@ -126,8 +133,8 @@ alacritty-install: ## Install alacritty only, now config
 	@$(install) alacritty
 
 alacritty-config: ## Install alacritty + config + theme
-	test -d ~/.config/alacritty || mkdir -p ~/.config/alacritty
-	cp -r ./alacritty/. ~/.config/alacritty/
+	test -d "$(alacritty_config_dir)" || mkdir -p "$(alacritty_config_dir)"
+	cp -r ./alacritty/. "$(alacritty_config_dir)/"
 	@$(fonts_install)
 
 mac-apps: ## Install macOS workspace GUI apps
