@@ -34,7 +34,7 @@ else
 	install := brew install
 	newsboat_config := ./newsboat/config.darwin
 	install_nvim := brew install neovim --HEAD
-	deps := fd python3 node glow terminal-notifier
+	deps := fd python3 node terminal-notifier
 	optional_deps := jq btop newsboat
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"

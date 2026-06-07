@@ -240,9 +240,7 @@ end
 
 vim.keymap.set("n", "<leader>td", toggle_file_diff, { desc = "File diff" })
 
-vim.keymap.set("n", "<leader>fp", function()
-  require("luanphan.glow_preview").toggle()
-end, { desc = "Preview Markdown" })
+vim.keymap.set("n", "<leader>fp", "<cmd>MarkdownPreviewToggle<cr>", { desc = "Preview Markdown in browser" })
 
 vim.keymap.set("n", "<leader>fs", function()
   if vim.fn.bufname() == "" then
