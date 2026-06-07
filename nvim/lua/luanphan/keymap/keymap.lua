@@ -244,6 +244,8 @@ vim.keymap.set("n", "<leader>fp", function()
   require("luanphan.glow_preview").toggle()
 end, { desc = "Preview Markdown" })
 
+vim.keymap.set("n", "<leader>fP", "<cmd>MarkdownPreviewToggle<cr>", { desc = "Preview Markdown in browser" })
+
 vim.keymap.set("n", "<leader>fs", function()
   if vim.fn.bufname() == "" then
     -- New buffer without name - prompt for filename

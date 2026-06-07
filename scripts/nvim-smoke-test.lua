@@ -296,6 +296,24 @@ local function test_json_format_keymap()
   end, 3000)
 end
 
+local function test_markdown_browser_preview_keymap()
+  local preview_map = vim.fn.maparg("<leader>fP", "n", false, true)
+  local glow_map = vim.fn.maparg("<leader>fp", "n", false, true)
+  local plugin = require("lazy.core.config").plugins["markdown-preview.nvim"]
+
+  assert_true(type(plugin) == "table", "markdown-preview.nvim plugin should be registered")
+  assert_true(type(preview_map) == "table" and preview_map.desc == "Preview Markdown in browser", "<leader>fP should toggle browser preview")
+  assert_true(type(glow_map) == "table" and glow_map.desc == "Preview Markdown", "<leader>fp should keep Glow preview")
+  assert_true(vim.g.mkdp_auto_start == 0, "browser Markdown preview should not auto-start")
+  assert_true(vim.g.mkdp_auto_close == 1, "browser Markdown preview should auto-close")
+  assert_true(vim.g.mkdp_refresh_slow == 1, "browser Markdown preview should refresh slowly")
+  assert_true(vim.g.mkdp_open_to_the_world == 0, "browser Markdown preview should stay local")
+  assert_true(
+    type(vim.g.mkdp_preview_options) == "table" and vim.g.mkdp_preview_options.disable_sync_scroll == 1,
+    "browser Markdown preview should not sync-scroll"
+  )
+end
+
 local function has_visible_diffview()
   for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
@@ -964,6 +982,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("word wrap keymap applies to all windows", function()
     test_word_wrap_keymap_applies_to_all_windows()
+  end)
+
+  test("markdown browser preview keymap", function()
+    test_markdown_browser_preview_keymap()
   end)
 
   test("agent cli commands are executable", function()

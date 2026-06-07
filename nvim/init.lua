@@ -28,6 +28,7 @@ local specs = {
   { import = "luanphan.plugins.worktree" },
   { import = "luanphan.plugins.harpoon" },
   { import = "luanphan.plugins.editor" },
+  { import = "luanphan.plugins.markdown" },
   { import = "luanphan.plugins.file-configs" },
   { import = "luanphan.plugins.qf-replace" },
   { import = "luanphan.plugins.terminal" },
