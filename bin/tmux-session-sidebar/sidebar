@@ -160,7 +160,6 @@ render() {
 		printf '  a pin/unpin%s\n' "$EOL"
 		printf '  A sidebar%s\n' "$EOL"
 		printf '  e clear%s\n' "$EOL"
-		printf '  P replace%s\n' "$EOL"
 		printf 'O-C/C-S +%s\n' "$EOL"
 		printf '  ↑/↓ session%s\n' "$EOL"
 		printf '  ←/→ window%s\n' "$EOL"
