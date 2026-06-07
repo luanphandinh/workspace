@@ -297,13 +297,12 @@ local function test_json_format_keymap()
 end
 
 local function test_markdown_browser_preview_keymap()
-  local preview_map = vim.fn.maparg("<leader>fP", "n", false, true)
-  local glow_map = vim.fn.maparg("<leader>fp", "n", false, true)
+  local preview_map = vim.fn.maparg("<leader>fp", "n", false, true)
   local plugin = require("lazy.core.config").plugins["markdown-preview.nvim"]
 
   assert_true(type(plugin) == "table", "markdown-preview.nvim plugin should be registered")
-  assert_true(type(preview_map) == "table" and preview_map.desc == "Preview Markdown in browser", "<leader>fP should toggle browser preview")
-  assert_true(type(glow_map) == "table" and glow_map.desc == "Preview Markdown", "<leader>fp should keep Glow preview")
+  assert_true(type(preview_map) == "table" and preview_map.desc == "Preview Markdown in browser", "<leader>fp should toggle browser preview")
+  assert_true(vim.fn.maparg("<leader>fP", "n") == "", "<leader>fP should be removed")
   assert_true(vim.g.mkdp_auto_start == 0, "browser Markdown preview should not auto-start")
   assert_true(vim.g.mkdp_auto_close == 1, "browser Markdown preview should auto-close")
   assert_true(vim.g.mkdp_refresh_slow == 1, "browser Markdown preview should refresh slowly")
