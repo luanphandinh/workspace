@@ -362,11 +362,17 @@ If a service or config is already in §6 as a code change but doesn't need a sep
 - **Code exploration source of truth**: before drafting §4 diagrams for a code-backed design, invoke/use `local-code-explore` to explore the existing entrypoints, call chains, branches, storage, queue edges, and service relationships. Treat its evidence map and merged service graph as the source for the design diagram.
 - **In the terminal chat**: reuse the `local-code-explore` terminal diagram format and rules. Do not invent a separate ASCII layout in this skill. The terminal diagram must stay as one merged graph with shared service boxes, RPC/API/function level nodes, centered connectors, and protocol/method/topic labels on arrows.
 - **In the tech doc**: convert the same `local-code-explore` graph into a fenced ```mermaid``` block (`flowchart` / `sequenceDiagram` / `classDiagram` as appropriate). Mermaid-aware viewers render it inline.
-- **Mermaid flowchart parser safety**: `flowchart` node IDs must be simple identifiers only (e.g. `api`, `svc`, `cache`, `db`). Do NOT put spaces, punctuation, paths, cache keys, operation names, or `(NEW)` markers in node IDs.
+- **Mermaid flowchart parser safety**: `flowchart` node IDs must be simple identifiers only (e.g. `service_a`, `service_b`, `store_a`, `step_a`). Do NOT put spaces, punctuation, paths, key patterns, operation names, or `(NEW)` markers in node IDs.
   - Flowchart node labels with spaces, punctuation, or `(NEW)` MUST use quoted label syntax: `svc["Service A (NEW)"]`.
-  - Database / cylinder nodes MUST quote the label too: `db[("Service A cache")]`.
-  - Edge labels containing cache keys, RPC names, HTTP paths, `/`, `{}`, `+`, `*`, `:`, `.`, or `(NEW)` MUST use quoted edge-label syntax: `-->|"RPC: <Service>.<Method> (NEW)"|`.
+  - Database / cylinder nodes MUST quote the label too: `store_a[("Store A")]`.
+  - Edge labels containing key patterns, RPC names, HTTP paths, `/`, `{}`, `+`, `*`, `:`, `.`, or `(NEW)` MUST use quoted edge-label syntax: `-->|"RPC: <Service>.<Method> (NEW)"|`.
   - Keep one Mermaid statement per line. Do not split a node or edge statement across multiple lines.
+- **Mermaid flowchart layout width control**: §4.1 is architecture shape, not full operation detail. Prefer `flowchart LR` for the overall service direction, but split wide diagrams into `subgraph` blocks by concern.
+  - Inside each subgraph, set `direction TB` to stack local steps vertically.
+  - Keep cross-subgraph edges short and high-level.
+  - Put detailed operation names in §4.2 sequence diagrams or §6 code diffs, not in §4.1 edge labels.
+  - Shorten §4.1 edge labels to operation intent, e.g. `Write derived state (NEW)` instead of a full key pattern.
+  - Target 5–10 visible nodes and avoid long single-row chains.
 - **Keep both representations in sync**: ASCII and mermaid encode the same nodes/edges/labels from the `local-code-explore` graph. If you change one, change the other.
 - **Keep diagrams concise**: target 5–10 primary nodes in the shared overview. For doc-only deep dives, add smaller §4.2 sequence diagrams by concern; do not split the terminal ASCII overview into per-service or per-repo charts.
 - **Update on revisions**: when the design changes, update the mermaid in the tech doc AND re-emit the updated ASCII in chat. Stale diagrams are worse than no diagram.
@@ -374,12 +380,29 @@ If a service or config is already in §6 as a code change but doesn't need a sep
 Mermaid equivalent derived from the shared graph:
 ```mermaid
 flowchart LR
-  service_a["Service A"] -->|"RPC: <ServiceB>.<MethodA>"| service_b["Service B"]
-  service_b -->|"MQ: <topic-name> (NEW)"| service_c["Service C (NEW)"]
-  service_b -->|"SQL: INSERT INTO <table-name>"| store_a[("Store A")]
+  subgraph concern_a["Concern A"]
+    direction TB
+    service_a["Service A"]
+    service_b["Service B"]
+    store_a[("Store A (NEW)")]
+    service_a -->|"Read source data"| service_b
+    service_a -->|"Write derived state (NEW)"| store_a
+  end
+  subgraph concern_b["Concern B"]
+    direction TB
+    component_a["Component A"]
+    step_a["Step A (NEW)"]
+    output_a["Output A"]
+    component_a -->|"Use derived state (NEW)"| step_a
+    step_a -->|"Build output (NEW)"| output_a
+  end
+  store_a -->|"Read state (NEW)"| component_a
   classDef new fill:#bbf7d0,stroke:#16a34a,color:#16a34a,font-weight:bold
-  class service_c new
+  class store_a,step_a new
   linkStyle 1 stroke:#16a34a,stroke-width:2px,color:#16a34a
+  linkStyle 2 stroke:#16a34a,stroke-width:2px,color:#16a34a
+  linkStyle 3 stroke:#16a34a,stroke-width:2px,color:#16a34a
+  linkStyle 4 stroke:#16a34a,stroke-width:2px,color:#16a34a
 ```
 ## Design loop (workflow — how to fill the 8 sections)
 - The doc is **never final** until the feature is in production. Keep asking for feedback after every revision.
