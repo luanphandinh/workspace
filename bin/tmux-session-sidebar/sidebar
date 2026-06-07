@@ -3,6 +3,7 @@
 # received on stdin. Triggers send Enter via `tmux send-keys` so the redraw
 # happens in-place — no respawn-pane, no flicker.
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
+TAB="$(printf '\t')"
 
 # Mark this pane as a sidebar so sidebar-resize can find it across
 # every session/window without relying on the window-level pointer
@@ -63,7 +64,7 @@ render() {
 			printf '(none: prefix + a)%s\n' "$EOL"
 		else
 			current="$(tmux display-message -p '#{session_id}' 2>/dev/null)"
-			mapping="$(tmux list-sessions -F '#{session_id}|#{session_name}' 2>/dev/null || :)"
+			mapping="$(tmux list-sessions -F '#{session_id}	#{session_name}' 2>/dev/null || :)"
 
 			# Rules around each session block. A rule is rendered green when
 			# either neighbour (the session above OR below it) is the
@@ -73,17 +74,21 @@ render() {
 
 			while IFS= read -r entry; do
 				[ -z "$entry" ] && continue
-				# Resolve entry → (id, name). Tolerate legacy name entries.
+				# Resolve entry to id/name. Tolerate pre-normalized entries.
 				case "$entry" in
+					*"$TAB"*)
+						name="${entry%%"$TAB"*}"
+						id="${entry#*"$TAB"}"
+						;;
 					'$'[0-9]*)
 						id="$entry"
 						name="$(printf '%s\n' "$mapping" \
-							| awk -F'|' -v id="$id" '$1==id{print $2; exit}')"
+							| awk -F "$TAB" -v id="$id" '$1==id{print $2; exit}')"
 						;;
 					*)
 						name="$entry"
 						id="$(printf '%s\n' "$mapping" \
-							| awk -F'|' -v n="$name" '$2==n{print $1; exit}')"
+							| awk -F "$TAB" -v n="$name" '$2==n{print $1; exit}')"
 						;;
 				esac
 
@@ -155,7 +160,6 @@ render() {
 		printf '  a pin/unpin%s\n' "$EOL"
 		printf '  A sidebar%s\n' "$EOL"
 		printf '  e clear%s\n' "$EOL"
-		printf '  P replace%s\n' "$EOL"
 		printf 'O-C/C-S +%s\n' "$EOL"
 		printf '  ↑/↓ session%s\n' "$EOL"
 		printf '  ←/→ window%s\n' "$EOL"

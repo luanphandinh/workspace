@@ -62,7 +62,7 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update setup-deps optional-deps newsboat-config nvim nvim-install nvim-config nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin mkws-test cleanup
+.PHONY: help setup update setup-deps optional-deps newsboat-config nvim nvim-install nvim-config nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test mkws-test tmux-sidebar-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -125,6 +125,7 @@ tmux-install: ## Install tmux only, no config nor plugins
 tmux-config: workspace-bin ## Install tmux-config
 	cp ./tmux/.tmux.conf ~/.tmux.conf
 	tmux source ~/.tmux.conf
+	~/bin/tmux-session-sidebar/reload
 	~/.tmux/plugins/tpm/scripts/install_plugins.sh
 
 alacritty: ## install alacritty and all config
@@ -173,8 +174,13 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
 
+test: mkws-test tmux-sidebar-test ## Run smoke tests
+
 mkws-test: ## Run mkws/mkwst/mkwsts smoke tests
 	sh ./scripts/mkws-smoke-test.sh
+
+tmux-sidebar-test: ## Run tmux sidebar smoke tests
+	sh ./scripts/tmux-sidebar-smoke-test.sh
 
 cleanup: ## Clean up ./tmp folder
 	test -d ./tmp && rm -rf ./tmp

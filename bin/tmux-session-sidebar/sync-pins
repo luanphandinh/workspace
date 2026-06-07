@@ -1,0 +1,53 @@
+#!/bin/sh
+# Normalize pinned sessions to name<TAB>id, preserving pin order.
+set -eu
+
+PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
+[ -s "$PIN_FILE" ] || exit 0
+
+mapfile="$(mktemp -t pinmap.XXXXXX)"
+tmpout="$(mktemp -t pinout.XXXXXX)"
+trap 'rm -f "$mapfile" "$tmpout"' EXIT
+
+tmux list-sessions -F '#{session_name}	#{session_id}' > "$mapfile" 2>/dev/null || exit 0
+
+awk -F '	' -v OFS='	' '
+	NR == FNR {
+		if ($1 != "" && $2 != "") {
+			name_to_id[$1] = $2
+			id_to_name[$2] = $1
+		}
+		next
+	}
+	$0 == "" { next }
+	{
+		stored_name = ""
+		stored_id = ""
+
+		if (index($0, "\t") > 0) {
+			split($0, parts, "\t")
+			stored_name = parts[1]
+			stored_id = parts[2]
+		} else if ($0 ~ /^\$[0-9]+$/) {
+			stored_id = $0
+		} else {
+			stored_name = $0
+		}
+
+		live_name = ""
+		live_id = ""
+
+		if (stored_name != "" && (stored_name in name_to_id)) {
+			live_name = stored_name
+			live_id = name_to_id[stored_name]
+		} else if (stored_id != "" && (stored_id in id_to_name)) {
+			live_id = stored_id
+			live_name = id_to_name[stored_id]
+		}
+
+		if (live_id == "" || seen[live_id]++) next
+		print live_name, live_id
+	}
+' "$mapfile" "$PIN_FILE" > "$tmpout"
+
+mv "$tmpout" "$PIN_FILE"

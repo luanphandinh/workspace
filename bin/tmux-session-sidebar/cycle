@@ -1,9 +1,9 @@
 #!/bin/sh
 # Switch the attached client to the next/previous pinned session (wraps).
 # Usage: cycle [next|prev]   (default: next)
-# Pin file holds session IDs; legacy name entries are still resolved against
-# live sessions before cycling. Dead pins are skipped.
+# Pin file holds name<TAB>id entries; legacy id-only entries are tolerated.
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
+TAB="$(printf '\t')"
 DIR="${1:-next}"
 
 if [ ! -s "$PIN_FILE" ]; then
@@ -11,27 +11,13 @@ if [ ! -s "$PIN_FILE" ]; then
 	exit 0
 fi
 
-# Materialise the live id|name map to a tempfile — BSD awk on macOS rejects
-# multi-line strings passed via `-v`, so we read it as a real input file.
-mapfile="$(mktemp -t pinmap.XXXXXX)"
-trap 'rm -f "$mapfile"' EXIT
-tmux list-sessions -F '#{session_id}|#{session_name}' > "$mapfile" 2>/dev/null
+"$HOME/bin/tmux-session-sidebar/sync-pins" >/dev/null 2>&1 || :
 
-# Build an ordered list of live session ids that match each pin entry.
-ordered="$(awk -F'|' '
-	NR == FNR {
-		if ($1 != "") {
-			live_id[$1] = $1
-			name_to_id[$2] = $1
-		}
-		next
-	}
-	NF == 0 { next }
-	{
-		if ($0 in live_id)         print live_id[$0]
-		else if ($0 in name_to_id) print name_to_id[$0]
-	}
-' "$mapfile" "$PIN_FILE")"
+# Build an ordered list of pinned session ids.
+ordered="$(awk -F "$TAB" '
+	NF >= 2 && $2 != "" { print $2; next }
+	/^\$[0-9]+$/ { print }
+' "$PIN_FILE")"
 
 if [ -z "$ordered" ]; then
 	tmux display-message "no pinned sessions are alive"
