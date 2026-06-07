@@ -10,14 +10,21 @@
 # tmux's #{client_last_session} is consulted first as a fast path; if
 # it's a pinned session, we use it directly.
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
+TAB="$(printf '\t')"
 [ -f "$PIN_FILE" ] || { tmux display-message "no pinned sessions"; exit 0; }
 [ -s "$PIN_FILE" ] || { tmux display-message "no pinned sessions"; exit 0; }
+
+"$HOME/bin/tmux-session-sidebar/sync-pins" >/dev/null 2>&1 || :
 
 current_id="$(tmux display-message -p '#{session_id}')"
 current_name="$(tmux display-message -p '#S')"
 
 # Already pinned → ignore per spec.
-if grep -Fxq -- "$current_id" "$PIN_FILE" 2>/dev/null; then
+if awk -F "$TAB" -v id="$current_id" -v name="$current_name" '
+	NF >= 2 && ($1 == name || $2 == id) { found = 1 }
+	$0 == name || $0 == id { found = 1 }
+	END { exit found ? 0 : 1 }
+' "$PIN_FILE" 2>/dev/null; then
 	tmux display-message "$current_name is already pinned"
 	exit 0
 fi
@@ -26,16 +33,23 @@ fi
 last_name="$(tmux display-message -p '#{client_last_session}' 2>/dev/null || :)"
 last_id=""
 if [ -n "$last_name" ]; then
-	last_id="$(tmux list-sessions -F '#{session_name}|#{session_id}' 2>/dev/null \
-		| awk -F'|' -v n="$last_name" '$1==n{print $2; exit}')"
-	if [ -n "$last_id" ] && ! grep -Fxq -- "$last_id" "$PIN_FILE" 2>/dev/null; then
+	last_id="$(tmux list-sessions -F '#{session_name}	#{session_id}' 2>/dev/null \
+		| awk -F "$TAB" -v n="$last_name" '$1==n{print $2; exit}')"
+	if [ -n "$last_id" ] && ! awk -F "$TAB" -v id="$last_id" '
+		NF >= 2 && $2 == id { found = 1 }
+		$0 == id { found = 1 }
+		END { exit found ? 0 : 1 }
+	' "$PIN_FILE" 2>/dev/null; then
 		last_id=""   # previous session isn't pinned — fall through
 	fi
 fi
 
-# Slow path: walk every pinned id, pick the one with greatest activity.
+# Slow path: walk every pinned session id, pick the one with greatest activity.
 if [ -z "$last_id" ]; then
-	last_id="$(awk 'NF' "$PIN_FILE" | while IFS= read -r pid; do
+	last_id="$(awk -F "$TAB" '
+		NF >= 2 && $2 != "" { print $2; next }
+		/^\$[0-9]+$/ { print }
+	' "$PIN_FILE" | while IFS= read -r pid; do
 		ts="$(tmux display-message -p -t "$pid" '#{session_activity}' 2>/dev/null || :)"
 		[ -n "$ts" ] && printf '%s %s\n' "$ts" "$pid"
 	done | sort -rn | awk 'NR==1{print $2}')"
@@ -47,13 +61,14 @@ if [ -z "$last_id" ]; then
 fi
 
 # Look up the human-readable name of the slot we're replacing for the toast.
-last_name="$(tmux list-sessions -F '#{session_id}|#{session_name}' 2>/dev/null \
-	| awk -F'|' -v id="$last_id" '$1==id{print $2; exit}')"
+last_name="$(tmux list-sessions -F '#{session_id}	#{session_name}' 2>/dev/null \
+	| awk -F "$TAB" -v id="$last_id" '$1==id{print $2; exit}')"
 
 # In-place replace, preserving line order.
 tmp="$(mktemp)"
-awk -v old="$last_id" -v new="$current_id" '
-	$0 == old { print new; next }
+awk -F "$TAB" -v OFS="$TAB" -v old="$last_id" -v new_name="$current_name" -v new_id="$current_id" '
+	NF >= 2 && $2 == old { print new_name, new_id; next }
+	$0 == old { print new_name, new_id; next }
 	{ print }
 ' "$PIN_FILE" > "$tmp"
 mv "$tmp" "$PIN_FILE"
