@@ -62,7 +62,7 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update setup-deps optional-deps newsboat-config nvim nvim-install nvim-config nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin mkws-test tmux-sidebar-test cleanup
+.PHONY: help setup update setup-deps optional-deps newsboat-config nvim nvim-install nvim-config nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test mkws-test tmux-sidebar-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -173,6 +173,8 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	find ~/bin -type f -exec chmod +x {} +
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
+
+test: mkws-test tmux-sidebar-test ## Run smoke tests
 
 mkws-test: ## Run mkws/mkwst/mkwsts smoke tests
 	sh ./scripts/mkws-smoke-test.sh

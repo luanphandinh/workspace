@@ -1,10 +1,10 @@
-name: mkws-test
+name: tests
 
 on:
   push:
 
 jobs:
-  mkws-test:
+  tests:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -16,4 +16,4 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run smoke tests
-        run: make mkws-test
+        run: make test
