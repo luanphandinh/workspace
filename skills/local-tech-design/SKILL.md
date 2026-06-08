@@ -24,6 +24,10 @@ Every tech design lives inside a **multi-repo git-worktree workspace** built by 
 ## Format of the tech design
 - Do NOT PUT ANY empty line in between lines, just new line is enough, no empty line
 - **Exception — Markdown tables MUST be followed by one blank line.** After every Markdown table in the tech design, insert exactly one empty line before the next heading, bullet list, paragraph, code block, diagram, or another table. This applies to ALL tables in the tech design (§3 Decisions, §5/§6 field tables, §7 Effort, §8 Release Checklist, mapping-style tables if ever included, and any ad-hoc comparison table). This rule overrides the "no empty line" rule because without the blank line, the next line can be parsed as part of the table.
+- **Exception — HTML block boundaries MUST have one blank line.**
+  - Insert exactly one blank line after every `</details>` before the next Markdown block.
+  - Insert exactly one blank line before `<details>` when it follows a heading, list, paragraph, or another `</details>`.
+  - This overrides the "no empty lines" rule; without it, renderers may treat following headings as raw text.
 - **Tables — header styling.** Every Markdown table in the doc (§3 Decisions table, §5/§6 field tables, §7 Effort, §8 Release Checklist, etc.) MUST render its header row as **bold + gray-background**. Implementation:
   - Wrap each header cell in `**…**` so the text is bold even in renderers that don't auto-bold the header row.
   - Auto-applies a gray fill to the header row of Markdown tables — combining auto-fill with the explicit `**…**` gives bold + gray-bg with no extra markup.
