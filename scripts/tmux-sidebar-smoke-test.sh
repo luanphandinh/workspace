@@ -16,6 +16,8 @@ export TMUX_SMOKE_SWITCH_FILE="$TMP/switch"
 export TMUX_SMOKE_MESSAGES="$TMP/messages"
 export TMUX_SMOKE_OPEN_FILE="$TMP/sidebar-open"
 export TMUX_SMOKE_WINDOW_PANES="$TMP/window-panes"
+export TMUX_SMOKE_WINDOWS="$TMP/windows"
+export TMUX_SMOKE_LIST_WINDOWS_LOG="$TMP/list-windows-log"
 export TMUX_SMOKE_MARKED_PANES="$TMP/marked-panes"
 export TMUX_SMOKE_KILLED_PANES="$TMP/killed-panes"
 export TMUX_SMOKE_SPLIT_PANES="$TMP/split-panes"
@@ -55,6 +57,20 @@ session_activity() {
 	done < "$TMUX_SMOKE_SESSIONS"
 }
 
+windows() {
+	if [ -s "$TMUX_SMOKE_WINDOWS" ]; then
+		while IFS='|' read -r id active name; do
+			[ -n "$id" ] || continue
+			printf '%s\t%s\t%s\n' "$id" "$active" "$name"
+		done < "$TMUX_SMOKE_WINDOWS"
+		return
+	fi
+	while IFS='|' read -r name id activity; do
+		[ -n "$id" ] || continue
+		printf '%s\t1\tmain\n' "$id"
+	done < "$TMUX_SMOKE_SESSIONS"
+}
+
 format_arg() {
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
@@ -83,9 +99,12 @@ case "${1:-}" in
 		fi
 		;;
 	list-windows)
+		printf '%s\n' "$*" >> "$TMUX_SMOKE_LIST_WINDOWS_LOG"
 		format="$(format_arg "$@")"
 		if [ "$format" = '#{window_id} #{@pin_sidebar_pane}' ]; then
 			cat "$TMUX_SMOKE_WINDOW_PANES" 2>/dev/null || :
+		elif [ "$format" = "#{session_id}${tab}#{window_active}${tab}#{window_name}" ]; then
+			windows
 		elif [ "$format" = '#{window_id}' ]; then
 			if [ -s "$TMUX_SMOKE_WINDOW_PANES" ]; then
 				awk '{ print $1 }' "$TMUX_SMOKE_WINDOW_PANES"
@@ -307,6 +326,23 @@ test_sidebar_renders_canonical_pin() {
 	pass "sidebar renders canonical pin"
 }
 
+test_sidebar_batches_window_listing() {
+	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30'
+	write_pins 'alpha	$1' 'beta	$2' 'gamma	$3'
+	printf '$1|1|main\n$1|0|edit\n$2|1|work\n$3|1|ops\n' > "$TMUX_SMOKE_WINDOWS"
+	: > "$TMUX_SMOKE_LIST_WINDOWS_LOG"
+	export TMUX_SMOKE_CURRENT_ID='$2'
+
+	sh "$ROOT/bin/tmux-session-sidebar/sidebar" </dev/null > "$TMP/sidebar-batch.out"
+
+	assert_file_contains "$TMP/sidebar-batch.out" "alpha"
+	assert_file_contains "$TMP/sidebar-batch.out" "beta"
+	assert_file_contains "$TMP/sidebar-batch.out" "gamma"
+	assert_file_contains "$TMP/sidebar-batch.out" "work"
+	assert_line_count "$TMUX_SMOKE_LIST_WINDOWS_LOG" 1
+	pass "sidebar batches window listing"
+}
+
 test_reload_restarts_open_sidebars() {
 	set_sessions 'alpha|$1|10'
 	write_pins 'alpha	$1'
@@ -333,6 +369,7 @@ test_cycle_uses_canonical_ids
 test_replace_last_active_updates_slot
 test_prune_delegates_to_sync
 test_sidebar_renders_canonical_pin
+test_sidebar_batches_window_listing
 test_reload_restarts_open_sidebars
 
 printf 'PASS tmux sidebar smoke tests\n'
