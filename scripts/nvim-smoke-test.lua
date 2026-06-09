@@ -305,7 +305,7 @@ local function test_markdown_browser_preview_keymap()
   assert_true(vim.fn.maparg("<leader>fP", "n") == "", "<leader>fP should be removed")
   assert_true(vim.g.mkdp_auto_start == 0, "browser Markdown preview should not auto-start")
   assert_true(vim.g.mkdp_auto_close == 1, "browser Markdown preview should auto-close")
-  assert_true(vim.g.mkdp_refresh_slow == 1, "browser Markdown preview should refresh slowly")
+  assert_true(vim.g.mkdp_refresh_slow == 0, "browser Markdown preview should auto-refresh content")
   assert_true(vim.g.mkdp_open_to_the_world == 0, "browser Markdown preview should stay local")
   assert_true(vim.g.mkdp_theme == "light", "browser Markdown preview should use light theme")
   assert_true(

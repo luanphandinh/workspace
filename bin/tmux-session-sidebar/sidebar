@@ -26,6 +26,31 @@ RESET="$(printf '\033[0m')"
 # previous (longer) render is wiped without blanking the whole pane.
 EOL="$(printf '\033[K')"
 
+repeat_char() {
+	count="$1"
+	char="$2"
+	out=""
+	i=0
+	while [ "$i" -lt "$count" ]; do
+		out="${out}${char}"
+		i=$((i + 1))
+	done
+	printf '%s\n' "$out"
+}
+
+header_rule() {
+	width="$1"
+	label=" pinned "
+	label_len=8
+	if [ "$width" -le "$label_len" ]; then
+		printf '%s\n' "$label"
+		return
+	fi
+	side=$(((width - label_len) / 2))
+	extra=$((width - label_len - 2 * side))
+	printf '%s%s%s\n' "$(repeat_char "$side" "─")" "$label" "$(repeat_char "$((side + extra))" "─")"
+}
+
 sidebar_width() {
 	width="$(tmux show-options -gqv '@pin_sidebar_width' 2>/dev/null || :)"
 	case "$width" in
@@ -34,21 +59,120 @@ sidebar_width() {
 	printf '%s\n' "$width"
 }
 
+render_pins() {
+	current="$1"
+	sessions="$2"
+	windows="$3"
+	sep="$(printf '\034')"
+
+	{
+		printf '%s\n' "$sessions"
+		printf '%s\n' "$sep"
+		printf '%s\n' "$windows"
+		printf '%s\n' "$sep"
+		cat "$PIN_FILE" 2>/dev/null || :
+	} | awk -F "$TAB" \
+		-v tab="$TAB" \
+		-v sep="$sep" \
+		-v current="$current" \
+		-v rule="$RULE" \
+		-v green="$GREEN" \
+		-v dim="$DIM" \
+		-v reset="$RESET" \
+		-v eol="$EOL" '
+		$0 == sep {
+			section++
+			next
+		}
+		section == 0 && $1 != "" && $2 != "" {
+			id_to_name[$1] = $2
+			name_to_id[$2] = $1
+			next
+		}
+		section == 1 && $1 != "" {
+			id = $1
+			n = ++win_count[id]
+			win_active[id, n] = $2
+			win_name[id, n] = $3
+			next
+		}
+		section == 2 && $0 != "" {
+			pins[++pin_count] = $0
+		}
+		END {
+			prev_current = 0
+			for (i = 1; i <= pin_count; i++) {
+				entry = pins[i]
+				stored_name = ""
+				stored_id = ""
+
+				if (index(entry, tab) > 0) {
+					split(entry, parts, tab)
+					stored_name = parts[1]
+					stored_id = parts[2]
+				} else if (entry ~ /^\$[0-9]+$/) {
+					stored_id = entry
+				} else {
+					stored_name = entry
+				}
+
+				name = ""
+				id = ""
+				if (stored_name != "" && (stored_name in name_to_id)) {
+					name = stored_name
+					id = name_to_id[stored_name]
+				} else if (stored_id != "" && (stored_id in id_to_name)) {
+					id = stored_id
+					name = id_to_name[stored_id]
+				}
+
+				is_current = (id != "" && id == current) ? 1 : 0
+
+				if (is_current == 1 || prev_current == 1)
+					printf "%s%s%s%s\n", green, rule, reset, eol
+				else
+					printf "%s%s\n", rule, eol
+
+				if (id == "" || name == "") {
+					dead_name = (name != "") ? name : entry
+					printf "%s✗ %s (dead)%s%s\n", dim, dead_name, reset, eol
+					prev_current = is_current
+					continue
+				}
+
+				if (is_current == 1)
+					printf "%s▸ %s%s%s\n", green, name, reset, eol
+				else
+					printf "  %s%s\n", name, eol
+
+				n = win_count[id]
+				for (j = 1; j <= n; j++) {
+					active = win_active[id, j]
+					wname = win_name[id, j]
+					tree = (j == n) ? "└" : "├"
+					if (active == 1 && is_current == 1)
+						printf "  %s▸ %s%s%s\n", green, wname, reset, eol
+					else if (active == 1)
+						printf "  ▸ %s%s\n", wname, eol
+					else
+						printf "  %s %s%s\n", tree, wname, eol
+				}
+
+				prev_current = is_current
+			}
+
+			if (prev_current == 1)
+				printf "%s%s%s%s\n", green, rule, reset, eol
+			else
+				printf "%s%s\n", rule, eol
+		}
+	'
+}
+
 render() {
 	WIDTH="$(sidebar_width)"
-	RULE="$(awk -v w="$WIDTH" 'BEGIN { for (i=0; i<w; i++) printf "─"; print "" }')"
-	HEADER="$(awk -v w="$WIDTH" '
-		BEGIN {
-			label = " pinned "
-			side  = int((w - length(label)) / 2)
-			extra = (w - length(label)) - 2 * side
-			out   = ""
-			for (i=0; i<side;        i++) out = out "─"
-			out = out label
-			for (i=0; i<side+extra;  i++) out = out "─"
-			print out
-		}
-	')"
+	RULE="$(repeat_char "$WIDTH" "─")"
+	HEADER="$(header_rule "$WIDTH")"
 
 	{
 		# Hide cursor + go home. NO full-screen clear — that's the source
@@ -64,92 +188,9 @@ render() {
 			printf '(none: prefix + a)%s\n' "$EOL"
 		else
 			current="$(tmux display-message -p '#{session_id}' 2>/dev/null)"
-			mapping="$(tmux list-sessions -F '#{session_id}	#{session_name}' 2>/dev/null || :)"
-
-			# Rules around each session block. A rule is rendered green when
-			# either neighbour (the session above OR below it) is the
-			# current sidebar's session — so the top + bottom of the
-			# focused block both appear in green.
-			prev_current=0
-
-			while IFS= read -r entry; do
-				[ -z "$entry" ] && continue
-				# Resolve entry to id/name. Tolerate pre-normalized entries.
-				case "$entry" in
-					*"$TAB"*)
-						name="${entry%%"$TAB"*}"
-						id="${entry#*"$TAB"}"
-						;;
-					'$'[0-9]*)
-						id="$entry"
-						name="$(printf '%s\n' "$mapping" \
-							| awk -F "$TAB" -v id="$id" '$1==id{print $2; exit}')"
-						;;
-					*)
-						name="$entry"
-						id="$(printf '%s\n' "$mapping" \
-							| awk -F "$TAB" -v n="$name" '$2==n{print $1; exit}')"
-						;;
-				esac
-
-				if [ "$id" = "$current" ]; then is_current=1; else is_current=0; fi
-
-				# Top rule of this session: green if THIS or PREV is current.
-				if [ "$is_current" = "1" ] || [ "$prev_current" = "1" ]; then
-					printf "${GREEN}%s${RESET}%s\n" "$RULE" "$EOL"
-				else
-					printf '%s%s\n' "$RULE" "$EOL"
-				fi
-
-				if [ -z "$id" ] || [ -z "$name" ]; then
-					printf "${DIM}✗ %s (dead)${RESET}%s\n" "${name:-$entry}" "$EOL"
-					prev_current=$is_current
-					continue
-				fi
-
-				# Session header — green if this is THIS sidebar's session.
-				if [ "$is_current" = "1" ]; then
-					printf "${GREEN}▸ %s${RESET}%s\n" "$name" "$EOL"
-				else
-					printf '  %s%s\n' "$name" "$EOL"
-				fi
-
-				# Children — windows in that session. 2-col indent. Last
-				# entry uses `└`, others use `├`. The active window uses
-				# `▸` regardless of session. GREEN colour is reserved for
-				# the active window of the CURRENT session (i.e. parent is
-				# green AND window is focused) — every other line is white.
-				tmux list-windows -t "$id" -F '#{window_active}|#{window_name}' 2>/dev/null \
-					| awk -F'|' \
-						-v g="$GREEN" -v r="$RESET" -v eol="$EOL" \
-						-v cur="$is_current" '
-						{ lines[NR] = $0 }
-						END {
-							n = NR
-							for (i = 1; i <= n; i++) {
-								split(lines[i], p, "|")
-								active = p[1]
-								wname  = p[2]
-								tree   = (i == n) ? "└" : "├"
-								if (active == 1 && cur == 1)
-									printf "  %s▸ %s%s%s\n", g, wname, r, eol
-								else if (active == 1)
-									printf "  ▸ %s%s\n", wname, eol
-								else
-									printf "  %s %s%s\n", tree, wname, eol
-							}
-						}
-					'
-
-				prev_current=$is_current
-			done < "$PIN_FILE"
-
-			# Closing rule below the last session: green if last was current.
-			if [ "$prev_current" = "1" ]; then
-				printf "${GREEN}%s${RESET}%s\n" "$RULE" "$EOL"
-			else
-				printf '%s%s\n' "$RULE" "$EOL"
-			fi
+			sessions="$(tmux list-sessions -F '#{session_id}	#{session_name}' 2>/dev/null || :)"
+			windows="$(tmux list-windows -aF '#{session_id}	#{window_active}	#{window_name}' 2>/dev/null || :)"
+			render_pins "$current" "$sessions" "$windows"
 		fi
 
 		# Compact help for macOS and cross-platform terminal bindings.

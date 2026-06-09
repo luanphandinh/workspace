@@ -24,6 +24,10 @@ Every tech design lives inside a **multi-repo git-worktree workspace** built by 
 ## Format of the tech design
 - Do NOT PUT ANY empty line in between lines, just new line is enough, no empty line
 - **Exception — Markdown tables MUST be followed by one blank line.** After every Markdown table in the tech design, insert exactly one empty line before the next heading, bullet list, paragraph, code block, diagram, or another table. This applies to ALL tables in the tech design (§3 Decisions, §5/§6 field tables, §7 Effort, §8 Release Checklist, mapping-style tables if ever included, and any ad-hoc comparison table). This rule overrides the "no empty line" rule because without the blank line, the next line can be parsed as part of the table.
+- **Exception — HTML block boundaries MUST have one blank line.**
+  - Insert exactly one blank line after every `</details>` before the next Markdown block.
+  - Insert exactly one blank line before `<details>` when it follows a heading, list, paragraph, or another `</details>`.
+  - This overrides the "no empty lines" rule; without it, renderers may treat following headings as raw text.
 - **Tables — header styling.** Every Markdown table in the doc (§3 Decisions table, §5/§6 field tables, §7 Effort, §8 Release Checklist, etc.) MUST render its header row as **bold + gray-background**. Implementation:
   - Wrap each header cell in `**…**` so the text is bold even in renderers that don't auto-bold the header row.
   - Auto-applies a gray fill to the header row of Markdown tables — combining auto-fill with the explicit `**…**` gives bold + gray-bg with no extra markup.
@@ -367,20 +371,20 @@ If a service or config is already in §6 as a code change but doesn't need a sep
   - Database / cylinder nodes MUST quote the label too: `store_a[("Store A")]`.
   - Edge labels containing key patterns, RPC names, HTTP paths, `/`, `{}`, `+`, `*`, `:`, `.`, or `(NEW)` MUST use quoted edge-label syntax: `-->|"RPC: <Service>.<Method> (NEW)"|`.
   - Keep one Mermaid statement per line. Do not split a node or edge statement across multiple lines.
-- **Mermaid flowchart layout width control**: §4.1 is architecture shape, not full operation detail. Prefer `flowchart LR` for the overall service direction, but split wide diagrams into `subgraph` blocks by concern.
-  - Inside each subgraph, set `direction TB` to stack local steps vertically.
+- **Mermaid flowchart layout width control**: §4.1 is architecture shape, not full operation detail. Prefer `flowchart LR` only while the diagram stays readable. When the architecture flowchart becomes too wide or turns into a long single-row chain, switch to `flowchart TB` and split it into stacked `subgraph` blocks by concern or phase.
+  - In top-down mode, each subgraph should use `direction TB` so local steps stack vertically.
   - Keep cross-subgraph edges short and high-level.
   - Put detailed operation names in §4.2 sequence diagrams or §6 code diffs, not in §4.1 edge labels.
   - Shorten §4.1 edge labels to operation intent, e.g. `Write derived state (NEW)` instead of a full key pattern.
-  - Target 5–10 visible nodes and avoid long single-row chains.
+  - Target 5–10 visible nodes and choose top-down layout instead of shrinking labels or keeping an unreadable horizontal chain.
 - **Keep both representations in sync**: ASCII and mermaid encode the same nodes/edges/labels from the `local-code-explore` graph. If you change one, change the other.
 - **Keep diagrams concise**: target 5–10 primary nodes in the shared overview. For doc-only deep dives, add smaller §4.2 sequence diagrams by concern; do not split the terminal ASCII overview into per-service or per-repo charts.
 - **Update on revisions**: when the design changes, update the mermaid in the tech doc AND re-emit the updated ASCII in chat. Stale diagrams are worse than no diagram.
 - **Highlight what's NEW**: every diagram MUST visually distinguish new pieces (new services, new tables, new edges, new fields) from existing ones. Mermaid: green fill + green text via a `new` class (`classDef new fill:#bbf7d0,stroke:#16a34a,color:#16a34a,font-weight:bold`) applied to new nodes — this also colors any `(NEW)` marker inside the node label green; new edges styled with `linkStyle <idx> stroke:#16a34a,stroke-width:2px,color:#16a34a` (the trailing `color:` greens the edge-label text including its `(NEW)` tag). Tag new nodes/edges with a trailing `(NEW)` marker in BOTH ASCII and mermaid (use parentheses, never `[NEW]` — `[...]` is mermaid node syntax and breaks the parser inside edge labels). The `(NEW)` text must render green wherever it appears. Existing pieces stay default-styled — the contrast is the point.
 Mermaid equivalent derived from the shared graph:
 ```mermaid
-flowchart LR
-  subgraph concern_a["Concern A"]
+flowchart TB
+  subgraph stage_a["Stage A"]
     direction TB
     service_a["Service A"]
     service_b["Service B"]
@@ -388,7 +392,7 @@ flowchart LR
     service_a -->|"Read source data"| service_b
     service_a -->|"Write derived state (NEW)"| store_a
   end
-  subgraph concern_b["Concern B"]
+  subgraph stage_b["Stage B"]
     direction TB
     component_a["Component A"]
     step_a["Step A (NEW)"]
