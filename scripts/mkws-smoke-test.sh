@@ -147,6 +147,41 @@ test_mkws() {
 	assert_contains "$workspace/workspace.yml" "branch_name: feature/a"
 	assert_eq "feature/a" "$(git -C "$workspace/repo-a" branch --show-current)"
 
+	mkdir -p "$workspace/skills/shared-skill"
+	cat > "$workspace/skills/shared-skill/SKILL.md" <<EOF
+---
+name: shared-skill
+description: Shared fixture skill.
+---
+
+# Shared fixture skill
+EOF
+	(
+		cd "$workspace"
+		mkws skill-sync >/dev/null
+	)
+	for repo in repo-a repo-b; do
+		assert_exists "$workspace/$repo/.agent/skills/shared-skill/SKILL.md"
+		assert_exists "$workspace/$repo/.claude/skills/shared-skill/SKILL.md"
+		assert_exists "$workspace/$repo/.cursor/skills/shared-skill/SKILL.md"
+	done
+
+	mkdir -p "$workspace/skills/repo-only-skill" "$workspace/repo-a/internal"
+	cat > "$workspace/skills/repo-only-skill/SKILL.md" <<EOF
+---
+name: repo-only-skill
+description: Repo-scoped fixture skill.
+---
+
+# Repo-scoped fixture skill
+EOF
+	(
+		cd "$workspace/repo-a/internal"
+		mkws skill-sync >/dev/null
+	)
+	assert_exists "$workspace/repo-a/.agent/skills/repo-only-skill/SKILL.md"
+	assert_not_exists "$workspace/repo-b/.agent/skills/repo-only-skill/SKILL.md"
+
 	(
 		cd "$root"
 		mkws --name design-only >/dev/null

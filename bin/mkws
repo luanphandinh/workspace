@@ -17,6 +17,11 @@ import sys
 from pathlib import Path
 
 WS_CONTAINER = "local_workspaces"
+AGENT_SKILL_TARGETS = (
+    ("codex", Path(".agent") / "skills"),
+    ("claude-code", Path(".claude") / "skills"),
+    ("cursor", Path(".cursor") / "skills"),
+)
 
 # ---------------------------------------------------------------------------
 # Colored logging. Disabled when stdout isn't a TTY or NO_COLOR is set, so pipes
@@ -69,6 +74,19 @@ def die(text: str, code: int = 1) -> None:
 
 def has_cmd(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+def is_git_worktree(path: Path) -> bool:
+    proc = run(["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"])
+    return proc.returncode == 0 and proc.stdout.strip() == "true"
+
+
+def git_top_level(path: Path):
+    proc = run(["git", "-C", str(path), "rev-parse", "--show-toplevel"])
+    if proc.returncode != 0:
+        return None
+    out = proc.stdout.strip()
+    return Path(out).resolve() if out else None
 
 
 # ---------------------------------------------------------------------------
@@ -1399,6 +1417,95 @@ def cmd_sync_tech_doc() -> int:
     return 0
 
 
+def resolve_skill_sync_context(pwd: Path):
+    pwd = pwd.resolve()
+    if (pwd / "workspace.yml").is_file():
+        return pwd, None
+
+    repo_dir = git_top_level(pwd)
+    if repo_dir and (repo_dir.parent / "workspace.yml").is_file():
+        return repo_dir.parent, repo_dir
+
+    die("`mkws skill-sync` must be run from a workspace dir or a repo inside one")
+
+
+def workspace_skill_dirs(workspace_dir: Path) -> list:
+    source_dir = workspace_dir / "skills"
+    if not source_dir.is_dir():
+        die(f"no skills/ directory at {workspace_dir}")
+    return sorted(
+        p for p in source_dir.iterdir()
+        if p.is_dir() and (p / "SKILL.md").is_file()
+    )
+
+
+def skill_sync_targets(workspace_dir: Path, scoped_repo):
+    if scoped_repo is not None:
+        return [scoped_repo]
+
+    data = read_manifest(workspace_dir / "workspace.yml")
+    targets = []
+    seen = set()
+    for repo in normalize_repos(data["repos"], data["branch_name"]):
+        target = (workspace_dir / repo["name"]).resolve()
+        if target in seen:
+            continue
+        seen.add(target)
+        targets.append(target)
+    return targets
+
+
+def replace_skill_dir(src: Path, dst: Path) -> None:
+    if dst.is_symlink() or dst.is_file():
+        dst.unlink()
+    elif dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(
+        src,
+        dst,
+        ignore=shutil.ignore_patterns(".git", ".DS_Store", "__pycache__"),
+    )
+
+
+def cmd_skill_sync() -> int:
+    workspace_dir, scoped_repo = resolve_skill_sync_context(Path.cwd())
+    skills = workspace_skill_dirs(workspace_dir)
+    targets = skill_sync_targets(workspace_dir, scoped_repo)
+
+    heading("skill-sync")
+    info(f"workspace: {BOLD}{workspace_dir}{RESET}")
+    info(f"source:    {BOLD}{workspace_dir / 'skills'}{RESET}")
+    info(f"skills:    {len(skills)}")
+    info(f"targets:   {len(targets)}")
+
+    copied = skipped = failed = 0
+    for repo in targets:
+        heading(repo.name)
+        if not repo.is_dir():
+            warn(f"missing repo path: {repo}")
+            failed += 1
+            continue
+        if not is_git_worktree(repo):
+            warn(f"not a git repo: {repo}")
+            failed += 1
+            continue
+        if not skills:
+            info("no skills with SKILL.md found")
+            skipped += 1
+            continue
+        for agent, rel in AGENT_SKILL_TARGETS:
+            target_root = repo / rel
+            target_root.mkdir(parents=True, exist_ok=True)
+            for skill in skills:
+                replace_skill_dir(skill, target_root / skill.name)
+                copied += 1
+            ok(f"{agent}: {len(skills)} skill(s)")
+
+    heading("summary")
+    info(f"copied: {copied}, skipped: {skipped}, failed: {failed}")
+    return 1 if failed else 0
+
+
 # ---------------------------------------------------------------------------
 # default mode: create or extend a workspace, optionally --add repos.
 # ---------------------------------------------------------------------------
@@ -1579,6 +1686,7 @@ Usage:
   mkws sync [--push] [<folder>...]
   mkws clean [<workspace-folder>]
   mkws migrate [<workspace-folder>]
+  mkws skill-sync
   mkws sync_tech_doc
   mkws open [<name-or-link>]
 
@@ -1654,6 +1762,16 @@ Modes:
              Examples:
                mkws migrate
                mkws migrate ./local_workspaces/myws
+  skill-sync Copy `<workspace>/skills/<skill>/` into project-local agent skill
+             folders for workspace repos. Run from the workspace dir to sync
+             every repo listed in workspace.yml, or from inside one workspace
+             repo to sync only that repo.
+             Targets:
+               .agent/skills/
+               .claude/skills/
+               .cursor/skills/
+             Example:
+               mkws skill-sync
   sync_tech_doc
              Mirror workspace tech docs into one root index:
              `<root>/tech_doc/<workspace>/tech_doc` symlinks to
@@ -1764,6 +1882,9 @@ def parse_args(argv):
             argv.pop(0)
             if argv and not argv[0].startswith("-"):
                 target_path = argv.pop(0)
+        elif sub == "skill-sync":
+            mode = "skill-sync"
+            argv.pop(0)
         elif sub == "sync_tech_doc":
             mode = "sync_tech_doc"
             argv.pop(0)
@@ -1842,6 +1963,10 @@ def main() -> None:
         if repos or branch or name or link_pairs or target_paths:
             die("'migrate' takes an optional workspace folder only; --add/--branch/--name/--link are not accepted")
         sys.exit(cmd_migrate(target_path))
+    if mode == "skill-sync":
+        if repos or branch or name or link_pairs or target_path or target_paths:
+            die("'skill-sync' takes no args; --add/--branch/--name/--link are not accepted")
+        sys.exit(cmd_skill_sync())
     if mode == "sync_tech_doc":
         if repos or branch or name or link_pairs or target_path or target_paths:
             die("'sync_tech_doc' takes no args; --add/--branch/--name/--link are not accepted")
