@@ -314,6 +314,38 @@ local function test_markdown_browser_preview_keymap()
   )
 end
 
+local function test_git_conflict_decoration_guard()
+  local guard = require("luanphan.git_conflict_guard")
+  assert_true(
+    guard.is_out_of_range_error("Invalid 'line': out of range"),
+    "git conflict guard should recognize stale decoration line errors"
+  )
+
+  local wrapped = guard.wrap(function()
+    error("Invalid 'line': out of range", 0)
+  end)
+  local ok, result = pcall(wrapped, nil, nil, vim.api.nvim_get_current_buf())
+  assert_true(ok and result == false, "git conflict guard should swallow stale decoration line errors")
+
+  local rethrow = guard.wrap(function()
+    error("different error", 0)
+  end)
+  local rethrow_ok = pcall(rethrow)
+  assert_true(not rethrow_ok, "git conflict guard should rethrow unrelated errors")
+end
+
+local function test_shell_treesitter_guarded_injections()
+  vim.cmd("edit scripts/mkws-smoke-test.sh")
+  local buf = vim.api.nvim_get_current_buf()
+  assert_true(vim.bo[buf].filetype == "sh", "mkws smoke script should be detected as sh")
+  wait_until("shell treesitter active", function()
+    return vim.treesitter.highlighter.active[buf] ~= nil
+  end, 3000)
+  assert_true(vim.g.luanphan_bash_injection_guard == 1, "bash injection guard should be installed")
+  assert_true(vim.wo.foldmethod == "expr", "shell buffers should keep treesitter folds")
+  assert_true(vim.wo.foldexpr == "v:lua.vim.treesitter.foldexpr()", "shell buffers should use treesitter foldexpr")
+end
+
 local function has_visible_diffview()
   for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
@@ -986,6 +1018,14 @@ local setup_ok, setup_err = xpcall(function()
 
   test("markdown browser preview keymap", function()
     test_markdown_browser_preview_keymap()
+  end)
+
+  test("git conflict decoration guard", function()
+    test_git_conflict_decoration_guard()
+  end)
+
+  test("shell treesitter guarded injections", function()
+    test_shell_treesitter_guarded_injections()
   end)
 
   test("agent cli commands are executable", function()

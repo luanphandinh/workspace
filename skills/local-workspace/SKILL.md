@@ -22,6 +22,7 @@ mkws merge <target> [<folder>...]
 mkws sync [--push] [<folder>...]
 mkws clean [<workspace-folder>]
 mkws migrate [<workspace-folder>]
+mkws skill-sync
 mkws sync_tech_doc
 mkws open [<name-or-link>]
 mkwst index
@@ -51,6 +52,7 @@ mkwsts index
   - Both cases: serial, halt on conflict, optional folder args to further scope by repo name. Rejects `--add` / `--branch` / `--name`.
 - `sync` — subcommand. Composite: for every matching repo, `pull` the current branch → merge the repo's configured `base_branch` (or default `main`/`master`) into the current branch. With `--push`, also push the current branch to the remote after the base merge. Serial. **Halts on merge conflict**. Pull/push failures for one repo are recorded but don't halt — the run continues to the next repo. Same folder-args form as `pull`.
 - `migrate` — subcommand. Rewrites an existing `workspace.yml` into v2 format. Takes an optional workspace folder path; no arg means the current directory. Rejects `--add`, `--branch`, and `--name`.
+- `skill-sync` — subcommand. Copies workspace-scoped skills from `<workspace>/skills/<skill-name>/` into project-local agent skill folders for service repos: `.agent/skills/`, `.claude/skills/`, and `.cursor/skills/`. Run from the workspace root to sync every repo listed in `workspace.yml`; run from inside a service repo under that workspace to sync only that repo. It overwrites same-named copied skill folders and leaves unrelated target skills alone. Takes no args and rejects `--add`, `--branch`, `--name`, and `--link`.
 - `sync_tech_doc` — subcommand. Builds a root-level tech-doc index by symlinking each workspace tech doc into `<root>/tech_doc/<workspace-name>/tech_doc`. Creates links for newly created workspace tech docs and removes stale generated symlinks for workspace tech docs that disappeared. It never deletes real files or real directories. Takes no args and rejects `--add`, `--branch`, and `--name`.
 
 ## Layout — all workspaces live under `local_workspaces/`
@@ -311,6 +313,29 @@ The command scans `<root>/local_workspaces/*/workspace.yml`. For every workspace
 <root>/tech_doc/<workspace-name>/tech_doc -> <root>/local_workspaces/<workspace-name>/tech_doc
 ```
 If a workspace `tech_doc/` folder is removed, the matching generated symlink is removed on the next run. If `<root>/tech_doc/<workspace-name>/tech_doc` already exists as a real file or directory, `mkws sync_tech_doc` warns and skips it rather than deleting user content.
+
+## Sync workspace skills to service repos
+User intent: "sync workspace skills into each service repo", "copy this workspace's skills for Codex and Claude Code", "refresh project-local skills".
+```
+cd <root>/local_workspaces/<workspace-name>
+mkws skill-sync
+```
+The command copies each skill directory with a `SKILL.md` from:
+```
+<root>/local_workspaces/<workspace-name>/skills/<skill-name>/
+```
+into every repo listed in that workspace manifest:
+```
+<repo>/.agent/skills/<skill-name>/
+<repo>/.claude/skills/<skill-name>/
+<repo>/.cursor/skills/<skill-name>/
+```
+When run from inside one service repo under the workspace, including a nested subdirectory, only that repo is synced:
+```
+cd <root>/local_workspaces/<workspace-name>/<repo-a>
+mkws skill-sync
+```
+The command overwrites same-named copied skill folders in the agent targets and leaves unrelated target skills alone. It does not edit global agent skill directories.
 
 ## Inspect a workspace
 Read `<root>/local_workspaces/<name>/workspace.yml` directly. Report `name`, default `branch_name`, quick links, and each repo's `name`, `branch_name`, and optional `base_branch`.

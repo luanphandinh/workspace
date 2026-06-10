@@ -16,6 +16,24 @@ local parser_auto_install_disabled = {
   markdown_inline = true,
   rmd = true,
 }
+local treesitter_disabled_filetypes = {
+  markdown = true,
+  markdown_inline = true,
+  rmd = true,
+}
+local treesitter_disabled_langs = {
+  markdown = true,
+  markdown_inline = true,
+  rmd = true,
+}
+
+local bash_injections_query = [[
+((comment) @injection.content
+  (#set! injection.language "comment"))
+
+((regex) @injection.content
+  (#set! injection.language "regex"))
+]]
 
 local function install_missing_parser(ev)
   local ft = vim.bo[ev.buf].filetype
@@ -59,17 +77,26 @@ return {
       vim.opt.foldtext = ""
       vim.opt.foldlevel = 99
 
+      -- Keep Bash highlighting enabled, but skip nested heredoc/printf injections
+      -- that can hit nil range nodes in current Neovim dev builds.
+      vim.treesitter.query.set("bash", "injections", bash_injections_query)
+      vim.g.luanphan_bash_injection_guard = 1
+
       require("nvim-treesitter.configs").setup({
         sync_install = false,
         auto_install = false,
         highlight = {
           enable = true,
-          disable = { "markdown", "markdown_inline" },
+          disable = function(lang, buf)
+            return treesitter_disabled_langs[lang] or treesitter_disabled_filetypes[vim.bo[buf].filetype] or false
+          end,
           additional_vim_regex_highlighting = false
         },
         indent = {
           enable = true,
-          disable = { "markdown" },
+          disable = function(lang, buf)
+            return treesitter_disabled_langs[lang] or treesitter_disabled_filetypes[vim.bo[buf].filetype] or false
+          end,
         },
         ensure_installed = parser_install_enabled and parser_install_list or {},
       })

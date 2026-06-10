@@ -259,23 +259,30 @@ return {
     version = "*",
     event = { "BufReadPre", "BufNewFile" },
     config = function()
-      require("git-conflict").setup({
-        -- Buffer-local only when conflict markers are present. Prefix <leader>gc + o/t/b/0 (none).
-        -- Next/prev conflict keep plugin defaults [x / ]x (no leader) to avoid clashing with g* maps.
-        default_mappings = {
-          ours = "<leader>gco",
-          theirs = "<leader>gct",
-          both = "<leader>gcb",
-          none = "<leader>gc0",
-          prev = "[x",
-          next = "]x",
-        },
-        default_commands = true,
-        highlights = {
-          incoming = "DiffAdd",
-          current = "DiffText",
-        },
-      })
+      local restore_decoration_provider = require("luanphan.git_conflict_guard").install()
+      local ok, err = pcall(function()
+        require("git-conflict").setup({
+          -- Buffer-local only when conflict markers are present. Prefix <leader>gc + o/t/b/0 (none).
+          -- Next/prev conflict keep plugin defaults [x / ]x (no leader) to avoid clashing with g* maps.
+          default_mappings = {
+            ours = "<leader>gco",
+            theirs = "<leader>gct",
+            both = "<leader>gcb",
+            none = "<leader>gc0",
+            prev = "[x",
+            next = "]x",
+          },
+          default_commands = true,
+          highlights = {
+            incoming = "DiffAdd",
+            current = "DiffText",
+          },
+        })
+      end)
+      restore_decoration_provider()
+      if not ok then
+        error(err)
+      end
     end,
   },
 }
