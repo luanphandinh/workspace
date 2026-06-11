@@ -22,6 +22,7 @@ description: "Exploring the code base"
 - If the service publish any message to message queue, record the message queue and look up potential consumer in the codebase, if you can look them up, proceed to explore the consumer also, the consumer explore will be the same as the explore phase mentioned above.
 ## Parallel downstream exploration via sub-agents
 - **When to fan out:** any time a service calls 2+ independent downstream services (RPC / HTTP / MQ consumer) and those branches don't depend on each other's results, explore them in parallel via sub-agents instead of serially in the main agent.
+- **Permission:** invoking `local-code-explore` is explicit permission to use sub-agents when the fan-out rule matches. Do not avoid fan-out or ask again for permission unless sub-agent tooling is unavailable.
 - **How to dispatch:** send **one message containing multiple Agent tool calls** (one per downstream repo) so they run concurrently. See `superpowers:dispatching-parallel-agents`. Do NOT dispatch one at a time — that serializes them.
 - **Sub-agent prompt must be self-contained:** absolute path to the downstream codebase folder, exact entry point to start exploring (RPC method / HTTP handler / MQ topic), and what to report back. The sub-agent has no memory of the main conversation.
 - **Ask each sub-agent for a SHORT report (<200 words):**
