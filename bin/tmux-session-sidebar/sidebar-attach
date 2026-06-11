@@ -36,6 +36,8 @@ fi
 # can see `sidebar` as a child process and restore it after a server
 # restart. Directly execing the script makes resurrect save only `bash`.
 cmd="/bin/sh -c '\"$HOME/bin/tmux-session-sidebar/sidebar\"'"
+layout="$(tmux display-message -p -t "$win" '#{window_layout}' 2>/dev/null || :)"
+[ -n "$layout" ] && tmux set-option -wt "$win" '@pin_sidebar_restore_layout' "$layout" >/dev/null 2>&1 || :
 width="$(tmux show-options -gqv '@pin_sidebar_width' 2>/dev/null || :)"
 case "$width" in
 	''|*[!0-9]*) width=20 ;;

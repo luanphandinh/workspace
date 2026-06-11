@@ -19,6 +19,9 @@ if [ "$state" = "1" ]; then
 			if tmux list-panes -t "$win" -F '#{pane_id}' 2>/dev/null \
 				| grep -Fxq "$pane"; then
 				tmux kill-pane -t "$pane" >/dev/null 2>&1 || :
+				"$HOME/bin/tmux-session-sidebar/restore-layout" "$win" >/dev/null 2>&1 || :
+			else
+				tmux set-option -wu -t "$win" '@pin_sidebar_restore_layout' >/dev/null 2>&1 || :
 			fi
 			tmux set-option -wu -t "$win" '@pin_sidebar_pane' >/dev/null 2>&1 || :
 		done

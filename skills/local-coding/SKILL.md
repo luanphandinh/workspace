@@ -18,6 +18,8 @@ When this skill is used for any code change, do not start implementation immedia
 2. **Plan second**: after the design direction is approved, invoke `superpowers:writing-plans` to create the implementation plan under `<workspace>/implementation_plan/`.
 3. **Execute third**: after the plan is approved, implement through `superpowers:subagent-driven-development` when practical; otherwise use `superpowers:executing-plans`. All execution notes and task records also live under `<workspace>/implementation_plan/`.
 
+Invoking `local-coding` is explicit permission to use sub-agents when this skill's implementation or testing rules call for them. Do not avoid sub-agents or ask again for permission unless sub-agent tooling is unavailable or the user explicitly disables it.
+
 If the user already provides an approved design or an existing plan, verify that approval and resume from the next missing phase instead of repeating completed phases.
 
 ## Comments — minimal, business-context only (universal — applies to every line of code you write)

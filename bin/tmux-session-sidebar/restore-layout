@@ -1,0 +1,12 @@
+#!/bin/sh
+# Restore the content-pane layout captured before a full-height sidebar split.
+set -e
+
+win="${1:-}"
+[ -z "$win" ] && exit 0
+
+layout="$(tmux show-options -wqv -t "$win" '@pin_sidebar_restore_layout' 2>/dev/null || :)"
+[ -n "$layout" ] || exit 0
+
+tmux select-layout -t "$win" "$layout" >/dev/null 2>&1 || :
+tmux set-option -wu -t "$win" '@pin_sidebar_restore_layout' >/dev/null 2>&1 || :

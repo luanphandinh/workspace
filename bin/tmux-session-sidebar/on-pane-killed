@@ -23,5 +23,7 @@ sidebar="$(tmux list-panes -t "$win" -F '#{pane_id} #{@pin_sidebar}' 2>/dev/null
 	| awk '$2 == "1" { print $1; exit }')"
 
 if [ -n "$sidebar" ]; then
+	current="$(tmux display-message -p -t "$sidebar" '#{pane_width}' 2>/dev/null || :)"
+	[ "$current" = "$WIDTH" ] && exit 0
 	tmux resize-pane -t "$sidebar" -x "$WIDTH" >/dev/null 2>&1 || :
 fi
