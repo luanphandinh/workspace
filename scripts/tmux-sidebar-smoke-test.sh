@@ -139,11 +139,15 @@ case "${1:-}" in
 		target="$(target_arg "$@")"
 		if [ "$format" = '#{pane_id}' ]; then
 			window_pane "$target"
+			awk -v win="$target" 'NF == 3 && $1 == win && $3 == "1" { print $2 }' "$TMUX_SMOKE_MARKED_PANES" 2>/dev/null || :
 		elif [ "$format" = '#{pane_id} #{@pin_sidebar}' ] && [ -n "$target" ]; then
 			pane="$(window_pane "$target")"
 			[ -n "$pane" ] && printf '%s 1\n' "$pane"
+			awk -v win="$target" 'NF == 3 && $1 == win && $3 == "1" { print $2, $3 }' "$TMUX_SMOKE_MARKED_PANES" 2>/dev/null || :
+		elif [ "${2:-}" = "-aF" ] && [ "$format" = '#{window_id} #{pane_id} #{@pin_sidebar}' ]; then
+			awk 'NF == 2 { print "@1", $1, $2; next } NF { print }' "$TMUX_SMOKE_MARKED_PANES" 2>/dev/null || :
 		elif [ "${2:-}" = "-aF" ]; then
-			cat "$TMUX_SMOKE_MARKED_PANES" 2>/dev/null || :
+			awk 'NF == 3 { print $2, $3; next } NF { print }' "$TMUX_SMOKE_MARKED_PANES" 2>/dev/null || :
 		fi
 		;;
 	display-message)
@@ -220,6 +224,8 @@ case "${1:-}" in
 			esac
 		done
 		printf '%s\n' "$target" >> "$TMUX_SMOKE_KILLED_PANES"
+		awk -v pane="$target" '!(NF == 2 && $1 == pane) && !(NF == 3 && $2 == pane) { print }' "$TMUX_SMOKE_MARKED_PANES" 2>/dev/null > "$TMUX_SMOKE_MARKED_PANES.tmp" || :
+		mv "$TMUX_SMOKE_MARKED_PANES.tmp" "$TMUX_SMOKE_MARKED_PANES"
 		;;
 	split-window)
 		count="$(wc -l < "$TMUX_SMOKE_SPLIT_PANES" 2>/dev/null || printf 0)"
@@ -404,7 +410,7 @@ test_reload_restarts_open_sidebars() {
 	printf '1\n' > "$TMUX_SMOKE_OPEN_FILE"
 	printf '@1 %%old1\n@2 %%old2\n' > "$TMUX_SMOKE_WINDOW_PANES"
 	printf '@1|1|main\n@2|1|main\n' > "$TMUX_SMOKE_WINDOWS"
-	printf '%%old2 1\n%%old3 1\n' > "$TMUX_SMOKE_MARKED_PANES"
+	printf '@2 %%old2 1\n@2 %%old3 1\n' > "$TMUX_SMOKE_MARKED_PANES"
 	: > "$TMUX_SMOKE_KILLED_PANES"
 	: > "$TMUX_SMOKE_SPLIT_PANES"
 
@@ -431,18 +437,20 @@ test_attach_saves_restore_layout() {
 	pass "sidebar attach saves restore layout"
 }
 
-test_toggle_close_restores_layout() {
+test_toggle_close_preserves_current_content_layout() {
 	set_sessions 'alpha|$1|10'
 	printf '1\n' > "$TMUX_SMOKE_OPEN_FILE"
-	printf '@1 %%side\n' > "$TMUX_SMOKE_WINDOW_PANES"
+	printf '@1 %%3\n' > "$TMUX_SMOKE_WINDOW_PANES"
+	printf 'ef85,180x40,0,0{20x40,0,0,3,60x40,21,0[60x20,21,0,0,60x19,21,21,2],98x40,82,0,1}\n' > "$TMUX_SMOKE_LAYOUT_FILE"
 	printf 'layout-before-sidebar\n' > "$TMUX_SMOKE_RESTORE_LAYOUT_FILE"
+	: > "$TMUX_SMOKE_KILLED_PANES"
 	: > "$TMUX_SMOKE_SELECTED_LAYOUTS"
 
 	run_script sidebar-toggle
 
-	assert_file_contains "$TMUX_SMOKE_KILLED_PANES" "%side"
-	assert_file_contains "$TMUX_SMOKE_SELECTED_LAYOUTS" "@1 layout-before-sidebar"
-	pass "sidebar close restores content layout"
+	assert_file_contains "$TMUX_SMOKE_KILLED_PANES" "%3"
+	assert_file_contains "$TMUX_SMOKE_SELECTED_LAYOUTS" "@1 632a,180x40,0,0{68x40,0,0[68x20,0,0,0,68x19,0,21,2],111x40,69,0,1}"
+	pass "sidebar close preserves current content layout"
 }
 
 test_sync_migrates_and_dedupes
@@ -456,6 +464,6 @@ test_sidebar_renders_canonical_pin
 test_sidebar_batches_window_listing
 test_reload_restarts_open_sidebars
 test_attach_saves_restore_layout
-test_toggle_close_restores_layout
+test_toggle_close_preserves_current_content_layout
 
 printf 'PASS tmux sidebar smoke tests\n'

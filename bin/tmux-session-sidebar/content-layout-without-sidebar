@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+import sys
+
+
+class LayoutError(Exception):
+    pass
+
+
+def parse_int(text, pos):
+    start = pos
+    while pos < len(text) and text[pos].isdigit():
+        pos += 1
+    if start == pos:
+        raise LayoutError("expected integer")
+    return int(text[start:pos]), pos
+
+
+def expect(text, pos, char):
+    if pos >= len(text) or text[pos] != char:
+        raise LayoutError(f"expected {char}")
+    return pos + 1
+
+
+def parse_node(text, pos=0):
+    width, pos = parse_int(text, pos)
+    pos = expect(text, pos, "x")
+    height, pos = parse_int(text, pos)
+    pos = expect(text, pos, ",")
+    x, pos = parse_int(text, pos)
+    pos = expect(text, pos, ",")
+    y, pos = parse_int(text, pos)
+    if pos >= len(text):
+        raise LayoutError("unexpected end")
+
+    if text[pos] == ",":
+        pane_id, pos = parse_int(text, pos + 1)
+        return {
+            "type": "pane",
+            "width": width,
+            "height": height,
+            "x": x,
+            "y": y,
+            "pane_id": str(pane_id),
+        }, pos
+
+    if text[pos] not in "{[":
+        raise LayoutError("expected split or pane")
+
+    kind = text[pos]
+    close = "}" if kind == "{" else "]"
+    pos += 1
+    children = []
+    while True:
+        child, pos = parse_node(text, pos)
+        children.append(child)
+        if pos >= len(text):
+            raise LayoutError("unterminated split")
+        if text[pos] == close:
+            pos += 1
+            break
+        pos = expect(text, pos, ",")
+
+    return {
+        "type": "split",
+        "kind": kind,
+        "width": width,
+        "height": height,
+        "x": x,
+        "y": y,
+        "children": children,
+    }, pos
+
+
+def without_pane(node, pane_id):
+    if node["type"] == "pane":
+        if node["pane_id"] == pane_id:
+            return None, True
+        return dict(node), False
+
+    removed = False
+    children = []
+    for child in node["children"]:
+        kept, child_removed = without_pane(child, pane_id)
+        removed = removed or child_removed
+        if kept is not None:
+            children.append(kept)
+
+    if not children:
+        return None, removed
+    if len(children) == 1:
+        return children[0], removed
+
+    kept = dict(node)
+    kept["children"] = children
+    return kept, removed
+
+
+def allocate(sizes, total):
+    if not sizes:
+        return []
+
+    if total <= 0:
+        return [1 for _ in sizes]
+
+    size_sum = sum(sizes)
+    if size_sum <= 0:
+        base = [total // len(sizes) for _ in sizes]
+        for idx in range(total % len(sizes)):
+            base[idx] += 1
+        return [max(1, item) for item in base]
+
+    raw = [(size * total) / size_sum for size in sizes]
+    result = [max(1, int(item)) for item in raw]
+    delta = total - sum(result)
+
+    while delta > 0:
+        order = sorted(
+            range(len(raw)),
+            key=lambda idx: (raw[idx] - int(raw[idx]), -idx),
+            reverse=True,
+        )
+        for idx in order:
+            if delta == 0:
+                break
+            result[idx] += 1
+            delta -= 1
+
+    while delta < 0:
+        changed = False
+        order = sorted(range(len(raw)), key=lambda idx: (raw[idx] - int(raw[idx]), idx))
+        for idx in order:
+            if delta == 0:
+                break
+            if result[idx] > 1:
+                result[idx] -= 1
+                delta += 1
+                changed = True
+        if not changed:
+            break
+
+    return result
+
+
+def scale_node(node, x, y, width, height):
+    scaled = dict(node)
+    scaled["x"] = x
+    scaled["y"] = y
+    scaled["width"] = width
+    scaled["height"] = height
+
+    if node["type"] == "pane":
+        return scaled
+
+    children = node["children"]
+    if node["kind"] == "{":
+        widths = allocate([child["width"] for child in children], width - (len(children) - 1))
+        child_x = x
+        scaled_children = []
+        for child, child_width in zip(children, widths):
+            scaled_children.append(scale_node(child, child_x, y, child_width, height))
+            child_x += child_width + 1
+    else:
+        heights = allocate([child["height"] for child in children], height - (len(children) - 1))
+        child_y = y
+        scaled_children = []
+        for child, child_height in zip(children, heights):
+            scaled_children.append(scale_node(child, x, child_y, width, child_height))
+            child_y += child_height + 1
+
+    scaled["children"] = scaled_children
+    return scaled
+
+
+def serialize(node):
+    prefix = f"{node['width']}x{node['height']},{node['x']},{node['y']}"
+    if node["type"] == "pane":
+        return f"{prefix},{node['pane_id']}"
+
+    close = "}" if node["kind"] == "{" else "]"
+    children = ",".join(serialize(child) for child in node["children"])
+    return f"{prefix}{node['kind']}{children}{close}"
+
+
+def checksum(body):
+    value = 0
+    for char in body:
+        value = (value >> 1) + ((value & 1) << 15)
+        value = (value + ord(char)) & 0xFFFF
+    return f"{value:04x}"
+
+
+def main():
+    if len(sys.argv) < 2:
+        return 2
+
+    pane_id = sys.argv[1].lstrip("%")
+    layout = sys.argv[2] if len(sys.argv) > 2 else sys.stdin.read()
+    layout = layout.strip()
+    if not pane_id or not layout:
+        return 1
+
+    body = layout.split(",", 1)[1] if "," in layout else layout
+    root, pos = parse_node(body)
+    if pos != len(body):
+        raise LayoutError("trailing layout data")
+
+    content, removed = without_pane(root, pane_id)
+    if not removed or content is None:
+        return 1
+
+    scaled = scale_node(content, 0, 0, root["width"], root["height"])
+    serialized = serialize(scaled)
+    print(f"{checksum(serialized)},{serialized}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except LayoutError as exc:
+        print(f"layout parse error: {exc}", file=sys.stderr)
+        raise SystemExit(1)

@@ -1,0 +1,35 @@
+#!/bin/sh
+# Close a window's tracked sidebar while preserving the current content layout.
+set -e
+
+win="${1:-}"
+pane="${2:-}"
+[ -n "$win" ] || exit 0
+
+if [ -z "$pane" ]; then
+	pane="$(tmux show-options -wqv -t "$win" '@pin_sidebar_pane' 2>/dev/null || :)"
+fi
+
+[ -n "$pane" ] || exit 0
+
+if ! tmux list-panes -t "$win" -F '#{pane_id}' 2>/dev/null | grep -Fxq "$pane"; then
+	tmux set-option -wu -t "$win" '@pin_sidebar_restore_layout' >/dev/null 2>&1 || :
+	tmux set-option -wu -t "$win" '@pin_sidebar_pane' >/dev/null 2>&1 || :
+	exit 0
+fi
+
+layout="$(tmux display-message -p -t "$win" '#{window_layout}' 2>/dev/null || :)"
+content_layout=""
+if [ -n "$layout" ]; then
+	content_layout="$("$HOME/bin/tmux-session-sidebar/content-layout-without-sidebar" "$pane" "$layout" 2>/dev/null || :)"
+fi
+
+tmux kill-pane -t "$pane" >/dev/null 2>&1 || :
+
+if [ -n "$content_layout" ] && tmux select-layout -t "$win" "$content_layout" >/dev/null 2>&1; then
+	tmux set-option -wu -t "$win" '@pin_sidebar_restore_layout' >/dev/null 2>&1 || :
+else
+	"$HOME/bin/tmux-session-sidebar/restore-layout" "$win" >/dev/null 2>&1 || :
+fi
+
+tmux set-option -wu -t "$win" '@pin_sidebar_pane' >/dev/null 2>&1 || :
