@@ -7,18 +7,32 @@ state="$(tmux show-options -gqv '@pin_sidebar_open' 2>/dev/null || :)"
 
 "$HOME/bin/tmux-session-sidebar/prune" >/dev/null 2>&1 || :
 
-{
-	tmux list-windows -aF '#{window_id} #{@pin_sidebar_pane}' 2>/dev/null \
-		| awk '$2 != "" { print $2 }'
-	tmux list-panes -aF '#{pane_id} #{@pin_sidebar}' 2>/dev/null \
-		| awk '$2 == "1" { print $1 }'
-} | awk 'NF && !seen[$1]++ { print $1 }' \
-	| while IFS= read -r pane; do
-		tmux kill-pane -t "$pane" >/dev/null 2>&1 || :
+closed="${TMPDIR:-/tmp}/tmux-sidebar-closed-$$"
+: > "$closed"
+trap 'rm -f "$closed"' EXIT INT TERM
+
+tmux list-windows -aF '#{window_id} #{@pin_sidebar_pane}' 2>/dev/null \
+	| awk '$2 != "" { print $1, $2 }' \
+	| while IFS= read -r line; do
+		win="${line%% *}"
+		pane="${line##* }"
+		printf '%s\n' "$pane" >> "$closed"
+		"$HOME/bin/tmux-session-sidebar/close-window-sidebar" "$win" "$pane" >/dev/null 2>&1 || :
+	done
+
+tmux list-panes -aF '#{window_id} #{pane_id} #{@pin_sidebar}' 2>/dev/null \
+	| awk '$3 == "1" { print $1, $2 }' \
+	| while IFS= read -r line; do
+		win="${line%% *}"
+		pane="${line##* }"
+		if grep -Fxq "$pane" "$closed" 2>/dev/null; then
+			continue
+		fi
+		printf '%s\n' "$pane" >> "$closed"
+		"$HOME/bin/tmux-session-sidebar/close-window-sidebar" "$win" "$pane" >/dev/null 2>&1 || :
 	done
 
 tmux list-windows -aF '#{window_id}' 2>/dev/null | while IFS= read -r win; do
-	"$HOME/bin/tmux-session-sidebar/restore-layout" "$win" >/dev/null 2>&1 || :
 	tmux set-option -wu -t "$win" '@pin_sidebar_pane' >/dev/null 2>&1 || :
 done
 
