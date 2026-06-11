@@ -18,6 +18,7 @@ state="$(tmux show-options -gqv '@pin_sidebar_open' 2>/dev/null || :)"
 	done
 
 tmux list-windows -aF '#{window_id}' 2>/dev/null | while IFS= read -r win; do
+	"$HOME/bin/tmux-session-sidebar/restore-layout" "$win" >/dev/null 2>&1 || :
 	tmux set-option -wu -t "$win" '@pin_sidebar_pane' >/dev/null 2>&1 || :
 done
 
