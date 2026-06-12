@@ -18,7 +18,6 @@ vim.opt.rtp:prepend(lazypath)
 local specs = {
   "nvim-lua/plenary.nvim",
   { import = "luanphan.plugins.nvim-tree" },
-  { import = "luanphan.plugins.treesitter" },
   { import = "luanphan.plugins.telescope" },
   { import = "luanphan.plugins.actions" },
   { import = "luanphan.plugins.copilot" },
@@ -75,4 +74,5 @@ require("lazy").setup(specs, {
   },
 })
 
+require("luanphan.plugins.treesitter").setup()
 require("luanphan.keymap.keymap")

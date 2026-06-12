@@ -50,6 +50,183 @@ local function toggle_all_file_history()
   vim.cmd("DiffviewFileHistory")
 end
 
+local function normal_buffer_path()
+  local path = vim.api.nvim_buf_get_name(0)
+  if path == "" or path:match("^diffview://") or vim.bo.buftype ~= "" then
+    return nil
+  end
+  return path
+end
+
+local function absolute_diffview_path(path, view)
+  if not path or path == "" then
+    return nil
+  end
+  if vim.fn.isabsolutepath(path) == 1 then
+    return path
+  end
+
+  local root = view and view.adapter and view.adapter.ctx and view.adapter.ctx.toplevel
+  if root and root ~= "" then
+    return root .. "/" .. path
+  end
+  return vim.fn.fnamemodify(path, ":p")
+end
+
+local function diffview_entry_path(entry, view)
+  if not entry then
+    return nil
+  end
+  if entry.absolute_path then
+    return entry.absolute_path
+  end
+  if entry.right and entry.right.path then
+    return absolute_diffview_path(entry.right.path, view)
+  end
+  if entry.left and entry.left.path then
+    return absolute_diffview_path(entry.left.path, view)
+  end
+  return absolute_diffview_path(entry.path, view)
+end
+
+local function current_diffview_file_path(view)
+  if not view then
+    return nil
+  end
+
+  if type(view.infer_cur_file) == "function" then
+    local ok, entry = pcall(function()
+      return view:infer_cur_file(false)
+    end)
+    local path = ok and diffview_entry_path(entry, view) or nil
+    if path then
+      return path
+    end
+  end
+
+  if view.panel and type(view.panel.get_item_at_cursor) == "function" then
+    local ok, entry = pcall(function()
+      return view.panel:get_item_at_cursor()
+    end)
+    local path = ok and diffview_entry_path(entry, view) or nil
+    if path then
+      return path
+    end
+  end
+
+  local path = diffview_entry_path(view.cur_file or view.cur_entry, view)
+  if path then
+    return path
+  end
+
+  if view.panel and type(view.panel.ordered_file_list) == "function" then
+    local ok, files = pcall(function()
+      return view.panel:ordered_file_list()
+    end)
+    if ok and type(files) == "table" then
+      for _, entry in ipairs(files) do
+        path = diffview_entry_path(entry, view)
+        if path then
+          return path
+        end
+      end
+    end
+  end
+
+  if view.panel and type(view.panel.list_files) == "function" then
+    local ok, files = pcall(function()
+      return view.panel:list_files()
+    end)
+    if ok and type(files) == "table" then
+      for _, entry in ipairs(files) do
+        path = diffview_entry_path(entry, view)
+        if path then
+          return path
+        end
+      end
+    end
+  end
+
+  if view.files and type(view.files.iter) == "function" then
+    local ok, iter = pcall(function()
+      return view.files:iter()
+    end)
+    if ok then
+      for _, entry in iter do
+        path = diffview_entry_path(entry, view)
+        if path then
+          return path
+        end
+      end
+    end
+  end
+
+  if type(view.files) == "table" then
+    for _, group in pairs(view.files) do
+      if type(group) == "table" then
+        for _, entry in ipairs(group) do
+          path = diffview_entry_path(entry, view)
+          if path then
+            return path
+          end
+        end
+      end
+    end
+  end
+
+  return nil
+end
+
+local function refire_current_file_runtime(buf)
+  vim.schedule(function()
+    if not vim.api.nvim_buf_is_loaded(buf) or vim.bo[buf].buftype ~= "" then
+      return
+    end
+    if vim.bo[buf].filetype == "" then
+      vim.api.nvim_buf_call(buf, function()
+        vim.cmd("filetype detect")
+      end)
+    end
+    pcall(vim.api.nvim_exec_autocmds, "FileType", { buffer = buf, modeline = false })
+  end)
+end
+
+local function open_original_file(path)
+  if not path then
+    vim.notify("No original file found for current diff", vim.log.levels.WARN)
+    return
+  end
+
+  vim.cmd("DiffviewClose")
+  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  refire_current_file_runtime(vim.api.nvim_get_current_buf())
+end
+
+local function jump_to_original_file(view)
+  if not view then
+    local ok, lib = pcall(require, "diffview.lib")
+    view = ok and lib.get_current_view() or nil
+  end
+  open_original_file(current_diffview_file_path(view) or normal_buffer_path())
+end
+
+local function set_diffview_jump_keymap(view, buf)
+  vim.keymap.set("n", "<leader>gf", function()
+    jump_to_original_file(view)
+  end, { buffer = buf, desc = "Jump to original file" })
+end
+
+local function set_diffview_tab_jump_keymaps(view)
+  local tab = view and view.tabpage or vim.api.nvim_get_current_tabpage()
+  if not vim.api.nvim_tabpage_is_valid(tab) then
+    return
+  end
+
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+    set_diffview_jump_keymap(view, vim.api.nvim_win_get_buf(win))
+  end
+end
+
 local function git_systemlist(args)
   local output = vim.fn.systemlist(args)
   if vim.v.shell_error ~= 0 then
@@ -205,36 +382,11 @@ return {
             vim.api.nvim_tabpage_set_var(0, "diffview_active", true)
             vim.cmd("filetype detect")
 
-            -- Set keymap to jump to original file
-            vim.keymap.set("n", "<leader>gf", function()
-              local lib = require("diffview.lib")
-              local cur_view = lib.get_current_view()
-              if not cur_view then return end
-
-              -- Get the current file entry
-              local entry = cur_view.panel:get_item_at_cursor()
-              if not entry then
-                -- Try to get from the current file in the view
-                local file = cur_view.cur_file
-                if file then
-                  local path = file.path
-                  vim.cmd("DiffviewClose")
-                  vim.cmd("edit " .. vim.fn.fnameescape(path))
-                end
-                return
-              end
-
-              -- Get the file path
-              local path = entry.path
-              if entry.right and entry.right.path then
-                path = entry.right.path
-              elseif entry.left and entry.left.path then
-                path = entry.left.path
-              end
-
-              vim.cmd("DiffviewClose")
-              vim.cmd("edit " .. vim.fn.fnameescape(path))
-            end, { buffer = true, desc = "Jump to original file" })
+            set_diffview_tab_jump_keymaps(view)
+            set_diffview_jump_keymap(view, 0)
+            vim.schedule(function()
+              set_diffview_tab_jump_keymaps(view)
+            end)
           end,
         },
       })
