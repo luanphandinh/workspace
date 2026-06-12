@@ -10,10 +10,15 @@ font-style-bold-italic = false
 window-padding-x = 8
 window-padding-y = 0
 macos-titlebar-style = hidden
+macos-window-shadow = false
 
 theme = Gruvbox Dark Hard
 desktop-notifications = false
 progress-style = false
+shell-integration = none
+cursor-click-to-move = false
+link-url = false
+link-previews = false
 
 # Avoid accidental close-window input.
 keybind = cmd+w=ignore

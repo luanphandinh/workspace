@@ -72,12 +72,12 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update version-lock-update setup-deps optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config ghostty ghostty-install ghostty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test tmux-sidebar-test ghostty-test cleanup
+.PHONY: help setup update version-lock-update setup-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config ghostty ghostty-install ghostty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test tmux-sidebar-test ghostty-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
 setup:  ## Install all workspace tools, configs, and terminal agent CLIs.
-setup: setup-deps go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config $(ghostty_setup) optional-deps newsboat-config mac-apps cleanup
+setup: setup-deps fonts-install go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config $(ghostty_setup) optional-deps newsboat-config mac-apps cleanup
 
 update: setup-deps version-lock-update ## Install all workspace tools while updating Neovim plugins and native treesitter locks to latest.
 	$(MAKE) MODE=latest setup
@@ -89,6 +89,9 @@ setup-deps: ## Setup deps
 	test -d ./tmp || mkdir -p ./tmp
 	@$(setup_script)
 	@yes Y | $(install) $(deps)
+
+fonts-install: ## Install terminal fonts
+	@$(fonts_install)
 
 optional-deps: ## Setup optional CLI deps
 	@yes Y | $(install) $(optional_deps)
@@ -166,7 +169,6 @@ alacritty-install: ## Install alacritty only, now config
 alacritty-config: ## Install alacritty + config + theme
 	test -d "$(alacritty_config_dir)" || mkdir -p "$(alacritty_config_dir)"
 	cp -r ./alacritty/. "$(alacritty_config_dir)/"
-	@$(fonts_install)
 
 ghostty: ## Install ghostty and config
 ghostty: ghostty-install ghostty-config
@@ -177,7 +179,6 @@ ghostty-install: ## Install ghostty only, no config
 ghostty-config: ## Install ghostty config
 	test -d "$(ghostty_config_dir)" || mkdir -p "$(ghostty_config_dir)"
 	cp -r ./ghostty/. "$(ghostty_config_dir)/"
-	@$(fonts_install)
 
 mac-apps: ## Install macOS workspace GUI apps
 	@$(mac_apps_install)
