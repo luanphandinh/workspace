@@ -16,6 +16,8 @@ trap 'tmux wait-for -U "$lock" >/dev/null 2>&1 || :' EXIT
 state="$(tmux show-options -gqv '@pin_sidebar_open' 2>/dev/null || :)"
 [ "$state" = "1" ] || exit 0
 
+"$HOME/bin/tmux-session-sidebar/precompute-focus" "$win" >/dev/null 2>&1 || :
+
 # Skip if a sidebar is already tracked AND its pane still exists.
 existing="$(tmux show-options -wqv -t "$win" '@pin_sidebar_pane' 2>/dev/null || :)"
 if [ -n "$existing" ] \

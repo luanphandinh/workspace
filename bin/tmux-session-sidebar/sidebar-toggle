@@ -32,6 +32,7 @@ fi
 # BEFORE we attach sidebars. Inactive sessions otherwise keep stale cached
 # sizes and the new sidebar pane comes up wrong-sized.
 "$HOME/bin/tmux-session-sidebar/fit-windows" >/dev/null 2>&1 || :
+"$HOME/bin/tmux-session-sidebar/precompute-focus" >/dev/null 2>&1 || :
 
 # Set the global flag FIRST so sidebar-attach (which gates on it)
 # actually creates panes when we call it below.

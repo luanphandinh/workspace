@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+tab="$(printf '\t')"
+target="${1:-}"
+
+if [ -n "$target" ]; then
+	source="$(tmux display-message -p -t "$target" "#{window_id}${tab}#{session_id}" 2>/dev/null || :)"
+else
+	source="$(tmux list-windows -aF "#{window_id}${tab}#{session_id}" 2>/dev/null || :)"
+fi
+
+printf '%s\n' "$source" | while IFS="$tab" read -r win session; do
+	[ -n "$win" ] || continue
+	[ -n "$session" ] || continue
+	tmux set-option -wt "$win" '@pin_sidebar_focus_session' "$session" >/dev/null 2>&1 || :
+	tmux set-option -wt "$win" '@pin_sidebar_focus_window' "$win" >/dev/null 2>&1 || :
+done

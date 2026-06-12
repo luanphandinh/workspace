@@ -24,7 +24,10 @@ export TMUX_SMOKE_SPLIT_PANES="$TMP/split-panes"
 export TMUX_SMOKE_LAYOUT_FILE="$TMP/window-layout"
 export TMUX_SMOKE_RESTORE_LAYOUT_FILE="$TMP/restore-layout"
 export TMUX_SMOKE_SELECTED_LAYOUTS="$TMP/selected-layouts"
+export TMUX_SMOKE_FOCUS_FILE="$TMP/focus"
 export TMUX_SMOKE_CURRENT_ID='$1'
+export TMUX_SMOKE_CURRENT_WINDOW='@1'
+export TMUX_SMOKE_PANE_WINDOW='@1'
 export TMUX_SMOKE_CURRENT_NAME="alpha"
 export TMUX_SMOKE_LAST_NAME=""
 
@@ -61,17 +64,79 @@ session_activity() {
 }
 
 windows() {
+	mode="$1"
+	n=0
 	if [ -s "$TMUX_SMOKE_WINDOWS" ]; then
-		while IFS='|' read -r id active name; do
-			[ -n "$id" ] || continue
-			printf '%s\t%s\t%s\n' "$id" "$active" "$name"
+		while IFS='|' read -r session window active name; do
+			[ -n "$session" ] || continue
+			n=$((n + 1))
+			if [ -z "$name" ]; then
+				name="$active"
+				active="$window"
+				window="@${n}"
+			fi
+			case "$mode" in
+				session-active-name) printf '%s\t%s\t%s\n' "$session" "$active" "$name" ;;
+				session-window-name) printf '%s\t%s\t%s\n' "$session" "$window" "$name" ;;
+				window-session) printf '%s\t%s\n' "$window" "$session" ;;
+				window-id) printf '%s\n' "$window" ;;
+			esac
 		done < "$TMUX_SMOKE_WINDOWS"
 		return
 	fi
 	while IFS='|' read -r name id activity; do
 		[ -n "$id" ] || continue
-		printf '%s\t1\tmain\n' "$id"
+		case "$mode" in
+			session-active-name) printf '%s\t1\tmain\n' "$id" ;;
+			session-window-name) printf '%s\t@1\tmain\n' "$id" ;;
+			window-session) printf '@1\t%s\n' "$id" ;;
+			window-id) printf '@1\n' ;;
+		esac
 	done < "$TMUX_SMOKE_SESSIONS"
+}
+
+window_session() {
+	target="$1"
+	windows window-session | awk -v target="$target" '$1 == target { print $2; exit }'
+}
+
+focus_value() {
+	win="$1"
+	field="$2"
+	[ -n "$win" ] || win="$TMUX_SMOKE_CURRENT_WINDOW"
+	case "$win" in
+		%*) win="$TMUX_SMOKE_PANE_WINDOW" ;;
+	esac
+	value="$(awk -v win="$win" -v field="$field" '
+		$1 == win {
+			if (field == "session") print $2
+			else print $3
+			exit
+		}
+	' "$TMUX_SMOKE_FOCUS_FILE" 2>/dev/null || :)"
+	if [ -n "$value" ]; then
+		printf '%s\n' "$value"
+	elif [ "$field" = "session" ]; then
+		printf '%s\n' "$TMUX_SMOKE_CURRENT_ID"
+	else
+		printf '%s\n' "$TMUX_SMOKE_CURRENT_WINDOW"
+	fi
+}
+
+set_focus_value() {
+	win="$1"
+	field="$2"
+	value="$3"
+	session="$(focus_value "$win" session)"
+	window="$(focus_value "$win" window)"
+	if [ "$field" = "session" ]; then
+		session="$value"
+	else
+		window="$value"
+	fi
+	awk -v win="$win" '$1 != win { print }' "$TMUX_SMOKE_FOCUS_FILE" 2>/dev/null > "$TMUX_SMOKE_FOCUS_FILE.tmp" || :
+	printf '%s %s %s\n' "$win" "$session" "$window" >> "$TMUX_SMOKE_FOCUS_FILE.tmp"
+	mv "$TMUX_SMOKE_FOCUS_FILE.tmp" "$TMUX_SMOKE_FOCUS_FILE"
 }
 
 format_arg() {
@@ -121,12 +186,16 @@ case "${1:-}" in
 		if [ "$format" = '#{window_id} #{@pin_sidebar_pane}' ]; then
 			cat "$TMUX_SMOKE_WINDOW_PANES" 2>/dev/null || :
 		elif [ "$format" = "#{session_id}${tab}#{window_active}${tab}#{window_name}" ]; then
-			windows
+			windows session-active-name
+		elif [ "$format" = "#{session_id}${tab}#{window_id}${tab}#{window_name}" ]; then
+			windows session-window-name
+		elif [ "$format" = "#{window_id}${tab}#{session_id}" ]; then
+			windows window-session
 		elif [ "$format" = '#{window_id}' ]; then
 			if [ -s "$TMUX_SMOKE_WINDOW_PANES" ]; then
 				awk '{ print $1 }' "$TMUX_SMOKE_WINDOW_PANES"
 			elif [ -s "$TMUX_SMOKE_WINDOWS" ]; then
-				awk -F '|' 'NF { print $1 }' "$TMUX_SMOKE_WINDOWS"
+				windows window-id
 			else
 				printf '@1\n'
 			fi
@@ -167,11 +236,17 @@ case "${1:-}" in
 		fi
 		case "${1:-}" in
 			'#{session_id}') printf '%s\n' "$TMUX_SMOKE_CURRENT_ID" ;;
+			'#{window_id}') printf '%s\n' "$TMUX_SMOKE_CURRENT_WINDOW" ;;
 			'#S') printf '%s\n' "$TMUX_SMOKE_CURRENT_NAME" ;;
 			'#{client_last_session}') printf '%s\n' "$TMUX_SMOKE_LAST_NAME" ;;
 			'#{session_activity}') session_activity "$target" ;;
 			'#{window_layout}') cat "$TMUX_SMOKE_LAYOUT_FILE" 2>/dev/null || : ;;
 			'#{pane_width}') printf '20\n' ;;
+			*)
+				if [ "${1:-}" = "#{window_id}${tab}#{session_id}" ]; then
+					printf '%s\t%s\n' "$target" "$(window_session "$target")"
+				fi
+				;;
 		esac
 		;;
 	switch-client)
@@ -189,6 +264,8 @@ case "${1:-}" in
 		case "$*" in
 			*"@pin_sidebar_open"*) cat "$TMUX_SMOKE_OPEN_FILE" 2>/dev/null || : ;;
 			*"@pin_sidebar_width"*) printf '20\n' ;;
+			*"@pin_sidebar_focus_session"*) focus_value "$(target_arg "$@")" session ;;
+			*"@pin_sidebar_focus_window"*) focus_value "$(target_arg "$@")" window ;;
 			*"@pin_sidebar_pane"*) window_pane "$(target_arg "$@")" ;;
 			*"@pin_sidebar_restore_layout"*) cat "$TMUX_SMOKE_RESTORE_LAYOUT_FILE" 2>/dev/null || : ;;
 			*"window-size"*) printf 'latest\n' ;;
@@ -212,6 +289,10 @@ case "${1:-}" in
 			printf '%s\n' "${5:-}" > "$TMUX_SMOKE_RESTORE_LAYOUT_FILE"
 		elif [ "${2:-}" = "-wu" ] && [ "${3:-}" = "-t" ] && [ "${5:-}" = "@pin_sidebar_restore_layout" ]; then
 			: > "$TMUX_SMOKE_RESTORE_LAYOUT_FILE"
+		elif [ "${2:-}" = "-wt" ] && [ "${4:-}" = "@pin_sidebar_focus_session" ]; then
+			set_focus_value "${3:-}" session "${5:-}"
+		elif [ "${2:-}" = "-wt" ] && [ "${4:-}" = "@pin_sidebar_focus_window" ]; then
+			set_focus_value "${3:-}" window "${5:-}"
 		fi
 		;;
 	kill-pane)
@@ -397,9 +478,10 @@ test_sidebar_renders_canonical_pin() {
 test_sidebar_batches_window_listing() {
 	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30'
 	write_pins 'alpha	$1' 'beta	$2' 'gamma	$3'
-	printf '$1|1|main\n$1|0|edit\n$2|1|work\n$3|1|ops\n' > "$TMUX_SMOKE_WINDOWS"
+	printf '$1|@1|1|main\n$1|@2|0|edit\n$2|@3|1|work\n$3|@4|1|ops\n' > "$TMUX_SMOKE_WINDOWS"
 	: > "$TMUX_SMOKE_LIST_WINDOWS_LOG"
 	export TMUX_SMOKE_CURRENT_ID='$2'
+	export TMUX_SMOKE_CURRENT_WINDOW='@3'
 
 	sh "$ROOT/bin/tmux-session-sidebar/sidebar" </dev/null > "$TMP/sidebar-batch.out"
 
@@ -412,6 +494,36 @@ test_sidebar_batches_window_listing() {
 	assert_file_not_contains "$TMP/sidebar-batch.out" "  ▸ ops"
 	assert_line_count "$TMUX_SMOKE_LIST_WINDOWS_LOG" 1
 	pass "sidebar batches window listing"
+}
+
+test_sidebar_uses_precomputed_window_focus() {
+	set_sessions 'alpha|$1|10'
+	write_pins 'alpha	$1'
+	printf '$1|@1|0|main\n$1|@2|1|edit\n' > "$TMUX_SMOKE_WINDOWS"
+	printf '@1 $1 @1\n' > "$TMUX_SMOKE_FOCUS_FILE"
+	export TMUX_PANE='%side'
+	export TMUX_SMOKE_PANE_WINDOW='@1'
+	export TMUX_SMOKE_CURRENT_ID='$1'
+	export TMUX_SMOKE_CURRENT_WINDOW='@2'
+
+	sh "$ROOT/bin/tmux-session-sidebar/sidebar" </dev/null > "$TMP/sidebar-focus.out"
+
+	assert_file_contains "$TMP/sidebar-focus.out" "▸ main"
+	assert_file_not_contains "$TMP/sidebar-focus.out" "▸ edit"
+	pass "sidebar uses precomputed window focus"
+}
+
+test_precompute_focus_sets_each_window_focus() {
+	set_sessions 'alpha|$1|10' 'beta|$2|20'
+	printf '$1|@1|0|main\n$1|@2|1|edit\n$2|@3|1|work\n' > "$TMUX_SMOKE_WINDOWS"
+	: > "$TMUX_SMOKE_FOCUS_FILE"
+
+	run_script precompute-focus
+
+	assert_file_contains "$TMUX_SMOKE_FOCUS_FILE" '@1 $1 @1'
+	assert_file_contains "$TMUX_SMOKE_FOCUS_FILE" '@2 $1 @2'
+	assert_file_contains "$TMUX_SMOKE_FOCUS_FILE" '@3 $2 @3'
+	pass "precompute focus sets each window focus"
 }
 
 test_reload_restarts_open_sidebars() {
@@ -472,6 +584,8 @@ test_replace_last_active_updates_slot
 test_prune_delegates_to_sync
 test_sidebar_renders_canonical_pin
 test_sidebar_batches_window_listing
+test_sidebar_uses_precomputed_window_focus
+test_precompute_focus_sets_each_window_focus
 test_reload_restarts_open_sidebars
 test_attach_saves_restore_layout
 test_toggle_close_preserves_current_content_layout
