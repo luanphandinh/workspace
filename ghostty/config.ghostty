@@ -10,8 +10,15 @@ font-style-bold-italic = false
 window-padding-x = 8
 window-padding-y = 0
 macos-titlebar-style = hidden
+macos-window-shadow = false
 
 theme = Gruvbox Dark Hard
+desktop-notifications = false
+progress-style = false
+shell-integration = none
+cursor-click-to-move = false
+link-url = false
+link-previews = false
 
 # Avoid accidental close-window input.
 keybind = cmd+w=ignore
@@ -33,12 +40,12 @@ keybind = ctrl+shift+h=csi:28~
 keybind = ctrl+shift+l=csi:29~
 
 # Jump to tmux window 1..9 in the current session.
-keybind = cmd+1=csi:31~
-keybind = cmd+2=csi:32~
-keybind = cmd+3=csi:33~
-keybind = cmd+4=csi:34~
-keybind = cmd+5=csi:35~
-keybind = cmd+6=csi:36~
-keybind = cmd+7=csi:37~
-keybind = cmd+8=csi:38~
-keybind = cmd+9=csi:39~
+keybind = cmd+digit_1=csi:31~
+keybind = cmd+digit_2=csi:32~
+keybind = cmd+digit_3=csi:33~
+keybind = cmd+digit_4=csi:34~
+keybind = cmd+digit_5=csi:35~
+keybind = cmd+digit_6=csi:36~
+keybind = cmd+digit_7=csi:37~
+keybind = cmd+digit_8=csi:38~
+keybind = cmd+digit_9=csi:39~
