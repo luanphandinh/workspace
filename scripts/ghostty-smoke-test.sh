@@ -25,6 +25,11 @@ grep -qx 'shell-integration = none' ghostty/config.ghostty
 grep -qx 'cursor-click-to-move = false' ghostty/config.ghostty
 grep -qx 'link-url = false' ghostty/config.ghostty
 grep -qx 'link-previews = false' ghostty/config.ghostty
+for n in 1 2 3 4 5 6 7 8 9; do
+	seq=$((30 + n))
+	grep -qx "keybind = cmd+digit_$n=csi:${seq}~" ghostty/config.ghostty
+	! grep -qx "keybind = cmd+$n=csi:${seq}~" ghostty/config.ghostty
+done
 
 if command -v ghostty >/dev/null 2>&1; then
 	ghostty +validate-config --config-file="$repo_root/ghostty/config.ghostty"
