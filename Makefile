@@ -1,5 +1,6 @@
 UNAME := $(shell uname)
 ARCH := $(shell uname -m)
+version_lock := ./version-lock.json
 export PATH := $(HOME)/.local/bin:$(HOME)/bin:$(PATH)
 ifeq ($(UNAME),Darwin)
 	go_arch := amd64
@@ -50,9 +51,9 @@ alacritty_config_dir := $(shell wslpath -u '$(windows_appdata)')/alacritty
 fonts_install := sh ./scripts/install-windows-firacode-nerd-font.sh
 endif
 
-go_version := 1.25.9
-go_archive := go$(go_version).$(os_name)-$(go_arch).tar.gz
-tree_sitter_cli_version := 0.26.9
+go_version = $(shell python3 ./scripts/version_lock.py get $(version_lock) go.version)
+go_archive = go$(go_version).$(os_name)-$(go_arch).tar.gz
+tree_sitter_cli_version = $(shell python3 ./scripts/version_lock.py get $(version_lock) tree_sitter_cli.version)
 export PATH := /usr/local/go/bin:$(HOME)/go/bin:$(PATH)
 MODE ?= locked
 ifeq ($(MODE),latest)
@@ -63,15 +64,18 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update setup-deps optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test mkws-test tmux-sidebar-test cleanup
+.PHONY: help setup update version-lock-update setup-deps optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test tmux-sidebar-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
 setup:  ## Install all workspace tools, configs, and terminal agent CLIs.
 setup: setup-deps go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config optional-deps newsboat-config mac-apps cleanup
 
-update: ## Install all workspace tools while updating Neovim plugins to latest.
+update: setup-deps version-lock-update ## Install all workspace tools while updating Neovim plugins and native treesitter locks to latest.
 	$(MAKE) MODE=latest setup
+
+version-lock-update: ## Update native treesitter versions in version-lock.json
+	python3 ./scripts/update-version-lock.py $(version_lock)
 
 setup-deps: ## Setup deps
 	test -d ./tmp || mkdir -p ./tmp
@@ -106,7 +110,7 @@ nvim-config: tree-sitter-cli-install nvim-native-treesitter-parsers-install
 tree-sitter-cli-install: ## Install tree-sitter CLI for native parser builds
 	@if command -v tree-sitter >/dev/null 2>&1; then \
 		version=$$(tree-sitter --version | awk '{print $$2}'); \
-		if awk -v v="$$version" 'BEGIN { split(v, a, "."); ok=(a[1] > 0 || (a[1] == 0 && (a[2] > 26 || (a[2] == 26 && a[3] >= 1)))); exit ok ? 0 : 1 }'; then \
+		if [ "$$version" = "$(tree_sitter_cli_version)" ]; then \
 			tree-sitter --version; \
 			exit 0; \
 		fi; \
@@ -191,7 +195,10 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: mkws-test tmux-sidebar-test ## Run smoke tests
+test: version-lock-test mkws-test tmux-sidebar-test ## Run smoke tests
+
+version-lock-test: ## Run version-lock smoke tests
+	sh ./scripts/version-lock-smoke-test.sh
 
 mkws-test: ## Run mkws/mkwst/mkwsts smoke tests
 	sh ./scripts/mkws-smoke-test.sh

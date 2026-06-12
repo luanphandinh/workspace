@@ -2,12 +2,13 @@
 set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+lock_file="${VERSION_LOCK_FILE:-${repo_root}/version-lock.json}"
 cache_dir="${NVIM_NATIVE_TREESITTER_CACHE_DIR:-${repo_root}/tmp/native-treesitter-parsers}"
 site_dir="${NVIM_NATIVE_TREESITTER_SITE_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/nvim/site}"
 parser_dir="${site_dir}/parser"
 queries_dir="${site_dir}/queries"
 
-export PATH="${HOME}/.local/bin:${HOME}/bin:${PATH}"
+export PATH="${PATH}:${HOME}/.local/bin:${HOME}/bin"
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -75,12 +76,14 @@ install_parser() {
 }
 
 need_cmd git
+need_cmd python3
 need_cmd tree-sitter
 need_cmd cc
 
 mkdir -p "$cache_dir" "$parser_dir" "$queries_dir"
 
-install_parser go https://github.com/tree-sitter/tree-sitter-go.git 2346a3ab1bb3857b48b29d779a1ef9799a248cd7
-install_parser json https://github.com/tree-sitter/tree-sitter-json.git 001c28d7a29832b06b0e831ec77845553c89b56d
-install_parser bash https://github.com/tree-sitter/tree-sitter-bash.git a06c2e4415e9bc0346c6b86d401879ffb44058f7
-install_parser yaml https://github.com/tree-sitter-grammars/tree-sitter-yaml.git a1c4812a73ec5e089de8e441fdea3a921e8d5079
+python3 "$repo_root/scripts/version_lock.py" validate "$lock_file"
+
+python3 "$repo_root/scripts/version_lock.py" parsers "$lock_file" | while IFS='	' read -r lang repo ref; do
+  install_parser "$lang" "$repo" "$ref"
+done
