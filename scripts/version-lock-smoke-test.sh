@@ -81,7 +81,6 @@ ref1=$(git -C "$tmp_dir/testlang1" rev-parse HEAD)
 ref2=$(git -C "$tmp_dir/testlang2" rev-parse HEAD)
 ref3=$(git -C "$tmp_dir/testlang3" rev-parse HEAD)
 ref4=$(git -C "$tmp_dir/testlang4" rev-parse HEAD)
-ref5=$(git -C "$tmp_dir/testlang5" rev-parse HEAD)
 
 cat > "$tmp_dir/version-lock.json" <<EOF
 {
@@ -96,27 +95,26 @@ cat > "$tmp_dir/version-lock.json" <<EOF
       {
         "language": "testlang1",
         "repo": "$tmp_dir/testlang1",
-        "ref": "$ref1"
+        "lock_version": "$ref1"
       },
       {
         "language": "testlang2",
         "repo": "$tmp_dir/testlang2",
-        "ref": "$ref2"
+        "lock_version": "$ref2"
       },
       {
         "language": "testlang3",
         "repo": "$tmp_dir/testlang3",
-        "ref": "$ref3"
+        "lock_version": "$ref3"
       },
       {
         "language": "testlang4",
         "repo": "$tmp_dir/testlang4",
-        "ref": "$ref4"
+        "lock_version": "$ref4"
       },
       {
         "language": "testlang5",
-        "repo": "$tmp_dir/testlang5",
-        "ref": "$ref5"
+        "repo": "$tmp_dir/testlang5"
       }
     ]
   }
@@ -187,8 +185,10 @@ with open(sys.argv[1]) as lock_file:
 if lock["tree_sitter_cli"]["version"] != "9.9.9":
     raise SystemExit("tree_sitter_cli version was not updated")
 for parser in lock["treesitter"]["parsers"]:
-    if parser["ref"] != "0123456789abcdef0123456789abcdef01234567":
-        raise SystemExit("parser ref was not updated")
+    if parser["lock_version"] != "0123456789abcdef0123456789abcdef01234567":
+        raise SystemExit("parser lock_version was not updated")
+    if "ref" in parser:
+        raise SystemExit("legacy parser ref was not removed")
 PY
 
 echo "PASS version-lock smoke test"

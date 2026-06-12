@@ -34,7 +34,14 @@ def validate_lock(lock):
         language = parser.get("language")
         require_string(language, f"{base}.language")
         require_string(parser.get("repo"), f"{base}.repo")
-        require_string(parser.get("ref"), f"{base}.ref")
+        has_lock_version = "lock_version" in parser
+        has_ref = "ref" in parser
+        if has_lock_version and has_ref:
+            fail(f"{base} must use lock_version, not both lock_version and ref")
+        if has_lock_version:
+            require_string(parser.get("lock_version"), f"{base}.lock_version")
+        if has_ref:
+            require_string(parser.get("ref"), f"{base}.ref")
 
         if language in seen:
             fail(f"{base}.language is duplicated: {language}")
@@ -58,7 +65,8 @@ def get_path(lock, path):
 
 def print_parsers(lock):
     for parser in lock["treesitter"]["parsers"]:
-        print("\t".join([parser["language"], parser["repo"], parser["ref"]]))
+        lock_version = parser.get("lock_version", parser.get("ref", ""))
+        print("\t".join([parser["language"], parser["repo"], lock_version]))
 
 
 def main():
