@@ -48,6 +48,59 @@ local function setup_cmp_restart_command()
   vim.keymap.set("n", "<leader>rs", restart_cmp, { desc = "Completion" })
 end
 
+local lsp_recover_filetypes = {
+  go = "gopls",
+  gomod = "gopls",
+  gowork = "gopls",
+  gotmpl = "gopls",
+  rust = "rust_analyzer",
+}
+
+local lsp_recover_pending = {}
+
+local function has_lsp_client(buf, name)
+  for _, client in ipairs(vim.lsp.get_clients({ bufnr = buf, name = name })) do
+    if not client:is_stopped() then
+      return true
+    end
+  end
+  return false
+end
+
+local function recover_lsp_for_entered_buffer(ev)
+  local buf = ev.buf
+  if not vim.api.nvim_buf_is_loaded(buf) or vim.bo[buf].buftype ~= "" then
+    return
+  end
+
+  local ft = vim.bo[buf].filetype
+  local server = lsp_recover_filetypes[ft]
+  if not server or has_lsp_client(buf, server) or lsp_recover_pending[buf] then
+    return
+  end
+
+  lsp_recover_pending[buf] = true
+  vim.schedule(function()
+    lsp_recover_pending[buf] = nil
+    if not vim.api.nvim_buf_is_loaded(buf) or vim.bo[buf].buftype ~= "" or vim.bo[buf].filetype ~= ft then
+      return
+    end
+
+    local ok_lazy, lazy = pcall(require, "lazy")
+    if ok_lazy then
+      pcall(lazy.load, { plugins = { "nvim-lspconfig" } })
+    end
+    pcall(vim.api.nvim_exec_autocmds, "FileType", { buffer = buf, modeline = false })
+  end)
+end
+
+local function setup_lsp_recovery_autocmd()
+  vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter" }, {
+    group = vim.api.nvim_create_augroup("LuanphanLspRecoverEnteredBuffers", { clear = true }),
+    callback = recover_lsp_for_entered_buffer,
+  })
+end
+
 return {
   -- Mason package manager
   {
@@ -68,7 +121,7 @@ return {
   -- mason-lspconfig - lazy load with lspconfig
   {
     "williamboman/mason-lspconfig.nvim",
-    event = "BufReadPre",
+    event = { "BufReadPre", "BufNewFile" },
     dependencies = { "williamboman/mason.nvim" },
     config = function()
       require("mason-lspconfig").setup {
@@ -83,7 +136,8 @@ return {
 
   {
     "neovim/nvim-lspconfig",
-    event = "BufReadPre",
+    event = { "BufReadPre", "BufNewFile" },
+    init = setup_lsp_recovery_autocmd,
     config = function()
       -- LSP attach handler for keymaps and formatting
       vim.api.nvim_create_autocmd("LspAttach", {

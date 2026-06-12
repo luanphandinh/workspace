@@ -52,6 +52,7 @@ endif
 
 go_version := 1.25.9
 go_archive := go$(go_version).$(os_name)-$(go_arch).tar.gz
+tree_sitter_cli_version := 0.26.9
 export PATH := /usr/local/go/bin:$(HOME)/go/bin:$(PATH)
 MODE ?= locked
 ifeq ($(MODE),latest)
@@ -62,7 +63,7 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update setup-deps optional-deps newsboat-config nvim nvim-install nvim-config nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test mkws-test tmux-sidebar-test cleanup
+.PHONY: help setup update setup-deps optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test mkws-test tmux-sidebar-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -96,10 +97,22 @@ nvim-install: ## Install neovim only, no config
 	@nvim --version | head -n 1
 
 nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
+nvim-config: tree-sitter-cli-install
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	rm -rf ~/.config/nvim/*
 	cp -r ./nvim/. ~/.config/nvim/
 	NVIM_INSTALL_TREESITTER=1 nvim --headless "+Lazy! $(lazy_command)" +qa
+
+tree-sitter-cli-install: ## Install tree-sitter CLI for nvim-treesitter parser builds
+	@if command -v tree-sitter >/dev/null 2>&1; then \
+		version=$$(tree-sitter --version | awk '{print $$2}'); \
+		if awk -v v="$$version" 'BEGIN { split(v, a, "."); ok=(a[1] > 0 || (a[1] == 0 && (a[2] > 26 || (a[2] == 26 && a[3] >= 1)))); exit ok ? 0 : 1 }'; then \
+			tree-sitter --version; \
+			exit 0; \
+		fi; \
+	fi; \
+	npm install --global --prefix "$(HOME)/.local" tree-sitter-cli@$(tree_sitter_cli_version); \
+	tree-sitter --version
 
 nvim-lock: ## Refresh nvim/lazy-lock.json from the installed Neovim config.
 	cp ~/.config/nvim/lazy-lock.json ./nvim/lazy-lock.json

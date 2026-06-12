@@ -89,6 +89,20 @@ local function write(path, lines)
   vim.fn.writefile(lines, path)
 end
 
+local function child_nvim_luafile_command(cwd, script)
+  local env = ""
+  if vim.env.XDG_CONFIG_HOME and vim.env.XDG_CONFIG_HOME ~= "" then
+    env = "XDG_CONFIG_HOME=" .. vim.fn.shellescape(vim.env.XDG_CONFIG_HOME) .. " "
+  end
+
+  local lua = table.concat({
+    "local ok, err = xpcall(dofile, debug.traceback, " .. string.format("%q", script) .. ")",
+    "if not ok then io.stderr:write(tostring(err) .. '\\n'); vim.cmd('cquit') end",
+  }, "; ")
+
+  return "cd " .. vim.fn.shellescape(cwd) .. " && " .. env .. "GOWORK=off nvim --headless " .. vim.fn.shellescape("+lua " .. lua) .. " +qa 2>&1"
+end
+
 local function write_executable(path, lines)
   write(path, lines)
   assert_true(vim.fn.setfperm(path, "rwxr-xr-x") == 1, "failed to chmod " .. path)
@@ -344,6 +358,62 @@ local function test_shell_treesitter_guarded_injections()
   assert_true(vim.g.luanphan_bash_injection_guard == 1, "bash injection guard should be installed")
   assert_true(vim.wo.foldmethod == "expr", "shell buffers should keep treesitter folds")
   assert_true(vim.wo.foldexpr == "v:lua.vim.treesitter.foldexpr()", "shell buffers should use treesitter foldexpr")
+end
+
+local function test_treesitter_uses_native_runtime()
+  local plugin = require("lazy.core.config").plugins["nvim-treesitter"]
+  assert_true(type(plugin) == "table", "nvim-treesitter plugin should be registered")
+  assert_true(plugin.branch ~= "master", "nvim-treesitter should not stay on the legacy compat branch")
+  assert_true(package.loaded["nvim-treesitter.configs"] == nil, "native runtime setup should not load nvim-treesitter.configs")
+end
+
+local function test_treesitter_required_parsers_available()
+  local expected = {
+    go = "go",
+    json = "json",
+    yaml = "yaml",
+    sh = "bash",
+  }
+
+  for ft, lang in pairs(expected) do
+    assert_true(vim.treesitter.language.get_lang(ft) == lang, ft .. " should map to the " .. lang .. " parser")
+    local ok = vim.treesitter.language.add(lang)
+    assert_true(ok == true, lang .. " parser should be available")
+  end
+end
+
+local function test_go_runtime_recovers_when_entering_loaded_buffer(worktree)
+  local script = temp_root .. "/go-runtime-stale-buffer.lua"
+  write(script, {
+    "local function fail(message) error(message, 0) end",
+    "local function assert_true(value, message) if not value then fail(message) end end",
+    "local function wait_until(label, predicate, timeout)",
+    "  local ok = vim.wait(timeout or 10000, predicate, 50, false)",
+    "  assert_true(ok, 'timeout waiting for ' .. label)",
+    "end",
+    "local function wait_for_lsp(buf)",
+    "  wait_until('gopls on recovered buffer', function()",
+    "    for _, client in ipairs(vim.lsp.get_clients({ bufnr = buf })) do",
+    "      if client.name == 'gopls' and not client:is_stopped() then return true end",
+    "    end",
+    "    return false",
+    "  end, 30000)",
+    "end",
+    "vim.env.GOWORK = 'off'",
+    "vim.cmd('cd ' .. vim.fn.fnameescape(" .. string.format("%q", worktree) .. "))",
+    "vim.cmd('noautocmd edit ' .. vim.fn.fnameescape(" .. string.format("%q", worktree .. "/main.go") .. "))",
+    "local buf = vim.api.nvim_get_current_buf()",
+    "vim.cmd('noautocmd setlocal filetype=go')",
+    "assert_true(vim.treesitter.highlighter.active[buf] == nil, 'stale buffer should start without treesitter')",
+    "vim.cmd('enew')",
+    "vim.cmd('buffer ' .. buf)",
+    "wait_until('go treesitter on recovered buffer', function() return vim.treesitter.highlighter.active[buf] ~= nil end, 5000)",
+    "wait_for_lsp(buf)",
+  })
+
+  local cmd = child_nvim_luafile_command(worktree, script)
+  local out = vim.fn.systemlist(cmd)
+  assert_true(vim.v.shell_error == 0, table.concat(out, "\n"))
 end
 
 local function has_visible_diffview()
@@ -965,11 +1035,7 @@ local function test_deleted_workspace_started_at_workspace_falls_back_to_master_
     "assert_true(plugin._ and plugin._.loaded, 'worktree plugin did not load after key')",
   })
 
-  local env = ""
-  if vim.env.XDG_CONFIG_HOME and vim.env.XDG_CONFIG_HOME ~= "" then
-    env = "XDG_CONFIG_HOME=" .. vim.fn.shellescape(vim.env.XDG_CONFIG_HOME) .. " "
-  end
-  local cmd = "cd " .. vim.fn.shellescape(workspace) .. " && " .. env .. "GOWORK=off nvim --headless '+luafile " .. vim.fn.shellescape(script) .. "' +qa"
+  local cmd = child_nvim_luafile_command(workspace, script)
   local out = vim.fn.systemlist(cmd)
   assert_true(vim.v.shell_error == 0, table.concat(out, "\n"))
 end
@@ -990,6 +1056,93 @@ local function test_git_diff_previews(worktree)
   invoke_map("<leader>gD")
   wait_for_diffview()
   close_diffview()
+end
+
+local function test_git_diff_original_file_jump_starts_go_runtime(worktree)
+  local script = temp_root .. "/diffview-original-runtime.lua"
+  write(script, {
+    "local uv = vim.uv or vim.loop",
+    "local worktree = " .. string.format("%q", worktree),
+    "local file = worktree .. '/main.go'",
+    "local function fail(message) error(message, 0) end",
+    "local function assert_true(value, message) if not value then fail(message) end end",
+    "local function realpath(path) return uv.fs_realpath(path) or path end",
+    "local function wait_until(label, predicate, timeout)",
+    "  local ok = vim.wait(timeout or 10000, predicate, 50, false)",
+    "  assert_true(ok, 'timeout waiting for ' .. label)",
+    "end",
+    "local function invoke_map(lhs)",
+    "  local map = vim.fn.maparg(lhs, 'n', false, true)",
+    "  assert_true(type(map) == 'table' and type(map.callback) == 'function', lhs .. ' missing callback')",
+    "  map.callback()",
+    "end",
+    "local function has_visible_diffview()",
+    "  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do",
+    "    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do",
+    "      local name = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win))",
+    "      if name:match('^diffview://') then return true end",
+    "    end",
+    "  end",
+    "  return false",
+    "end",
+    "local function find_diffview_tab()",
+    "  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do",
+    "    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do",
+    "      local name = vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win))",
+    "      if name:match('^diffview://') then return tab end",
+    "    end",
+    "  end",
+    "  return nil",
+    "end",
+    "local function diffview_file_count()",
+    "  local ok, lib = pcall(require, 'diffview.lib')",
+    "  local view = ok and lib.get_current_view() or nil",
+    "  if view and view.files and type(view.files.len) == 'function' then",
+    "    local len_ok, len = pcall(function() return view.files:len() end)",
+    "    if len_ok then return len end",
+    "  end",
+    "  return 0",
+    "end",
+    "local function focus_diffview_jump_buffer()",
+    "  wait_until('diffview original jump mapping', function()",
+    "    local tab = find_diffview_tab()",
+    "    if not tab then return false end",
+    "    vim.api.nvim_set_current_tabpage(tab)",
+    "    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do",
+    "      if pcall(vim.api.nvim_set_current_win, win) then",
+    "        local map = vim.fn.maparg('<leader>gf', 'n', false, true)",
+    "        if type(map) == 'table' and type(map.callback) == 'function' then return true end",
+    "      end",
+    "    end",
+    "    return false",
+    "  end, 5000)",
+    "end",
+    "local function wait_for_lsp(buf)",
+    "  wait_until('gopls after diff jump', function()",
+    "    for _, client in ipairs(vim.lsp.get_clients({ bufnr = buf })) do",
+    "      if client.name == 'gopls' and not client:is_stopped() then return true end",
+    "    end",
+    "    return false",
+    "  end, 30000)",
+    "end",
+    "vim.env.GOWORK = 'off'",
+    "vim.cmd('cd ' .. vim.fn.fnameescape(worktree))",
+    "invoke_map('<leader>gd')",
+    "wait_until('diffview', has_visible_diffview, 10000)",
+    "wait_until('diffview files', function() return diffview_file_count() > 0 end, 10000)",
+    "focus_diffview_jump_buffer()",
+    "invoke_map('<leader>gf')",
+    "wait_until('diffview closes after original jump', function() return not has_visible_diffview() end, 5000)",
+    "wait_until('original file buffer', function() return realpath(vim.api.nvim_buf_get_name(0)) == realpath(file) end, 5000)",
+    "local buf = vim.api.nvim_get_current_buf()",
+    "assert_true(vim.bo[buf].filetype == 'go', 'jumped buffer filetype is ' .. vim.bo[buf].filetype)",
+    "wait_until('go treesitter after diff jump', function() return vim.treesitter.highlighter.active[buf] ~= nil end, 5000)",
+    "wait_for_lsp(buf)",
+  })
+
+  local cmd = child_nvim_luafile_command(worktree, script)
+  local out = vim.fn.systemlist(cmd)
+  assert_true(vim.v.shell_error == 0, table.concat(out, "\n"))
 end
 
 local function test(name, fn)
@@ -1026,6 +1179,18 @@ local setup_ok, setup_err = xpcall(function()
 
   test("shell treesitter guarded injections", function()
     test_shell_treesitter_guarded_injections()
+  end)
+
+  test("treesitter uses native runtime", function()
+    test_treesitter_uses_native_runtime()
+  end)
+
+  test("treesitter required parsers available", function()
+    test_treesitter_required_parsers_available()
+  end)
+
+  test("go runtime recovers when entering loaded buffer", function()
+    test_go_runtime_recovers_when_entering_loaded_buffer(worktree)
   end)
 
   test("agent cli commands are executable", function()
@@ -1074,6 +1239,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("git diff previews", function()
     test_git_diff_previews(worktree)
+  end)
+
+  test("git diff original file jump starts go runtime", function()
+    test_git_diff_original_file_jump_starts_go_runtime(worktree)
   end)
 
   test("worktree switch restores agent terminal", function()
