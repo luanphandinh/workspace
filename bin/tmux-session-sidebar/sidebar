@@ -152,8 +152,6 @@ render_pins() {
 					tree = (j == n) ? "└" : "├"
 					if (active == 1 && is_current == 1)
 						printf "  %s▸ %s%s%s\n", green, wname, reset, eol
-					else if (active == 1)
-						printf "  ▸ %s%s\n", wname, eol
 					else
 						printf "  %s %s%s\n", tree, wname, eol
 				}

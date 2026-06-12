@@ -284,6 +284,13 @@ assert_file_contains() {
 	}
 }
 
+assert_file_not_contains() {
+	if grep -F "$2" "$1" >/dev/null; then
+		printf 'expected %s not to contain: %s\n' "$1" "$2" >&2
+		exit 1
+	fi
+}
+
 assert_line_count() {
 	actual="$(wc -l < "$1" 2>/dev/null | awk '{ print $1 }')"
 	if [ "$actual" != "$2" ]; then
@@ -400,6 +407,9 @@ test_sidebar_batches_window_listing() {
 	assert_file_contains "$TMP/sidebar-batch.out" "beta"
 	assert_file_contains "$TMP/sidebar-batch.out" "gamma"
 	assert_file_contains "$TMP/sidebar-batch.out" "work"
+	assert_file_contains "$TMP/sidebar-batch.out" "▸ work"
+	assert_file_not_contains "$TMP/sidebar-batch.out" "  ▸ main"
+	assert_file_not_contains "$TMP/sidebar-batch.out" "  ▸ ops"
 	assert_line_count "$TMUX_SMOKE_LIST_WINDOWS_LOG" 1
 	pass "sidebar batches window listing"
 }
