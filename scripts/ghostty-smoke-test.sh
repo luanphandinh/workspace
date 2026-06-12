@@ -11,6 +11,8 @@ grep -qx 'font-thicken-strength = 180' ghostty/config.ghostty
 grep -qx 'font-style-italic = false' ghostty/config.ghostty
 grep -qx 'font-style-bold-italic = false' ghostty/config.ghostty
 grep -qx 'theme = Gruvbox Dark Hard' ghostty/config.ghostty
+grep -qx 'desktop-notifications = false' ghostty/config.ghostty
+grep -qx 'progress-style = false' ghostty/config.ghostty
 
 if command -v ghostty >/dev/null 2>&1; then
 	ghostty +validate-config --config-file="$repo_root/ghostty/config.ghostty"
