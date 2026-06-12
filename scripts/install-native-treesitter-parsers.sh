@@ -7,6 +7,7 @@ cache_dir="${NVIM_NATIVE_TREESITTER_CACHE_DIR:-${repo_root}/tmp/native-treesitte
 site_dir="${NVIM_NATIVE_TREESITTER_SITE_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/nvim/site}"
 parser_dir="${site_dir}/parser"
 queries_dir="${site_dir}/queries"
+max_jobs=4
 
 export PATH="${PATH}:${HOME}/.local/bin:${HOME}/bin"
 
@@ -75,6 +76,22 @@ install_parser() {
   echo "installed treesitter parser: ${lang}"
 }
 
+wait_for_slot() {
+  while [ "$(jobs -p | wc -l | tr -d ' ')" -ge "$max_jobs" ]; do
+    sleep 0.1
+  done
+}
+
+wait_for_jobs() {
+  status=0
+  for job in "$@"; do
+    if ! wait "$job"; then
+      status=1
+    fi
+  done
+  return "$status"
+}
+
 need_cmd git
 need_cmd python3
 need_cmd tree-sitter
@@ -84,6 +101,15 @@ mkdir -p "$cache_dir" "$parser_dir" "$queries_dir"
 
 python3 "$repo_root/scripts/version_lock.py" validate "$lock_file"
 
-python3 "$repo_root/scripts/version_lock.py" parsers "$lock_file" | while IFS='	' read -r lang repo ref; do
-  install_parser "$lang" "$repo" "$ref"
-done
+jobs=""
+while IFS='	' read -r lang repo ref; do
+  wait_for_slot
+  install_parser "$lang" "$repo" "$ref" &
+  jobs="${jobs} $!"
+done <<EOF
+$(python3 "$repo_root/scripts/version_lock.py" parsers "$lock_file")
+EOF
+
+if [ -n "$jobs" ]; then
+  wait_for_jobs $jobs
+fi

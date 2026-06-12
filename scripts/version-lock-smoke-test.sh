@@ -26,7 +26,7 @@ python3 "$repo_root/scripts/version_lock.py" validate "$lock_file"
 tree_sitter_cli_version=$(python3 "$repo_root/scripts/version_lock.py" get "$lock_file" tree_sitter_cli.version)
 make -n -C "$repo_root" tree-sitter-cli-install | grep "tree-sitter-cli@${tree_sitter_cli_version}" >/dev/null
 
-mkdir -p "$tmp_dir/bin" "$tmp_dir/grammar/queries" "$tmp_dir/site"
+mkdir -p "$tmp_dir/bin" "$tmp_dir/site"
 cat > "$tmp_dir/bin/tree-sitter" <<'SH'
 #!/usr/bin/env sh
 set -eu
@@ -46,17 +46,42 @@ while [ "$#" -gt 0 ]; do
 done
 
 test -n "$output"
+lock_dir="${TREE_SITTER_SMOKE_LOCK_DIR:-}"
+if [ -n "$lock_dir" ]; then
+  mkdir -p "$lock_dir"
+  token="$lock_dir/$$"
+  : > "$token"
+  count=$(find "$lock_dir" -type f | wc -l | tr -d ' ')
+  max_file="${TREE_SITTER_SMOKE_MAX_FILE:-}"
+  if [ -n "$max_file" ]; then
+    current_max=0
+    [ -f "$max_file" ] && current_max=$(cat "$max_file")
+    if [ "$count" -gt "$current_max" ]; then
+      printf '%s\n' "$count" > "$max_file"
+    fi
+  fi
+  sleep 0.2
+fi
 printf 'parser\n' > "$output"
+[ -n "${token:-}" ] && rm -f "$token"
 SH
 chmod +x "$tmp_dir/bin/tree-sitter"
 
-printf '(source_file) @test\n' > "$tmp_dir/grammar/queries/highlights.scm"
-git -C "$tmp_dir/grammar" -c init.templateDir= init -q
-git -C "$tmp_dir/grammar" config user.email test@example.invalid
-git -C "$tmp_dir/grammar" config user.name test
-git -C "$tmp_dir/grammar" add queries/highlights.scm
-git -C "$tmp_dir/grammar" commit -q -m initial
-grammar_ref=$(git -C "$tmp_dir/grammar" rev-parse HEAD)
+for lang in testlang1 testlang2 testlang3 testlang4 testlang5; do
+  mkdir -p "$tmp_dir/$lang/queries"
+  printf '(source_file) @test\n' > "$tmp_dir/$lang/queries/highlights.scm"
+  git -C "$tmp_dir/$lang" -c init.templateDir= init -q
+  git -C "$tmp_dir/$lang" config user.email test@example.invalid
+  git -C "$tmp_dir/$lang" config user.name test
+  git -C "$tmp_dir/$lang" add queries/highlights.scm
+  git -C "$tmp_dir/$lang" commit -q -m initial
+done
+
+ref1=$(git -C "$tmp_dir/testlang1" rev-parse HEAD)
+ref2=$(git -C "$tmp_dir/testlang2" rev-parse HEAD)
+ref3=$(git -C "$tmp_dir/testlang3" rev-parse HEAD)
+ref4=$(git -C "$tmp_dir/testlang4" rev-parse HEAD)
+ref5=$(git -C "$tmp_dir/testlang5" rev-parse HEAD)
 
 cat > "$tmp_dir/version-lock.json" <<EOF
 {
@@ -69,9 +94,29 @@ cat > "$tmp_dir/version-lock.json" <<EOF
   "treesitter": {
     "parsers": [
       {
-        "language": "testlang",
-        "repo": "$tmp_dir/grammar",
-        "ref": "$grammar_ref"
+        "language": "testlang1",
+        "repo": "$tmp_dir/testlang1",
+        "ref": "$ref1"
+      },
+      {
+        "language": "testlang2",
+        "repo": "$tmp_dir/testlang2",
+        "ref": "$ref2"
+      },
+      {
+        "language": "testlang3",
+        "repo": "$tmp_dir/testlang3",
+        "ref": "$ref3"
+      },
+      {
+        "language": "testlang4",
+        "repo": "$tmp_dir/testlang4",
+        "ref": "$ref4"
+      },
+      {
+        "language": "testlang5",
+        "repo": "$tmp_dir/testlang5",
+        "ref": "$ref5"
       }
     ]
   }
@@ -82,10 +127,24 @@ PATH="$tmp_dir/bin:$PATH" \
 VERSION_LOCK_FILE="$tmp_dir/version-lock.json" \
 NVIM_NATIVE_TREESITTER_CACHE_DIR="$tmp_dir/cache" \
 NVIM_NATIVE_TREESITTER_SITE_DIR="$tmp_dir/site" \
+TREE_SITTER_SMOKE_LOCK_DIR="$tmp_dir/build-locks" \
+TREE_SITTER_SMOKE_MAX_FILE="$tmp_dir/max-builds" \
   sh "$repo_root/scripts/install-native-treesitter-parsers.sh"
 
-test -f "$tmp_dir/site/parser/testlang.so"
-test -f "$tmp_dir/site/queries/testlang/highlights.scm"
+for lang in testlang1 testlang2 testlang3 testlang4 testlang5; do
+  test -f "$tmp_dir/site/parser/$lang.so"
+  test -f "$tmp_dir/site/queries/$lang/highlights.scm"
+done
+
+max_builds=$(cat "$tmp_dir/max-builds")
+if [ "$max_builds" -lt 2 ]; then
+  echo "expected parser builds to run in parallel" >&2
+  exit 1
+fi
+if [ "$max_builds" -gt 4 ]; then
+  echo "expected parser builds to be capped at 4 jobs, saw $max_builds" >&2
+  exit 1
+fi
 
 mkdir -p "$tmp_dir/update-bin"
 cat > "$tmp_dir/update-bin/npm" <<'SH'
@@ -127,8 +186,9 @@ with open(sys.argv[1]) as lock_file:
 
 if lock["tree_sitter_cli"]["version"] != "9.9.9":
     raise SystemExit("tree_sitter_cli version was not updated")
-if lock["treesitter"]["parsers"][0]["ref"] != "0123456789abcdef0123456789abcdef01234567":
-    raise SystemExit("parser ref was not updated")
+for parser in lock["treesitter"]["parsers"]:
+    if parser["ref"] != "0123456789abcdef0123456789abcdef01234567":
+        raise SystemExit("parser ref was not updated")
 PY
 
 echo "PASS version-lock smoke test"
