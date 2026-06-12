@@ -8,6 +8,8 @@ test -f ghostty/config.ghostty
 grep -qx 'font-family = "FiraCode Nerd Font Mono"' ghostty/config.ghostty
 grep -qx 'font-thicken = true' ghostty/config.ghostty
 grep -qx 'font-thicken-strength = 180' ghostty/config.ghostty
+grep -qx 'font-style-italic = false' ghostty/config.ghostty
+grep -qx 'font-style-bold-italic = false' ghostty/config.ghostty
 grep -qx 'theme = Gruvbox Dark Hard' ghostty/config.ghostty
 
 if command -v ghostty >/dev/null 2>&1; then
