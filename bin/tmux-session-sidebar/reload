@@ -38,6 +38,7 @@ done
 
 tmux set-option -g '@pin_sidebar_open' '1' >/dev/null 2>&1 || :
 "$HOME/bin/tmux-session-sidebar/fit-windows" >/dev/null 2>&1 || :
+"$HOME/bin/tmux-session-sidebar/precompute-focus" >/dev/null 2>&1 || :
 
 tmux list-windows -aF '#{window_id}' 2>/dev/null | while IFS= read -r win; do
 	"$HOME/bin/tmux-session-sidebar/sidebar-attach" "$win" >/dev/null 2>&1 || :
