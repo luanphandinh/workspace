@@ -41,9 +41,9 @@ make skills-sync
 make workspace-bin
 ```
 
-## Tmux / Alacritty
+## Tmux / Alacritty / Ghostty
 
-- Configs live under `tmux/` and `alacritty/`. Use `make tmux-config` or `make alacritty-config` after edits to install them.
+- Configs live under `tmux/`, `alacritty/`, and `ghostty/`. Use `make tmux-config`, `make alacritty-config`, or `make ghostty-config` after edits to install them.
 
 ## General
 
