@@ -362,8 +362,8 @@ end
 
 local function test_treesitter_uses_native_runtime()
   local plugin = require("lazy.core.config").plugins["nvim-treesitter"]
-  assert_true(type(plugin) == "table", "nvim-treesitter plugin should be registered")
-  assert_true(plugin.branch ~= "master", "nvim-treesitter should not stay on the legacy compat branch")
+  assert_true(plugin == nil, "native treesitter runtime should not register nvim-treesitter")
+  assert_true(package.loaded["nvim-treesitter"] == nil, "native runtime setup should not load nvim-treesitter")
   assert_true(package.loaded["nvim-treesitter.configs"] == nil, "native runtime setup should not load nvim-treesitter.configs")
 end
 
