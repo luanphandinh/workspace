@@ -72,7 +72,7 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update version-lock-update setup-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config ghostty ghostty-install ghostty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test tmux-sidebar-test ghostty-test cleanup
+.PHONY: help setup update version-lock-update setup-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config ghostty ghostty-install ghostty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test tmux-sidebar-test tmux-status-test ghostty-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -215,7 +215,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: version-lock-test mkws-test tmux-sidebar-test ghostty-test ## Run smoke tests
+test: version-lock-test mkws-test tmux-sidebar-test tmux-status-test ghostty-test ## Run smoke tests
 
 version-lock-test: ## Run version-lock smoke tests
 	sh ./scripts/version-lock-smoke-test.sh
@@ -225,6 +225,9 @@ mkws-test: ## Run mkws/mkwst/mkwsts smoke tests
 
 tmux-sidebar-test: ## Run tmux sidebar smoke tests
 	sh ./scripts/tmux-sidebar-smoke-test.sh
+
+tmux-status-test: ## Run tmux status smoke tests
+	sh ./scripts/tmux-status-smoke-test.sh
 
 ghostty-test: ## Run ghostty config/install smoke tests
 	sh ./scripts/ghostty-smoke-test.sh

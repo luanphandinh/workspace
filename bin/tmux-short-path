@@ -1,0 +1,60 @@
+#!/bin/sh
+set -eu
+
+path=${1:-${PWD:-}}
+[ -n "$path" ] || exit 0
+
+case "$path" in
+	"$HOME") path="~" ;;
+	"$HOME"/*) path="~/${path#"$HOME"/}" ;;
+esac
+
+case "$path" in
+	/) printf '/'; exit 0 ;;
+	~) printf '~'; exit 0 ;;
+	~/*)
+		prefix="~"
+		rest=${path#~/}
+		absolute=0
+		;;
+	/*)
+		prefix=""
+		rest=${path#/}
+		absolute=1
+		;;
+	*)
+		prefix=""
+		rest=$path
+		absolute=0
+		;;
+esac
+
+old_ifs=$IFS
+IFS=/
+set -f
+set -- $rest
+IFS=$old_ifs
+
+count=$#
+[ "$count" -gt 0 ] || {
+	[ "$absolute" -eq 1 ] && printf '/' || printf '%s' "$prefix"
+	exit 0
+}
+
+out=$prefix
+[ "$absolute" -eq 1 ] && out="/"
+i=1
+for part do
+	if [ "$i" -le $((count - 2)) ]; then
+		part=$(printf '%.1s' "$part")
+	fi
+
+	case "$out" in
+		"") out=$part ;;
+		/) out="/$part" ;;
+		*) out="$out/$part" ;;
+	esac
+	i=$((i + 1))
+done
+
+printf '%s' "$out"
