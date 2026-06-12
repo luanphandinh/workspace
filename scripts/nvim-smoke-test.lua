@@ -382,6 +382,37 @@ local function test_treesitter_required_parsers_available()
   end
 end
 
+local function test_go_treesitter_folds_available()
+  local path = temp_root .. "/go-folds/main.go"
+  write(path, {
+    "package main",
+    "",
+    "func main() {",
+    "\tif true {",
+    "\t\tprintln(\"hello\")",
+    "\t}",
+    "}",
+  })
+
+  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  local buf = vim.api.nvim_get_current_buf()
+  wait_until("go treesitter active for folds", function()
+    return vim.treesitter.highlighter.active[buf] ~= nil
+  end, 3000)
+
+  assert_true(vim.wo.foldmethod == "expr", "go buffers should use treesitter folds")
+  assert_true(vim.wo.foldexpr == "v:lua.vim.treesitter.foldexpr()", "go buffers should use treesitter foldexpr")
+
+  local has_fold = false
+  for line = 1, vim.api.nvim_buf_line_count(buf) do
+    if vim.fn.foldlevel(line) > 0 then
+      has_fold = true
+      break
+    end
+  end
+  assert_true(has_fold, "go treesitter fold query should create fold levels")
+end
+
 local function test_go_runtime_recovers_when_entering_loaded_buffer(worktree)
   local script = temp_root .. "/go-runtime-stale-buffer.lua"
   write(script, {
@@ -1187,6 +1218,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("treesitter required parsers available", function()
     test_treesitter_required_parsers_available()
+  end)
+
+  test("go treesitter folds available", function()
+    test_go_treesitter_folds_available()
   end)
 
   test("go runtime recovers when entering loaded buffer", function()
