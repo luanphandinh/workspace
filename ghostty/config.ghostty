@@ -1,0 +1,58 @@
+# Alacritty-compatible Ghostty config for tmux-focused workflows.
+
+font-family = "FiraCode Nerd Font Mono"
+font-size = 12
+
+window-padding-x = 8
+window-padding-y = 0
+macos-titlebar-style = hidden
+
+background = #282828
+foreground = #ebdbb2
+
+palette = 0=#282828
+palette = 1=#cc241d
+palette = 2=#98971a
+palette = 3=#d79921
+palette = 4=#458588
+palette = 5=#b16286
+palette = 6=#689d6a
+palette = 7=#a89984
+palette = 8=#928374
+palette = 9=#fb4934
+palette = 10=#b8bb26
+palette = 11=#fabd2f
+palette = 12=#83a598
+palette = 13=#d3869b
+palette = 14=#8ec07c
+palette = 15=#ebdbb2
+
+# Avoid accidental close-window input.
+keybind = cmd+w=ignore
+
+# Previous / next pinned tmux session.
+keybind = cmd+opt+up=csi:25~
+keybind = cmd+opt+down=csi:26~
+keybind = ctrl+shift+up=csi:25~
+keybind = ctrl+shift+down=csi:26~
+keybind = ctrl+shift+k=csi:25~
+keybind = ctrl+shift+j=csi:26~
+
+# Previous / next tmux window in the current session.
+keybind = cmd+opt+left=csi:28~
+keybind = cmd+opt+right=csi:29~
+keybind = ctrl+shift+left=csi:28~
+keybind = ctrl+shift+right=csi:29~
+keybind = ctrl+shift+h=csi:28~
+keybind = ctrl+shift+l=csi:29~
+
+# Jump to tmux window 1..9 in the current session.
+keybind = cmd+1=csi:31~
+keybind = cmd+2=csi:32~
+keybind = cmd+3=csi:33~
+keybind = cmd+4=csi:34~
+keybind = cmd+5=csi:35~
+keybind = cmd+6=csi:36~
+keybind = cmd+7=csi:37~
+keybind = cmd+8=csi:38~
+keybind = cmd+9=csi:39~

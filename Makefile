@@ -27,6 +27,8 @@ ifneq (,$(findstring Linux,$(UNAME)))
 		&& unzip -o -q ./tmp/FiraCode.zip "FiraCodeNerdFont*.ttf" -d "$(HOME)/.local/share/fonts" \
 		&& fc-cache -f "$(HOME)/.local/share/fonts")
 	mac_apps_install := true
+	ghostty_install := true
+	ghostty_setup :=
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
 									&& sudo apt install software-properties-common -y \
 									&& sudo add-apt-repository ppa:aslatter/ppa -y \
@@ -41,10 +43,13 @@ else
 	setup_script := echo "Run installer for macOs"
 	fonts_install := brew install --cask font-fira-code-nerd-font
 	mac_apps_install := brew install --cask alfred arc maccy
+	ghostty_install := brew install --cask ghostty
+	ghostty_setup := ghostty-install ghostty-config
 endif
 
 is_wsl := $(shell test -r /proc/sys/kernel/osrelease && grep -qi microsoft /proc/sys/kernel/osrelease && echo 1 || echo 0)
 alacritty_config_dir := $(HOME)/.config/alacritty
+ghostty_config_dir := $(HOME)/.config/ghostty
 ifeq ($(is_wsl),1)
 windows_appdata := $(shell cmd.exe /C echo %APPDATA% 2>/dev/null | tr -d '\r')
 alacritty_config_dir := $(shell wslpath -u '$(windows_appdata)')/alacritty
@@ -64,12 +69,12 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update version-lock-update setup-deps optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test tmux-sidebar-test cleanup
+.PHONY: help setup update version-lock-update setup-deps optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config ghostty ghostty-install ghostty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test tmux-sidebar-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
 setup:  ## Install all workspace tools, configs, and terminal agent CLIs.
-setup: setup-deps go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config optional-deps newsboat-config mac-apps cleanup
+setup: setup-deps go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config $(ghostty_setup) optional-deps newsboat-config mac-apps cleanup
 
 update: setup-deps version-lock-update ## Install all workspace tools while updating Neovim plugins and native treesitter locks to latest.
 	$(MAKE) MODE=latest setup
@@ -158,6 +163,17 @@ alacritty-install: ## Install alacritty only, now config
 alacritty-config: ## Install alacritty + config + theme
 	test -d "$(alacritty_config_dir)" || mkdir -p "$(alacritty_config_dir)"
 	cp -r ./alacritty/. "$(alacritty_config_dir)/"
+	@$(fonts_install)
+
+ghostty: ## Install ghostty and config
+ghostty: ghostty-install ghostty-config
+
+ghostty-install: ## Install ghostty only, no config
+	@$(ghostty_install)
+
+ghostty-config: ## Install ghostty config
+	test -d "$(ghostty_config_dir)" || mkdir -p "$(ghostty_config_dir)"
+	cp -r ./ghostty/. "$(ghostty_config_dir)/"
 	@$(fonts_install)
 
 mac-apps: ## Install macOS workspace GUI apps
