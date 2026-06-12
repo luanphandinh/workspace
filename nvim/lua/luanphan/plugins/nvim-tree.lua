@@ -8,7 +8,7 @@ return {
           custom = { "^\\.git$" },
         },
         view = {
-          width = 45,
+          width = 40,
         },
         actions = {
           change_dir = {
