@@ -20,19 +20,6 @@ assert_eq() {
 	printf 'ok %s\n' "$label"
 }
 
-assert_eq "/c/b/a/d/full_name/full_name" \
-	"$(HOME="$TMP/home" sh "$ROOT/bin/tmux-short-path" "/code/base/app/domain/full_name/full_name")" \
-	"short path keeps last two full"
-
-assert_eq "/a/b" \
-	"$(HOME="$TMP/home" sh "$ROOT/bin/tmux-short-path" "/a/b")" \
-	"short path keeps short absolute paths"
-
-mkdir -p "$TMP/home/personal/local_workspaces/example/workspace"
-assert_eq "~/p/l/example/workspace" \
-	"$(HOME="$TMP/home" sh "$ROOT/bin/tmux-short-path" "$TMP/home/personal/local_workspaces/example/workspace")" \
-	"short path keeps home prefix"
-
 if command -v sqlite3 >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
 	db="$TMP/state.sqlite"
 	rollout="$TMP/rollout.jsonl"
@@ -49,7 +36,9 @@ else
 	printf 'skip codex status compact format; sqlite3 or jq missing\n'
 fi
 
-grep -q 'tmux-short-path "#{pane_current_path}"' "$ROOT/tmux/.tmux.conf"
+! grep -q 'tmux-short-path' "$ROOT/tmux/.tmux.conf"
+grep -q 'git rev-parse --abbrev-ref HEAD' "$ROOT/tmux/.tmux.conf"
+grep -q "set -g status-left ' ~ #(" "$ROOT/tmux/.tmux.conf"
 grep -q 'tmux-claude-codex-status' "$ROOT/tmux/.tmux.conf"
 
 echo "PASS tmux status smoke tests"
