@@ -37,6 +37,9 @@ assert_line_count() {
 HUB="$TMP/hub"
 LOG="$TMP/run.log"
 INSTALLER="$TMP/install-skill"
+PROJECT="$TMP/project"
+FAKEBIN="$TMP/bin"
+FZF_INPUT="$TMP/fzf-input"
 
 cat > "$INSTALLER" <<'SH'
 #!/bin/sh
@@ -65,6 +68,27 @@ assert_exists "$HUB/.agent/skills/example-skill/SKILL.md"
 assert_line_count "$HUB/execute_plugins" 1
 assert_line_count "$LOG" 2
 assert_contains "$HUB/package.json" '"private": true'
+
+mkdir -p "$HUB/.claude/skills/other-skill" "$PROJECT" "$FAKEBIN"
+printf '# other\n' > "$HUB/.claude/skills/other-skill/SKILL.md"
+cat > "$FAKEBIN/fzf" <<'SH'
+#!/bin/sh
+set -eu
+cat > "$SKILLS_HUB_FZF_INPUT"
+printf '%s\n' ".agent/skills/example-skill" ".claude/skills/other-skill"
+SH
+chmod +x "$FAKEBIN/fzf"
+
+(
+	cd "$PROJECT"
+	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+		python3 "$ROOT/bin/skills-hub" pick >/dev/null
+)
+
+assert_contains "$FZF_INPUT" ".agent/skills/example-skill"
+assert_contains "$FZF_INPUT" ".claude/skills/other-skill"
+assert_exists "$PROJECT/.agent/skills/example-skill/SKILL.md"
+assert_exists "$PROJECT/.claude/skills/other-skill/SKILL.md"
 
 where_path=$(SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" where)
 if [ "$where_path" != "$HUB" ]; then

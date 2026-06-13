@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -23,11 +24,13 @@ def usage() -> None:
         """Usage:
   skills-hub add <command>
   skills-hub pull
+  skills-hub pick
   skills-hub where
 
 Commands:
   add   Run <command> inside the managed skills-hub folder, then cache it in execute_plugins.
   pull  Replay every cached command from execute_plugins inside the managed skills-hub folder.
+  pick  Pick hub skills with fzf and copy them into the current folder.
   where Print the managed skills-hub folder path.
 
 Environment:
@@ -93,6 +96,35 @@ def cache_command(command: str, path: Path) -> None:
     write_commands(path, commands)
 
 
+def copy_skill_dir(src: Path, dst: Path) -> None:
+    if dst.is_symlink() or dst.is_file():
+        dst.unlink()
+    elif dst.exists():
+        shutil.rmtree(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        src,
+        dst,
+        ignore=shutil.ignore_patterns(".git", ".DS_Store", "__pycache__"),
+    )
+
+
+def discover_skill_dirs(home: Path) -> dict[str, Path]:
+    if not home.is_dir():
+        return {}
+
+    skills = {}
+    for skill_md in home.rglob("SKILL.md"):
+        skill_dir = skill_md.parent
+        if skill_dir.parent.name != "skills":
+            continue
+        rel = skill_dir.relative_to(home)
+        if len(rel.parts) < 3:
+            continue
+        skills[str(rel)] = skill_dir
+    return dict(sorted(skills.items()))
+
+
 def cmd_add(args: list[str]) -> int:
     home = hub_home()
     path = cache_file(home)
@@ -129,6 +161,48 @@ def cmd_pull() -> int:
     return 0
 
 
+def cmd_pick() -> int:
+    if shutil.which("fzf") is None:
+        die("fzf is required for skills-hub pick")
+
+    home = hub_home()
+    ensure_home(home)
+    skills = discover_skill_dirs(home)
+    if not skills:
+        print(f"skills-hub: no skills found under {home}")
+        return 0
+
+    proc = subprocess.run(
+        ["fzf", "--multi", "--prompt", "skills-hub> "],
+        input="\n".join(skills.keys()) + "\n",
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode == 130:
+        print("skills-hub: no skills selected")
+        return 0
+    if proc.returncode != 0:
+        return proc.returncode
+
+    selected = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    if not selected:
+        print("skills-hub: no skills selected")
+        return 0
+
+    copied = 0
+    for rel in selected:
+        src = skills.get(rel)
+        if src is None:
+            die(f"selected skill is not in hub: {rel}")
+        dst = Path.cwd() / rel
+        copy_skill_dir(src, dst)
+        print(f"skills-hub: installed {rel}")
+        copied += 1
+
+    print(f"skills-hub: installed {copied} skill(s)")
+    return 0
+
+
 def cmd_where() -> int:
     home = hub_home()
     ensure_home(home)
@@ -149,6 +223,10 @@ def main() -> int:
         if args:
             die("pull takes no args")
         return cmd_pull()
+    if command == "pick":
+        if args:
+            die("pick takes no args")
+        return cmd_pick()
     if command == "where":
         if args:
             die("where takes no args")
