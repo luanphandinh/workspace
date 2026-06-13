@@ -74,7 +74,7 @@ fmt_usage() {
 }
 
 file_mtime() {
-	stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || date +%s
+	stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || date +%s
 }
 
 codex_status() {
