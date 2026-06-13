@@ -25,6 +25,15 @@ assert_contains() {
 	}
 }
 
+assert_not_contains() {
+	if grep -F "$2" "$1" >/dev/null; then
+		printf 'expected %s to not contain: %s\n' "$1" "$2" >&2
+		printf '%s contents:\n' "$1" >&2
+		cat "$1" >&2
+		exit 1
+	fi
+}
+
 assert_line_count() {
 	count=$(wc -l < "$1" | tr -d ' ')
 	if [ "$count" != "$2" ]; then
@@ -75,13 +84,15 @@ cat > "$FAKEBIN/fzf" <<'SH'
 #!/bin/sh
 set -eu
 cat > "$SKILLS_HUB_FZF_INPUT"
-printf '%s\n' ".agent/skills/example-skill" ".claude/skills/other-skill"
+printf '%s\n' "$SKILLS_HUB_FZF_OUTPUT"
 SH
 chmod +x "$FAKEBIN/fzf"
 
 (
 	cd "$PROJECT"
 	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+		SKILLS_HUB_FZF_OUTPUT=".agent/skills/example-skill
+.claude/skills/other-skill" \
 		python3 "$ROOT/bin/skills-hub" pick >/dev/null
 )
 
@@ -89,6 +100,37 @@ assert_contains "$FZF_INPUT" ".agent/skills/example-skill"
 assert_contains "$FZF_INPUT" ".claude/skills/other-skill"
 assert_exists "$PROJECT/.agent/skills/example-skill/SKILL.md"
 assert_exists "$PROJECT/.claude/skills/other-skill/SKILL.md"
+
+mkdir -p "$HUB/.agent/skills/third-skill" "$TMP/group-project"
+printf '# third\n' > "$HUB/.agent/skills/third-skill/SKILL.md"
+
+PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+	SKILLS_HUB_FZF_OUTPUT=".agent/skills/example-skill
+.claude/skills/other-skill" \
+	python3 "$ROOT/bin/skills-hub" group create useful >/dev/null
+
+assert_exists "$HUB/groups/useful"
+assert_contains "$HUB/groups/useful" ".agent/skills/example-skill"
+assert_contains "$HUB/groups/useful" ".claude/skills/other-skill"
+
+PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+	SKILLS_HUB_FZF_OUTPUT="+ .agent/skills/third-skill
+- .claude/skills/other-skill" \
+	python3 "$ROOT/bin/skills-hub" group update useful >/dev/null
+
+assert_contains "$HUB/groups/useful" ".agent/skills/example-skill"
+assert_contains "$HUB/groups/useful" ".agent/skills/third-skill"
+assert_not_contains "$HUB/groups/useful" ".claude/skills/other-skill"
+
+(
+	cd "$TMP/group-project"
+	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+		SKILLS_HUB_FZF_OUTPUT="useful" \
+		python3 "$ROOT/bin/skills-hub" group pick >/dev/null
+)
+
+assert_exists "$TMP/group-project/.agent/skills/example-skill/SKILL.md"
+assert_exists "$TMP/group-project/.agent/skills/third-skill/SKILL.md"
 
 where_path=$(SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" where)
 if [ "$where_path" != "$HUB" ]; then

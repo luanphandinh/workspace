@@ -14,6 +14,10 @@ def cache_file(home: Path) -> Path:
     return home / "execute_plugins"
 
 
+def groups_dir(home: Path) -> Path:
+    return home / "groups"
+
+
 def die(message: str, code: int = 1) -> None:
     print(f"error: {message}", file=sys.stderr)
     sys.exit(code)
@@ -25,12 +29,16 @@ def usage() -> None:
   skills-hub add <command>
   skills-hub pull
   skills-hub pick
+  skills-hub group create [name]
+  skills-hub group update [name]
+  skills-hub group pick
   skills-hub where
 
 Commands:
   add   Run <command> inside the managed skills-hub folder, then cache it in execute_plugins.
   pull  Replay every cached command from execute_plugins inside the managed skills-hub folder.
   pick  Pick hub skills with fzf and copy them into the current folder.
+  group Save, update, and install named skill groups.
   where Print the managed skills-hub folder path.
 
 Environment:
@@ -82,6 +90,74 @@ def command_from_args(args: list[str]) -> str:
     return command
 
 
+def validate_group_name(name: str) -> str:
+    name = name.strip()
+    if not name:
+        die("group name is required")
+    if name in (".", "..") or "/" in name or "\\" in name:
+        die("group name must be a simple file name")
+    return name
+
+
+def group_path(home: Path, name: str) -> Path:
+    return groups_dir(home) / validate_group_name(name)
+
+
+def read_group(path: Path) -> list[str]:
+    if not path.is_file():
+        return []
+    skills = []
+    seen = set()
+    for line in path.read_text().splitlines():
+        rel = line.strip()
+        if not rel or rel.startswith("#") or rel in seen:
+            continue
+        seen.add(rel)
+        skills.append(rel)
+    return skills
+
+
+def write_group(path: Path, skills: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    seen = set()
+    lines = []
+    for rel in skills:
+        rel = rel.strip()
+        if not rel or rel in seen:
+            continue
+        seen.add(rel)
+        lines.append(rel)
+    path.write_text("".join(f"{rel}\n" for rel in lines))
+
+
+def discover_groups(home: Path) -> list[str]:
+    path = groups_dir(home)
+    if not path.is_dir():
+        return []
+    return sorted(item.name for item in path.iterdir() if item.is_file())
+
+
+def require_fzf() -> None:
+    if shutil.which("fzf") is None:
+        die("fzf is required")
+
+
+def run_fzf(choices: list[str], prompt: str, multi: bool = True, print_query: bool = False) -> tuple[int, list[str]]:
+    require_fzf()
+    args = ["fzf", "--prompt", prompt]
+    if multi:
+        args.append("--multi")
+    if print_query:
+        args.append("--print-query")
+    proc = subprocess.run(
+        args,
+        input="\n".join(choices) + ("\n" if choices else ""),
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode, proc.stdout.splitlines()
+
+
 def run_plugin(command: str, home: Path) -> int:
     ensure_home(home)
     print(f"skills-hub: {home}")
@@ -125,6 +201,27 @@ def discover_skill_dirs(home: Path) -> dict[str, Path]:
     return dict(sorted(skills.items()))
 
 
+def install_skill_paths(home: Path, selected: list[str]) -> int:
+    skills = discover_skill_dirs(home)
+    copied = 0
+    seen = set()
+    for rel in selected:
+        rel = rel.strip()
+        if not rel or rel in seen:
+            continue
+        seen.add(rel)
+        src = skills.get(rel)
+        if src is None:
+            die(f"selected skill is not in hub: {rel}")
+        dst = Path.cwd() / rel
+        copy_skill_dir(src, dst)
+        print(f"skills-hub: installed {rel}")
+        copied += 1
+
+    print(f"skills-hub: installed {copied} skill(s)")
+    return 0
+
+
 def cmd_add(args: list[str]) -> int:
     home = hub_home()
     path = cache_file(home)
@@ -162,9 +259,6 @@ def cmd_pull() -> int:
 
 
 def cmd_pick() -> int:
-    if shutil.which("fzf") is None:
-        die("fzf is required for skills-hub pick")
-
     home = hub_home()
     ensure_home(home)
     skills = discover_skill_dirs(home)
@@ -172,35 +266,164 @@ def cmd_pick() -> int:
         print(f"skills-hub: no skills found under {home}")
         return 0
 
-    proc = subprocess.run(
-        ["fzf", "--multi", "--prompt", "skills-hub> "],
-        input="\n".join(skills.keys()) + "\n",
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode == 130:
+    code, output = run_fzf(list(skills.keys()), "skills-hub> ")
+    if code == 130:
         print("skills-hub: no skills selected")
         return 0
-    if proc.returncode != 0:
-        return proc.returncode
+    if code != 0:
+        return code
 
-    selected = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    selected = [line.strip() for line in output if line.strip()]
     if not selected:
         print("skills-hub: no skills selected")
         return 0
 
-    copied = 0
-    for rel in selected:
-        src = skills.get(rel)
-        if src is None:
-            die(f"selected skill is not in hub: {rel}")
-        dst = Path.cwd() / rel
-        copy_skill_dir(src, dst)
-        print(f"skills-hub: installed {rel}")
-        copied += 1
+    return install_skill_paths(home, selected)
 
-    print(f"skills-hub: installed {copied} skill(s)")
+
+def read_group_name_from_stdin() -> str:
+    if not sys.stdin.isatty():
+        die("group name is required")
+    return validate_group_name(input("Group name: "))
+
+
+def select_group_name(home: Path):
+    names = discover_groups(home)
+    code, output = run_fzf(names, "skills-group> ", multi=False, print_query=True)
+    if code == 130:
+        return None
+    if code != 0:
+        sys.exit(code)
+
+    query = output[0].strip() if output else ""
+    selected = [line.strip() for line in output[1:] if line.strip()]
+    if selected:
+        return validate_group_name(selected[0])
+    if query:
+        return validate_group_name(query)
+    return None
+
+
+def cmd_group_edit(name: str, create: bool) -> int:
+    home = hub_home()
+    ensure_home(home)
+    path = group_path(home, name)
+    if create and path.exists():
+        die(f"group already exists: {name}")
+    current = [] if create else read_group(path)
+    skills = discover_skill_dirs(home)
+    if not skills:
+        print(f"skills-hub: no skills found under {home}")
+        return 0
+
+    current_set = set(current)
+    choices = []
+    if create:
+        choices.extend(skills.keys())
+    else:
+        choices.extend(f"- {rel}" for rel in current if rel in skills)
+        choices.extend(f"- {rel}" for rel in current if rel not in skills)
+        choices.extend(f"+ {rel}" for rel in skills if rel not in current_set)
+
+    code, output = run_fzf(choices, "skills-group-skill> ")
+    if code == 130:
+        print("skills-hub: group unchanged")
+        return 0
+    if code != 0:
+        return code
+
+    members = list(current)
+    for line in output:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("+ "):
+            rel = line[2:].strip()
+            if rel and rel not in members:
+                members.append(rel)
+            continue
+        if line.startswith("- "):
+            rel = line[2:].strip()
+            members = [item for item in members if item != rel]
+            continue
+        if create and line in skills and line not in members:
+            members.append(line)
+
+    write_group(path, members)
+    print(f"skills-hub: saved group {path.name} with {len(members)} skill(s)")
     return 0
+
+
+def cmd_group_pick() -> int:
+    home = hub_home()
+    ensure_home(home)
+    names = discover_groups(home)
+    if not names:
+        print(f"skills-hub: no groups found under {groups_dir(home)}")
+        return 0
+
+    code, output = run_fzf(names, "skills-group> ")
+    if code == 130:
+        print("skills-hub: no groups selected")
+        return 0
+    if code != 0:
+        return code
+
+    selected_groups = [line.strip() for line in output if line.strip()]
+    if not selected_groups:
+        print("skills-hub: no groups selected")
+        return 0
+
+    selected_skills = []
+    seen = set()
+    for name in selected_groups:
+        path = group_path(home, name)
+        for rel in read_group(path):
+            if rel in seen:
+                continue
+            seen.add(rel)
+            selected_skills.append(rel)
+
+    return install_skill_paths(home, selected_skills)
+
+
+def cmd_group(args: list[str]) -> int:
+    if not args or args[0] in ("-h", "--help", "help"):
+        print(
+            """Usage:
+  skills-hub group create [name]
+  skills-hub group update [name]
+  skills-hub group pick
+"""
+        )
+        return 0
+
+    subcommand = args[0]
+    rest = args[1:]
+    if subcommand == "create":
+        if len(rest) > 1:
+            die("group create takes at most one name")
+        name = validate_group_name(rest[0]) if rest else read_group_name_from_stdin()
+        return cmd_group_edit(name, create=True)
+    if subcommand == "update":
+        if len(rest) > 1:
+            die("group update takes at most one name")
+        if rest:
+            name = validate_group_name(rest[0])
+        else:
+            selected = select_group_name(hub_home())
+            if selected is None:
+                print("skills-hub: no group selected")
+                return 0
+            name = selected
+        return cmd_group_edit(name, create=False)
+    if subcommand == "pick":
+        if rest:
+            die("group pick takes no args")
+        return cmd_group_pick()
+
+    die(f"unknown group command: {subcommand}")
+    return 1
 
 
 def cmd_where() -> int:
@@ -227,6 +450,8 @@ def main() -> int:
         if args:
             die("pick takes no args")
         return cmd_pick()
+    if command == "group":
+        return cmd_group(args)
     if command == "where":
         if args:
             die("where takes no args")
