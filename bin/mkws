@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 WS_CONTAINER = "local_workspaces"
+EXTERNAL_DIR = "_external"
 AGENT_SKILL_TARGETS = (
     ("codex", Path(".agent") / "skills"),
     ("claude-code", Path(".claude") / "skills"),
@@ -483,9 +484,23 @@ def resolve_source(raw: str, repo_root: Path):
 # its immediate subfolders are scanned and each one with .git is included.
 # Empty input → default to [$PWD].
 # ---------------------------------------------------------------------------
-def expand_targets(folders: list) -> list:
+def target_label(path: Path) -> str:
+    if path.parent.name == EXTERNAL_DIR:
+        return f"{EXTERNAL_DIR}/{path.name}"
+    return path.name
+
+
+def target_kind(path: Path) -> str:
+    return "external" if path.parent.name == EXTERNAL_DIR else "regular"
+
+
+def expand_targets(folders: list, include_default_external: bool = False) -> list:
     if not folders:
-        folders = [os.getcwd()]
+        cwd = Path.cwd()
+        folders = [str(cwd)]
+        external_dir = cwd / EXTERNAL_DIR
+        if include_default_external and not (cwd / ".git").exists() and external_dir.is_dir():
+            folders.append(str(external_dir))
 
     repos: list = []
     seen: set = set()
@@ -568,17 +583,23 @@ def resolve_existing_workspace_context(pwd: Path, name_flag: str) -> Path:
 # run `git pull` on the currently checked-out branch.
 # ---------------------------------------------------------------------------
 def cmd_pull(folders: list) -> int:
-    repos = expand_targets(folders)
+    repos = expand_targets(folders, include_default_external=True)
 
     if not repos:
         heading("summary")
         info("no git repos found")
         return 0
 
-    info(f"pulling {len(repos)} repo(s) in parallel...")
+    external_total = sum(1 for repo in repos if target_kind(repo) == "external")
+    if external_total:
+        regular_total = len(repos) - external_total
+        info(f"pulling {len(repos)} repo(s) in parallel ({regular_total} regular, {external_total} external)...")
+    else:
+        info(f"pulling {len(repos)} repo(s) in parallel...")
 
     def worker(sub: Path, log: RepoLog) -> str:
-        log.heading(sub.name)
+        label = target_label(sub)
+        log.heading(label)
         proc = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
         branch = proc.stdout.strip() if proc.returncode == 0 else ""
         if not branch:
@@ -592,20 +613,25 @@ def cmd_pull(folders: list) -> int:
         log.raw((proc.stdout or "").rstrip())
         log.raw((proc.stderr or "").rstrip())
         if proc.returncode == 0:
-            log.ok(f"updated {sub.name}")
+            log.ok(f"updated {label}")
             return "pulled"
-        log.fail(f"pull failed for {sub.name}")
+        log.fail(f"pull failed for {label}")
         return "failed"
 
     results = run_in_parallel(repos, worker)
     pulled = sum(1 for r in results if r == "pulled")
     skipped = sum(1 for r in results if r == "skipped")
-    failed_repos = [repos[i].name for i, r in enumerate(results) if r == "failed"]
+    failed_repos = [target_label(repos[i]) for i, r in enumerate(results) if r == "failed"]
     failed = len(failed_repos)
 
     heading("summary")
     color = GREEN if failed == 0 else YELLOW
     info(f"pulled: {color}{pulled}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
+    if external_total:
+        external_pulled = sum(1 for i, r in enumerate(results) if r == "pulled" and target_kind(repos[i]) == "external")
+        external_skipped = sum(1 for i, r in enumerate(results) if r == "skipped" and target_kind(repos[i]) == "external")
+        external_failed = sum(1 for i, r in enumerate(results) if r == "failed" and target_kind(repos[i]) == "external")
+        info(f"external: pulled {external_pulled}, skipped: {external_skipped}, failed: {external_failed}")
     if failed_repos:
         info(f"failed: {RED}{', '.join(failed_repos)}{RESET}")
     return 0 if failed == 0 else 1
@@ -1697,11 +1723,13 @@ Modes:
              matching repo. Takes any number of folder args (absolute, relative,
              or a bare name under $PWD). Each arg is either a git repo (pulled
              directly) or a directory whose immediate git-repo subfolders are
-             pulled. No args → iterate $PWD's subfolders.
+             pulled. No args → iterate $PWD's subfolders and immediate git
+             repos under $PWD/_external when present.
              Examples:
-               mkws pull                        # every repo under $PWD
+               mkws pull                        # every repo under $PWD plus _external
                mkws pull repo-a                 # just one repo in $PWD
                mkws pull repo-a repo-b          # two repos
+               mkws pull _external              # only external repos
                mkws pull ./local_workspaces/myws    # every worktree in a workspace
                mkws pull /abs/repo-a ./repo-b   # mix absolute and relative
   push       `git push origin HEAD` on the current branch of every matching
