@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+def hub_home() -> Path:
+    return Path(os.environ.get("SKILLS_HUB_HOME", "~/.skills-hub")).expanduser()
+
+
+def cache_file(home: Path) -> Path:
+    return home / "execute_plugins"
+
+
+def die(message: str, code: int = 1) -> None:
+    print(f"error: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+def usage() -> None:
+    print(
+        """Usage:
+  skills-hub add <command>
+  skills-hub pull
+  skills-hub pick
+  skills-hub where
+
+Commands:
+  add   Run <command> inside the managed skills-hub folder, then cache it in execute_plugins.
+  pull  Replay every cached command from execute_plugins inside the managed skills-hub folder.
+  pick  Pick hub skills with fzf and copy them into the current folder.
+  where Print the managed skills-hub folder path.
+
+Environment:
+  SKILLS_HUB_HOME  Managed folder. Default: ~/.skills-hub
+
+Example:
+  skills-hub add 'npx skills add example-org/skills-bundle -y'
+  skills-hub pull
+  cd "$(skills-hub where)"
+"""
+    )
+
+
+def read_commands(path: Path) -> list[str]:
+    if not path.is_file():
+        return []
+    commands = []
+    seen = set()
+    for line in path.read_text().splitlines():
+        command = line.strip()
+        if not command or command.startswith("#"):
+            continue
+        if command in seen:
+            continue
+        seen.add(command)
+        commands.append(command)
+    return commands
+
+
+def write_commands(path: Path, commands: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "".join(f"{command}\n" for command in commands)
+    path.write_text(text)
+
+
+def ensure_home(home: Path) -> None:
+    home.mkdir(parents=True, exist_ok=True)
+    package_json = home / "package.json"
+    if not package_json.exists():
+        package_json.write_text('{"private": true, "name": "skills-hub"}\n')
+
+
+def command_from_args(args: list[str]) -> str:
+    command = " ".join(args).strip()
+    if not command:
+        die("missing command")
+    if "\n" in command or "\r" in command:
+        die("command must be a single line")
+    return command
+
+
+def run_plugin(command: str, home: Path) -> int:
+    ensure_home(home)
+    print(f"skills-hub: {home}")
+    print(f"skills-hub: running: {command}")
+    return subprocess.run(command, shell=True, cwd=str(home)).returncode
+
+
+def cache_command(command: str, path: Path) -> None:
+    commands = read_commands(path)
+    if command not in commands:
+        commands.append(command)
+    write_commands(path, commands)
+
+
+def copy_skill_dir(src: Path, dst: Path) -> None:
+    if dst.is_symlink() or dst.is_file():
+        dst.unlink()
+    elif dst.exists():
+        shutil.rmtree(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        src,
+        dst,
+        ignore=shutil.ignore_patterns(".git", ".DS_Store", "__pycache__"),
+    )
+
+
+def discover_skill_dirs(home: Path) -> dict[str, Path]:
+    if not home.is_dir():
+        return {}
+
+    skills = {}
+    for skill_md in home.rglob("SKILL.md"):
+        skill_dir = skill_md.parent
+        if skill_dir.parent.name != "skills":
+            continue
+        rel = skill_dir.relative_to(home)
+        if len(rel.parts) < 3:
+            continue
+        skills[str(rel)] = skill_dir
+    return dict(sorted(skills.items()))
+
+
+def cmd_add(args: list[str]) -> int:
+    home = hub_home()
+    path = cache_file(home)
+    command = command_from_args(args)
+    code = run_plugin(command, home)
+    if code != 0:
+        return code
+    cache_command(command, path)
+    print(f"skills-hub: cached: {path}")
+    return 0
+
+
+def cmd_pull() -> int:
+    home = hub_home()
+    path = cache_file(home)
+    commands = read_commands(path)
+    if not commands:
+        print(f"skills-hub: no commands in {path}")
+        return 0
+
+    failed = []
+    for command in commands:
+        code = run_plugin(command, home)
+        if code != 0:
+            failed.append((command, code))
+
+    write_commands(path, commands)
+    if failed:
+        for command, code in failed:
+            print(f"skills-hub: failed ({code}): {command}", file=sys.stderr)
+        return 1
+
+    print(f"skills-hub: pulled {len(commands)} command(s)")
+    return 0
+
+
+def cmd_pick() -> int:
+    if shutil.which("fzf") is None:
+        die("fzf is required for skills-hub pick")
+
+    home = hub_home()
+    ensure_home(home)
+    skills = discover_skill_dirs(home)
+    if not skills:
+        print(f"skills-hub: no skills found under {home}")
+        return 0
+
+    proc = subprocess.run(
+        ["fzf", "--multi", "--prompt", "skills-hub> "],
+        input="\n".join(skills.keys()) + "\n",
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode == 130:
+        print("skills-hub: no skills selected")
+        return 0
+    if proc.returncode != 0:
+        return proc.returncode
+
+    selected = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    if not selected:
+        print("skills-hub: no skills selected")
+        return 0
+
+    copied = 0
+    for rel in selected:
+        src = skills.get(rel)
+        if src is None:
+            die(f"selected skill is not in hub: {rel}")
+        dst = Path.cwd() / rel
+        copy_skill_dir(src, dst)
+        print(f"skills-hub: installed {rel}")
+        copied += 1
+
+    print(f"skills-hub: installed {copied} skill(s)")
+    return 0
+
+
+def cmd_where() -> int:
+    home = hub_home()
+    ensure_home(home)
+    print(home)
+    return 0
+
+
+def main() -> int:
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
+        usage()
+        return 0
+
+    command = sys.argv[1]
+    args = sys.argv[2:]
+    if command == "add":
+        return cmd_add(args)
+    if command == "pull":
+        if args:
+            die("pull takes no args")
+        return cmd_pull()
+    if command == "pick":
+        if args:
+            die("pick takes no args")
+        return cmd_pick()
+    if command == "where":
+        if args:
+            die("where takes no args")
+        return cmd_where()
+
+    die(f"unknown command: {command}")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
