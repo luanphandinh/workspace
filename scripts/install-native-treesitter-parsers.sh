@@ -92,12 +92,6 @@ install_parser() {
   echo "installed treesitter parser: ${lang}"
 }
 
-wait_for_slot() {
-  while [ "$(jobs -p | wc -l | tr -d ' ')" -ge "$max_jobs" ]; do
-    sleep 0.1
-  done
-}
-
 wait_for_jobs() {
   status=0
   for job in "$@"; do
@@ -106,6 +100,17 @@ wait_for_jobs() {
     fi
   done
   return "$status"
+}
+
+flush_jobs() {
+  if [ -z "$jobs" ]; then
+    return
+  fi
+  if ! wait_for_jobs $jobs; then
+    install_status=1
+  fi
+  jobs=""
+  job_count=0
 }
 
 need_cmd git
@@ -118,14 +123,18 @@ mkdir -p "$cache_dir" "$parser_dir" "$queries_dir"
 python3 "$repo_root/scripts/version_lock.py" validate "$lock_file"
 
 jobs=""
+job_count=0
+install_status=0
 while IFS='	' read -r lang repo lock_version; do
-  wait_for_slot
   install_parser "$lang" "$repo" "$lock_version" &
   jobs="${jobs} $!"
+  job_count=$((job_count + 1))
+  if [ "$job_count" -ge "$max_jobs" ]; then
+    flush_jobs
+  fi
 done <<EOF
 $(python3 "$repo_root/scripts/version_lock.py" parsers "$lock_file")
 EOF
 
-if [ -n "$jobs" ]; then
-  wait_for_jobs $jobs
-fi
+flush_jobs
+exit "$install_status"
