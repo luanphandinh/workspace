@@ -18,8 +18,8 @@ grep -qx 'font_family FiraCode Nerd Font Mono' kitty/kitty.conf
 grep -qx 'font_size 12.0' kitty/kitty.conf
 grep -qx 'italic_font FiraCode Nerd Font Mono' kitty/kitty.conf
 grep -qx 'bold_italic_font FiraCode Nerd Font Mono' kitty/kitty.conf
-grep -qx 'background #282828' kitty/kitty.conf
-grep -qx 'foreground #ebdbb2' kitty/kitty.conf
+grep -qx 'include current-theme.conf' kitty/kitty.conf
+! grep -Eq '^(background|foreground|selection_background|selection_foreground|cursor|cursor_text_color|color[0-9]+)[[:space:]]' kitty/kitty.conf
 grep -qx 'hide_window_decorations titlebar-and-corners' kitty/kitty.conf
 grep -qx 'shell_integration disabled' kitty/kitty.conf
 grep -qx 'enable_audio_bell no' kitty/kitty.conf
@@ -65,6 +65,8 @@ printf '%s\n' "$setup_plan" | grep -q 'cp -r ./kitty/.'
 printf '%s\n' "$setup_plan" | grep -Eq 'font-fira-code-nerd-font|FiraCode.zip|install-windows-firacode-nerd-font'
 
 kitty_config_plan=$(make -n --no-print-directory kitty-config)
+printf '%s\n' "$kitty_config_plan" | grep -q "kitten themes --dump-theme 'Gruvbox Dark'"
+printf '%s\n' "$kitty_config_plan" | grep -q 'current-theme.conf'
 assert_no_font_install "$kitty_config_plan" "kitty-config"
 
 assert_no_font_install "$linux_plan" "kitty"

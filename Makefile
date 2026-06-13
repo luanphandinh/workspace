@@ -196,6 +196,7 @@ kitty-install: ## Install kitty only, no config
 kitty-config: ## Install kitty config
 	test -d "$(kitty_config_dir)" || mkdir -p "$(kitty_config_dir)"
 	cp -r ./kitty/. "$(kitty_config_dir)/"
+	kitten themes --dump-theme 'Gruvbox Dark' > "$(kitty_config_dir)/current-theme.conf"
 
 mac-apps: ## Install macOS workspace GUI apps
 	@$(mac_apps_install)
