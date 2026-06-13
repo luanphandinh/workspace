@@ -238,6 +238,32 @@ EOF
 	)
 	assert_remote_branch_exists "$sync_root/repo-sync" "feature/sync"
 
+	pull_seed="$TMP/mkws-pull-seed"
+	pull_remote="$TMP/mkws-pull-remote.git"
+	pull_updater="$TMP/mkws-pull-updater"
+	pull_root="$TMP/mkws-pull-root"
+	init_repo "$pull_seed"
+	git clone -q --bare "$pull_seed" "$pull_remote"
+	mkdir -p "$pull_root/_external"
+	git clone -q "$pull_remote" "$pull_root/repo-pull"
+	git clone -q "$pull_remote" "$pull_root/_external/external-pull"
+	git clone -q "$pull_remote" "$pull_updater"
+	git -C "$pull_updater" config user.name "Example User"
+	git -C "$pull_updater" config user.email "user@example.com"
+	printf 'remote update\n' > "$pull_updater/remote.txt"
+	git -C "$pull_updater" add remote.txt
+	git -C "$pull_updater" commit -q -m "remote update"
+	git -C "$pull_updater" push -q origin main
+	(
+		cd "$pull_root"
+		mkws pull > "$TMP/mkws-pull.out"
+	)
+	assert_exists "$pull_root/repo-pull/remote.txt"
+	assert_exists "$pull_root/_external/external-pull/remote.txt"
+	assert_contains "$TMP/mkws-pull.out" "pulling 2 repo(s) in parallel (1 regular, 1 external)"
+	assert_contains "$TMP/mkws-pull.out" "_external/external-pull"
+	assert_contains "$TMP/mkws-pull.out" "external: pulled 1, skipped: 0, failed: 0"
+
 	pass "mkws"
 }
 

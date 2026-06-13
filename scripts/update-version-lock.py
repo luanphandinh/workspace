@@ -22,10 +22,11 @@ def main():
 
     for parser in lock["treesitter"]["parsers"]:
         output = run(["git", "ls-remote", parser["repo"], "HEAD"])
-        ref = output.split()[0] if output else ""
-        if not ref:
+        lock_version = output.split()[0] if output else ""
+        if not lock_version:
             fail(f"unable to resolve parser HEAD: {parser['language']}")
-        parser["ref"] = ref
+        parser["lock_version"] = lock_version
+        parser.pop("ref", None)
 
     validate_lock(lock)
     lock_path.write_text(json.dumps(lock, indent=2) + "\n")

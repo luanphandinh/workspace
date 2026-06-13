@@ -23,6 +23,21 @@ assert_eq() {
 if command -v sqlite3 >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
 	db="$TMP/state.sqlite"
 	rollout="$TMP/rollout.jsonl"
+	fakebin="$TMP/fakebin"
+	mkdir -p "$fakebin"
+	cat > "$fakebin/stat" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-f" ]; then
+	printf '  File: "%s"\nBlocks: Total: 1\n' "$3"
+	exit 0
+fi
+if [ "$1" = "-c" ]; then
+	date +%s
+	exit 0
+fi
+exit 1
+EOF
+	chmod +x "$fakebin/stat"
 	sqlite3 "$db" 'create table threads (rollout_path text, updated_at integer);'
 	sqlite3 "$db" "insert into threads values ('$rollout', 1);"
 	cat > "$rollout" <<'EOF'
@@ -30,7 +45,7 @@ if command -v sqlite3 >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
 EOF
 	touch "$rollout"
 	assert_eq "codex[38% | 29%][22:20|14-11 22:13]" \
-		"$(TZ=UTC HOME="$TMP/home" RATE_LIMITS_CACHE="$TMP/missing.json" CODEX_STATE_DB="$db" sh "$ROOT/bin/tmux-claude-codex-status")" \
+		"$(PATH="$fakebin:$PATH" TZ=UTC HOME="$TMP/home" RATE_LIMITS_CACHE="$TMP/missing.json" CODEX_STATE_DB="$db" sh "$ROOT/bin/tmux-claude-codex-status")" \
 		"codex status compact format"
 else
 	printf 'skip codex status compact format; sqlite3 or jq missing\n'

@@ -7,6 +7,7 @@ cache_dir="${NVIM_NATIVE_TREESITTER_CACHE_DIR:-${repo_root}/tmp/native-treesitte
 site_dir="${NVIM_NATIVE_TREESITTER_SITE_DIR:-${XDG_DATA_HOME:-${HOME}/.local/share}/nvim/site}"
 parser_dir="${site_dir}/parser"
 queries_dir="${site_dir}/queries"
+max_jobs=4
 
 export PATH="${PATH}:${HOME}/.local/bin:${HOME}/bin"
 
@@ -20,7 +21,7 @@ need_cmd() {
 prepare_repo() {
   lang="$1"
   repo="$2"
-  ref="$3"
+  lock_version="$3"
   target="${cache_dir}/${lang}"
 
   if [ ! -d "${target}/.git" ]; then
@@ -30,9 +31,21 @@ prepare_repo() {
     git -C "$target" remote add origin "$repo"
   fi
 
-  git -C "$target" fetch --depth 1 origin "$ref" -q
+  git -C "$target" fetch --depth 1 origin "$lock_version" -q
   git -C "$target" checkout --detach FETCH_HEAD -q
   printf '%s\n' "$target"
+}
+
+resolve_latest_lock_version() {
+  lang="$1"
+  repo="$2"
+  output=$(git ls-remote "$repo" HEAD)
+  lock_version=$(printf '%s\n' "$output" | awk 'NR == 1 { print $1 }')
+  if [ -z "$lock_version" ]; then
+    echo "unable to resolve latest treesitter parser lock version: ${lang}" >&2
+    exit 1
+  fi
+  printf '%s\n' "$lock_version"
 }
 
 copy_queries() {
@@ -63,9 +76,13 @@ copy_queries() {
 install_parser() {
   lang="$1"
   repo="$2"
-  ref="$3"
+  lock_version="$3"
 
-  source_dir=$(prepare_repo "$lang" "$repo" "$ref")
+  if [ -z "$lock_version" ]; then
+    lock_version=$(resolve_latest_lock_version "$lang" "$repo")
+  fi
+
+  source_dir=$(prepare_repo "$lang" "$repo" "$lock_version")
   tmp_output="${parser_dir}/${lang}.so.tmp.$$"
   output="${parser_dir}/${lang}.so"
 
@@ -73,6 +90,22 @@ install_parser() {
   mv "$tmp_output" "$output"
   copy_queries "$lang" "$source_dir"
   echo "installed treesitter parser: ${lang}"
+}
+
+wait_for_slot() {
+  while [ "$(jobs -p | wc -l | tr -d ' ')" -ge "$max_jobs" ]; do
+    sleep 0.1
+  done
+}
+
+wait_for_jobs() {
+  status=0
+  for job in "$@"; do
+    if ! wait "$job"; then
+      status=1
+    fi
+  done
+  return "$status"
 }
 
 need_cmd git
@@ -84,6 +117,15 @@ mkdir -p "$cache_dir" "$parser_dir" "$queries_dir"
 
 python3 "$repo_root/scripts/version_lock.py" validate "$lock_file"
 
-python3 "$repo_root/scripts/version_lock.py" parsers "$lock_file" | while IFS='	' read -r lang repo ref; do
-  install_parser "$lang" "$repo" "$ref"
-done
+jobs=""
+while IFS='	' read -r lang repo lock_version; do
+  wait_for_slot
+  install_parser "$lang" "$repo" "$lock_version" &
+  jobs="${jobs} $!"
+done <<EOF
+$(python3 "$repo_root/scripts/version_lock.py" parsers "$lock_file")
+EOF
+
+if [ -n "$jobs" ]; then
+  wait_for_jobs $jobs
+fi

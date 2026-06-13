@@ -40,8 +40,8 @@ mkwsts index
 - `mkwst clean` — removes stale repo metadata from `workstation.yml` when a recorded path is missing or no longer a git repo. It does not delete repo directories.
 - `mkwsts index` — builds or refreshes `<root>/workstations.yml` for the current folder. Scans the current folder and immediate child folders for `workstation.yml`, skips hidden directories and `local_workspaces/`, and records workstation-level details only: `name`, `root`, and `manifest`.
 - `open` — subcommand. Opens a recorded workspace link in the default browser. With no query, lists all workspace links. Query can match the link name or URL exactly, or a unique substring. Run from inside a workspace dir/worktree, or pass `--name <workspace>`. Examples: `mkws open`, `mkws open design-doc`, `mkws open design-doc --name myws`.
-- `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders. Rejects `--add`, `--branch`, `--name`.
-  Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull ./local_workspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
+- `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders and immediate git repos under `$PWD/_external/` when present. External repos are pulled in parallel and reported separately, but remain read-only context for workspace creation/coding. Rejects `--add`, `--branch`, `--name`.
+  Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull _external`, `mkws pull ./local_workspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
 - `push` — subcommand. `git push origin HEAD` on the current branch of every matching repo. Parallel. Detached HEAD is skipped. Non-ff / auth failures are reported in the summary but do not halt the batch. Same folder-args form as `pull`. Rejects `--add`, `--branch`, `--name`.
 - `merge` — subcommand. **Bidirectional** merge driven by the required `<target>` argument:
   - **`mkws merge master`** (or `main`) — *Case B: integrate latest base INTO the feature branch*. For each worktree: use the repo's configured `base_branch` when present, otherwise `main`/`master`; stash dirty edits, pull `origin/<feature>` if it exists, merge the base into the feature branch, pop stash, `git push origin <feature>`. Halts on conflict (state left in place to resolve).
@@ -249,9 +249,9 @@ mkws open design-doc --name X
 Links are stored in `workspace.yml` under `links:` and are preserved by code-only operations such as `mkws clean`.
 
 ## Pull latest
-User intent: "refresh the repos", "pull latest", "bring all worktrees up to date". `mkws pull` walks the immediate subfolders and runs `git pull --ff-only` on each git repo it finds, using that repo's own currently checked-out branch.
+User intent: "refresh the repos", "pull latest", "bring all worktrees up to date". `mkws pull` walks the immediate subfolders and runs `git pull --ff-only` on each git repo it finds, using that repo's own currently checked-out branch. From a workstation root, no-arg `mkws pull` also includes immediate git repos under `_external/` and reports the external result count separately.
 ```
-# from the root: pulls every source repo on its branch
+# from the root: pulls every source repo plus _external repos on their branches
 cd <root>
 mkws pull
 
