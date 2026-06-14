@@ -16,6 +16,12 @@ assert_no_font_install() {
 test -f kitty/kitty.conf
 test -f kitty/kitty.app.png
 test -f kitty/LICENSE.kitty-icon
+old_terminal_name=$(printf 'ghost%s' 'ty')
+test ! -e "$old_terminal_name"
+if grep -R -i "$old_terminal_name" Makefile AGENTS.md CLAUDE.md scripts >/dev/null 2>&1; then
+	printf 'found stale %s setup reference\n' "$old_terminal_name" >&2
+	exit 1
+fi
 file kitty/kitty.app.png | grep -q 'PNG image data'
 grep -q 'MIT License' kitty/LICENSE.kitty-icon
 grep -qx 'font_family FiraCode Nerd Font Mono' kitty/kitty.conf
