@@ -27,8 +27,8 @@ ifneq (,$(findstring Linux,$(UNAME)))
 		&& unzip -o -q ./tmp/FiraCode.zip "FiraCodeNerdFont*.ttf" -d "$(HOME)/.local/share/fonts" \
 		&& fc-cache -f "$(HOME)/.local/share/fonts")
 	mac_apps_install := true
-	ghostty_install := if command -v ghostty >/dev/null 2>&1; then ghostty +version; else sudo apt update; if apt-cache show ghostty >/dev/null 2>&1; then sudo apt install -y ghostty; else echo "ghostty package unavailable in current apt repositories; skipping install"; fi; fi
-	ghostty_setup := ghostty-install ghostty-config
+	kitty_install := if command -v kitty >/dev/null 2>&1; then printf 'kitty already installed: %s\n' "$$(command -v kitty)"; else curl -fsSL https://sw.kovidgoyal.net/kitty/installer.sh | sh /dev/stdin; mkdir -p "$$HOME/.local/bin"; ln -sf "$$HOME/.local/kitty.app/bin/kitty" "$$HOME/.local/bin/kitty"; ln -sf "$$HOME/.local/kitty.app/bin/kitten" "$$HOME/.local/bin/kitten"; fi
+	kitty_setup := kitty-install kitty-config
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
 									&& sudo apt install software-properties-common -y \
 									&& sudo add-apt-repository universe -y \
@@ -44,19 +44,19 @@ else
 	setup_script := echo "Run installer for macOs"
 	fonts_install := brew install --cask font-fira-code-nerd-font
 	mac_apps_install := brew install --cask alfred arc maccy
-	ghostty_install := brew install --cask ghostty
-	ghostty_setup := ghostty-install ghostty-config
+	kitty_install := brew install --cask kitty
+	kitty_setup := kitty-install kitty-config
 endif
 
 is_wsl := $(shell test -r /proc/sys/kernel/osrelease && grep -qi microsoft /proc/sys/kernel/osrelease && echo 1 || echo 0)
 alacritty_config_dir := $(HOME)/.config/alacritty
-ghostty_config_dir := $(HOME)/.config/ghostty
+kitty_config_dir := $(HOME)/.config/kitty
 ifeq ($(is_wsl),1)
 windows_appdata := $(shell cmd.exe /C echo %APPDATA% 2>/dev/null | tr -d '\r')
 alacritty_config_dir := $(shell wslpath -u '$(windows_appdata)')/alacritty
 fonts_install := sh ./scripts/install-windows-firacode-nerd-font.sh
-ghostty_install := true
-ghostty_setup :=
+kitty_install := true
+kitty_setup :=
 endif
 
 go_version = $(shell python3 ./scripts/version_lock.py get $(version_lock) go.version)
@@ -72,12 +72,12 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update version-lock-update setup-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config ghostty ghostty-install ghostty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test tmux-sidebar-test tmux-status-test ghostty-test cleanup
+.PHONY: help setup update version-lock-update setup-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config kitty kitty-install kitty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test tmux-sidebar-test tmux-status-test kitty-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
 setup:  ## Install all workspace tools, configs, and terminal agent CLIs.
-setup: setup-deps fonts-install go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config $(ghostty_setup) optional-deps newsboat-config mac-apps cleanup
+setup: setup-deps fonts-install go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config $(kitty_setup) optional-deps newsboat-config mac-apps cleanup
 
 update: setup-deps version-lock-update ## Install all workspace tools while updating Neovim plugins and native treesitter locks to latest.
 	$(MAKE) MODE=latest setup
@@ -170,15 +170,16 @@ alacritty-config: ## Install alacritty + config + theme
 	test -d "$(alacritty_config_dir)" || mkdir -p "$(alacritty_config_dir)"
 	cp -r ./alacritty/. "$(alacritty_config_dir)/"
 
-ghostty: ## Install ghostty and config
-ghostty: ghostty-install ghostty-config
+kitty: ## Install kitty and config
+kitty: kitty-install kitty-config
 
-ghostty-install: ## Install ghostty only, no config
-	@$(ghostty_install)
+kitty-install: ## Install kitty only, no config
+	@$(kitty_install)
 
-ghostty-config: ## Install ghostty config
-	test -d "$(ghostty_config_dir)" || mkdir -p "$(ghostty_config_dir)"
-	cp -r ./ghostty/. "$(ghostty_config_dir)/"
+kitty-config: ## Install kitty config
+	test -d "$(kitty_config_dir)" || mkdir -p "$(kitty_config_dir)"
+	cp -r ./kitty/. "$(kitty_config_dir)/"
+	kitten themes --dump-theme 'Gruvbox Dark' > "$(kitty_config_dir)/current-theme.conf"
 
 mac-apps: ## Install macOS workspace GUI apps
 	@$(mac_apps_install)
@@ -215,7 +216,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: version-lock-test mkws-test skills-hub-test tmux-sidebar-test tmux-status-test ghostty-test ## Run smoke tests
+test: version-lock-test mkws-test skills-hub-test tmux-sidebar-test tmux-status-test kitty-test ## Run smoke tests
 
 version-lock-test: ## Run version-lock smoke tests
 	sh ./scripts/version-lock-smoke-test.sh
@@ -232,8 +233,8 @@ tmux-sidebar-test: ## Run tmux sidebar smoke tests
 tmux-status-test: ## Run tmux status smoke tests
 	sh ./scripts/tmux-status-smoke-test.sh
 
-ghostty-test: ## Run ghostty config/install smoke tests
-	sh ./scripts/ghostty-smoke-test.sh
+kitty-test: ## Run kitty config/install smoke tests
+	sh ./scripts/kitty-smoke-test.sh
 
 cleanup: ## Clean up ./tmp folder
 	test -d ./tmp && rm -rf ./tmp
