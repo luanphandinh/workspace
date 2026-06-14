@@ -29,6 +29,8 @@ grep -qx 'font_size 12.0' kitty/kitty.conf
 grep -qx 'italic_font FiraCode Nerd Font Mono' kitty/kitty.conf
 grep -qx 'bold_italic_font FiraCode Nerd Font Mono' kitty/kitty.conf
 grep -qx 'scrollback_lines 100' kitty/kitty.conf
+grep -qx 'enabled_layouts stack' kitty/kitty.conf
+grep -qx 'window_border_width 0' kitty/kitty.conf
 grep -qx 'include current-theme.conf' kitty/kitty.conf
 ! grep -Eq '^(background|foreground|selection_background|selection_foreground|cursor|cursor_text_color|color[0-9]+)[[:space:]]' kitty/kitty.conf
 grep -qx 'placement_strategy top-left' kitty/kitty.conf
