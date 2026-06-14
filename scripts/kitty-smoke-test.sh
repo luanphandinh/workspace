@@ -35,6 +35,10 @@ grep -qx 'shell_integration disabled' kitty/kitty.conf
 grep -qx 'enable_audio_bell no' kitty/kitty.conf
 grep -qx 'confirm_os_window_close 0' kitty/kitty.conf
 grep -qx 'sync_to_monitor yes' kitty/kitty.conf
+grep -qx 'cursor_trail 4' kitty/kitty.conf
+grep -qx 'cursor_trail_decay 0.08 0.25' kitty/kitty.conf
+grep -qx 'cursor_trail_start_threshold 3' kitty/kitty.conf
+grep -qx 'cursor_trail_color none' kitty/kitty.conf
 grep -qx 'map cmd+w discard_event' kitty/kitty.conf
 grep -qx 'map cmd+opt+up send_text all \\e\[25~' kitty/kitty.conf
 grep -qx 'map cmd+opt+down send_text all \\e\[26~' kitty/kitty.conf
