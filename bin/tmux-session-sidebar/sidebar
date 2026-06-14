@@ -213,12 +213,9 @@ render() {
 		printf '  A sidebar%s\n' "$EOL"
 		printf '  e clear%s\n' "$EOL"
 		printf 'O-C/C-S +%s\n' "$EOL"
-		printf '  ↑/↓ session%s\n' "$EOL"
-		printf '  ←/→ window%s\n' "$EOL"
-		printf 'C-S +%s\n' "$EOL"
-		printf '  j/k session%s\n' "$EOL"
-		printf '  h/l window%s\n' "$EOL"
-		printf 'Cmd +%s\n' "$EOL"
+		printf '  ↑/↓ | j/k session%s\n' "$EOL"
+		printf '  ←/→ | h/l window%s\n' "$EOL"
+		printf 'Cmd/Alt +%s\n' "$EOL"
 		printf '  1..9 window%s\n' "$EOL"
 
 		# Wipe any stale content below the new render (left over from a

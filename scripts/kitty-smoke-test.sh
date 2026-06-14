@@ -62,6 +62,7 @@ grep -qx 'map ctrl+shift+l send_text all \\e\[29~' kitty/kitty.conf
 for n in 1 2 3 4 5 6 7 8 9; do
 	seq=$((30 + n))
 	grep -qx "map cmd+$n send_text all \\\\e\\[$seq~" kitty/kitty.conf
+	grep -qx "map alt+$n send_text all \\\\e\\[$seq~" kitty/kitty.conf
 done
 
 if command -v kitty >/dev/null 2>&1; then

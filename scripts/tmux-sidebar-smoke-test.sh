@@ -372,6 +372,13 @@ assert_file_not_contains() {
 	fi
 }
 
+assert_file_not_contains_line() {
+	if grep -Fx "$2" "$1" >/dev/null; then
+		printf 'expected %s not to contain line: %s\n' "$1" "$2" >&2
+		exit 1
+	fi
+}
+
 assert_line_count() {
 	actual="$(wc -l < "$1" 2>/dev/null | awk '{ print $1 }')"
 	if [ "$actual" != "$2" ]; then
@@ -472,6 +479,10 @@ test_sidebar_renders_canonical_pin() {
 	sh "$ROOT/bin/tmux-session-sidebar/sidebar" </dev/null > "$TMP/sidebar.out"
 
 	assert_file_contains "$TMP/sidebar.out" "alpha"
+	assert_file_contains "$TMP/sidebar.out" "↑/↓ | j/k session"
+	assert_file_contains "$TMP/sidebar.out" "←/→ | h/l window"
+	assert_file_contains "$TMP/sidebar.out" "Cmd/Alt +"
+	assert_file_not_contains_line "$TMP/sidebar.out" "C-S +"
 	pass "sidebar renders canonical pin"
 }
 
