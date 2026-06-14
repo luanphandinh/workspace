@@ -37,6 +37,7 @@ grep -qx 'placement_strategy top-left' kitty/kitty.conf
 grep -qx 'resize_in_steps yes' kitty/kitty.conf
 grep -qx 'hide_window_decorations titlebar-and-corners' kitty/kitty.conf
 grep -qx 'macos_titlebar_color background' kitty/kitty.conf
+grep -qx 'macos_show_window_title_in none' kitty/kitty.conf
 grep -qx 'shell_integration disabled' kitty/kitty.conf
 grep -qx 'enable_audio_bell no' kitty/kitty.conf
 grep -qx 'confirm_os_window_close 0' kitty/kitty.conf
