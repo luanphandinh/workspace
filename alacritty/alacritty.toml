@@ -30,7 +30,7 @@ bindings = [
   { key = "H",          mods = "Control|Shift", chars = "\u001b[28~" },
   { key = "L",          mods = "Control|Shift", chars = "\u001b[29~" },
   # Jump to tmux WINDOW 1..9 in the current session (User4..User12).
-  # Overrides Alacritty's default Cmd+number tab switching.
+  # Cmd+number covers macOS; Alt+number covers Linux/Windows keyboards.
   { key = "1", mods = "Command", chars = "\u001b[31~" },
   { key = "2", mods = "Command", chars = "\u001b[32~" },
   { key = "3", mods = "Command", chars = "\u001b[33~" },
@@ -40,6 +40,15 @@ bindings = [
   { key = "7", mods = "Command", chars = "\u001b[37~" },
   { key = "8", mods = "Command", chars = "\u001b[38~" },
   { key = "9", mods = "Command", chars = "\u001b[39~" },
+  { key = "1", mods = "Alt", chars = "\u001b[31~" },
+  { key = "2", mods = "Alt", chars = "\u001b[32~" },
+  { key = "3", mods = "Alt", chars = "\u001b[33~" },
+  { key = "4", mods = "Alt", chars = "\u001b[34~" },
+  { key = "5", mods = "Alt", chars = "\u001b[35~" },
+  { key = "6", mods = "Alt", chars = "\u001b[36~" },
+  { key = "7", mods = "Alt", chars = "\u001b[37~" },
+  { key = "8", mods = "Alt", chars = "\u001b[38~" },
+  { key = "9", mods = "Alt", chars = "\u001b[39~" },
 ]
 
 [font]
