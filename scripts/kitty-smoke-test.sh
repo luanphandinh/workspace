@@ -14,6 +14,10 @@ assert_no_font_install() {
 }
 
 test -f kitty/kitty.conf
+test -f kitty/kitty.app.png
+test -f kitty/LICENSE.kitty-icon
+file kitty/kitty.app.png | grep -q 'PNG image data'
+grep -q 'MIT License' kitty/LICENSE.kitty-icon
 grep -qx 'font_family FiraCode Nerd Font Mono' kitty/kitty.conf
 grep -qx 'font_size 12.0' kitty/kitty.conf
 grep -qx 'italic_font FiraCode Nerd Font Mono' kitty/kitty.conf
