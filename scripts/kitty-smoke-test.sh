@@ -31,6 +31,7 @@ grep -qx 'bold_italic_font FiraCode Nerd Font Mono' kitty/kitty.conf
 grep -qx 'include current-theme.conf' kitty/kitty.conf
 ! grep -Eq '^(background|foreground|selection_background|selection_foreground|cursor|cursor_text_color|color[0-9]+)[[:space:]]' kitty/kitty.conf
 grep -qx 'placement_strategy top-left' kitty/kitty.conf
+grep -qx 'resize_in_steps yes' kitty/kitty.conf
 grep -qx 'hide_window_decorations titlebar-and-corners' kitty/kitty.conf
 grep -qx 'macos_titlebar_color background' kitty/kitty.conf
 grep -qx 'shell_integration disabled' kitty/kitty.conf
