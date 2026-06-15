@@ -360,8 +360,6 @@ local function test_shell_treesitter_reads_workspace_scripts()
     wait_until(file .. " shell treesitter active", function()
       return vim.treesitter.highlighter.active[buf] ~= nil
     end, 3000)
-    assert_true(vim.wo.foldmethod == "expr", file .. " should keep treesitter folds")
-    assert_true(vim.wo.foldexpr == "v:lua.vim.treesitter.foldexpr()", file .. " should use treesitter foldexpr")
   end
 end
 
@@ -387,7 +385,7 @@ local function test_treesitter_required_parsers_available()
   end
 end
 
-local function test_go_treesitter_folds_available()
+local function test_go_treesitter_preserves_fold_options_on_start()
   local path = temp_root .. "/go-folds/main.go"
   write(path, {
     "package main",
@@ -399,26 +397,23 @@ local function test_go_treesitter_folds_available()
     "}",
   })
 
-  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  vim.cmd("noautocmd edit " .. vim.fn.fnameescape(path))
   local buf = vim.api.nvim_get_current_buf()
-  wait_until("go treesitter active for folds", function()
+  vim.bo[buf].filetype = "go"
+  vim.opt_local.foldmethod = "marker"
+  vim.opt_local.foldexpr = "0"
+  vim.opt_local.foldlevel = 2
+  vim.api.nvim_exec_autocmds("FileType", { buffer = buf, modeline = false })
+  wait_until("go treesitter active without fold setup", function()
     return vim.treesitter.highlighter.active[buf] ~= nil
   end, 3000)
 
-  assert_true(vim.wo.foldmethod == "expr", "go buffers should use treesitter folds")
-  assert_true(vim.wo.foldexpr == "v:lua.vim.treesitter.foldexpr()", "go buffers should use treesitter foldexpr")
-
-  local has_fold = false
-  for line = 1, vim.api.nvim_buf_line_count(buf) do
-    if vim.fn.foldlevel(line) > 0 then
-      has_fold = true
-      break
-    end
-  end
-  assert_true(has_fold, "go treesitter fold query should create fold levels")
+  assert_true(vim.wo.foldmethod == "marker", "treesitter should not change foldmethod")
+  assert_true(vim.wo.foldexpr == "0", "treesitter should not change foldexpr")
+  assert_true(vim.wo.foldlevel == 2, "treesitter should not change foldlevel")
 end
 
-local function test_treesitter_preserves_existing_fold_level_on_enter()
+local function test_treesitter_preserves_existing_fold_options_on_enter()
   local path = temp_root .. "/go-fold-preserve/main.go"
   write(path, {
     "package main",
@@ -435,14 +430,17 @@ local function test_treesitter_preserves_existing_fold_level_on_enter()
   wait_until("go treesitter active before fold preservation", function()
     return vim.treesitter.highlighter.active[buf] ~= nil
   end, 3000)
-  assert_true(vim.wo.foldlevel == 99, "go buffers should start with default foldlevel")
 
+  vim.opt_local.foldmethod = "marker"
+  vim.opt_local.foldexpr = "0"
   vim.opt_local.foldlevel = 3
   vim.cmd("enew")
   vim.cmd("buffer " .. buf)
   vim.api.nvim_exec_autocmds("BufEnter", { buffer = buf, modeline = false })
   vim.api.nvim_exec_autocmds("BufWinEnter", { buffer = buf, modeline = false })
 
+  assert_true(vim.wo.foldmethod == "marker", "existing foldmethod should be preserved on enter")
+  assert_true(vim.wo.foldexpr == "0", "existing foldexpr should be preserved on enter")
   assert_true(vim.wo.foldlevel == 3, "existing foldlevel should be preserved on enter")
 end
 
@@ -1301,12 +1299,12 @@ local setup_ok, setup_err = xpcall(function()
     test_treesitter_required_parsers_available()
   end)
 
-  test("go treesitter folds available", function()
-    test_go_treesitter_folds_available()
+  test("go treesitter preserves fold options on start", function()
+    test_go_treesitter_preserves_fold_options_on_start()
   end)
 
-  test("treesitter preserves existing fold level on enter", function()
-    test_treesitter_preserves_existing_fold_level_on_enter()
+  test("treesitter preserves existing fold options on enter", function()
+    test_treesitter_preserves_existing_fold_options_on_enter()
   end)
 
   test("diff windows keep diff folds on enter", function()
