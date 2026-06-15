@@ -1,19 +1,4 @@
-local treesitter_disabled_filetypes = {
-  markdown = true,
-  markdown_inline = true,
-  rmd = true,
-}
-local treesitter_disabled_langs = {
-  markdown = true,
-  markdown_inline = true,
-  rmd = true,
-}
-
 local setup_done = false
-
-local function is_disabled(buf, lang)
-  return treesitter_disabled_langs[lang] or treesitter_disabled_filetypes[vim.bo[buf].filetype] or false
-end
 
 local function start_native_treesitter(ev)
   local ft = vim.bo[ev.buf].filetype
@@ -23,8 +8,7 @@ local function start_native_treesitter(ev)
 
   local lang = vim.treesitter.language.get_lang(ft) or ft
 
-  if lang == "" or is_disabled(ev.buf, lang) then
-    pcall(vim.treesitter.stop, ev.buf)
+  if lang == "" then
     return
   end
 
