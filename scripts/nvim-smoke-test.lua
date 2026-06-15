@@ -418,6 +418,34 @@ local function test_go_treesitter_folds_available()
   assert_true(has_fold, "go treesitter fold query should create fold levels")
 end
 
+local function test_treesitter_preserves_existing_fold_level_on_enter()
+  local path = temp_root .. "/go-fold-preserve/main.go"
+  write(path, {
+    "package main",
+    "",
+    "func main() {",
+    "\tif true {",
+    "\t\tprintln(\"hello\")",
+    "\t}",
+    "}",
+  })
+
+  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  local buf = vim.api.nvim_get_current_buf()
+  wait_until("go treesitter active before fold preservation", function()
+    return vim.treesitter.highlighter.active[buf] ~= nil
+  end, 3000)
+  assert_true(vim.wo.foldlevel == 99, "go buffers should start with default foldlevel")
+
+  vim.opt_local.foldlevel = 3
+  vim.cmd("enew")
+  vim.cmd("buffer " .. buf)
+  vim.api.nvim_exec_autocmds("BufEnter", { buffer = buf, modeline = false })
+  vim.api.nvim_exec_autocmds("BufWinEnter", { buffer = buf, modeline = false })
+
+  assert_true(vim.wo.foldlevel == 3, "existing foldlevel should be preserved on enter")
+end
+
 local function test_diff_windows_keep_diff_folds_on_enter()
   local function fold_state(win)
     return vim.wo[win].foldmethod .. ":" .. vim.wo[win].foldlevel
@@ -1275,6 +1303,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("go treesitter folds available", function()
     test_go_treesitter_folds_available()
+  end)
+
+  test("treesitter preserves existing fold level on enter", function()
+    test_treesitter_preserves_existing_fold_level_on_enter()
   end)
 
   test("diff windows keep diff folds on enter", function()
