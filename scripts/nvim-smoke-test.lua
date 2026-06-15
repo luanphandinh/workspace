@@ -413,6 +413,54 @@ local function test_go_treesitter_folds_available()
   assert_true(has_fold, "go treesitter fold query should create fold levels")
 end
 
+local function test_diff_windows_keep_diff_folds_on_enter()
+  local function fold_state(win)
+    return vim.wo[win].foldmethod .. ":" .. vim.wo[win].foldlevel
+  end
+
+  local function go_lines(max)
+    local result = {}
+    for i = 1, max do
+      result[#result + 1] = string.format("package main // %03d", i)
+    end
+    return result
+  end
+
+  vim.cmd("enew")
+  local left_buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_name(left_buf, "diffview://left")
+  vim.bo[left_buf].filetype = "go"
+  vim.bo[left_buf].buftype = "nowrite"
+  vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, go_lines(200))
+  local left_win = vim.api.nvim_get_current_win()
+
+  vim.cmd("vsplit")
+  local right_win = vim.api.nvim_get_current_win()
+  local right_buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(right_buf, temp_root .. "/diff-window-right.go")
+  vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, go_lines(200))
+  vim.api.nvim_win_set_buf(right_win, right_buf)
+  vim.bo[right_buf].filetype = "go"
+
+  vim.api.nvim_win_call(left_win, function()
+    vim.cmd("diffthis | setlocal foldmethod=diff foldlevel=0 foldenable")
+  end)
+  vim.api.nvim_win_call(right_win, function()
+    vim.cmd("diffthis | setlocal foldmethod=diff foldlevel=0 foldenable")
+  end)
+
+  assert_true(fold_state(left_win) == "diff:0", "left diff fold state changed before enter")
+  assert_true(fold_state(right_win) == "diff:0", "right diff fold state changed before enter")
+
+  vim.api.nvim_set_current_win(left_win)
+  vim.api.nvim_set_current_win(right_win)
+  vim.api.nvim_exec_autocmds("BufEnter", { buffer = right_buf, modeline = false })
+  vim.api.nvim_exec_autocmds("BufWinEnter", { buffer = right_buf, modeline = false })
+
+  assert_true(fold_state(left_win) == "diff:0", "left diff fold state changed to " .. fold_state(left_win))
+  assert_true(fold_state(right_win) == "diff:0", "right diff fold state changed to " .. fold_state(right_win))
+end
+
 local function test_go_runtime_recovers_when_entering_loaded_buffer(worktree)
   local script = temp_root .. "/go-runtime-stale-buffer.lua"
   write(script, {
@@ -1222,6 +1270,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("go treesitter folds available", function()
     test_go_treesitter_folds_available()
+  end)
+
+  test("diff windows keep diff folds on enter", function()
+    test_diff_windows_keep_diff_folds_on_enter()
   end)
 
   test("go runtime recovers when entering loaded buffer", function()
