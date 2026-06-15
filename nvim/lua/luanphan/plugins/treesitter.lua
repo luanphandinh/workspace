@@ -9,14 +9,6 @@ local treesitter_disabled_langs = {
   rmd = true,
 }
 
-local bash_injections_query = [[
-((comment) @injection.content
-  (#set! injection.language "comment"))
-
-((regex) @injection.content
-  (#set! injection.language "regex"))
-]]
-
 local fold_manual_line_threshold = 10000
 local setup_done = false
 
@@ -100,8 +92,6 @@ local function setup()
   setup_done = true
 
   vim.treesitter.language.register("bash", { "bash", "sh" })
-  vim.treesitter.query.set("bash", "injections", bash_injections_query)
-  vim.g.luanphan_bash_injection_guard = 1
 
   vim.api.nvim_create_autocmd({ "FileType", "BufEnter", "BufWinEnter" }, {
     group = vim.api.nvim_create_augroup("luanphan_native_treesitter", { clear = true }),

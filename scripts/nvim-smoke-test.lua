@@ -348,16 +348,21 @@ local function test_git_conflict_decoration_guard()
   assert_true(not rethrow_ok, "git conflict guard should rethrow unrelated errors")
 end
 
-local function test_shell_treesitter_guarded_injections()
-  vim.cmd("edit scripts/mkws-smoke-test.sh")
-  local buf = vim.api.nvim_get_current_buf()
-  assert_true(vim.bo[buf].filetype == "sh", "mkws smoke script should be detected as sh")
-  wait_until("shell treesitter active", function()
-    return vim.treesitter.highlighter.active[buf] ~= nil
-  end, 3000)
-  assert_true(vim.g.luanphan_bash_injection_guard == 1, "bash injection guard should be installed")
-  assert_true(vim.wo.foldmethod == "expr", "shell buffers should keep treesitter folds")
-  assert_true(vim.wo.foldexpr == "v:lua.vim.treesitter.foldexpr()", "shell buffers should use treesitter foldexpr")
+local function test_shell_treesitter_reads_workspace_scripts()
+  local files = vim.fn.systemlist({ "git", "ls-files", "--", "*.sh" })
+  assert_true(vim.v.shell_error == 0, table.concat(files, "\n"))
+  assert_true(#files > 0, "workspace should have shell scripts to test")
+
+  for _, file in ipairs(files) do
+    vim.cmd("edit " .. vim.fn.fnameescape(file))
+    local buf = vim.api.nvim_get_current_buf()
+    assert_true(vim.bo[buf].filetype == "sh", file .. " should be detected as sh")
+    wait_until(file .. " shell treesitter active", function()
+      return vim.treesitter.highlighter.active[buf] ~= nil
+    end, 3000)
+    assert_true(vim.wo.foldmethod == "expr", file .. " should keep treesitter folds")
+    assert_true(vim.wo.foldexpr == "v:lua.vim.treesitter.foldexpr()", file .. " should use treesitter foldexpr")
+  end
 end
 
 local function test_treesitter_uses_native_runtime()
@@ -1256,8 +1261,8 @@ local setup_ok, setup_err = xpcall(function()
     test_git_conflict_decoration_guard()
   end)
 
-  test("shell treesitter guarded injections", function()
-    test_shell_treesitter_guarded_injections()
+  test("shell treesitter reads workspace scripts", function()
+    test_shell_treesitter_reads_workspace_scripts()
   end)
 
   test("treesitter uses native runtime", function()
