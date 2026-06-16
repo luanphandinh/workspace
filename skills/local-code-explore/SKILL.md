@@ -79,7 +79,8 @@ Report back in under 200 words:
   - `missing: <item>` when expected propagation is not found.
 - Highlight means terminal color, not Markdown. Do NOT render request-trace labels with Markdown asterisks; those literal characters are noisy in CLI output.
 - Use ANSI SGR color in every terminal diagram, and color only the exact part the user asked to focus on: the requested identifier, value, condition, topic, method, or mutation payload. Keep labels such as `request:`, `value:`, `mutates:`, `passes:`, and `missing:` uncolored.
-- Suggested colors: cyan bold (`\x1b[1;36m...\x1b[0m`) for the requested item/value, yellow bold (`\x1b[1;33m...\x1b[0m`) for missing or unproven propagation of that same requested item, and green bold (`\x1b[1;32m...\x1b[0m`) for confirmed mutation of that item. Do not color unrelated branches or generic words.
+- Emit real ANSI ESC bytes for color. Do NOT print escaped text forms such as `\x1b[1;36m`, `\033[1;36m`, or `ESC[1;36m`; terminal panes will show those literals instead of colors.
+- Suggested colors: cyan bold for the requested item/value, yellow bold for missing or unproven propagation of that same requested item, and green bold for confirmed mutation of that item. Do not color unrelated branches or generic words.
 - ANSI escape sequences are zero-width. Width repair must measure visible text after stripping ANSI, while preserving the original color escapes in the repaired output.
 - Never count ANSI escape bytes when deciding where the closing `|`, connector `|`, arrow, or branch should appear.
 - Do not color border characters, connector characters, arrows, or padding spaces. Color only the focused words inside an already padded text cell or edge label.

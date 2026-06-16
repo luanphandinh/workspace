@@ -240,7 +240,81 @@ end
 
 vim.keymap.set("n", "<leader>td", toggle_file_diff, { desc = "File diff" })
 
-vim.keymap.set("n", "<leader>fp", "<cmd>MarkdownPreviewToggle<cr>", { desc = "Preview Markdown in browser" })
+local function open_csvlens_preview(file)
+  if vim.fn.executable("csvlens") ~= 1 then
+    vim.notify("csvlens is not installed", vim.log.levels.WARN)
+    return
+  end
+
+  local width = math.max(80, math.floor(vim.o.columns * 0.9))
+  local height = math.max(20, math.floor(vim.o.lines * 0.85))
+  width = math.min(width, vim.o.columns)
+  height = math.min(height, vim.o.lines - 2)
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden = "wipe"
+  vim.b[buf].luanphan_csvlens_preview = true
+
+  local win
+  win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    width = width,
+    height = height,
+    row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1),
+    col = math.max(0, math.floor((vim.o.columns - width) / 2)),
+    style = "minimal",
+    border = "single",
+    title = " csvlens ",
+    title_pos = "center",
+  })
+
+  local function close()
+    if win and vim.api.nvim_win_is_valid(win) then
+      pcall(vim.api.nvim_win_close, win, true)
+    end
+  end
+
+  vim.keymap.set("n", "q", close, { buffer = buf, silent = true })
+  vim.keymap.set("t", "<C-q>", [[<C-\><C-n>:close<cr>]], { buffer = buf, silent = true })
+  vim.keymap.set("t", "<Esc><Esc>", [[<C-\><C-n>]], { buffer = buf, silent = true })
+  vim.keymap.set("t", "<C-h>", "<C-h>", { buffer = buf, silent = true })
+  vim.keymap.set("t", "<C-l>", "<C-l>", { buffer = buf, silent = true })
+  vim.fn.termopen({ "csvlens", file }, {
+    on_exit = function()
+      vim.schedule(close)
+    end,
+  })
+  vim.schedule(function()
+    if win and vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_set_current_win(win)
+      vim.cmd("normal! i")
+    end
+  end)
+end
+
+local function preview_file()
+  local file = vim.fn.expand("%:p")
+  if file == "" then
+    vim.notify("No file to preview", vim.log.levels.WARN)
+    return
+  end
+
+  local ft = vim.bo.filetype
+  local ext = vim.fn.fnamemodify(file, ":e"):lower()
+  if ft == "markdown" or ft == "rmd" or ext == "md" or ext == "markdown" or ext == "rmd" then
+    vim.cmd("MarkdownPreviewToggle")
+    return
+  end
+
+  if ft == "csv" or ext == "csv" then
+    open_csvlens_preview(file)
+    return
+  end
+
+  vim.notify("No preview configured for " .. (ft ~= "" and ft or ext), vim.log.levels.WARN)
+end
+
+vim.keymap.set("n", "<leader>fp", preview_file, { desc = "Preview file" })
 
 vim.keymap.set("n", "<leader>fs", function()
   if vim.fn.bufname() == "" then
