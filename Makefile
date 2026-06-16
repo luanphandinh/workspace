@@ -19,7 +19,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 		&& sudo rm -rf /opt/$(nvim_linux_name) \
 		&& sudo tar -C /opt -xzf ./tmp/$(nvim_linux_name).tar.gz \
 		&& sudo ln -sf /opt/$(nvim_linux_name)/bin/nvim /usr/local/bin/nvim
-	deps := fd-find fzf yazi python3-pip nodejs npm curl unzip fontconfig git build-essential
+	deps := fd-find fzf yazi python3-pip nodejs npm curl unzip xz-utils fontconfig git build-essential
 	optional_deps := jq btop
 	os_name := linux
 	fonts_install := test -f "$(HOME)/.local/share/fonts/FiraCodeNerdFont-Regular.ttf" || (mkdir -p "$(HOME)/.local/share/fonts" ./tmp \
@@ -29,6 +29,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 	mac_apps_install := true
 	kitty_install := if command -v kitty >/dev/null 2>&1; then printf 'kitty already installed: %s\n' "$$(command -v kitty)"; else curl -fsSL https://sw.kovidgoyal.net/kitty/installer.sh | sh /dev/stdin; mkdir -p "$$HOME/.local/bin"; ln -sf "$$HOME/.local/kitty.app/bin/kitty" "$$HOME/.local/bin/kitty"; ln -sf "$$HOME/.local/kitty.app/bin/kitten" "$$HOME/.local/bin/kitten"; fi
 	kitty_setup := kitty-install kitty-config
+	csvlens_install := sh ./scripts/install-csvlens.sh
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
 									&& sudo apt install software-properties-common -y \
 									&& sudo add-apt-repository universe -y \
@@ -38,7 +39,7 @@ else
 	install := brew install
 	newsboat_config := ./newsboat/config.darwin
 	install_nvim := brew install neovim --HEAD
-	deps := fd fzf yazi python3 node terminal-notifier
+	deps := fd fzf yazi csvlens python3 node terminal-notifier
 	optional_deps := jq btop newsboat
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
@@ -46,6 +47,7 @@ else
 	mac_apps_install := brew install --cask alfred arc maccy
 	kitty_install := brew install --cask kitty
 	kitty_setup := kitty-install kitty-config
+	csvlens_install := true
 endif
 
 is_wsl := $(shell test -r /proc/sys/kernel/osrelease && grep -qi microsoft /proc/sys/kernel/osrelease && echo 1 || echo 0)
@@ -72,12 +74,12 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update version-lock-update setup-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config kitty kitty-install kitty-config mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test cleanup
+.PHONY: help setup update version-lock-update setup-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config kitty kitty-install kitty-config csvlens-install mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
 setup:  ## Install all workspace tools, configs, and terminal agent CLIs.
-setup: setup-deps fonts-install go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config $(kitty_setup) optional-deps newsboat-config mac-apps cleanup
+setup: setup-deps fonts-install go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config $(kitty_setup) csvlens-install optional-deps newsboat-config mac-apps cleanup
 
 update: setup-deps version-lock-update ## Install all workspace tools while updating Neovim plugins and native treesitter locks to latest.
 	$(MAKE) MODE=latest setup
@@ -181,6 +183,9 @@ kitty-config: ## Install kitty config
 	cp -r ./kitty/. "$(kitty_config_dir)/"
 	kitten themes --dump-theme 'Gruvbox Dark' > "$(kitty_config_dir)/current-theme.conf"
 
+csvlens-install: ## Install csvlens CSV viewer
+	@$(csvlens_install)
+
 mac-apps: ## Install macOS workspace GUI apps
 	@$(mac_apps_install)
 
@@ -216,7 +221,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: version-lock-test mkws-test skills-hub-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test ## Run smoke tests
+test: version-lock-test mkws-test skills-hub-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test ## Run smoke tests
 
 version-lock-test: ## Run version-lock smoke tests
 	sh ./scripts/version-lock-smoke-test.sh
@@ -238,6 +243,9 @@ alacritty-test: ## Run alacritty config/install smoke tests
 
 kitty-test: ## Run kitty config/install smoke tests
 	sh ./scripts/kitty-smoke-test.sh
+
+csvlens-test: ## Run csvlens install smoke tests
+	sh ./scripts/csvlens-smoke-test.sh
 
 cleanup: ## Clean up ./tmp folder
 	test -d ./tmp && rm -rf ./tmp
