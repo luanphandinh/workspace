@@ -277,6 +277,8 @@ local function open_csvlens_preview(file)
   vim.keymap.set("n", "q", close, { buffer = buf, silent = true })
   vim.keymap.set("t", "<C-q>", [[<C-\><C-n>:close<cr>]], { buffer = buf, silent = true })
   vim.keymap.set("t", "<Esc><Esc>", [[<C-\><C-n>]], { buffer = buf, silent = true })
+  vim.keymap.set("t", "<C-h>", "<C-h>", { buffer = buf, silent = true })
+  vim.keymap.set("t", "<C-l>", "<C-l>", { buffer = buf, silent = true })
   vim.fn.termopen({ "csvlens", file }, {
     on_exit = function()
       vim.schedule(close)

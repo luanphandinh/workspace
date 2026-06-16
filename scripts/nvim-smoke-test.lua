@@ -364,6 +364,23 @@ local function test_csv_preview_keymap()
   end, 3000)
   assert_true(read_lines(log)[1] == csv, "csvlens should receive current CSV file")
 
+  local preview_buf
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(buf) and vim.b[buf].luanphan_csvlens_preview then
+      preview_buf = buf
+      break
+    end
+  end
+  assert_true(type(preview_buf) == "number", "csvlens preview buffer should exist")
+  local has_ctrl_h = false
+  local has_ctrl_l = false
+  for _, map in ipairs(vim.api.nvim_buf_get_keymap(preview_buf, "t")) do
+    has_ctrl_h = has_ctrl_h or map.lhs == "<C-H>"
+    has_ctrl_l = has_ctrl_l or map.lhs == "<C-L>"
+  end
+  assert_true(has_ctrl_h, "csvlens preview should override terminal <C-h>")
+  assert_true(has_ctrl_l, "csvlens preview should override terminal <C-l>")
+
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_valid(buf) and vim.b[buf].luanphan_csvlens_preview then
       local job = vim.b[buf].terminal_job_id
