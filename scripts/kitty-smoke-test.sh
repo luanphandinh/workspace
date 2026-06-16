@@ -86,6 +86,12 @@ setup_plan=$(make -n --no-print-directory setup)
 printf '%s\n' "$setup_plan" | grep -q 'cp -r ./kitty/.'
 printf '%s\n' "$setup_plan" | grep -Eq 'font-fira-code-nerd-font|FiraCode.zip|install-windows-firacode-nerd-font'
 
+linux_setup_plan=$(make -n --no-print-directory UNAME=Linux is_wsl=0 setup)
+printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*fzf.*yazi'
+
+darwin_setup_plan=$(make -n --no-print-directory UNAME=Darwin setup)
+printf '%s\n' "$darwin_setup_plan" | grep -Eq 'brew install .*fzf.*yazi'
+
 kitty_config_plan=$(make -n --no-print-directory kitty-config)
 printf '%s\n' "$kitty_config_plan" | grep -q "kitten themes --dump-theme 'Gruvbox Dark'"
 printf '%s\n' "$kitty_config_plan" | grep -q 'current-theme.conf'

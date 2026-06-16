@@ -19,7 +19,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 		&& sudo rm -rf /opt/$(nvim_linux_name) \
 		&& sudo tar -C /opt -xzf ./tmp/$(nvim_linux_name).tar.gz \
 		&& sudo ln -sf /opt/$(nvim_linux_name)/bin/nvim /usr/local/bin/nvim
-	deps := fd-find python3-pip nodejs npm curl unzip fontconfig git build-essential
+	deps := fd-find fzf yazi python3-pip nodejs npm curl unzip fontconfig git build-essential
 	optional_deps := jq btop
 	os_name := linux
 	fonts_install := test -f "$(HOME)/.local/share/fonts/FiraCodeNerdFont-Regular.ttf" || (mkdir -p "$(HOME)/.local/share/fonts" ./tmp \
@@ -38,7 +38,7 @@ else
 	install := brew install
 	newsboat_config := ./newsboat/config.darwin
 	install_nvim := brew install neovim --HEAD
-	deps := fd python3 node terminal-notifier
+	deps := fd fzf yazi python3 node terminal-notifier
 	optional_deps := jq btop newsboat
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
