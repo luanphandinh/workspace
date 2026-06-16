@@ -315,7 +315,7 @@ local function test_markdown_browser_preview_keymap()
   local plugin = require("lazy.core.config").plugins["markdown-preview.nvim"]
 
   assert_true(type(plugin) == "table", "markdown-preview.nvim plugin should be registered")
-  assert_true(type(preview_map) == "table" and preview_map.desc == "Preview Markdown in browser", "<leader>fp should toggle browser preview")
+  assert_true(type(preview_map) == "table" and preview_map.desc == "Preview file", "<leader>fp should preview files")
   assert_true(vim.fn.maparg("<leader>fP", "n") == "", "<leader>fP should be removed")
   assert_true(vim.g.mkdp_auto_start == 0, "browser Markdown preview should not auto-start")
   assert_true(vim.g.mkdp_auto_close == 1, "browser Markdown preview should auto-close")
@@ -326,6 +326,54 @@ local function test_markdown_browser_preview_keymap()
     type(vim.g.mkdp_preview_options) == "table" and vim.g.mkdp_preview_options.disable_sync_scroll == 1,
     "browser Markdown preview should not sync-scroll"
   )
+end
+
+local function test_csv_preview_keymap()
+  local csv = temp_root .. "/preview.csv"
+  local log = temp_root .. "/csvlens-preview.log"
+  local fakebin = temp_root .. "/fakebin-csvlens"
+  write(csv, { "name,value", "example,1" })
+  vim.fn.mkdir(fakebin, "p")
+  write_executable(fakebin .. "/csvlens", {
+    "#!/bin/sh",
+    "printf '%s\\n' \"$1\" > " .. vim.fn.shellescape(log),
+    "sleep 3",
+  })
+
+  local old_path = vim.env.PATH
+  vim.env.PATH = fakebin .. ":" .. old_path
+  vim.cmd("edit " .. vim.fn.fnameescape(csv))
+  vim.bo.filetype = "csv"
+  local preview_map = vim.fn.maparg("<leader>fp", "n", false, true)
+  assert_true(type(preview_map) == "table" and type(preview_map.callback) == "function", "<leader>fp should be a callback mapping")
+  preview_map.callback()
+
+  local function visible_csvlens_preview_count()
+    local count = 0
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local buf = vim.api.nvim_win_get_buf(win)
+      if vim.b[buf].luanphan_csvlens_preview then
+        count = count + 1
+      end
+    end
+    return count
+  end
+
+  wait_until("csvlens preview", function()
+    return visible_csvlens_preview_count() == 1 and vim.fn.filereadable(log) == 1
+  end, 3000)
+  assert_true(read_lines(log)[1] == csv, "csvlens should receive current CSV file")
+
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(buf) and vim.b[buf].luanphan_csvlens_preview then
+      local job = vim.b[buf].terminal_job_id
+      if type(job) == "number" and job > 0 then
+        pcall(vim.fn.jobstop, job)
+      end
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+  vim.env.PATH = old_path
 end
 
 local function test_git_conflict_decoration_guard()
@@ -1281,6 +1329,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("markdown browser preview keymap", function()
     test_markdown_browser_preview_keymap()
+  end)
+
+  test("csv preview keymap", function()
+    test_csv_preview_keymap()
   end)
 
   test("git conflict decoration guard", function()
