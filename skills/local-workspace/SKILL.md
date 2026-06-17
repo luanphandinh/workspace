@@ -31,7 +31,7 @@ mkwst clean [<workstation-folder>]
 mkwsts index
 ```
 - `--name` — workspace folder name, or a path to an existing workspace directory that contains `workspace.yml`. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). Plain names create/use `<root>/local_workspaces/<name>`; path values target that workspace directly.
-- `--branch` — default branch for repos that do not specify their own branch. **Required only when an added repo has no per-repo branch** (`--add repo-a`). **Optional** when every added repo uses `repo@branch`, when creating an empty workspace (no `--add`), or when extending an empty workspace with no repos. If the workspace already has a `branch_name` set, `--branch` is optional but, if passed, must match exactly. If the workspace was created empty (`branch_name:` in yml is empty) and you later pass `--branch`, the value is persisted into the yml. Once persisted, the existing-yml match-or-error rule kicks in.
+- `--branch` — default branch for repos that do not specify their own branch. **Required only when an added repo has no per-repo branch** (`--add repo-a`). **Optional** when every added repo uses `repo@branch`, when creating an empty workspace (no `--add`), or when extending an empty workspace with no repos. If the workspace already has a `branch_name` set and `--add` is present, a different `--branch` applies only to the newly added repo(s) and does not change the workspace default branch. If the workspace already has a `branch_name` set and `--add` is absent, a different `--branch` is rejected. If the workspace was created empty (`branch_name:` in yml is empty) and you later pass `--branch`, the value is persisted into the yml.
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. Add `@<branch>` to any repo spec to override the default branch for that repo, e.g. `repo-a@feature/a`. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
 - `--link <name> <link> [<name> <link>...]` — add or update one or more quick-access workspace links in `workspace.yml`. Values are name/link pairs. Repeating `--link` also works. Run from inside a workspace dir/worktree, or pass `--name <workspace>` from the root. If an existing link URL is found, the latest provided name replaces the old name; if an existing name is found, its link is updated.
 - `mkwst index` — builds or refreshes `<root>/workstation.yml` for the current parent folder. Scans immediate child git repos into top-level `repos`, scans immediate child git repos under `<root>/_external/` into `_external.repos`, and refreshes each repo's path, remote, upstream, and current branch metadata. It does not fetch, delete stale entries, or scan `local_workspaces/`. External repos are index-only context; they are not workspace worktrees.
@@ -198,7 +198,7 @@ cd <root>/local_workspaces/X
 mkws --add C
 ```
 
-Either way, do NOT pass `--branch` when the workspace already has a default branch — it's read from the yml. To add one repo on a different branch, use `mkws --add C@feature/C`.
+Either way, omit `--branch` to use the workspace default branch. To add repo(s) on a different branch, use either `mkws --add C@feature/C` or `mkws --add C --branch feature/C`; this records only the added repo(s) on the override branch and keeps the workspace default branch unchanged.
 
 ## Use a non-default base branch
 User intent: "this repo's workspace branch should be based on another local or remote branch instead of main/master".
@@ -365,4 +365,4 @@ Report the workspace path, the default branch, any per-repo branch/base override
 
 # Troubleshooting
 - `mkws: command not found`, `mkwst: command not found`, or `mkwsts: command not found` — run `make workspace-bin` from this repo root, then start a new shell (or `source ~/.zshrc`).
-- `error: --branch ... does not match workspace.yml branch ...` — the workspace already exists on a different branch. Either omit `--branch`, match the yml, or use a different `--name`.
+- `error: --branch ... does not match workspace.yml branch ...` — the workspace already exists on a different branch and you passed `--branch` without `--add`. Either omit `--branch`, match the yml, use `--add` to apply the branch to new repo(s), or use a different `--name`.
