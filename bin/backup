@@ -4,6 +4,7 @@ from __future__ import annotations
 import shutil
 import sys
 from datetime import datetime
+from filecmp import cmp
 from pathlib import Path
 
 
@@ -20,10 +21,18 @@ def main() -> int:
     date = datetime.now().strftime("%Y%m%d")
     prefix = f"{path.name}_{date}_"
     max_counter = -1
+    latest_backup = None
     for item in path.parent.glob(f"{prefix}*"):
         suffix = item.name.removeprefix(prefix)
         if suffix.isdigit():
-            max_counter = max(max_counter, int(suffix))
+            counter = int(suffix)
+            if counter > max_counter:
+                max_counter = counter
+                latest_backup = item
+
+    if latest_backup is not None and cmp(path, latest_backup, shallow=False):
+        print(latest_backup)
+        return 0
 
     backup_path = path.with_name(f"{prefix}{max_counter + 1}")
     shutil.copy2(path, backup_path)

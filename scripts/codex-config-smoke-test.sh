@@ -122,6 +122,13 @@ if [ "$backup_path" != "${backup_file}_${DATE}_0" ]; then
 	printf 'expected backup path %s, got %s\n' "${backup_file}_${DATE}_0" "$backup_path" >&2
 	exit 1
 fi
+same_backup_path=$(python3 "$ROOT/bin/backup" "$backup_file")
+if [ "$same_backup_path" != "${backup_file}_${DATE}_0" ]; then
+	printf 'expected unchanged backup path %s, got %s\n' "${backup_file}_${DATE}_0" "$same_backup_path" >&2
+	exit 1
+fi
+assert_not_exists "${backup_file}_${DATE}_1"
+printf 'backup me again\n' > "$backup_file"
 python3 "$ROOT/bin/backup" "$backup_file" >/dev/null
 assert_exists "${backup_file}_${DATE}_1"
 
