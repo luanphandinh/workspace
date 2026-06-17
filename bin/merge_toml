@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+SECTION_RE = re.compile(r"^\s*(\[[^\]]+\])\s*(?:#.*)?$")
+KEY_RE = re.compile(r"^\s*([A-Za-z0-9_-]+|\"[^\"]+\"|'[^']+')\s*=")
+
+
+@dataclass
+class Section:
+    name: str
+    header: str | None
+    body: list[str]
+
+
+def die(message: str, code: int = 1) -> None:
+    print(f"error: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+def split_sections(text: str) -> list[Section]:
+    sections = [Section("", None, [])]
+    for line in text.splitlines(keepends=True):
+        match = SECTION_RE.match(line)
+        if match:
+            sections.append(Section(match.group(1), line, []))
+            continue
+        sections[-1].body.append(line)
+    return sections
+
+
+def line_key(line: str) -> str | None:
+    match = KEY_RE.match(line)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def overlay_keys(section: Section) -> set[str]:
+    keys = set()
+    for line in section.body:
+        key = line_key(line)
+        if key is not None:
+            keys.add(key)
+    return keys
+
+
+def trim_leading_blank(lines: list[str]) -> list[str]:
+    index = 0
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    return lines[index:]
+
+
+def merge_section(base: Section, overlay: Section) -> Section:
+    keys = overlay_keys(overlay)
+    body = []
+    for line in base.body:
+        key = line_key(line)
+        if key is not None and key in keys:
+            continue
+        body.append(line)
+    return Section(base.name, base.header, overlay.body + trim_leading_blank(body))
+
+
+def merge_toml(base_text: str, overlay_text: str) -> str:
+    base_sections = split_sections(base_text)
+    overlay_sections = split_sections(overlay_text)
+    overlay_by_name = {section.name: section for section in overlay_sections}
+    seen = set()
+    output: list[str] = []
+
+    for section in base_sections:
+        if section.name in overlay_by_name:
+            section = merge_section(section, overlay_by_name[section.name])
+            seen.add(section.name)
+        if section.header is not None:
+            output.append(section.header)
+        output.extend(section.body)
+
+    for section in overlay_sections:
+        if not section.name or section.name in seen:
+            continue
+        if output and (output[-1].strip() or len(output) == 1):
+            output.append("\n")
+        output.append(section.header or f"{section.name}\n")
+        output.extend(section.body)
+
+    text = "".join(output)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text
+
+
+def main() -> int:
+    if len(sys.argv) != 3 or sys.argv[1] in ("-h", "--help"):
+        print("usage: merge_toml <original_file> <new_config_file>", file=sys.stderr)
+        return 2
+
+    original_file = Path(sys.argv[1]).expanduser()
+    new_config_file = Path(sys.argv[2]).expanduser()
+    if not new_config_file.is_file():
+        die(f"new config file does not exist: {new_config_file}")
+
+    original_text = original_file.read_text() if original_file.exists() else ""
+    merged = merge_toml(original_text, new_config_file.read_text())
+    if merged == original_text:
+        return 0
+
+    original_file.parent.mkdir(parents=True, exist_ok=True)
+    if original_file.exists():
+        subprocess.run([str(Path(__file__).with_name("backup")), str(original_file)], check=True)
+    original_file.write_text(merged)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
