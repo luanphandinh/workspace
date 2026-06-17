@@ -87,7 +87,9 @@ printf '%s\n' "$setup_plan" | grep -q 'cp -r ./kitty/.'
 printf '%s\n' "$setup_plan" | grep -Eq 'font-fira-code-nerd-font|FiraCode.zip|install-windows-firacode-nerd-font'
 
 linux_setup_plan=$(make -n --no-print-directory UNAME=Linux is_wsl=0 setup)
-printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*fzf.*yazi'
+printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*fzf'
+! printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*yazi'
+printf '%s\n' "$linux_setup_plan" | grep -q 'sh ./scripts/install-linux-snaps.sh'
 
 darwin_setup_plan=$(make -n --no-print-directory UNAME=Darwin setup)
 printf '%s\n' "$darwin_setup_plan" | grep -Eq 'brew install .*fzf.*yazi'
