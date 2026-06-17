@@ -28,6 +28,7 @@ def usage() -> None:
         """Usage:
   skills-hub add <command>
   skills-hub pull
+  skills-hub list [parent]
   skills-hub pick
   skills-hub group create [name]
   skills-hub group update [name]
@@ -37,6 +38,7 @@ def usage() -> None:
 Commands:
   add   Run <command> inside the managed skills-hub folder, then cache it in execute_plugins.
   pull  Replay every cached command from execute_plugins inside the managed skills-hub folder.
+  list  List hub skills grouped by parent folder.
   pick  Pick hub skills with fzf and copy them into the current folder.
   group Save, update, and install named skill groups.
   where Print the managed skills-hub folder path.
@@ -47,6 +49,7 @@ Environment:
 Example:
   skills-hub add 'npx skills add example-org/skills-bundle -y'
   skills-hub pull
+  skills-hub list agents
   cd "$(skills-hub where)"
 """
     )
@@ -201,6 +204,65 @@ def discover_skill_dirs(home: Path) -> dict[str, Path]:
     return dict(sorted(skills.items()))
 
 
+def parent_label(parent: str) -> str:
+    if parent == ".agents":
+        return "agents (codex, cursor, ...)"
+    return parent.removeprefix(".")
+
+
+def parent_filter(name: str) -> str:
+    name = name.strip()
+    if not name:
+        die("parent is required")
+    if "/" in name or "\\" in name:
+        die("parent must be a simple folder name")
+    if name == "agents":
+        return ".agents"
+    if name.startswith("."):
+        return name
+    return f".{name}"
+
+
+def group_skills_by_parent(skills: dict[str, Path]) -> dict[str, list[str]]:
+    grouped = {}
+    for rel in skills:
+        parts = Path(rel).parts
+        if len(parts) < 3:
+            continue
+        parent = parts[0]
+        skill_rel = str(Path(*parts[2:]))
+        grouped.setdefault(parent, []).append(skill_rel)
+    return {parent: sorted(items) for parent, items in sorted(grouped.items())}
+
+
+def format_columns(items: list[str], width: int, indent: str = "  ", gap: int = 2) -> list[str]:
+    if not items:
+        return []
+
+    available = max(1, width - len(indent))
+    item_width = max(len(item) for item in items)
+    column_width = item_width + gap
+    columns = max(1, min(len(items), available // column_width))
+    if columns == 1:
+        return [f"{indent}{item}" for item in items]
+
+    rows = (len(items) + columns - 1) // columns
+    lines = []
+    for row in range(rows):
+        row_items = []
+        for column in range(columns):
+            index = row + column * rows
+            if index >= len(items):
+                continue
+            item = items[index]
+            if column == columns - 1 or index + rows >= len(items):
+                row_items.append(item)
+            else:
+                row_items.append(item.ljust(column_width))
+        lines.append(f"{indent}{''.join(row_items).rstrip()}")
+    return lines
+
+
 def install_skill_paths(home: Path, selected: list[str]) -> int:
     skills = discover_skill_dirs(home)
     copied = 0
@@ -255,6 +317,36 @@ def cmd_pull() -> int:
         return 1
 
     print(f"skills-hub: pulled {len(commands)} command(s)")
+    return 0
+
+
+def cmd_list(args: list[str]) -> int:
+    if len(args) > 1:
+        die("list takes at most one parent")
+
+    home = hub_home()
+    ensure_home(home)
+    grouped = group_skills_by_parent(discover_skill_dirs(home))
+    if args:
+        selected_parent = parent_filter(args[0])
+        grouped = {
+            parent: skills
+            for parent, skills in grouped.items()
+            if parent == selected_parent
+        }
+
+    if not grouped:
+        print(f"skills-hub: no skills found under {home}")
+        return 0
+
+    first = True
+    for parent, skills in grouped.items():
+        if not first:
+            print()
+        first = False
+        print(parent_label(parent))
+        for line in format_columns(skills, shutil.get_terminal_size((80, 20)).columns):
+            print(line)
     return 0
 
 
@@ -446,6 +538,8 @@ def main() -> int:
         if args:
             die("pull takes no args")
         return cmd_pull()
+    if command == "list":
+        return cmd_list(args)
     if command == "pick":
         if args:
             die("pick takes no args")
