@@ -122,6 +122,7 @@ test_mkws() {
 	mkdir -p "$root"
 	init_repo "$root/repo-a"
 	init_repo "$root/repo-b"
+	init_repo "$root/repo-c"
 
 	mkws --help >/dev/null
 	EXPECT='`mkws index` moved to `mkwst index`' expect_fail_contains mkws index
@@ -146,6 +147,23 @@ test_mkws() {
 	assert_git_repo "$workspace/tech_doc"
 	assert_contains "$workspace/workspace.yml" "branch_name: feature/a"
 	assert_eq "feature/a" "$(git -C "$workspace/repo-a" branch --show-current)"
+
+	(
+		cd "$workspace"
+		mkws --add ../../repo-c --branch feature/c >/dev/null
+	)
+	assert_exists "$workspace/repo-c/.git"
+	assert_contains "$workspace/workspace.yml" "name: repo-c"
+	assert_contains "$workspace/workspace.yml" "branch_name: feature/c"
+	assert_eq "feature/c" "$(git -C "$workspace/repo-c" branch --show-current)"
+	assert_eq "feature/a" "$(python3 - "$workspace/workspace.yml" <<'PY'
+from pathlib import Path
+for line in Path(__import__("sys").argv[1]).read_text().splitlines():
+    if line.startswith("branch_name:"):
+        print(line.split(":", 1)[1].strip())
+        break
+PY
+)"
 
 	mkdir -p "$workspace/skills/shared-skill"
 	cat > "$workspace/skills/shared-skill/SKILL.md" <<EOF

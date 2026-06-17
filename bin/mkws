@@ -1546,23 +1546,27 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
         data = read_manifest(yml)
         existing = data["branch_name"]
         if existing:
-            if branch_flag and branch_flag != existing:
+            if branch_flag and branch_flag != existing and not repos_arg:
                 die(f"--branch '{branch_flag}' does not match workspace.yml branch '{existing}'")
             branch = existing
+            branch_for_added_repos = branch_flag or existing
         else:
             # Branch is empty in yml — workspace was created empty (no --branch).
             if branch_flag:
                 # User is filling in the branch now; persist it.
                 write_manifest(yml, name=name, branch=branch_flag, repos=data["repos"], links=data["links"])
                 branch = branch_flag
+                branch_for_added_repos = branch_flag
             else:
                 branch = ""
+                branch_for_added_repos = ""
     else:
         if not branch_flag and repos_arg and specs_need_default_branch:
             die("--branch required when adding repos without per-repo branches to a new workspace")
         workspace_dir.mkdir(parents=True, exist_ok=True)
         write_manifest(yml, name=name, branch=branch_flag or "", repos=[], links=[])
         branch = branch_flag or ""
+        branch_for_added_repos = branch
 
     ensure_tech_doc_repo(workspace_dir)
 
@@ -1598,7 +1602,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
         branch_for_repo = (
             (existing_repo or {}).get("branch_name")
             or repo_branch_override
-            or branch
+            or branch_for_added_repos
         )
         base_for_repo = (existing_repo or {}).get("base_branch", "")
         already_recorded = existing_repo is not None
@@ -1823,8 +1827,9 @@ Flags:
                       a workspace dir, read from workspace.yml. `/` in the
                       name becomes `_` in the folder.
   --branch <branch>   default branch name. Required when an added repo does
-                      not specify its own branch. Optional on re-add; must
-                      match workspace.yml if provided.
+                      not specify its own branch. When adding to an existing
+                      workspace, a different value applies to the newly added
+                      repo(s) without changing the workspace default branch.
   --add <repo>...     one or more repos to add. Each entry can be:
                         - a bare name (looked up under the root)
                         - a relative path (resolved against $PWD, e.g. ../repo)
