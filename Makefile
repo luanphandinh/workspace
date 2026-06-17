@@ -55,6 +55,8 @@ endif
 is_wsl := $(shell test -r /proc/sys/kernel/osrelease && grep -qi microsoft /proc/sys/kernel/osrelease && echo 1 || echo 0)
 alacritty_config_dir := $(HOME)/.config/alacritty
 kitty_config_dir := $(HOME)/.config/kitty
+codex_config_file := $(HOME)/.codex/config.toml
+workspace_codex_config_file := ./codex/config.toml
 ifeq ($(is_wsl),1)
 windows_appdata := $(shell cmd.exe /C echo %APPDATA% 2>/dev/null | tr -d '\r')
 alacritty_config_dir := $(shell wslpath -u '$(windows_appdata)')/alacritty
@@ -76,12 +78,12 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update version-lock-update setup-deps linux-snap-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis tmux tmux-install tmux-config alacritty alacritty-install alacritty-config kitty kitty-install kitty-config csvlens-install mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test cleanup
+.PHONY: help setup update version-lock-update setup-deps linux-snap-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-install tmux-config alacritty alacritty-install alacritty-config kitty kitty-install kitty-config csvlens-install mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test codex-config-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
 setup:  ## Install all workspace tools, configs, and terminal agent CLIs.
-setup: setup-deps linux-snap-deps fonts-install go-install gopls-install workspace-bin agent-clis nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config $(kitty_setup) csvlens-install optional-deps newsboat-config mac-apps cleanup
+setup: setup-deps linux-snap-deps fonts-install go-install gopls-install workspace-bin agent-clis codex-config nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config $(kitty_setup) csvlens-install optional-deps newsboat-config mac-apps cleanup
 
 update: setup-deps version-lock-update ## Install all workspace tools while updating Neovim plugins and native treesitter locks to latest.
 	$(MAKE) MODE=latest setup
@@ -153,6 +155,9 @@ agent-clis: ## Install terminal agent CLIs used by Neovim
 verify-agent-clis: ## Verify terminal agent CLIs used by Neovim
 	chmod +x ./scripts/install-agent-clis.sh
 	./scripts/install-agent-clis.sh verify
+
+codex-config: workspace-bin ## Merge workspace Codex config into the real Codex config
+	merge_toml "$(codex_config_file)" "$(workspace_codex_config_file)"
 
 tmux: ## Install tmux + configurations + plugins
 tmux: setup-deps tmux-install tmux-config cleanup
@@ -226,7 +231,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: version-lock-test mkws-test skills-hub-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test ## Run smoke tests
+test: version-lock-test mkws-test skills-hub-test codex-config-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test ## Run smoke tests
 
 version-lock-test: ## Run version-lock smoke tests
 	sh ./scripts/version-lock-smoke-test.sh
@@ -236,6 +241,9 @@ mkws-test: ## Run mkws/mkwst/mkwsts smoke tests
 
 skills-hub-test: ## Run skills-hub smoke tests
 	sh ./scripts/skills-hub-smoke-test.sh
+
+codex-config-test: ## Run Codex config smoke tests
+	sh ./scripts/codex-config-smoke-test.sh
 
 tmux-sidebar-test: ## Run tmux sidebar smoke tests
 	sh ./scripts/tmux-sidebar-smoke-test.sh

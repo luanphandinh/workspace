@@ -80,6 +80,10 @@ assert_contains "$HUB/package.json" '"private": true'
 
 mkdir -p "$HUB/.claude/skills/other-skill" "$PROJECT" "$FAKEBIN"
 printf '# other\n' > "$HUB/.claude/skills/other-skill/SKILL.md"
+mkdir -p "$HUB/.agents/skills/codex-skill"
+printf '# codex\n' > "$HUB/.agents/skills/codex-skill/SKILL.md"
+mkdir -p "$HUB/.agents/skills/cursor-skill"
+printf '# cursor\n' > "$HUB/.agents/skills/cursor-skill/SKILL.md"
 cat > "$FAKEBIN/fzf" <<'SH'
 #!/bin/sh
 set -eu
@@ -100,6 +104,20 @@ assert_contains "$FZF_INPUT" ".agent/skills/example-skill"
 assert_contains "$FZF_INPUT" ".claude/skills/other-skill"
 assert_exists "$PROJECT/.agent/skills/example-skill/SKILL.md"
 assert_exists "$PROJECT/.claude/skills/other-skill/SKILL.md"
+
+COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list > "$TMP/list.out"
+assert_contains "$TMP/list.out" "agent"
+assert_contains "$TMP/list.out" "  example-skill"
+assert_contains "$TMP/list.out" "agents (codex, cursor, ...)"
+assert_contains "$TMP/list.out" "  codex-skill   cursor-skill"
+assert_contains "$TMP/list.out" "claude"
+assert_contains "$TMP/list.out" "  other-skill"
+
+COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list agents > "$TMP/list-agents.out"
+assert_contains "$TMP/list-agents.out" "agents (codex, cursor, ...)"
+assert_contains "$TMP/list-agents.out" "  codex-skill   cursor-skill"
+assert_not_contains "$TMP/list-agents.out" "other-skill"
+assert_not_contains "$TMP/list-agents.out" "example-skill"
 
 mkdir -p "$HUB/.agent/skills/third-skill" "$TMP/group-project"
 printf '# third\n' > "$HUB/.agent/skills/third-skill/SKILL.md"
