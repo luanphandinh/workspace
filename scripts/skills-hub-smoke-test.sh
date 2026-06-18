@@ -16,6 +16,13 @@ assert_exists() {
 	}
 }
 
+assert_not_exists() {
+	if [ -e "$1" ]; then
+		printf 'unexpected path exists: %s\n' "$1" >&2
+		exit 1
+	fi
+}
+
 assert_contains() {
 	grep -F "$2" "$1" >/dev/null || {
 		printf 'expected %s to contain: %s\n' "$1" "$2" >&2
@@ -44,46 +51,66 @@ assert_line_count() {
 }
 
 HUB="$TMP/hub"
+HOME="$TMP/home"
 LOG="$TMP/run.log"
 INSTALLER="$TMP/install-skill"
 PROJECT="$TMP/project"
 FAKEBIN="$TMP/bin"
 FZF_INPUT="$TMP/fzf-input"
+LINK_ICON=""
+export HOME
+mkdir -p "$HOME"
 
 cat > "$INSTALLER" <<'SH'
 #!/bin/sh
 set -eu
 printf '%s\n' "$PWD" >> "$SKILLS_HUB_SMOKE_LOG"
-mkdir -p ".agent/skills/$1"
-printf '# %s\n' "$1" > ".agent/skills/$1/SKILL.md"
+mkdir -p ".agents/skills/$1"
+printf '# %s\n' "$1" > ".agents/skills/$1/SKILL.md"
 SH
 chmod +x "$INSTALLER"
 
 SKILLS_HUB_HOME="$HUB" SKILLS_HUB_SMOKE_LOG="$LOG" \
 	python3 "$ROOT/bin/skills-hub" add "$INSTALLER example-skill" >/dev/null
 
-assert_exists "$HUB/.agent/skills/example-skill/SKILL.md"
+assert_exists "$HUB/.agents/skills/example-skill/SKILL.md"
 assert_exists "$HUB/execute_plugins"
 assert_exists "$HUB/package.json"
 assert_contains "$HUB/execute_plugins" "$INSTALLER example-skill"
 assert_line_count "$HUB/execute_plugins" 1
 assert_contains "$LOG" "$HUB"
 
-rm -rf "$HUB/.agent/skills/example-skill"
+rm -rf "$HUB/.agents/skills/example-skill"
 SKILLS_HUB_HOME="$HUB" SKILLS_HUB_SMOKE_LOG="$LOG" \
 	python3 "$ROOT/bin/skills-hub" pull >/dev/null
 
-assert_exists "$HUB/.agent/skills/example-skill/SKILL.md"
+assert_exists "$HUB/.agents/skills/example-skill/SKILL.md"
 assert_line_count "$HUB/execute_plugins" 1
 assert_line_count "$LOG" 2
 assert_contains "$HUB/package.json" '"private": true'
 
 mkdir -p "$HUB/.claude/skills/other-skill" "$PROJECT" "$FAKEBIN"
 printf '# other\n' > "$HUB/.claude/skills/other-skill/SKILL.md"
+mkdir -p "$HUB/.claude/skills/available-claude-skill"
+printf '# available claude\n' > "$HUB/.claude/skills/available-claude-skill/SKILL.md"
+mkdir -p "$HOME/.claude/skills/global-claude-skill"
+printf '# global claude\n' > "$HOME/.claude/skills/global-claude-skill/SKILL.md"
+mkdir -p "$TMP/global-claude-linked-target"
+printf '# linked global claude\n' > "$TMP/global-claude-linked-target/SKILL.md"
+ln -s "$TMP/global-claude-linked-target" "$HOME/.claude/skills/global-linked-claude-skill"
+ln -s "$TMP/missing-global-claude-target" "$HOME/.claude/skills/global-dangling-claude-skill"
+mkdir -p "$HUB/.agents/skills/available-skill"
+printf '# available\n' > "$HUB/.agents/skills/available-skill/SKILL.md"
 mkdir -p "$HUB/.agents/skills/codex-skill"
 printf '# codex\n' > "$HUB/.agents/skills/codex-skill/SKILL.md"
 mkdir -p "$HUB/.agents/skills/cursor-skill"
 printf '# cursor\n' > "$HUB/.agents/skills/cursor-skill/SKILL.md"
+mkdir -p "$HOME/.agents/skills/global-skill"
+printf '# global\n' > "$HOME/.agents/skills/global-skill/SKILL.md"
+mkdir -p "$PROJECT/../.agents/skills/parent-only-skill"
+printf '# parent\n' > "$PROJECT/../.agents/skills/parent-only-skill/SKILL.md"
+mkdir -p "$HUB/.agents/skills/parent-only-skill"
+printf '# hub parent\n' > "$HUB/.agents/skills/parent-only-skill/SKILL.md"
 cat > "$FAKEBIN/fzf" <<'SH'
 #!/bin/sh
 set -eu
@@ -95,49 +122,84 @@ chmod +x "$FAKEBIN/fzf"
 (
 	cd "$PROJECT"
 	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
-		SKILLS_HUB_FZF_OUTPUT=".agent/skills/example-skill
+		SKILLS_HUB_FZF_OUTPUT=".agents/skills/example-skill
 .claude/skills/other-skill" \
 		python3 "$ROOT/bin/skills-hub" pick >/dev/null
 )
 
-assert_contains "$FZF_INPUT" ".agent/skills/example-skill"
+assert_contains "$FZF_INPUT" ".agents/skills/example-skill"
 assert_contains "$FZF_INPUT" ".claude/skills/other-skill"
-assert_exists "$PROJECT/.agent/skills/example-skill/SKILL.md"
+assert_exists "$PROJECT/.agents/skills/example-skill/SKILL.md"
 assert_exists "$PROJECT/.claude/skills/other-skill/SKILL.md"
+assert_not_exists "$PROJECT/.agent"
 
-COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list > "$TMP/list.out"
+(
+	cd "$PROJECT"
+	COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list > "$TMP/list.out"
+)
 assert_contains "$TMP/list.out" "agent"
-assert_contains "$TMP/list.out" "  example-skill"
-assert_contains "$TMP/list.out" "agents (codex, cursor, ...)"
-assert_contains "$TMP/list.out" "  codex-skill   cursor-skill"
+assert_contains "$TMP/list.out" "  active"
+assert_contains "$TMP/list.out" "    example-skill  global-skill"
+assert_contains "$TMP/list.out" "  available"
+assert_contains "$TMP/list.out" "available-skill"
+assert_contains "$TMP/list.out" "codex-skill"
+assert_contains "$TMP/list.out" "parent-only-skill"
 assert_contains "$TMP/list.out" "claude"
-assert_contains "$TMP/list.out" "  other-skill"
+assert_contains "$TMP/list.out" "  active"
+assert_contains "$TMP/list.out" "global-claude-skill"
+assert_contains "$TMP/list.out" "global-dangling-claude-skill $LINK_ICON"
+assert_contains "$TMP/list.out" "global-linked-claude-skill $LINK_ICON"
+assert_contains "$TMP/list.out" "other-skill"
+assert_contains "$TMP/list.out" "available-claude-skill"
+python3 - "$TMP/list.out" <<'PY'
+import sys
+text = open(sys.argv[1]).read()
+active = text.index("  active")
+available = text.index("  available")
+parent_only = text.index("parent-only-skill")
+if not available < parent_only:
+    raise SystemExit("parent-only-skill should be available, not active")
+if active < parent_only < available:
+    raise SystemExit("parent-only-skill leaked into active")
+PY
 
-COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list agents > "$TMP/list-agents.out"
-assert_contains "$TMP/list-agents.out" "agents (codex, cursor, ...)"
-assert_contains "$TMP/list-agents.out" "  codex-skill   cursor-skill"
+(
+	cd "$PROJECT"
+	COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list agent > "$TMP/list-agents.out"
+)
+assert_contains "$TMP/list-agents.out" "agent"
+assert_contains "$TMP/list-agents.out" "  active"
+assert_contains "$TMP/list-agents.out" "    example-skill  global-skill"
+assert_contains "$TMP/list-agents.out" "  available"
+assert_contains "$TMP/list-agents.out" "available-skill"
 assert_not_contains "$TMP/list-agents.out" "other-skill"
-assert_not_contains "$TMP/list-agents.out" "example-skill"
 
-mkdir -p "$HUB/.agent/skills/third-skill" "$TMP/group-project"
-printf '# third\n' > "$HUB/.agent/skills/third-skill/SKILL.md"
+(
+	cd "$PROJECT"
+	env -u NO_COLOR COLUMNS=80 FORCE_COLOR=1 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list agent > "$TMP/list-color.out"
+)
+assert_contains "$TMP/list-color.out" "$(printf '\033[32m  active\033[0m')"
+assert_contains "$TMP/list-color.out" "$(printf '\033[32m    example-skill  global-skill\033[0m')"
+
+mkdir -p "$HUB/.agents/skills/third-skill" "$TMP/group-project"
+printf '# third\n' > "$HUB/.agents/skills/third-skill/SKILL.md"
 
 PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
-	SKILLS_HUB_FZF_OUTPUT=".agent/skills/example-skill
+	SKILLS_HUB_FZF_OUTPUT=".agents/skills/example-skill
 .claude/skills/other-skill" \
 	python3 "$ROOT/bin/skills-hub" group create useful >/dev/null
 
 assert_exists "$HUB/groups/useful"
-assert_contains "$HUB/groups/useful" ".agent/skills/example-skill"
+assert_contains "$HUB/groups/useful" ".agents/skills/example-skill"
 assert_contains "$HUB/groups/useful" ".claude/skills/other-skill"
 
 PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
-	SKILLS_HUB_FZF_OUTPUT="+ .agent/skills/third-skill
+	SKILLS_HUB_FZF_OUTPUT="+ .agents/skills/third-skill
 - .claude/skills/other-skill" \
 	python3 "$ROOT/bin/skills-hub" group update useful >/dev/null
 
-assert_contains "$HUB/groups/useful" ".agent/skills/example-skill"
-assert_contains "$HUB/groups/useful" ".agent/skills/third-skill"
+assert_contains "$HUB/groups/useful" ".agents/skills/example-skill"
+assert_contains "$HUB/groups/useful" ".agents/skills/third-skill"
 assert_not_contains "$HUB/groups/useful" ".claude/skills/other-skill"
 
 (
@@ -147,8 +209,8 @@ assert_not_contains "$HUB/groups/useful" ".claude/skills/other-skill"
 		python3 "$ROOT/bin/skills-hub" group pick >/dev/null
 )
 
-assert_exists "$TMP/group-project/.agent/skills/example-skill/SKILL.md"
-assert_exists "$TMP/group-project/.agent/skills/third-skill/SKILL.md"
+assert_exists "$TMP/group-project/.agents/skills/example-skill/SKILL.md"
+assert_exists "$TMP/group-project/.agents/skills/third-skill/SKILL.md"
 
 where_path=$(SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" where)
 if [ "$where_path" != "$HUB" ]; then
