@@ -450,6 +450,34 @@ local function test_treesitter_required_parsers_available()
   end
 end
 
+local function test_go_treesitter_configures_default_folds()
+  local path = temp_root .. "/go-default-folds/main.go"
+  write(path, {
+    "package main",
+    "",
+    "func main() {",
+    "\tif true {",
+    "\t\tprintln(\"hello\")",
+    "\t}",
+    "}",
+  })
+
+  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  local buf = vim.api.nvim_get_current_buf()
+  wait_until("go treesitter active with fold setup", function()
+    return vim.treesitter.highlighter.active[buf] ~= nil
+  end, 3000)
+
+  assert_true(vim.wo.foldmethod == "expr", "go buffers should use expression folds")
+  assert_true(
+    vim.wo.foldexpr == "v:lua.vim.treesitter.foldexpr()",
+    "go buffers should use native treesitter foldexpr"
+  )
+  assert_true(vim.fn.foldlevel(3) > 0, "go function body should have a computed fold level")
+  vim.cmd("normal! zM")
+  assert_true(vim.fn.foldclosed(3) == 3, "zM should close the go function fold")
+end
+
 local function test_go_treesitter_preserves_fold_options_on_start()
   local path = temp_root .. "/go-folds/main.go"
   write(path, {
@@ -1366,6 +1394,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("treesitter required parsers available", function()
     test_treesitter_required_parsers_available()
+  end)
+
+  test("go treesitter configures default folds", function()
+    test_go_treesitter_configures_default_folds()
   end)
 
   test("go treesitter preserves fold options on start", function()
