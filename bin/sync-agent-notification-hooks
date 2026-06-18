@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+import json
+import pathlib
+import shlex
+import sys
+
+
+HOME = pathlib.Path.home()
+NOTIFY = HOME / "bin" / "codex-turn-ended-notify"
+ACTIVATE = "${AGENT_NOTIFY_ACTIVATE_APP:-${CODEX_NOTIFY_ACTIVATE_APP:-kitty}}"
+
+
+def read_json(path, default):
+    if not path.exists():
+        return default
+    try:
+        with path.open(encoding="utf-8") as file:
+            return json.load(file)
+    except json.JSONDecodeError as exc:
+        print(f"sync-agent-notification-hooks: invalid JSON in {path}: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+
+
+def write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(data, indent=2, sort_keys=False) + "\n"
+    path.write_text(text, encoding="utf-8")
+
+
+def command(title):
+    return " ".join(
+        [
+            f"AGENT_NOTIFY_TITLE={shlex.quote(title)}",
+            f"AGENT_NOTIFY_ACTIVATE_APP={ACTIVATE}",
+            shlex.quote(str(NOTIFY)),
+        ]
+    )
+
+
+def sync_claude():
+    path = HOME / ".claude" / "settings.json"
+    data = read_json(path, {})
+    if not isinstance(data, dict):
+        print(f"sync-agent-notification-hooks: expected object in {path}", file=sys.stderr)
+        raise SystemExit(1)
+
+    hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        print(f"sync-agent-notification-hooks: expected hooks object in {path}", file=sys.stderr)
+        raise SystemExit(1)
+
+    stop = hooks.setdefault("Stop", [])
+    if not isinstance(stop, list):
+        print(f"sync-agent-notification-hooks: expected hooks.Stop array in {path}", file=sys.stderr)
+        raise SystemExit(1)
+
+    notify_command = command("Claude")
+    for group in stop:
+        if not isinstance(group, dict):
+            continue
+        group_hooks = group.get("hooks")
+        if not isinstance(group_hooks, list):
+            continue
+        for hook in group_hooks:
+            if isinstance(hook, dict) and hook.get("command") == notify_command:
+                write_json(path, data)
+                return
+
+    stop.append(
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": notify_command,
+                    "timeout": 30,
+                }
+            ]
+        }
+    )
+    write_json(path, data)
+
+
+def sync_cursor():
+    path = HOME / ".cursor" / "hooks.json"
+    data = read_json(path, {"version": 1, "hooks": {}})
+    if not isinstance(data, dict):
+        print(f"sync-agent-notification-hooks: expected object in {path}", file=sys.stderr)
+        raise SystemExit(1)
+
+    data.setdefault("version", 1)
+    hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        print(f"sync-agent-notification-hooks: expected hooks object in {path}", file=sys.stderr)
+        raise SystemExit(1)
+
+    stop = hooks.setdefault("stop", [])
+    if not isinstance(stop, list):
+        print(f"sync-agent-notification-hooks: expected hooks.stop array in {path}", file=sys.stderr)
+        raise SystemExit(1)
+
+    notify_command = command("Cursor")
+    if not any(isinstance(hook, dict) and hook.get("command") == notify_command for hook in stop):
+        stop.append({"command": notify_command})
+    write_json(path, data)
+
+
+def main():
+    sync_claude()
+    sync_cursor()
+    print("sync-agent-notification-hooks: updated Claude and Cursor notification hooks")
+
+
+if __name__ == "__main__":
+    main()

@@ -78,7 +78,7 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update version-lock-update setup-deps linux-snap-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-install tmux-config alacritty alacritty-install alacritty-config kitty kitty-install kitty-config csvlens-install mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test codex-config-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test cleanup
+.PHONY: help setup update version-lock-update setup-deps linux-snap-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-install tmux-config alacritty alacritty-install alacritty-config kitty kitty-install kitty-config csvlens-install mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -228,10 +228,11 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	find ~/bin -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 	cp -r ./bin/. ~/bin/
 	find ~/bin -type f -exec chmod +x {} +
+	@python3 ./bin/sync-agent-notification-hooks
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: version-lock-test mkws-test skills-hub-test codex-config-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test ## Run smoke tests
+test: version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test ## Run smoke tests
 
 version-lock-test: ## Run version-lock smoke tests
 	sh ./scripts/version-lock-smoke-test.sh
@@ -244,6 +245,9 @@ skills-hub-test: ## Run skills-hub smoke tests
 
 codex-config-test: ## Run Codex config smoke tests
 	sh ./scripts/codex-config-smoke-test.sh
+
+agent-notification-hooks-test: ## Run agent notification hook smoke tests
+	sh ./scripts/agent-notification-hooks-smoke-test.sh
 
 tmux-sidebar-test: ## Run tmux sidebar smoke tests
 	sh ./scripts/tmux-sidebar-smoke-test.sh

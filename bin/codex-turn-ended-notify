@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+notify_title="${AGENT_NOTIFY_TITLE:-${CODEX_NOTIFY_TITLE:-Codex}}"
+activate_app="${AGENT_NOTIFY_ACTIVATE_APP:-${CODEX_NOTIFY_ACTIVATE_APP:-}}"
+
 jump_to_tmux_pane() {
 	pane="${1:-}"
 	[ -n "$pane" ] || exit 0
@@ -17,7 +20,7 @@ jump_to_tmux_pane() {
 
 	"$tmux_cmd" select-window -t "$target_window" >/dev/null 2>&1 || :
 	"$tmux_cmd" select-pane -t "$target_pane" >/dev/null 2>&1 || :
-	"$tmux_cmd" display-message -t "$target_pane" "Codex notification focused #{session_name}:#{window_index}.#{pane_index}" >/dev/null 2>&1 || :
+	"$tmux_cmd" display-message -t "$target_pane" "$notify_title notification focused #{session_name}:#{window_index}.#{pane_index}" >/dev/null 2>&1 || :
 
 	if [ -n "$target_session" ]; then
 		tab="$(printf '\t')"
@@ -31,14 +34,14 @@ jump_to_tmux_pane() {
 			done
 	fi
 
-	if [ -n "${CODEX_NOTIFY_ACTIVATE_APP:-}" ] && command -v open >/dev/null 2>&1; then
-		open -a "$CODEX_NOTIFY_ACTIVATE_APP" >/dev/null 2>&1 || :
-	elif [ -n "${CODEX_NOTIFY_ACTIVATE_APP:-}" ] && command -v osascript >/dev/null 2>&1; then
+	if [ -n "$activate_app" ] && command -v open >/dev/null 2>&1; then
+		open -a "$activate_app" >/dev/null 2>&1 || :
+	elif [ -n "$activate_app" ] && command -v osascript >/dev/null 2>&1; then
 		osascript \
 			-e 'on run argv' \
 			-e 'tell application (item 1 of argv) to activate' \
 			-e 'end run' \
-			"$CODEX_NOTIFY_ACTIVATE_APP" >/dev/null 2>&1 || :
+			"$activate_app" >/dev/null 2>&1 || :
 	fi
 }
 
@@ -68,7 +71,7 @@ config_dir="${CODEX_HOME:-$HOME/.codex}"
 config_file="$config_dir/config.toml"
 script_path="$(CDPATH= cd "$(dirname "$0")" 2>/dev/null && pwd -P)/$(basename "$0")"
 
-if [ -n "$payload" ] && [ -r "$config_file" ] && command -v python3 >/dev/null 2>&1; then
+if [ "$notify_title" = "Codex" ] && [ -n "$payload" ] && [ -r "$config_file" ] && command -v python3 >/dev/null 2>&1; then
 	python3 - "$config_file" "$script_path" "$payload" <<'PY' >/dev/null 2>&1 || :
 import ast
 import os
@@ -161,30 +164,30 @@ if command -v terminal-notifier >/dev/null 2>&1; then
 		if tmux_bin="$(command -v tmux 2>/dev/null)"; then
 			click_cmd="TMUX_BIN=$(shell_quote "$tmux_bin") $click_cmd"
 		fi
-		if [ -n "${CODEX_NOTIFY_ACTIVATE_APP:-}" ]; then
-			click_cmd="CODEX_NOTIFY_ACTIVATE_APP=$(shell_quote "$CODEX_NOTIFY_ACTIVATE_APP") $click_cmd"
+		if [ -n "$activate_app" ]; then
+			click_cmd="AGENT_NOTIFY_ACTIVATE_APP=$(shell_quote "$activate_app") $click_cmd"
 		fi
 		if [ -n "${TMUX:-}" ]; then
 			click_cmd="TMUX=$(shell_quote "$TMUX") $click_cmd"
 		fi
 		if [ -n "$tmux_target" ]; then
-			terminal-notifier -title "Codex" -message "$message" -subtitle "tmux $tmux_target" -execute "$click_cmd" >/dev/null 2>&1 || :
+			terminal-notifier -title "$notify_title" -message "$message" -subtitle "tmux $tmux_target" -execute "$click_cmd" >/dev/null 2>&1 || :
 		else
-			terminal-notifier -title "Codex" -message "$message" -execute "$click_cmd" >/dev/null 2>&1 || :
+			terminal-notifier -title "$notify_title" -message "$message" -execute "$click_cmd" >/dev/null 2>&1 || :
 		fi
 	else
-		terminal-notifier -title "Codex" -message "$message" >/dev/null 2>&1 || :
+		terminal-notifier -title "$notify_title" -message "$message" >/dev/null 2>&1 || :
 	fi
 elif command -v osascript >/dev/null 2>&1; then
 	osascript \
 		-e 'on run argv' \
-		-e 'display notification (item 1 of argv) with title "Codex"' \
+		-e 'display notification (item 1 of argv) with title (item 2 of argv)' \
 		-e 'end run' \
-		"$message" >/dev/null 2>&1 || :
+		"$message" "$notify_title" >/dev/null 2>&1 || :
 fi
 
 if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-	tmux display-message "Codex $message" >/dev/null 2>&1 || :
+	tmux display-message "$notify_title $message" >/dev/null 2>&1 || :
 	if [ -n "${TMUX_PANE:-}" ]; then
 		pane_tty="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_tty}' 2>/dev/null || :)"
 		if [ -n "$pane_tty" ] && [ -w "$pane_tty" ]; then
