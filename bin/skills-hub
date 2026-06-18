@@ -6,6 +6,11 @@ import sys
 from pathlib import Path
 
 
+LINK_ICON = "\uf0c1"
+LOCAL_ICON = "\uf015"
+GLOBAL_ICON = "\uf0ac"
+
+
 def hub_home() -> Path:
     return Path(os.environ.get("SKILLS_HUB_HOME", "~/.skills-hub")).expanduser()
 
@@ -39,7 +44,7 @@ Commands:
   add   Run <command> inside the managed skills-hub folder, then cache it in execute_plugins.
   pull  Replay every cached command from execute_plugins inside the managed skills-hub folder.
   list  List hub skills grouped by parent folder.
-  pick  Pick hub skills with fzf and copy them into the current folder.
+  pick  Pick hub skills with fzf and link them into the current folder.
   group Save, update, and install named skill groups.
   where Print the managed skills-hub folder path.
 
@@ -175,17 +180,13 @@ def cache_command(command: str, path: Path) -> None:
     write_commands(path, commands)
 
 
-def copy_skill_dir(src: Path, dst: Path) -> None:
+def link_skill_dir(src: Path, dst: Path) -> None:
     if dst.is_symlink() or dst.is_file():
         dst.unlink()
     elif dst.exists():
         shutil.rmtree(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(
-        src,
-        dst,
-        ignore=shutil.ignore_patterns(".git", ".DS_Store", "__pycache__"),
-    )
+    os.symlink(src, dst, target_is_directory=True)
 
 
 def discover_skill_dirs(home: Path) -> dict[str, Path]:
@@ -206,7 +207,7 @@ def discover_skill_dirs(home: Path) -> dict[str, Path]:
 
 def parent_label(parent: str) -> str:
     if parent == ".agents":
-        return "agents (codex, cursor, ...)"
+        return "agent"
     return parent.removeprefix(".")
 
 
@@ -216,7 +217,7 @@ def parent_filter(name: str) -> str:
         die("parent is required")
     if "/" in name or "\\" in name:
         die("parent must be a simple folder name")
-    if name == "agents":
+    if name in ("agent", "agents"):
         return ".agents"
     if name.startswith("."):
         return name
@@ -232,7 +233,93 @@ def group_skills_by_parent(skills: dict[str, Path]) -> dict[str, list[str]]:
         parent = parts[0]
         skill_rel = str(Path(*parts[2:]))
         grouped.setdefault(parent, []).append(skill_rel)
-    return {parent: sorted(items) for parent, items in sorted(grouped.items())}
+    return {parent: sorted(set(items)) for parent, items in sorted(grouped.items())}
+
+
+def color_enabled() -> bool:
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    return sys.stdout.isatty() or os.environ.get("FORCE_COLOR") not in (None, "", "0")
+
+
+def green(text: str) -> str:
+    if not color_enabled():
+        return text
+    return f"\033[32m{text}\033[0m"
+
+
+def global_skill_roots(parent: str) -> list[Path]:
+    home = Path.home()
+    return [home / parent / "skills"]
+
+
+def visible_skill_roots(parent: str) -> list[Path]:
+    path = Path.cwd()
+    roots = [path / parent / "skills"]
+    roots.extend(global_skill_roots(parent))
+    seen = set()
+    deduped = []
+    for root in roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        deduped.append(root)
+    return deduped
+
+
+def discover_skill_names(root: Path, symlink_skills: set[str] | None = None) -> set[str]:
+    skills = set()
+    if not root.is_dir():
+        return skills
+
+    for child in root.iterdir():
+        if child.name.startswith("."):
+            continue
+        if child.is_symlink():
+            skills.add(child.name)
+            if symlink_skills is not None:
+                symlink_skills.add(child.name)
+            continue
+        if child.is_dir():
+            skills.add(child.name)
+
+    for skill_md in root.rglob("SKILL.md"):
+        try:
+            rel = skill_md.parent.relative_to(root)
+        except ValueError:
+            continue
+        if rel.parts:
+            skills.add(str(rel))
+    return skills
+
+
+def discover_visible_parents() -> set[str]:
+    parents = set()
+    for base in (Path.cwd(), Path.home()):
+        if not base.is_dir():
+            continue
+        for child in base.iterdir():
+            skills_dir = child / "skills"
+            if discover_skill_names(skills_dir):
+                parents.add(child.name)
+    return parents
+
+
+def discover_visible_skills(parent: str) -> tuple[list[str], set[str], set[str], set[str]]:
+    skills = set()
+    symlink_skills = set()
+    local_skills = set()
+    global_skills = set()
+    local_root = Path.cwd() / parent / "skills"
+    global_roots = set(global_skill_roots(parent))
+    for root in visible_skill_roots(parent):
+        root_skills = discover_skill_names(root, symlink_skills)
+        skills.update(root_skills)
+        if root == local_root:
+            local_skills.update(root_skills)
+        if root in global_roots:
+            global_skills.update(root_skills)
+    return sorted(skills), symlink_skills, local_skills, global_skills
 
 
 def format_columns(items: list[str], width: int, indent: str = "  ", gap: int = 2) -> list[str]:
@@ -263,9 +350,37 @@ def format_columns(items: list[str], width: int, indent: str = "  ", gap: int = 
     return lines
 
 
+def skill_labels(items: list[str], symlink_items: set[str], local_items: set[str], global_items: set[str]) -> list[str]:
+    labels = []
+    for item in items:
+        icons = []
+        if item in symlink_items:
+            icons.append(LINK_ICON)
+        if item in local_items:
+            icons.append(LOCAL_ICON)
+        if item in global_items:
+            icons.append(GLOBAL_ICON)
+        labels.append(f"{item} {' '.join(icons)}" if icons else item)
+    return labels
+
+
+def print_skill_columns(
+    items: list[str],
+    width: int,
+    indent: str,
+    active: bool = False,
+    symlink_items: set[str] | None = None,
+    local_items: set[str] | None = None,
+    global_items: set[str] | None = None,
+) -> None:
+    labels = skill_labels(items, symlink_items or set(), local_items or set(), global_items or set())
+    for line in format_columns(labels, width, indent=indent):
+        print(green(line) if active else line)
+
+
 def install_skill_paths(home: Path, selected: list[str]) -> int:
     skills = discover_skill_dirs(home)
-    copied = 0
+    linked = 0
     seen = set()
     for rel in selected:
         rel = rel.strip()
@@ -276,11 +391,11 @@ def install_skill_paths(home: Path, selected: list[str]) -> int:
         if src is None:
             die(f"selected skill is not in hub: {rel}")
         dst = Path.cwd() / rel
-        copy_skill_dir(src, dst)
-        print(f"skills-hub: installed {rel}")
-        copied += 1
+        link_skill_dir(src, dst)
+        print(f"skills-hub: linked {rel}")
+        linked += 1
 
-    print(f"skills-hub: installed {copied} skill(s)")
+    print(f"skills-hub: linked {linked} skill(s)")
     return 0
 
 
@@ -327,26 +442,40 @@ def cmd_list(args: list[str]) -> int:
     home = hub_home()
     ensure_home(home)
     grouped = group_skills_by_parent(discover_skill_dirs(home))
+    parents = set(grouped) | discover_visible_parents()
     if args:
         selected_parent = parent_filter(args[0])
-        grouped = {
-            parent: skills
-            for parent, skills in grouped.items()
-            if parent == selected_parent
-        }
+        parents = {selected_parent}
 
-    if not grouped:
+    if not parents:
         print(f"skills-hub: no skills found under {home}")
         return 0
 
     first = True
-    for parent, skills in grouped.items():
+    terminal_width = shutil.get_terminal_size((80, 20)).columns
+    for parent in sorted(parents):
         if not first:
             print()
         first = False
         print(parent_label(parent))
-        for line in format_columns(skills, shutil.get_terminal_size((80, 20)).columns):
-            print(line)
+        skills = grouped.get(parent, [])
+        hub_symlink_skills = set()
+        discover_skill_names(home / parent / "skills", hub_symlink_skills)
+        active_skills, active_symlink_skills, local_skills, global_skills = discover_visible_skills(parent)
+        active_set = set(active_skills)
+        available_skills = [skill for skill in skills if skill not in active_set]
+        print(green("  active"))
+        print_skill_columns(
+            active_skills,
+            terminal_width,
+            indent="    ",
+            active=True,
+            symlink_items=active_symlink_skills,
+            local_items=local_skills,
+            global_items=global_skills,
+        )
+        print("  available")
+        print_skill_columns(available_skills, terminal_width, indent="    ", symlink_items=hub_symlink_skills)
     return 0
 
 

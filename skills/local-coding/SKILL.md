@@ -46,6 +46,23 @@ If the user already provides an approved design or an existing plan, verify that
 - **Test changed behavior, not implementation details.** Add or update focused tests around the observable behavior and edge cases touched by the change.
 - **Apply this when planning too.** Implementation plans MUST include these standards as constraints so execution sub-agents keep diffs small, avoid full-block indentation, prefer early returns, and reuse existing utilities.
 
+## New code gate — no speculative abstractions
+Before adding any new file, type, wrapper, helper, option struct, adapter, alias, or exported API, the agent MUST prove it is necessary.
+Allowed only when at least one is true:
+- It is directly required by the user request.
+- There are 2+ real call sites that need shared logic now.
+- It breaks an import cycle without duplicating logic.
+- It preserves an existing public API that current callers still use.
+Otherwise:
+- Do not add it.
+- Prefer changing the existing function signature/body directly.
+- Prefer passing the needed parameter directly into the existing function over creating options structs or wrapper functions that only add/forward that parameter.
+- Prefer returning the existing concrete struct over adding wrapper types or aliases.
+- Delete provisional helpers/wrappers/files once the final design makes them unnecessary.
+Before finalizing, run `git diff --name-only` and `git diff --stat`, then inspect every added file/type/function. For each added symbol/file, ask: "Would this still be needed if I wrote the direct change by hand?" If the answer is no, remove it before reporting completion.
+Type aliases are allowed only when existing callers need compatibility with the old package/type path. If there is no compatibility requirement, callers must use the real concrete type directly.
+Implementation plans MUST include this gate as a constraint so sub-agents do not introduce speculative files, helpers, wrappers, option structs, adapters, aliases, or exported APIs.
+
 ## Working folder — workspace + co-located tech_doc
 - All coding for a tech design happens inside a **multi-repo git-worktree workspace** at `<root>/local_workspaces/<workspace-name>/`. This is the SAME workspace that the `local-tech-design` skill created during the tech-design phase — it already holds the tech doc and mapping file under `<workspace>/tech_doc/`, and implementation planning artifacts belong under `<workspace>/implementation_plan/`. **Never edit the original sibling source repos** outside the workspace.
 - Workspace creation/extension is owned by the `local-workspace` skill (via `mkws`). **Delegate to that skill** — do not reimplement the worktree/branch setup here.
