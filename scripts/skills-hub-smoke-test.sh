@@ -23,6 +23,18 @@ assert_not_exists() {
 	fi
 }
 
+assert_symlink_target() {
+	if [ ! -L "$1" ]; then
+		printf 'expected symlink: %s\n' "$1" >&2
+		exit 1
+	fi
+	target=$(readlink "$1")
+	if [ "$target" != "$2" ]; then
+		printf 'expected %s to link to %s, got %s\n' "$1" "$2" "$target" >&2
+		exit 1
+	fi
+}
+
 assert_contains() {
 	grep -F "$2" "$1" >/dev/null || {
 		printf 'expected %s to contain: %s\n' "$1" "$2" >&2
@@ -58,6 +70,8 @@ PROJECT="$TMP/project"
 FAKEBIN="$TMP/bin"
 FZF_INPUT="$TMP/fzf-input"
 LINK_ICON=""
+LOCAL_ICON=""
+GLOBAL_ICON=""
 export HOME
 mkdir -p "$HOME"
 
@@ -129,9 +143,13 @@ chmod +x "$FAKEBIN/fzf"
 
 assert_contains "$FZF_INPUT" ".agents/skills/example-skill"
 assert_contains "$FZF_INPUT" ".claude/skills/other-skill"
+assert_symlink_target "$PROJECT/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
+assert_symlink_target "$PROJECT/.claude/skills/other-skill" "$HUB/.claude/skills/other-skill"
 assert_exists "$PROJECT/.agents/skills/example-skill/SKILL.md"
 assert_exists "$PROJECT/.claude/skills/other-skill/SKILL.md"
 assert_not_exists "$PROJECT/.agent"
+printf '# updated example\n' > "$HUB/.agents/skills/example-skill/SKILL.md"
+assert_contains "$PROJECT/.agents/skills/example-skill/SKILL.md" "updated example"
 
 (
 	cd "$PROJECT"
@@ -139,17 +157,18 @@ assert_not_exists "$PROJECT/.agent"
 )
 assert_contains "$TMP/list.out" "agent"
 assert_contains "$TMP/list.out" "  active"
-assert_contains "$TMP/list.out" "    example-skill  global-skill"
+assert_contains "$TMP/list.out" "example-skill $LINK_ICON $LOCAL_ICON"
+assert_contains "$TMP/list.out" "global-skill $GLOBAL_ICON"
 assert_contains "$TMP/list.out" "  available"
 assert_contains "$TMP/list.out" "available-skill"
 assert_contains "$TMP/list.out" "codex-skill"
 assert_contains "$TMP/list.out" "parent-only-skill"
 assert_contains "$TMP/list.out" "claude"
 assert_contains "$TMP/list.out" "  active"
-assert_contains "$TMP/list.out" "global-claude-skill"
-assert_contains "$TMP/list.out" "global-dangling-claude-skill $LINK_ICON"
-assert_contains "$TMP/list.out" "global-linked-claude-skill $LINK_ICON"
-assert_contains "$TMP/list.out" "other-skill"
+assert_contains "$TMP/list.out" "global-claude-skill $GLOBAL_ICON"
+assert_contains "$TMP/list.out" "global-dangling-claude-skill $LINK_ICON $GLOBAL_ICON"
+assert_contains "$TMP/list.out" "global-linked-claude-skill $LINK_ICON $GLOBAL_ICON"
+assert_contains "$TMP/list.out" "other-skill $LINK_ICON $LOCAL_ICON"
 assert_contains "$TMP/list.out" "available-claude-skill"
 python3 - "$TMP/list.out" <<'PY'
 import sys
@@ -169,7 +188,8 @@ PY
 )
 assert_contains "$TMP/list-agents.out" "agent"
 assert_contains "$TMP/list-agents.out" "  active"
-assert_contains "$TMP/list-agents.out" "    example-skill  global-skill"
+assert_contains "$TMP/list-agents.out" "example-skill $LINK_ICON $LOCAL_ICON"
+assert_contains "$TMP/list-agents.out" "global-skill $GLOBAL_ICON"
 assert_contains "$TMP/list-agents.out" "  available"
 assert_contains "$TMP/list-agents.out" "available-skill"
 assert_not_contains "$TMP/list-agents.out" "other-skill"
@@ -179,7 +199,7 @@ assert_not_contains "$TMP/list-agents.out" "other-skill"
 	env -u NO_COLOR COLUMNS=80 FORCE_COLOR=1 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list agent > "$TMP/list-color.out"
 )
 assert_contains "$TMP/list-color.out" "$(printf '\033[32m  active\033[0m')"
-assert_contains "$TMP/list-color.out" "$(printf '\033[32m    example-skill  global-skill\033[0m')"
+assert_contains "$TMP/list-color.out" "$(printf '\033[32m    example-skill %s %s' "$LINK_ICON" "$LOCAL_ICON")"
 
 mkdir -p "$HUB/.agents/skills/third-skill" "$TMP/group-project"
 printf '# third\n' > "$HUB/.agents/skills/third-skill/SKILL.md"
@@ -209,8 +229,8 @@ assert_not_contains "$HUB/groups/useful" ".claude/skills/other-skill"
 		python3 "$ROOT/bin/skills-hub" group pick >/dev/null
 )
 
-assert_exists "$TMP/group-project/.agents/skills/example-skill/SKILL.md"
-assert_exists "$TMP/group-project/.agents/skills/third-skill/SKILL.md"
+assert_symlink_target "$TMP/group-project/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
+assert_symlink_target "$TMP/group-project/.agents/skills/third-skill" "$HUB/.agents/skills/third-skill"
 
 where_path=$(SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" where)
 if [ "$where_path" != "$HUB" ]; then
