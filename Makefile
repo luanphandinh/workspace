@@ -19,7 +19,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 		&& sudo rm -rf /opt/$(nvim_linux_name) \
 		&& sudo tar -C /opt -xzf ./tmp/$(nvim_linux_name).tar.gz \
 		&& sudo ln -sf /opt/$(nvim_linux_name)/bin/nvim /usr/local/bin/nvim
-	deps := fd-find fzf python3-pip nodejs npm curl unzip xz-utils fontconfig git build-essential snapd
+	deps := fd-find fzf python3-pip nodejs npm curl unzip xz-utils fontconfig git build-essential snapd zoxide
 	optional_deps := jq btop
 	os_name := linux
 	fonts_install := test -f "$(HOME)/.local/share/fonts/FiraCodeNerdFont-Regular.ttf" || (mkdir -p "$(HOME)/.local/share/fonts" ./tmp \
@@ -40,7 +40,7 @@ else
 	install := brew install
 	newsboat_config := ./newsboat/config.darwin
 	install_nvim := brew install neovim --HEAD
-	deps := fd fzf yazi csvlens python3 node terminal-notifier
+	deps := fd fzf yazi csvlens python3 node terminal-notifier zoxide
 	optional_deps := jq btop newsboat
 	os_name := darwin
 	setup_script := echo "Run installer for macOs"
@@ -78,7 +78,7 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update version-lock-update setup-deps linux-snap-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-install tmux-config alacritty alacritty-install alacritty-config kitty kitty-install kitty-config csvlens-install mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test cleanup
+.PHONY: help setup update version-lock-update setup-deps linux-snap-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-install tmux-config alacritty alacritty-install alacritty-config kitty kitty-install kitty-config csvlens-install mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -232,7 +232,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test ## Run smoke tests
+test: version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test ## Run smoke tests
 
 version-lock-test: ## Run version-lock smoke tests
 	sh ./scripts/version-lock-smoke-test.sh
@@ -248,6 +248,9 @@ codex-config-test: ## Run Codex config smoke tests
 
 agent-notification-hooks-test: ## Run agent notification hook smoke tests
 	sh ./scripts/agent-notification-hooks-smoke-test.sh
+
+workspace-shell-test: ## Run workspace shell smoke tests
+	sh ./scripts/workspace-shell-smoke-test.sh
 
 tmux-sidebar-test: ## Run tmux sidebar smoke tests
 	sh ./scripts/tmux-sidebar-smoke-test.sh
