@@ -1,10 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
-bin_dir="${HOME}/.local/bin"
+bin_dir="${CODEX_INSTALL_DIR:-$HOME/.local/bin}"
 npm_prefix="${HOME}/.local"
+codex_standalone="${CODEX_HOME:-$HOME/.codex}/packages/standalone/current/codex"
 
-export PATH="${bin_dir}:${HOME}/bin:${PATH}"
+export PATH="${bin_dir}:${npm_prefix}/bin:${HOME}/bin:${PATH}"
 
 has_cmd() {
   command -v "$1" >/dev/null 2>&1
@@ -40,6 +41,16 @@ install_cursor_cli() {
   curl https://cursor.com/install -fsS | bash
 }
 
+install_codex_cli() {
+  if has_cmd codex && [ -x "$codex_standalone" ]; then
+    return
+  fi
+
+  need_cmd curl
+  mkdir -p "$bin_dir"
+  curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=true sh
+}
+
 verify_cli() {
   cmd="$1"
 
@@ -54,15 +65,28 @@ verify_cli() {
   fi
 }
 
+verify_codex_cli() {
+  verify_cli codex
+  codex_path="$(command -v codex)"
+  if [ "$codex_path" != "$bin_dir/codex" ]; then
+    echo "codex resolves to $codex_path, expected $bin_dir/codex" >&2
+    exit 1
+  fi
+  if [ ! -x "$codex_standalone" ]; then
+    echo "standalone codex is not installed at $codex_standalone" >&2
+    exit 1
+  fi
+}
+
 install_all() {
   install_npm_cli claude @anthropic-ai/claude-code
-  install_npm_cli codex @openai/codex
+  install_codex_cli
   install_cursor_cli
 }
 
 verify_all() {
   verify_cli claude
-  verify_cli codex
+  verify_codex_cli
   verify_cli cursor-agent
 }
 

@@ -156,30 +156,43 @@ assert_contains "$PROJECT/.agents/skills/example-skill/SKILL.md" "updated exampl
 	COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list > "$TMP/list.out"
 )
 assert_contains "$TMP/list.out" "agent"
-assert_contains "$TMP/list.out" "  active"
-assert_contains "$TMP/list.out" "example-skill $LINK_ICON $LOCAL_ICON"
-assert_contains "$TMP/list.out" "global-skill $GLOBAL_ICON"
 assert_contains "$TMP/list.out" "  available"
 assert_contains "$TMP/list.out" "available-skill"
 assert_contains "$TMP/list.out" "codex-skill"
 assert_contains "$TMP/list.out" "parent-only-skill"
 assert_contains "$TMP/list.out" "claude"
-assert_contains "$TMP/list.out" "  active"
-assert_contains "$TMP/list.out" "global-claude-skill $GLOBAL_ICON"
-assert_contains "$TMP/list.out" "global-dangling-claude-skill $LINK_ICON $GLOBAL_ICON"
-assert_contains "$TMP/list.out" "global-linked-claude-skill $LINK_ICON $GLOBAL_ICON"
-assert_contains "$TMP/list.out" "other-skill $LINK_ICON $LOCAL_ICON"
 assert_contains "$TMP/list.out" "available-claude-skill"
+assert_not_contains "$TMP/list.out" "  active"
+assert_not_contains "$TMP/list.out" "example-skill"
+assert_not_contains "$TMP/list.out" "global-skill"
+assert_not_contains "$TMP/list.out" "other-skill"
+
+(
+	cd "$PROJECT"
+	COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list --all > "$TMP/list-all.out"
+)
+assert_contains "$TMP/list-all.out" "agent"
+assert_contains "$TMP/list-all.out" "  active"
+assert_contains "$TMP/list-all.out" "example-skill $LINK_ICON $LOCAL_ICON"
+assert_contains "$TMP/list-all.out" "global-skill $GLOBAL_ICON"
+assert_contains "$TMP/list-all.out" "  available"
+assert_contains "$TMP/list-all.out" "available-skill"
+assert_contains "$TMP/list-all.out" "codex-skill"
+assert_contains "$TMP/list-all.out" "parent-only-skill"
+assert_contains "$TMP/list-all.out" "claude"
+assert_contains "$TMP/list-all.out" "  active"
+assert_contains "$TMP/list-all.out" "global-claude-skill $GLOBAL_ICON"
+assert_contains "$TMP/list-all.out" "global-dangling-claude-skill $LINK_ICON $GLOBAL_ICON"
+assert_contains "$TMP/list-all.out" "global-linked-claude-skill $LINK_ICON $GLOBAL_ICON"
+assert_contains "$TMP/list-all.out" "other-skill $LINK_ICON $LOCAL_ICON"
+assert_contains "$TMP/list-all.out" "available-claude-skill"
 python3 - "$TMP/list.out" <<'PY'
 import sys
 text = open(sys.argv[1]).read()
-active = text.index("  active")
 available = text.index("  available")
 parent_only = text.index("parent-only-skill")
 if not available < parent_only:
     raise SystemExit("parent-only-skill should be available, not active")
-if active < parent_only < available:
-    raise SystemExit("parent-only-skill leaked into active")
 PY
 
 (
@@ -190,9 +203,21 @@ assert_contains "$TMP/list-agents.out" "agent"
 assert_contains "$TMP/list-agents.out" "  active"
 assert_contains "$TMP/list-agents.out" "example-skill $LINK_ICON $LOCAL_ICON"
 assert_contains "$TMP/list-agents.out" "global-skill $GLOBAL_ICON"
-assert_contains "$TMP/list-agents.out" "  available"
-assert_contains "$TMP/list-agents.out" "available-skill"
+assert_not_contains "$TMP/list-agents.out" "  available"
+assert_not_contains "$TMP/list-agents.out" "available-skill"
 assert_not_contains "$TMP/list-agents.out" "other-skill"
+
+(
+	cd "$PROJECT"
+	COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list agent --all > "$TMP/list-agents-all.out"
+)
+assert_contains "$TMP/list-agents-all.out" "agent"
+assert_contains "$TMP/list-agents-all.out" "  active"
+assert_contains "$TMP/list-agents-all.out" "example-skill $LINK_ICON $LOCAL_ICON"
+assert_contains "$TMP/list-agents-all.out" "global-skill $GLOBAL_ICON"
+assert_contains "$TMP/list-agents-all.out" "  available"
+assert_contains "$TMP/list-agents-all.out" "available-skill"
+assert_not_contains "$TMP/list-agents-all.out" "other-skill"
 
 (
 	cd "$PROJECT"

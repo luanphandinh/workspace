@@ -33,7 +33,7 @@ def usage() -> None:
         """Usage:
   skills-hub add <command>
   skills-hub pull
-  skills-hub list [parent]
+  skills-hub list [parent] [--all]
   skills-hub pick
   skills-hub group create [name]
   skills-hub group update [name]
@@ -43,7 +43,7 @@ def usage() -> None:
 Commands:
   add   Run <command> inside the managed skills-hub folder, then cache it in execute_plugins.
   pull  Replay every cached command from execute_plugins inside the managed skills-hub folder.
-  list  List hub skills grouped by parent folder.
+  list  List skills grouped by parent folder.
   pick  Pick hub skills with fzf and link them into the current folder.
   group Save, update, and install named skill groups.
   where Print the managed skills-hub folder path.
@@ -54,7 +54,10 @@ Environment:
 Example:
   skills-hub add 'npx skills add example-org/skills-bundle -y'
   skills-hub pull
-  skills-hub list agents
+  skills-hub list
+  skills-hub list --all
+  skills-hub list agent
+  skills-hub list agent --all
   cd "$(skills-hub where)"
 """
     )
@@ -436,15 +439,27 @@ def cmd_pull() -> int:
 
 
 def cmd_list(args: list[str]) -> int:
-    if len(args) > 1:
-        die("list takes at most one parent")
+    parent = None
+    include_all = False
+    for arg in args:
+        if arg == "--all":
+            include_all = True
+            continue
+        if arg.startswith("-"):
+            die(f"unknown list option: {arg}")
+        if parent is not None:
+            die("list takes at most one parent")
+        parent = arg
+
+    active_only = parent in ("agent", "agents") and not include_all
+    available_only = not include_all and not active_only
 
     home = hub_home()
     ensure_home(home)
     grouped = group_skills_by_parent(discover_skill_dirs(home))
     parents = set(grouped) | discover_visible_parents()
-    if args:
-        selected_parent = parent_filter(args[0])
+    if parent:
+        selected_parent = parent_filter(parent)
         parents = {selected_parent}
 
     if not parents:
@@ -454,28 +469,39 @@ def cmd_list(args: list[str]) -> int:
     first = True
     terminal_width = shutil.get_terminal_size((80, 20)).columns
     for parent in sorted(parents):
-        if not first:
-            print()
-        first = False
-        print(parent_label(parent))
         skills = grouped.get(parent, [])
         hub_symlink_skills = set()
         discover_skill_names(home / parent / "skills", hub_symlink_skills)
         active_skills, active_symlink_skills, local_skills, global_skills = discover_visible_skills(parent)
         active_set = set(active_skills)
         available_skills = [skill for skill in skills if skill not in active_set]
-        print(green("  active"))
-        print_skill_columns(
-            active_skills,
-            terminal_width,
-            indent="    ",
-            active=True,
-            symlink_items=active_symlink_skills,
-            local_items=local_skills,
-            global_items=global_skills,
-        )
-        print("  available")
-        print_skill_columns(available_skills, terminal_width, indent="    ", symlink_items=hub_symlink_skills)
+        if active_only and not active_skills:
+            continue
+        if available_only and not available_skills:
+            continue
+
+        if not first:
+            print()
+        first = False
+        print(parent_label(parent))
+        if not available_only:
+            print(green("  active"))
+            print_skill_columns(
+                active_skills,
+                terminal_width,
+                indent="    ",
+                active=True,
+                symlink_items=active_symlink_skills,
+                local_items=local_skills,
+                global_items=global_skills,
+            )
+        if not active_only:
+            print("  available")
+            print_skill_columns(available_skills, terminal_width, indent="    ", symlink_items=hub_symlink_skills)
+
+    if first:
+        kind = "active" if active_only else "available"
+        print(f"skills-hub: no {kind} skills found")
     return 0
 
 

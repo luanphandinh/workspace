@@ -7,7 +7,7 @@ local cleanup_fixture_id = 0
 local agent_cli_commands = {
   { command = "cursor-agent", lhs = "<leader>ac", plugin = "luanphan-cursor-agent", g_bufnr = "cursor_agent_bufnr" },
   { command = "claude", lhs = "<leader>xc", plugin = "luanphan-claude-agent", g_bufnr = "claude_agent_bufnr" },
-  { command = "codex", lhs = "<leader>;", plugin = "luanphan-codex-agent", g_bufnr = "codex_agent_bufnr" },
+  { command = "mcodex", lhs = "<leader>;", plugin = "luanphan-codex-agent", g_bufnr = "codex_agent_bufnr" },
 }
 
 vim.notify = function(message, level)
@@ -1007,7 +1007,7 @@ local function test_codex_leader_semicolon_sends_visual_selection()
   local invoke_log = temp_root .. "/codex-send-invocations.log"
   vim.fn.mkdir(shim_dir, "p")
   write(invoke_log, {})
-  write_executable(shim_dir .. "/codex", {
+  write_executable(shim_dir .. "/mcodex", {
     "#!/bin/sh",
     "printf '%s|%s|%s\\n' \"$(basename \"$0\")\" \"$PWD\" \"$*\" >> \"$NVIM_AGENT_SMOKE_LOG\"",
     "sleep 30",
@@ -1042,7 +1042,7 @@ local function test_codex_leader_semicolon_sends_visual_selection()
     vim.cmd("normal! ggV")
     invoke_map("<leader>;", "x")
     wait_until("codex invocation", function()
-      return log_has_prefix(invoke_log, "codex|")
+      return log_has_prefix(invoke_log, "mcodex|")
     end, 3000)
 
     wait_until("codex selection marker", function()

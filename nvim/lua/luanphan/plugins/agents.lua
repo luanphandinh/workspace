@@ -32,11 +32,7 @@ local agent_defs = {
     g_bufnr = "codex_agent_bufnr",
     notify_prefix = "codex_agent",
     augroup_prefix = "CodexAgent",
-    defaults = function()
-      local notify_cmd = vim.fn.expand("~/bin/codex-turn-ended-notify")
-      local notify_arg = 'notify=["' .. notify_cmd:gsub("\\", "\\\\"):gsub('"', '\\"') .. '"]'
-      return { cmd = "codex", args = { "-c", notify_arg } }
-    end,
+    defaults = { cmd = "mcodex" },
     keys = {
       toggle = { lhs = "<leader>;", mode = "n", desc = "Toggle Codex" },
       focus = { lhs = "<leader>cf", mode = "n", desc = "Focus terminal" },
