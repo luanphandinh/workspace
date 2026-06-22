@@ -23,6 +23,8 @@ printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*zoxide'
 darwin_setup_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Darwin is_wsl=0 setup)
 printf '%s\n' "$darwin_setup_plan" | grep -Eq 'brew install .*zoxide'
 
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:\"*) ;; *) exit 1 ;; esac"
+
 if command -v zsh >/dev/null 2>&1; then
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" zsh -fc ". '$repo_root/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = zsh"
   grep -qx 'init zsh --cmd z' "$log"
