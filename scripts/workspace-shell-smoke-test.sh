@@ -28,6 +28,11 @@ if command -v zsh >/dev/null 2>&1; then
   grep -qx 'init zsh --cmd z' "$log"
 fi
 
+: > "$log"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; test \"\${ZOXIDE_INIT_SHELL:-}\" = \"\""
+! grep -q '^init ' "$log"
+
+: > "$log"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = bash"
 grep -qx 'init bash --cmd z' "$log"
 
