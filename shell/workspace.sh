@@ -10,4 +10,4 @@ elif [ -n "${BASH_VERSION:-}" ] && [ -z "${POSIXLY_CORRECT:-}" ] && command -v z
   eval "$(zoxide init bash --cmd z)"
 fi
 unalias mcodex 2>/dev/null || true
-mcodex() { codex -c "notify=[\"$HOME/bin/codex-turn-ended-notify\"]" "$@"; }
+unset -f mcodex 2>/dev/null || true

@@ -1,0 +1,48 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+	--version|-V)
+		exec codex "$@"
+		;;
+esac
+
+stamp_dir="${CODEX_HOME:-$HOME/.codex}/app-server-control"
+stamp_file="$stamp_dir/mcodex-remote-control-started"
+if [ ! -f "$stamp_file" ] || ! codex app-server daemon version >/dev/null 2>&1; then
+	codex remote-control start --json >/dev/null
+	mkdir -p "$stamp_dir"
+	: > "$stamp_file"
+fi
+
+notify_arg="notify=[\"$HOME/bin/codex-turn-ended-notify\"]"
+has_cd_arg=0
+for arg in "$@"; do
+	case "$arg" in
+		-C|-C*|--cd|--cd=*)
+			has_cd_arg=1
+			break
+			;;
+	esac
+done
+
+case "${1:-}" in
+	resume|fork)
+		subcmd="$1"
+		shift
+		if [ "$has_cd_arg" -eq 1 ]; then
+			exec codex "$subcmd" --remote unix:// -c "$notify_arg" "$@"
+		fi
+		exec codex "$subcmd" --remote unix:// -C "$PWD" -c "$notify_arg" "$@"
+		;;
+esac
+
+if [ "$#" -eq 0 ]; then
+	exec codex resume --remote unix:// -C "$PWD" -c "$notify_arg"
+fi
+
+if [ "$has_cd_arg" -eq 1 ]; then
+	exec codex --remote unix:// -c "$notify_arg" "$@"
+fi
+
+exec codex --remote unix:// -C "$PWD" -c "$notify_arg" "$@"
