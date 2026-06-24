@@ -302,6 +302,42 @@ assert_not_contains "$HUB/groups/useful" ".claude/skills/other-skill"
 assert_symlink_target "$TMP/group-project/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
 assert_symlink_target "$TMP/group-project/.agents/skills/third-skill" "$HUB/.agents/skills/third-skill"
 
+: > "$FZF_INPUT"
+: > "$FZF_ARGS"
+(
+	cd "$PROJECT"
+	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+		SKILLS_HUB_FZF_ARGS="$FZF_ARGS" \
+		SKILLS_HUB_FZF_OUTPUT=".agents/skills/example-skill" \
+		python3 "$ROOT/bin/skills-hub" remove > "$TMP/remove.out"
+)
+
+assert_contains "$FZF_INPUT" ".agents/skills/example-skill"
+assert_contains "$FZF_INPUT" ".claude/skills/other-skill"
+assert_not_contains "$FZF_INPUT" "global-skill"
+assert_contains "$FZF_ARGS" "--multi --bind ctrl-a:select-all,ctrl-d:deselect-all"
+assert_contains "$TMP/remove.out" "skills-hub: removed .agents/skills/example-skill"
+assert_not_exists "$PROJECT/.agents/skills/example-skill"
+assert_exists "$PROJECT/.claude/skills/other-skill/SKILL.md"
+assert_exists "$HUB/.agents/skills/example-skill/SKILL.md"
+assert_exists "$HOME/.agents/skills/global-skill/SKILL.md"
+
+: > "$FZF_INPUT"
+(
+	cd "$HUB"
+	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+		SKILLS_HUB_FZF_OUTPUT=".agents/skills/example-skill" \
+		python3 "$ROOT/bin/skills-hub" remove > "$TMP/remove-hub.out"
+)
+
+assert_contains "$TMP/remove-hub.out" "skills-hub: no local skills found"
+if [ -s "$FZF_INPUT" ]; then
+	printf 'expected remove from hub root to skip fzf, got input:\n' >&2
+	cat "$FZF_INPUT" >&2
+	exit 1
+fi
+assert_exists "$HUB/.agents/skills/example-skill/SKILL.md"
+
 where_path=$(SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" where)
 if [ "$where_path" != "$HUB" ]; then
 	printf 'expected skills-hub where to print %s, got %s\n' "$HUB" "$where_path" >&2
