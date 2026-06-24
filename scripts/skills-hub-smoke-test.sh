@@ -183,17 +183,20 @@ assert_contains "$PROJECT/.agents/skills/example-skill/SKILL.md" "updated exampl
 )
 assert_line "$TMP/list.out" ".agents"
 assert_no_line "$TMP/list.out" "agent"
-assert_contains "$TMP/list.out" "  available"
-assert_contains "$TMP/list.out" "available-skill"
-assert_contains "$TMP/list.out" "codex-skill"
-assert_contains "$TMP/list.out" "parent-only-skill"
+assert_contains "$TMP/list.out" "  active"
+assert_contains "$TMP/list.out" "example-skill $LINK_ICON $LOCAL_ICON"
+assert_contains "$TMP/list.out" "global-skill $GLOBAL_ICON"
 assert_line "$TMP/list.out" ".claude"
 assert_no_line "$TMP/list.out" "claude"
-assert_contains "$TMP/list.out" "available-claude-skill"
-assert_not_contains "$TMP/list.out" "  active"
-assert_not_contains "$TMP/list.out" "example-skill"
-assert_not_contains "$TMP/list.out" "global-skill"
-assert_not_contains "$TMP/list.out" "other-skill"
+assert_contains "$TMP/list.out" "global-claude-skill $GLOBAL_ICON"
+assert_contains "$TMP/list.out" "global-dangling-claude-skill $LINK_ICON $GLOBAL_ICON"
+assert_contains "$TMP/list.out" "global-linked-claude-skill $LINK_ICON $GLOBAL_ICON"
+assert_contains "$TMP/list.out" "other-skill $LINK_ICON $LOCAL_ICON"
+assert_not_contains "$TMP/list.out" "  available"
+assert_not_contains "$TMP/list.out" "available-skill"
+assert_not_contains "$TMP/list.out" "codex-skill"
+assert_not_contains "$TMP/list.out" "parent-only-skill"
+assert_not_contains "$TMP/list.out" "available-claude-skill"
 assert_not_contains "$TMP/list.out" "non-dot-skill"
 
 (
@@ -217,7 +220,7 @@ assert_contains "$TMP/list-all.out" "global-dangling-claude-skill $LINK_ICON $GL
 assert_contains "$TMP/list-all.out" "global-linked-claude-skill $LINK_ICON $GLOBAL_ICON"
 assert_contains "$TMP/list-all.out" "other-skill $LINK_ICON $LOCAL_ICON"
 assert_contains "$TMP/list-all.out" "available-claude-skill"
-python3 - "$TMP/list.out" <<'PY'
+python3 - "$TMP/list-all.out" <<'PY'
 import sys
 text = open(sys.argv[1]).read()
 available = text.index("  available")

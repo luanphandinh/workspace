@@ -452,8 +452,8 @@ def cmd_list(args: list[str]) -> int:
             die("list takes at most one parent")
         parent = arg
 
-    active_only = parent == ".agents" and not include_all
-    available_only = not include_all and not active_only
+    active_only = not include_all
+    show_available = include_all
 
     home = hub_home()
     ensure_home(home)
@@ -478,25 +478,22 @@ def cmd_list(args: list[str]) -> int:
         available_skills = [skill for skill in skills if skill not in active_set]
         if active_only and not active_skills:
             continue
-        if available_only and not available_skills:
-            continue
 
         if not first:
             print()
         first = False
         print(parent_label(parent))
-        if not available_only:
-            print(green("  active"))
-            print_skill_columns(
-                active_skills,
-                terminal_width,
-                indent="    ",
-                active=True,
-                symlink_items=active_symlink_skills,
-                local_items=local_skills,
-                global_items=global_skills,
-            )
-        if not active_only:
+        print(green("  active"))
+        print_skill_columns(
+            active_skills,
+            terminal_width,
+            indent="    ",
+            active=True,
+            symlink_items=active_symlink_skills,
+            local_items=local_skills,
+            global_items=global_skills,
+        )
+        if show_available:
             print("  available")
             print_skill_columns(available_skills, terminal_width, indent="    ", symlink_items=hub_symlink_skills)
 
