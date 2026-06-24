@@ -158,6 +158,7 @@ def run_fzf(choices: list[str], prompt: str, multi: bool = True, print_query: bo
     args = ["fzf", "--prompt", prompt]
     if multi:
         args.append("--multi")
+        args.extend(["--bind", "ctrl-a:select-all,ctrl-d:deselect-all"])
     if print_query:
         args.append("--print-query")
     proc = subprocess.run(

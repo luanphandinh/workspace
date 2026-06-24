@@ -36,7 +36,7 @@ assert_symlink_target() {
 }
 
 assert_contains() {
-	grep -F "$2" "$1" >/dev/null || {
+	grep -F -- "$2" "$1" >/dev/null || {
 		printf 'expected %s to contain: %s\n' "$1" "$2" >&2
 		printf '%s contents:\n' "$1" >&2
 		cat "$1" >&2
@@ -45,7 +45,7 @@ assert_contains() {
 }
 
 assert_not_contains() {
-	if grep -F "$2" "$1" >/dev/null; then
+	if grep -F -- "$2" "$1" >/dev/null; then
 		printf 'expected %s to not contain: %s\n' "$1" "$2" >&2
 		printf '%s contents:\n' "$1" >&2
 		cat "$1" >&2
@@ -69,6 +69,7 @@ INSTALLER="$TMP/install-skill"
 PROJECT="$TMP/project"
 FAKEBIN="$TMP/bin"
 FZF_INPUT="$TMP/fzf-input"
+FZF_ARGS="$TMP/fzf-args"
 LINK_ICON=""
 LOCAL_ICON=""
 GLOBAL_ICON=""
@@ -128,6 +129,9 @@ printf '# hub parent\n' > "$HUB/.agents/skills/parent-only-skill/SKILL.md"
 cat > "$FAKEBIN/fzf" <<'SH'
 #!/bin/sh
 set -eu
+if [ -n "${SKILLS_HUB_FZF_ARGS:-}" ]; then
+	printf '%s\n' "$*" >> "$SKILLS_HUB_FZF_ARGS"
+fi
 cat > "$SKILLS_HUB_FZF_INPUT"
 printf '%s\n' "$SKILLS_HUB_FZF_OUTPUT"
 SH
@@ -136,6 +140,7 @@ chmod +x "$FAKEBIN/fzf"
 (
 	cd "$PROJECT"
 	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+		SKILLS_HUB_FZF_ARGS="$FZF_ARGS" \
 		SKILLS_HUB_FZF_OUTPUT=".agents/skills/example-skill
 .claude/skills/other-skill" \
 		python3 "$ROOT/bin/skills-hub" pick >/dev/null
@@ -143,6 +148,7 @@ chmod +x "$FAKEBIN/fzf"
 
 assert_contains "$FZF_INPUT" ".agents/skills/example-skill"
 assert_contains "$FZF_INPUT" ".claude/skills/other-skill"
+assert_contains "$FZF_ARGS" "--multi --bind ctrl-a:select-all,ctrl-d:deselect-all"
 assert_symlink_target "$PROJECT/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
 assert_symlink_target "$PROJECT/.claude/skills/other-skill" "$HUB/.claude/skills/other-skill"
 assert_exists "$PROJECT/.agents/skills/example-skill/SKILL.md"
