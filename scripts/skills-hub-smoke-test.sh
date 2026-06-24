@@ -36,7 +36,7 @@ assert_symlink_target() {
 }
 
 assert_contains() {
-	grep -F "$2" "$1" >/dev/null || {
+	grep -F -- "$2" "$1" >/dev/null || {
 		printf 'expected %s to contain: %s\n' "$1" "$2" >&2
 		printf '%s contents:\n' "$1" >&2
 		cat "$1" >&2
@@ -45,8 +45,26 @@ assert_contains() {
 }
 
 assert_not_contains() {
-	if grep -F "$2" "$1" >/dev/null; then
+	if grep -F -- "$2" "$1" >/dev/null; then
 		printf 'expected %s to not contain: %s\n' "$1" "$2" >&2
+		printf '%s contents:\n' "$1" >&2
+		cat "$1" >&2
+		exit 1
+	fi
+}
+
+assert_line() {
+	grep -Fx -- "$2" "$1" >/dev/null || {
+		printf 'expected %s to contain line: %s\n' "$1" "$2" >&2
+		printf '%s contents:\n' "$1" >&2
+		cat "$1" >&2
+		exit 1
+	}
+}
+
+assert_no_line() {
+	if grep -Fx -- "$2" "$1" >/dev/null; then
+		printf 'expected %s to not contain line: %s\n' "$1" "$2" >&2
 		printf '%s contents:\n' "$1" >&2
 		cat "$1" >&2
 		exit 1
@@ -69,6 +87,7 @@ INSTALLER="$TMP/install-skill"
 PROJECT="$TMP/project"
 FAKEBIN="$TMP/bin"
 FZF_INPUT="$TMP/fzf-input"
+FZF_ARGS="$TMP/fzf-args"
 LINK_ICON=""
 LOCAL_ICON=""
 GLOBAL_ICON=""
@@ -125,9 +144,14 @@ mkdir -p "$PROJECT/../.agents/skills/parent-only-skill"
 printf '# parent\n' > "$PROJECT/../.agents/skills/parent-only-skill/SKILL.md"
 mkdir -p "$HUB/.agents/skills/parent-only-skill"
 printf '# hub parent\n' > "$HUB/.agents/skills/parent-only-skill/SKILL.md"
+mkdir -p "$HUB/agents/skills/non-dot-skill"
+printf '# non dot\n' > "$HUB/agents/skills/non-dot-skill/SKILL.md"
 cat > "$FAKEBIN/fzf" <<'SH'
 #!/bin/sh
 set -eu
+if [ -n "${SKILLS_HUB_FZF_ARGS:-}" ]; then
+	printf '%s\n' "$*" >> "$SKILLS_HUB_FZF_ARGS"
+fi
 cat > "$SKILLS_HUB_FZF_INPUT"
 printf '%s\n' "$SKILLS_HUB_FZF_OUTPUT"
 SH
@@ -136,6 +160,7 @@ chmod +x "$FAKEBIN/fzf"
 (
 	cd "$PROJECT"
 	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+		SKILLS_HUB_FZF_ARGS="$FZF_ARGS" \
 		SKILLS_HUB_FZF_OUTPUT=".agents/skills/example-skill
 .claude/skills/other-skill" \
 		python3 "$ROOT/bin/skills-hub" pick >/dev/null
@@ -143,6 +168,7 @@ chmod +x "$FAKEBIN/fzf"
 
 assert_contains "$FZF_INPUT" ".agents/skills/example-skill"
 assert_contains "$FZF_INPUT" ".claude/skills/other-skill"
+assert_contains "$FZF_ARGS" "--multi --bind ctrl-a:select-all,ctrl-d:deselect-all"
 assert_symlink_target "$PROJECT/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
 assert_symlink_target "$PROJECT/.claude/skills/other-skill" "$HUB/.claude/skills/other-skill"
 assert_exists "$PROJECT/.agents/skills/example-skill/SKILL.md"
@@ -155,23 +181,30 @@ assert_contains "$PROJECT/.agents/skills/example-skill/SKILL.md" "updated exampl
 	cd "$PROJECT"
 	COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list > "$TMP/list.out"
 )
-assert_contains "$TMP/list.out" "agent"
-assert_contains "$TMP/list.out" "  available"
-assert_contains "$TMP/list.out" "available-skill"
-assert_contains "$TMP/list.out" "codex-skill"
-assert_contains "$TMP/list.out" "parent-only-skill"
-assert_contains "$TMP/list.out" "claude"
-assert_contains "$TMP/list.out" "available-claude-skill"
-assert_not_contains "$TMP/list.out" "  active"
-assert_not_contains "$TMP/list.out" "example-skill"
-assert_not_contains "$TMP/list.out" "global-skill"
-assert_not_contains "$TMP/list.out" "other-skill"
+assert_line "$TMP/list.out" ".agents"
+assert_no_line "$TMP/list.out" "agent"
+assert_contains "$TMP/list.out" "  active"
+assert_contains "$TMP/list.out" "example-skill $LINK_ICON $LOCAL_ICON"
+assert_contains "$TMP/list.out" "global-skill $GLOBAL_ICON"
+assert_line "$TMP/list.out" ".claude"
+assert_no_line "$TMP/list.out" "claude"
+assert_contains "$TMP/list.out" "global-claude-skill $GLOBAL_ICON"
+assert_contains "$TMP/list.out" "global-dangling-claude-skill $LINK_ICON $GLOBAL_ICON"
+assert_contains "$TMP/list.out" "global-linked-claude-skill $LINK_ICON $GLOBAL_ICON"
+assert_contains "$TMP/list.out" "other-skill $LINK_ICON $LOCAL_ICON"
+assert_not_contains "$TMP/list.out" "  available"
+assert_not_contains "$TMP/list.out" "available-skill"
+assert_not_contains "$TMP/list.out" "codex-skill"
+assert_not_contains "$TMP/list.out" "parent-only-skill"
+assert_not_contains "$TMP/list.out" "available-claude-skill"
+assert_not_contains "$TMP/list.out" "non-dot-skill"
 
 (
 	cd "$PROJECT"
 	COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list --all > "$TMP/list-all.out"
 )
-assert_contains "$TMP/list-all.out" "agent"
+assert_line "$TMP/list-all.out" ".agents"
+assert_no_line "$TMP/list-all.out" "agent"
 assert_contains "$TMP/list-all.out" "  active"
 assert_contains "$TMP/list-all.out" "example-skill $LINK_ICON $LOCAL_ICON"
 assert_contains "$TMP/list-all.out" "global-skill $GLOBAL_ICON"
@@ -179,14 +212,15 @@ assert_contains "$TMP/list-all.out" "  available"
 assert_contains "$TMP/list-all.out" "available-skill"
 assert_contains "$TMP/list-all.out" "codex-skill"
 assert_contains "$TMP/list-all.out" "parent-only-skill"
-assert_contains "$TMP/list-all.out" "claude"
+assert_line "$TMP/list-all.out" ".claude"
+assert_no_line "$TMP/list-all.out" "claude"
 assert_contains "$TMP/list-all.out" "  active"
 assert_contains "$TMP/list-all.out" "global-claude-skill $GLOBAL_ICON"
 assert_contains "$TMP/list-all.out" "global-dangling-claude-skill $LINK_ICON $GLOBAL_ICON"
 assert_contains "$TMP/list-all.out" "global-linked-claude-skill $LINK_ICON $GLOBAL_ICON"
 assert_contains "$TMP/list-all.out" "other-skill $LINK_ICON $LOCAL_ICON"
 assert_contains "$TMP/list-all.out" "available-claude-skill"
-python3 - "$TMP/list.out" <<'PY'
+python3 - "$TMP/list-all.out" <<'PY'
 import sys
 text = open(sys.argv[1]).read()
 available = text.index("  available")
@@ -197,9 +231,10 @@ PY
 
 (
 	cd "$PROJECT"
-	COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list agent > "$TMP/list-agents.out"
+	COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list .agents > "$TMP/list-agents.out"
 )
-assert_contains "$TMP/list-agents.out" "agent"
+assert_line "$TMP/list-agents.out" ".agents"
+assert_no_line "$TMP/list-agents.out" "agent"
 assert_contains "$TMP/list-agents.out" "  active"
 assert_contains "$TMP/list-agents.out" "example-skill $LINK_ICON $LOCAL_ICON"
 assert_contains "$TMP/list-agents.out" "global-skill $GLOBAL_ICON"
@@ -209,9 +244,10 @@ assert_not_contains "$TMP/list-agents.out" "other-skill"
 
 (
 	cd "$PROJECT"
-	COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list agent --all > "$TMP/list-agents-all.out"
+	COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list .agents --all > "$TMP/list-agents-all.out"
 )
-assert_contains "$TMP/list-agents-all.out" "agent"
+assert_line "$TMP/list-agents-all.out" ".agents"
+assert_no_line "$TMP/list-agents-all.out" "agent"
 assert_contains "$TMP/list-agents-all.out" "  active"
 assert_contains "$TMP/list-agents-all.out" "example-skill $LINK_ICON $LOCAL_ICON"
 assert_contains "$TMP/list-agents-all.out" "global-skill $GLOBAL_ICON"
@@ -221,10 +257,19 @@ assert_not_contains "$TMP/list-agents-all.out" "other-skill"
 
 (
 	cd "$PROJECT"
-	env -u NO_COLOR COLUMNS=80 FORCE_COLOR=1 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list agent > "$TMP/list-color.out"
+	env -u NO_COLOR COLUMNS=80 FORCE_COLOR=1 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list .agents > "$TMP/list-color.out"
 )
 assert_contains "$TMP/list-color.out" "$(printf '\033[32m  active\033[0m')"
 assert_contains "$TMP/list-color.out" "$(printf '\033[32m    example-skill %s %s' "$LINK_ICON" "$LOCAL_ICON")"
+
+(
+	cd "$PROJECT"
+	if COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list agent > "$TMP/list-agent-alias.out" 2>&1; then
+		printf 'expected list agent to fail\n' >&2
+		exit 1
+	fi
+)
+assert_contains "$TMP/list-agent-alias.out" "parent must be a dot folder like .agents"
 
 mkdir -p "$HUB/.agents/skills/third-skill" "$TMP/group-project"
 printf '# third\n' > "$HUB/.agents/skills/third-skill/SKILL.md"
@@ -256,6 +301,42 @@ assert_not_contains "$HUB/groups/useful" ".claude/skills/other-skill"
 
 assert_symlink_target "$TMP/group-project/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
 assert_symlink_target "$TMP/group-project/.agents/skills/third-skill" "$HUB/.agents/skills/third-skill"
+
+: > "$FZF_INPUT"
+: > "$FZF_ARGS"
+(
+	cd "$PROJECT"
+	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+		SKILLS_HUB_FZF_ARGS="$FZF_ARGS" \
+		SKILLS_HUB_FZF_OUTPUT=".agents/skills/example-skill" \
+		python3 "$ROOT/bin/skills-hub" remove > "$TMP/remove.out"
+)
+
+assert_contains "$FZF_INPUT" ".agents/skills/example-skill"
+assert_contains "$FZF_INPUT" ".claude/skills/other-skill"
+assert_not_contains "$FZF_INPUT" "global-skill"
+assert_contains "$FZF_ARGS" "--multi --bind ctrl-a:select-all,ctrl-d:deselect-all"
+assert_contains "$TMP/remove.out" "skills-hub: removed .agents/skills/example-skill"
+assert_not_exists "$PROJECT/.agents/skills/example-skill"
+assert_exists "$PROJECT/.claude/skills/other-skill/SKILL.md"
+assert_exists "$HUB/.agents/skills/example-skill/SKILL.md"
+assert_exists "$HOME/.agents/skills/global-skill/SKILL.md"
+
+: > "$FZF_INPUT"
+(
+	cd "$HUB"
+	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+		SKILLS_HUB_FZF_OUTPUT=".agents/skills/example-skill" \
+		python3 "$ROOT/bin/skills-hub" remove > "$TMP/remove-hub.out"
+)
+
+assert_contains "$TMP/remove-hub.out" "skills-hub: no local skills found"
+if [ -s "$FZF_INPUT" ]; then
+	printf 'expected remove from hub root to skip fzf, got input:\n' >&2
+	cat "$FZF_INPUT" >&2
+	exit 1
+fi
+assert_exists "$HUB/.agents/skills/example-skill/SKILL.md"
 
 where_path=$(SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" where)
 if [ "$where_path" != "$HUB" ]; then

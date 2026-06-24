@@ -35,6 +35,7 @@ def usage() -> None:
   skills-hub pull
   skills-hub list [parent] [--all]
   skills-hub pick
+  skills-hub remove
   skills-hub group create [name]
   skills-hub group update [name]
   skills-hub group pick
@@ -45,6 +46,7 @@ Commands:
   pull  Replay every cached command from execute_plugins inside the managed skills-hub folder.
   list  List skills grouped by parent folder.
   pick  Pick hub skills with fzf and link them into the current folder.
+  remove Pick local skills with fzf and remove them from the current folder.
   group Save, update, and install named skill groups.
   where Print the managed skills-hub folder path.
 
@@ -56,8 +58,9 @@ Example:
   skills-hub pull
   skills-hub list
   skills-hub list --all
-  skills-hub list agent
-  skills-hub list agent --all
+  skills-hub list .agents
+  skills-hub list .agents --all
+  skills-hub remove
   cd "$(skills-hub where)"
 """
     )
@@ -158,6 +161,7 @@ def run_fzf(choices: list[str], prompt: str, multi: bool = True, print_query: bo
     args = ["fzf", "--prompt", prompt]
     if multi:
         args.append("--multi")
+        args.extend(["--bind", "ctrl-a:select-all,ctrl-d:deselect-all"])
     if print_query:
         args.append("--print-query")
     proc = subprocess.run(
@@ -192,6 +196,14 @@ def link_skill_dir(src: Path, dst: Path) -> None:
     os.symlink(src, dst, target_is_directory=True)
 
 
+def path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True
+
+
 def discover_skill_dirs(home: Path) -> dict[str, Path]:
     if not home.is_dir():
         return {}
@@ -204,14 +216,50 @@ def discover_skill_dirs(home: Path) -> dict[str, Path]:
         rel = skill_dir.relative_to(home)
         if len(rel.parts) < 3:
             continue
+        if not rel.parts[0].startswith(".") or rel.parts[1] != "skills":
+            continue
         skills[str(rel)] = skill_dir
     return dict(sorted(skills.items()))
 
 
+def discover_local_skill_dirs(root: Path) -> dict[str, Path]:
+    if not root.is_dir():
+        return {}
+
+    skills = {}
+    for parent in root.iterdir():
+        if not parent.name.startswith(".") or not parent.is_dir() or parent.is_symlink():
+            continue
+        skills_root = parent / "skills"
+        if not skills_root.is_dir() or skills_root.is_symlink():
+            continue
+
+        for child in skills_root.iterdir():
+            if child.name.startswith("."):
+                continue
+            if child.is_symlink():
+                skills[str(child.relative_to(root))] = child
+                continue
+            if child.is_dir() and (child / "SKILL.md").is_file():
+                skills[str(child.relative_to(root))] = child
+
+        for skill_md in skills_root.rglob("SKILL.md"):
+            skill_dir = skill_md.parent
+            try:
+                rel = skill_dir.relative_to(root)
+            except ValueError:
+                continue
+            if len(rel.parts) < 3:
+                continue
+            if not rel.parts[0].startswith(".") or rel.parts[1] != "skills":
+                continue
+            skills[str(rel)] = skill_dir
+
+    return dict(sorted(skills.items()))
+
+
 def parent_label(parent: str) -> str:
-    if parent == ".agents":
-        return "agent"
-    return parent.removeprefix(".")
+    return parent
 
 
 def parent_filter(name: str) -> str:
@@ -220,11 +268,9 @@ def parent_filter(name: str) -> str:
         die("parent is required")
     if "/" in name or "\\" in name:
         die("parent must be a simple folder name")
-    if name in ("agent", "agents"):
-        return ".agents"
-    if name.startswith("."):
-        return name
-    return f".{name}"
+    if not name.startswith("."):
+        die("parent must be a dot folder like .agents")
+    return name
 
 
 def group_skills_by_parent(skills: dict[str, Path]) -> dict[str, list[str]]:
@@ -302,6 +348,8 @@ def discover_visible_parents() -> set[str]:
         if not base.is_dir():
             continue
         for child in base.iterdir():
+            if not child.name.startswith("."):
+                continue
             skills_dir = child / "skills"
             if discover_skill_names(skills_dir):
                 parents.add(child.name)
@@ -402,6 +450,29 @@ def install_skill_paths(home: Path, selected: list[str]) -> int:
     return 0
 
 
+def remove_skill_paths(root: Path, selected: list[str]) -> int:
+    skills = discover_local_skill_dirs(root)
+    removed = 0
+    seen = set()
+    for rel in selected:
+        rel = rel.strip()
+        if not rel or rel in seen:
+            continue
+        seen.add(rel)
+        target = skills.get(rel)
+        if target is None:
+            die(f"selected skill is not local: {rel}")
+        if target.is_symlink() or target.is_file():
+            target.unlink()
+        elif target.exists():
+            shutil.rmtree(target)
+        print(f"skills-hub: removed {rel}")
+        removed += 1
+
+    print(f"skills-hub: removed {removed} skill(s)")
+    return 0
+
+
 def cmd_add(args: list[str]) -> int:
     home = hub_home()
     path = cache_file(home)
@@ -451,8 +522,8 @@ def cmd_list(args: list[str]) -> int:
             die("list takes at most one parent")
         parent = arg
 
-    active_only = parent in ("agent", "agents") and not include_all
-    available_only = not include_all and not active_only
+    active_only = not include_all
+    show_available = include_all
 
     home = hub_home()
     ensure_home(home)
@@ -477,25 +548,22 @@ def cmd_list(args: list[str]) -> int:
         available_skills = [skill for skill in skills if skill not in active_set]
         if active_only and not active_skills:
             continue
-        if available_only and not available_skills:
-            continue
 
         if not first:
             print()
         first = False
         print(parent_label(parent))
-        if not available_only:
-            print(green("  active"))
-            print_skill_columns(
-                active_skills,
-                terminal_width,
-                indent="    ",
-                active=True,
-                symlink_items=active_symlink_skills,
-                local_items=local_skills,
-                global_items=global_skills,
-            )
-        if not active_only:
+        print(green("  active"))
+        print_skill_columns(
+            active_skills,
+            terminal_width,
+            indent="    ",
+            active=True,
+            symlink_items=active_symlink_skills,
+            local_items=local_skills,
+            global_items=global_skills,
+        )
+        if show_available:
             print("  available")
             print_skill_columns(available_skills, terminal_width, indent="    ", symlink_items=hub_symlink_skills)
 
@@ -526,6 +594,33 @@ def cmd_pick() -> int:
         return 0
 
     return install_skill_paths(home, selected)
+
+
+def cmd_remove() -> int:
+    home = hub_home()
+    root = Path.cwd()
+    if path_is_relative_to(root, home):
+        print("skills-hub: no local skills found")
+        return 0
+
+    skills = discover_local_skill_dirs(root)
+    if not skills:
+        print("skills-hub: no local skills found")
+        return 0
+
+    code, output = run_fzf(list(skills.keys()), "skills-remove> ")
+    if code == 130:
+        print("skills-hub: no skills selected")
+        return 0
+    if code != 0:
+        return code
+
+    selected = [line.strip() for line in output if line.strip()]
+    if not selected:
+        print("skills-hub: no skills selected")
+        return 0
+
+    return remove_skill_paths(root, selected)
 
 
 def read_group_name_from_stdin() -> str:
@@ -699,6 +794,10 @@ def main() -> int:
         if args:
             die("pick takes no args")
         return cmd_pick()
+    if command == "remove":
+        if args:
+            die("remove takes no args")
+        return cmd_remove()
     if command == "group":
         return cmd_group(args)
     if command == "where":
