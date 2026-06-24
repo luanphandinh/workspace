@@ -56,8 +56,8 @@ Example:
   skills-hub pull
   skills-hub list
   skills-hub list --all
-  skills-hub list agent
-  skills-hub list agent --all
+  skills-hub list .agents
+  skills-hub list .agents --all
   cd "$(skills-hub where)"
 """
     )
@@ -205,14 +205,14 @@ def discover_skill_dirs(home: Path) -> dict[str, Path]:
         rel = skill_dir.relative_to(home)
         if len(rel.parts) < 3:
             continue
+        if not rel.parts[0].startswith(".") or rel.parts[1] != "skills":
+            continue
         skills[str(rel)] = skill_dir
     return dict(sorted(skills.items()))
 
 
 def parent_label(parent: str) -> str:
-    if parent == ".agents":
-        return "agent"
-    return parent.removeprefix(".")
+    return parent
 
 
 def parent_filter(name: str) -> str:
@@ -221,11 +221,9 @@ def parent_filter(name: str) -> str:
         die("parent is required")
     if "/" in name or "\\" in name:
         die("parent must be a simple folder name")
-    if name in ("agent", "agents"):
-        return ".agents"
-    if name.startswith("."):
-        return name
-    return f".{name}"
+    if not name.startswith("."):
+        die("parent must be a dot folder like .agents")
+    return name
 
 
 def group_skills_by_parent(skills: dict[str, Path]) -> dict[str, list[str]]:
@@ -303,6 +301,8 @@ def discover_visible_parents() -> set[str]:
         if not base.is_dir():
             continue
         for child in base.iterdir():
+            if not child.name.startswith("."):
+                continue
             skills_dir = child / "skills"
             if discover_skill_names(skills_dir):
                 parents.add(child.name)
@@ -452,7 +452,7 @@ def cmd_list(args: list[str]) -> int:
             die("list takes at most one parent")
         parent = arg
 
-    active_only = parent in ("agent", "agents") and not include_all
+    active_only = parent == ".agents" and not include_all
     available_only = not include_all and not active_only
 
     home = hub_home()
