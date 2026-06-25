@@ -79,12 +79,18 @@ cat > "$fakebin/chsh" <<SH
 printf '%s\n' "\$*" >> "$tmp/chsh.log"
 exit 0
 SH
-chmod +x "$fakebin/uname" "$fakebin/zsh" "$fakebin/getent" "$fakebin/chsh"
+cat > "$fakebin/sudo" <<SH
+#!/bin/sh
+printf 'sudo %s\n' "\$*" >> "$tmp/chsh.log"
+"\$@"
+SH
+chmod +x "$fakebin/uname" "$fakebin/zsh" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
 printf '%s\n' "$fakebin/zsh" > "$tmp/shells"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" USER=example-user WORKSPACE_SHELLS_FILE="$tmp/shells" \
 	sh "$repo_root/scripts/configure-default-zsh.sh"
+grep -qx -- 'sudo chsh -s '"$fakebin"'/zsh example-user' "$tmp/chsh.log"
 grep -qx -- '-s '"$fakebin"'/zsh example-user' "$tmp/chsh.log"
-rm -f "$fakebin/uname" "$fakebin/zsh" "$fakebin/getent" "$fakebin/chsh"
+rm -f "$fakebin/uname" "$fakebin/zsh" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:\"*) ;; *) exit 1 ;; esac"
 

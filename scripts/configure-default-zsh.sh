@@ -36,8 +36,6 @@ fi
 
 if [ "$(id -u)" -eq 0 ]; then
 	chsh -s "$zsh_path" "$target_user"
-elif chsh -s "$zsh_path" "$target_user" 2>/dev/null; then
-	:
 elif command -v sudo >/dev/null 2>&1; then
 	sudo chsh -s "$zsh_path" "$target_user"
 else
