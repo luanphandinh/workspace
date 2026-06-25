@@ -19,7 +19,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 		&& sudo rm -rf /opt/$(nvim_linux_name) \
 		&& sudo tar -C /opt -xzf ./tmp/$(nvim_linux_name).tar.gz \
 		&& sudo ln -sf /opt/$(nvim_linux_name)/bin/nvim /usr/local/bin/nvim
-	deps := fd-find fzf python3-pip nodejs npm curl unzip xz-utils fontconfig git build-essential snapd zoxide
+	deps := fd-find fzf python3-pip nodejs npm curl unzip xz-utils fontconfig git build-essential snapd zoxide zsh
 	optional_deps := jq btop
 	os_name := linux
 	fonts_install := test -f "$(HOME)/.local/share/fonts/FiraCodeNerdFont-Regular.ttf" || (mkdir -p "$(HOME)/.local/share/fonts" ./tmp \
@@ -31,6 +31,7 @@ ifneq (,$(findstring Linux,$(UNAME)))
 	kitty_setup := kitty-install kitty-config
 	csvlens_install := sh ./scripts/install-csvlens.sh
 	linux_snap_deps_install := sh ./scripts/install-linux-snaps.sh
+	default_shell_install := sh ./scripts/configure-default-zsh.sh
 	setup_script := echo "Run installer for linux" && sudo apt-get update \
 									&& sudo apt install software-properties-common -y \
 									&& sudo add-apt-repository universe -y \
@@ -50,6 +51,7 @@ else
 	kitty_setup := kitty-install kitty-config
 	csvlens_install := true
 	linux_snap_deps_install := true
+	default_shell_install := true
 endif
 
 is_wsl := $(shell test -r /proc/sys/kernel/osrelease && grep -qi microsoft /proc/sys/kernel/osrelease && echo 1 || echo 0)
@@ -78,12 +80,12 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup update version-lock-update setup-deps linux-snap-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-install tmux-config alacritty alacritty-install alacritty-config kitty kitty-install kitty-config csvlens-install mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test cleanup
+.PHONY: help setup update version-lock-update setup-deps default-shell linux-snap-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-install tmux-config alacritty alacritty-install alacritty-config kitty kitty-install kitty-config csvlens-install mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
 setup:  ## Install all workspace tools, configs, and terminal agent CLIs.
-setup: setup-deps linux-snap-deps fonts-install go-install gopls-install workspace-bin agent-clis codex-config nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config $(kitty_setup) csvlens-install optional-deps newsboat-config mac-apps cleanup
+setup: setup-deps default-shell linux-snap-deps fonts-install go-install gopls-install workspace-bin agent-clis codex-config nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config $(kitty_setup) csvlens-install optional-deps newsboat-config mac-apps cleanup
 
 update: setup-deps version-lock-update ## Install all workspace tools while updating Neovim plugins and native treesitter locks to latest.
 	$(MAKE) MODE=latest setup
@@ -95,6 +97,9 @@ setup-deps: ## Setup deps
 	test -d ./tmp || mkdir -p ./tmp
 	@$(setup_script)
 	@yes Y | $(install) $(deps)
+
+default-shell: ## Use zsh as the default login shell on Linux
+	@$(default_shell_install)
 
 linux-snap-deps: ## Install Linux snap deps
 	@$(linux_snap_deps_install)
