@@ -37,4 +37,21 @@ printf '%s\n' "$linux_setup_plan" | grep -q 'sh ./scripts/install-linux-snaps.sh
 printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*snapd'
 ! printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*yazi'
 
+debian_setup_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Linux LINUX_ID=debian is_wsl=0 setup)
+case "$debian_setup_plan" in
+	*"add-apt-repository universe"* | *"ppa:aslatter/ppa"*)
+		printf 'Debian setup must not add Ubuntu repositories\n' >&2
+		exit 1
+		;;
+esac
+
+ubuntu_setup_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Linux LINUX_ID=ubuntu is_wsl=0 setup)
+case "$ubuntu_setup_plan" in
+	*"add-apt-repository universe"*"ppa:aslatter/ppa"*) ;;
+	*)
+		printf 'Ubuntu setup should add Ubuntu repositories\n' >&2
+		exit 1
+		;;
+esac
+
 echo "PASS linux snaps smoke test"

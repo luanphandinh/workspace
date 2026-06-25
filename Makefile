@@ -12,6 +12,7 @@ else
 	go_arch := amd64
 endif
 ifneq (,$(findstring Linux,$(UNAME)))
+	LINUX_ID ?= $(shell . /etc/os-release 2>/dev/null && printf '%s' "$$ID" || printf linux)
 	install := sudo apt install
 	newsboat_config := ./newsboat/config.linux
 	nvim_linux_name := nvim-linux-x86_64
@@ -32,11 +33,16 @@ ifneq (,$(findstring Linux,$(UNAME)))
 	csvlens_install := sh ./scripts/install-csvlens.sh
 	linux_snap_deps_install := sh ./scripts/install-linux-snaps.sh
 	default_shell_install := sh ./scripts/configure-default-zsh.sh
-	setup_script := echo "Run installer for linux" && sudo apt-get update \
-									&& sudo apt install software-properties-common -y \
-									&& sudo add-apt-repository universe -y \
-									&& sudo add-apt-repository ppa:aslatter/ppa -y \
-									&& sudo apt update -y
+	ifeq ($(LINUX_ID),ubuntu)
+		setup_script := echo "Run installer for linux" && sudo apt-get update \
+										&& sudo apt install software-properties-common -y \
+										&& sudo add-apt-repository universe -y \
+										&& sudo add-apt-repository ppa:aslatter/ppa -y \
+										&& sudo apt update -y
+	else
+		setup_script := echo "Run installer for linux" && sudo apt-get update \
+										&& sudo apt install software-properties-common -y
+	endif
 else
 	install := brew install
 	newsboat_config := ./newsboat/config.darwin
