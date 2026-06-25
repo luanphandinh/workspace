@@ -7,10 +7,144 @@ case "${1:-}" in
 		;;
 esac
 
-stamp_dir="${CODEX_HOME:-$HOME/.codex}/app-server-control"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+stamp_dir="$codex_home/app-server-control"
 stamp_file="$stamp_dir/mcodex-remote-control-started"
-if [ ! -f "$stamp_file" ] || ! codex app-server daemon version >/dev/null 2>&1; then
-	codex remote-control start --json >/dev/null
+daemon_dir="$codex_home/app-server-daemon"
+daemon_timeout="${MCODEX_DAEMON_TIMEOUT:-8}"
+mcodex_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/mcodex.XXXXXX")"
+cleanup_mcodex_tmp() {
+	rm -rf "$mcodex_tmp_dir"
+}
+trap cleanup_mcodex_tmp EXIT INT TERM
+
+run_capture_timeout() {
+	seconds="$1"
+	output="$2"
+	shift 2
+	: > "$output"
+	"$@" > "$output" 2>/dev/null &
+	cmd_pid="$!"
+	(
+		sleep "$seconds"
+		kill "$cmd_pid" 2>/dev/null || true
+	) &
+	timer_pid="$!"
+	status=0
+	wait "$cmd_pid" || status="$?"
+	kill "$timer_pid" 2>/dev/null || true
+	wait "$timer_pid" 2>/dev/null || true
+	return "$status"
+}
+
+json_field() {
+	field="$1"
+	file="$2"
+	sed -n 's/.*"'"$field"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$file" | sed -n '1p'
+}
+
+daemon_ready() {
+	version_output="$mcodex_tmp_dir/daemon-version.json"
+	run_capture_timeout "$daemon_timeout" "$version_output" codex app-server daemon version || return 1
+	daemon_status="$(json_field status "$version_output")"
+	cli_version="$(json_field cliVersion "$version_output")"
+	app_server_version="$(json_field appServerVersion "$version_output")"
+	managed_version="$(json_field managedCodexVersion "$version_output")"
+	if [ -n "$daemon_status" ] && [ "$daemon_status" != "running" ]; then
+		return 1
+	fi
+	if [ -n "$cli_version" ] && [ -n "$app_server_version" ] && [ "$cli_version" != "$app_server_version" ]; then
+		return 2
+	fi
+	if [ -n "$cli_version" ] && [ -n "$managed_version" ] && [ "$cli_version" != "$managed_version" ]; then
+		return 2
+	fi
+	return 0
+}
+
+start_remote_control() {
+	start_output="$mcodex_tmp_dir/remote-control-start.json"
+	run_capture_timeout "$daemon_timeout" "$start_output" codex remote-control start --json
+}
+
+pid_from_file() {
+	pid_file="$1"
+	[ -f "$pid_file" ] || return 0
+	sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$pid_file" | sed -n '1p'
+}
+
+stop_pid_file_process() {
+	pid="$(pid_from_file "$1")"
+	case "$pid" in
+		""|*[!0-9]*|"$$")
+			return 0
+			;;
+	esac
+	kill "$pid" 2>/dev/null || true
+}
+
+kill_pid_file_process() {
+	pid="$(pid_from_file "$1")"
+	case "$pid" in
+		""|*[!0-9]*|"$$")
+			return 0
+			;;
+	esac
+	if kill -0 "$pid" 2>/dev/null; then
+		kill -KILL "$pid" 2>/dev/null || true
+	fi
+}
+
+reset_app_server_state() {
+	stop_pid_file_process "$daemon_dir/app-server.pid"
+	stop_pid_file_process "$daemon_dir/app-server-updater.pid"
+	sleep 1
+	kill_pid_file_process "$daemon_dir/app-server.pid"
+	kill_pid_file_process "$daemon_dir/app-server-updater.pid"
+	rm -f "$stamp_file" \
+		"$stamp_dir/app-server-control.sock" \
+		"$daemon_dir/app-server.pid" \
+		"$daemon_dir/app-server-updater.pid"
+}
+
+ensure_remote_control() {
+	if daemon_ready; then
+		mkdir -p "$stamp_dir"
+		: > "$stamp_file"
+		return 0
+	else
+		ready_status="$?"
+	fi
+	if [ "$ready_status" -eq 2 ]; then
+		reset_app_server_state
+		if start_remote_control && daemon_ready; then
+			mkdir -p "$stamp_dir"
+			: > "$stamp_file"
+			return 0
+		fi
+		printf 'mcodex: failed to restart stale Codex remote-control daemon\n' >&2
+		return 1
+	fi
+	if start_remote_control && daemon_ready; then
+		mkdir -p "$stamp_dir"
+		: > "$stamp_file"
+		return 0
+	fi
+	reset_app_server_state
+	if start_remote_control && daemon_ready; then
+		mkdir -p "$stamp_dir"
+		: > "$stamp_file"
+		return 0
+	fi
+	printf 'mcodex: failed to start Codex remote-control daemon\n' >&2
+	return 1
+}
+
+ensure_remote_control
+cleanup_mcodex_tmp
+trap - EXIT INT TERM
+
+if [ ! -f "$stamp_file" ]; then
 	mkdir -p "$stamp_dir"
 	: > "$stamp_file"
 fi

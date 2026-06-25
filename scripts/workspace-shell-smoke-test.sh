@@ -25,11 +25,19 @@ printf '%s\n' "\$*" >> "$codex_log"
 case "\${1:-} \${2:-} \${3:-}" in
   "remote-control start --json")
     : > "$daemon_file"
+    printf '{"status":"started","managedCodexVersion":"0.142.1","cliVersion":"0.142.1","appServerVersion":"0.142.1"}\n'
     exit 0
     ;;
   "app-server daemon version")
-    test -f "$daemon_file"
-    exit $?
+    if [ -f "$daemon_file" ]; then
+      printf '{"status":"running","managedCodexVersion":"0.142.1","cliVersion":"0.142.1","appServerVersion":"0.142.1"}\n'
+      exit 0
+    fi
+    if [ -n "\${CODEX_FAKE_STALE_DAEMON:-}" ]; then
+      printf '{"status":"running","managedCodexVersion":"0.142.0","cliVersion":"0.142.1","appServerVersion":"0.142.0"}\n'
+      exit 0
+    fi
+    exit 1
     ;;
   "--remote unix:// "*)
     exit 0
@@ -67,6 +75,23 @@ grep -Fxq -- '--remote unix:// -C '"$repo_root"' -c notify=["'"$tmp/home"'/bin/c
 grep -Fxq -- '--remote unix:// -c notify=["'"$tmp/home"'/bin/codex-turn-ended-notify"] -C '"$tmp/other"' explicit' "$codex_log"
 grep -Fxq -- 'resume --remote unix:// -C '"$repo_root"' -c notify=["'"$tmp/home"'/bin/codex-turn-ended-notify"] --last' "$codex_log"
 grep -Fxq -- 'resume --remote unix:// -c notify=["'"$tmp/home"'/bin/codex-turn-ended-notify"] -C '"$tmp/resume-other"' explicit' "$codex_log"
+
+stale_home="$tmp/stale-codex-home"
+mkdir -p "$stale_home/app-server-control" "$stale_home/app-server-daemon"
+: > "$stale_home/app-server-control/mcodex-remote-control-started"
+: > "$stale_home/app-server-control/app-server-control.sock"
+printf '{"pid":999999}\n' > "$stale_home/app-server-daemon/app-server.pid"
+printf '{"pid":999998}\n' > "$stale_home/app-server-daemon/app-server-updater.pid"
+: > "$codex_log"
+rm -f "$daemon_file"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" CODEX_HOME="$stale_home" CODEX_FAKE_STALE_DAEMON=1 \
+	sh "$repo_root/bin/mcodex" stale-prompt
+grep -Fxq 'app-server daemon version' "$codex_log"
+grep -Fxq 'remote-control start --json' "$codex_log"
+grep -Fxq -- '--remote unix:// -C '"$repo_root"' -c notify=["'"$tmp/home"'/bin/codex-turn-ended-notify"] stale-prompt' "$codex_log"
+test ! -e "$stale_home/app-server-control/app-server-control.sock"
+test ! -e "$stale_home/app-server-daemon/app-server.pid"
+test ! -e "$stale_home/app-server-daemon/app-server-updater.pid"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; ! command -v mcodex >/dev/null 2>&1"
 
