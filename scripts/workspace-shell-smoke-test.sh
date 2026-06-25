@@ -55,9 +55,36 @@ chmod +x "$fakebin/codex"
 
 linux_setup_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Linux is_wsl=0 setup)
 printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*zoxide'
+printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*zsh'
+printf '%s\n' "$linux_setup_plan" | grep -q 'sh ./scripts/configure-default-zsh.sh'
 
 darwin_setup_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Darwin is_wsl=0 setup)
 printf '%s\n' "$darwin_setup_plan" | grep -Eq 'brew install .*zoxide'
+printf '%s\n' "$darwin_setup_plan" | grep -q 'true'
+
+cat > "$fakebin/uname" <<'SH'
+#!/bin/sh
+echo Linux
+SH
+cat > "$fakebin/zsh" <<'SH'
+#!/bin/sh
+exit 0
+SH
+cat > "$fakebin/getent" <<SH
+#!/bin/sh
+printf '%s:x:1000:1000::/home/%s:/bin/bash\n' "\$2" "\$2"
+SH
+cat > "$fakebin/chsh" <<SH
+#!/bin/sh
+printf '%s\n' "\$*" >> "$tmp/chsh.log"
+exit 0
+SH
+chmod +x "$fakebin/uname" "$fakebin/zsh" "$fakebin/getent" "$fakebin/chsh"
+printf '%s\n' "$fakebin/zsh" > "$tmp/shells"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" USER=example-user WORKSPACE_SHELLS_FILE="$tmp/shells" \
+	sh "$repo_root/scripts/configure-default-zsh.sh"
+grep -qx -- '-s '"$fakebin"'/zsh example-user' "$tmp/chsh.log"
+rm -f "$fakebin/uname" "$fakebin/zsh" "$fakebin/getent" "$fakebin/chsh"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:\"*) ;; *) exit 1 ;; esac"
 
