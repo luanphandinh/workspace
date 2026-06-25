@@ -2,21 +2,75 @@
 set -eu
 
 notify_title="${AGENT_NOTIFY_TITLE:-${CODEX_NOTIFY_TITLE:-Codex}}"
+notify_group="${AGENT_NOTIFY_GROUP:-agent-notify-$notify_title}"
 activate_app="${AGENT_NOTIFY_ACTIVATE_APP:-${CODEX_NOTIFY_ACTIVATE_APP:-}}"
+
+get_tmux_cmd() {
+	if [ -n "${TMUX_BIN:-}" ]; then
+		printf '%s\n' "$TMUX_BIN"
+		return 0
+	fi
+	command -v tmux 2>/dev/null
+}
+
+tmux_format() {
+	tmux_cmd="$1"
+	pane="$2"
+	format="$3"
+	if [ -n "$pane" ]; then
+		"$tmux_cmd" display-message -p -t "$pane" "$format" 2>/dev/null || :
+	else
+		"$tmux_cmd" display-message -p "$format" 2>/dev/null || :
+	fi
+}
+
+usable_tmux_pane() {
+	tmux_cmd="$1"
+	pane="$2"
+	[ -n "$pane" ] || return 1
+
+	pane_id="$(tmux_format "$tmux_cmd" "$pane" '#{pane_id}')"
+	target_window="$(tmux_format "$tmux_cmd" "$pane" '#{session_name}:#{window_index}')"
+	case "$pane_id" in
+		%*) ;;
+		*) return 1 ;;
+	esac
+	case "$target_window" in
+		"" | ":" | ":." | ".") return 1 ;;
+	esac
+
+	printf '%s\n' "$pane_id"
+}
+
+resolve_tmux_pane() {
+	tmux_cmd="$1"
+	if [ -n "${TMUX_PANE:-}" ]; then
+		resolved_pane="$(usable_tmux_pane "$tmux_cmd" "$TMUX_PANE" || :)"
+		if [ -n "$resolved_pane" ]; then
+			printf '%s\n' "$resolved_pane"
+			return 0
+		fi
+	fi
+
+	current_pane="$(tmux_format "$tmux_cmd" "" '#{pane_id}')"
+	case "$current_pane" in
+		%*) usable_tmux_pane "$tmux_cmd" "$current_pane" || : ;;
+	esac
+}
 
 jump_to_tmux_pane() {
 	pane="${1:-}"
 	[ -n "$pane" ] || exit 0
-	tmux_cmd="${TMUX_BIN:-tmux}"
-	if [ "$tmux_cmd" = "tmux" ]; then
-		command -v tmux >/dev/null 2>&1 || exit 0
-	fi
+	tmux_cmd="$(get_tmux_cmd || :)"
+	[ -n "$tmux_cmd" ] || exit 0
 
-	target_window="$("$tmux_cmd" display-message -p -t "$pane" '#{session_name}:#{window_index}' 2>/dev/null || :)"
-	target_session="$("$tmux_cmd" display-message -p -t "$pane" '#{session_name}' 2>/dev/null || :)"
-	target_pane="$("$tmux_cmd" display-message -p -t "$pane" '#{pane_id}' 2>/dev/null || :)"
-	[ -n "$target_window" ] || exit 0
-	[ -n "$target_pane" ] || target_pane="$pane"
+	target_pane="$(usable_tmux_pane "$tmux_cmd" "$pane" || :)"
+	[ -n "$target_pane" ] || exit 0
+	target_window="$(tmux_format "$tmux_cmd" "$target_pane" '#{session_name}:#{window_index}')"
+	target_session="$(tmux_format "$tmux_cmd" "$target_pane" '#{session_name}')"
+	case "$target_window" in
+		"" | ":" | ":." | ".") exit 0 ;;
+	esac
 
 	"$tmux_cmd" select-window -t "$target_window" >/dev/null 2>&1 || :
 	"$tmux_cmd" select-pane -t "$target_pane" >/dev/null 2>&1 || :
@@ -67,102 +121,20 @@ case "$cwd" in
 esac
 message="Task complete: $display_path"
 
-config_dir="${CODEX_HOME:-$HOME/.codex}"
-config_file="$config_dir/config.toml"
 script_path="$(CDPATH= cd "$(dirname "$0")" 2>/dev/null && pwd -P)/$(basename "$0")"
 
-if [ "$notify_title" = "Codex" ] && [ -n "$payload" ] && [ -r "$config_file" ] && command -v python3 >/dev/null 2>&1; then
-	python3 - "$config_file" "$script_path" "$payload" <<'PY' >/dev/null 2>&1 || :
-import ast
-import os
-import shutil
-import subprocess
-import sys
-
-config_file, script_path, payload = sys.argv[1:]
-
-
-def notify_from_toml(path):
-    try:
-        import tomllib
-
-        with open(path, "rb") as file:
-            value = tomllib.load(file).get("notify")
-        if isinstance(value, list):
-            return [str(item) for item in value]
-    except Exception:
-        pass
-    return []
-
-
-def notify_from_literal(path):
-    try:
-        lines = open(path, encoding="utf-8").read().splitlines()
-    except OSError:
-        return []
-
-    collecting = False
-    chunks = []
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not collecting:
-            if "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            if key.strip() != "notify":
-                continue
-            chunks.append(value.strip())
-            collecting = "]" not in value
-        else:
-            chunks.append(line)
-            collecting = "]" not in line
-
-        if not collecting and chunks:
-            break
-
-    if not chunks:
-        return []
-
-    try:
-        value = ast.literal_eval(" ".join(chunks))
-    except Exception:
-        return []
-    if isinstance(value, (list, tuple)):
-        return [str(item) for item in value]
-    return []
-
-
-notify = notify_from_toml(config_file) or notify_from_literal(config_file)
-if not notify:
-    raise SystemExit(0)
-
-notify[0] = os.path.expandvars(os.path.expanduser(notify[0]))
-current = os.path.realpath(script_path)
-target = os.path.realpath(notify[0])
-if target == current:
-    raise SystemExit(0)
-
-if os.sep in notify[0]:
-    if not os.access(notify[0], os.X_OK):
-        raise SystemExit(0)
-elif shutil.which(notify[0]) is None:
-    raise SystemExit(0)
-
-subprocess.run(notify + [payload], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-PY
-fi
-
 if command -v terminal-notifier >/dev/null 2>&1; then
-	if [ -n "${TMUX_PANE:-}" ]; then
-		tmux_target=""
-		if tmux_target="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null)"; then
-			:
-		else
-			tmux_target=""
-		fi
-		click_cmd="$(shell_quote "$script_path") --jump-tmux $(shell_quote "$TMUX_PANE")"
-		if tmux_bin="$(command -v tmux 2>/dev/null)"; then
-			click_cmd="TMUX_BIN=$(shell_quote "$tmux_bin") $click_cmd"
+	tmux_cmd="$(get_tmux_cmd || :)"
+	notify_pane=""
+	if [ -n "$tmux_cmd" ]; then
+		notify_pane="$(resolve_tmux_pane "$tmux_cmd")"
+	fi
+
+	if [ -n "$notify_pane" ]; then
+		tmux_target="$(tmux_format "$tmux_cmd" "$notify_pane" '#{session_name}:#{window_index}.#{pane_index}')"
+		click_cmd="$(shell_quote "$script_path") --jump-tmux $(shell_quote "$notify_pane")"
+		if [ -n "$tmux_cmd" ]; then
+			click_cmd="TMUX_BIN=$(shell_quote "$tmux_cmd") $click_cmd"
 		fi
 		if [ -n "$activate_app" ]; then
 			click_cmd="AGENT_NOTIFY_ACTIVATE_APP=$(shell_quote "$activate_app") $click_cmd"
@@ -171,12 +143,12 @@ if command -v terminal-notifier >/dev/null 2>&1; then
 			click_cmd="TMUX=$(shell_quote "$TMUX") $click_cmd"
 		fi
 		if [ -n "$tmux_target" ]; then
-			terminal-notifier -title "$notify_title" -message "$message" -subtitle "tmux $tmux_target" -execute "$click_cmd" >/dev/null 2>&1 || :
+			terminal-notifier -title "$notify_title" -message "$message" -subtitle "tmux $tmux_target" -group "$notify_group" -ignoreDnD -execute "$click_cmd" >/dev/null 2>&1 || :
 		else
-			terminal-notifier -title "$notify_title" -message "$message" -execute "$click_cmd" >/dev/null 2>&1 || :
+			terminal-notifier -title "$notify_title" -message "$message" -group "$notify_group" -ignoreDnD -execute "$click_cmd" >/dev/null 2>&1 || :
 		fi
 	else
-		terminal-notifier -title "$notify_title" -message "$message" >/dev/null 2>&1 || :
+		terminal-notifier -title "$notify_title" -message "$message" -group "$notify_group" -ignoreDnD >/dev/null 2>&1 || :
 	fi
 elif command -v osascript >/dev/null 2>&1; then
 	osascript \
@@ -186,10 +158,16 @@ elif command -v osascript >/dev/null 2>&1; then
 		"$message" "$notify_title" >/dev/null 2>&1 || :
 fi
 
-if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-	tmux display-message "$notify_title $message" >/dev/null 2>&1 || :
-	if [ -n "${TMUX_PANE:-}" ]; then
-		pane_tty="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_tty}' 2>/dev/null || :)"
+if [ -n "${TMUX:-}" ]; then
+	tmux_cmd="$(get_tmux_cmd || :)"
+	if [ -n "$tmux_cmd" ]; then
+		"$tmux_cmd" display-message "$notify_title $message" >/dev/null 2>&1 || :
+		notify_pane="$(resolve_tmux_pane "$tmux_cmd")"
+	else
+		notify_pane=""
+	fi
+	if [ -n "$notify_pane" ]; then
+		pane_tty="$(tmux_format "$tmux_cmd" "$notify_pane" '#{pane_tty}')"
 		if [ -n "$pane_tty" ] && [ -w "$pane_tty" ]; then
 			printf '\a' >"$pane_tty" 2>/dev/null || :
 		fi
