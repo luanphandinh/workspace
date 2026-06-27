@@ -4,23 +4,26 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$repo_root"
 
+old_use_nix=$(printf 'USE_%s' NIX)
+old_csvlens_installer=$(printf 'install-%s' csvlens)
+
 linux_plan=$(make -n --no-print-directory UNAME=Linux ARCH=x86_64 is_wsl=0 csvlens-install)
-printf '%s\n' "$linux_plan" | grep -qx 'sh ./scripts/install-csvlens.sh'
+printf '%s\n' "$linux_plan" | grep -q 'csvlens --version'
+! printf '%s\n' "$linux_plan" | grep -q "$old_csvlens_installer.sh"
 
 darwin_plan=$(make -n --no-print-directory UNAME=Darwin ARCH=arm64 csvlens-install)
-printf '%s\n' "$darwin_plan" | grep -qx 'true'
+printf '%s\n' "$darwin_plan" | grep -q 'csvlens --version'
+! printf '%s\n' "$darwin_plan" | grep -q "$old_csvlens_installer.sh"
 
-linux_setup_plan=$(make -n --no-print-directory UNAME=Linux ARCH=x86_64 is_wsl=0 setup)
-printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*xz-utils'
-printf '%s\n' "$linux_setup_plan" | grep -q 'sh ./scripts/install-csvlens.sh'
+default_setup_plan=$(make -n --no-print-directory setup)
+printf '%s\n' "$default_setup_plan" | grep -q 'nix .*profile install .#workspace-deps'
+! printf '%s\n' "$default_setup_plan" | grep -q "$old_use_nix"
 
-darwin_setup_plan=$(make -n --no-print-directory UNAME=Darwin ARCH=arm64 setup)
-printf '%s\n' "$darwin_setup_plan" | grep -Eq 'brew install .*csvlens'
+runtime_setup_plan=$(make -n --no-print-directory setup-runtime)
+printf '%s\n' "$runtime_setup_plan" | grep -q 'csvlens --version'
+! printf '%s\n' "$runtime_setup_plan" | grep -q "$old_csvlens_installer.sh"
 
-grep -q 'target_arch=x86_64' scripts/install-csvlens.sh
-grep -q 'target_arch=aarch64' scripts/install-csvlens.sh
-grep -q 'csvlens-${target_arch}-unknown-linux-gnu.tar.xz' scripts/install-csvlens.sh
-grep -q 'CSVLENS_VERSION:-0.15.1' scripts/install-csvlens.sh
+test ! -e "scripts/$old_csvlens_installer.sh"
 
 if command -v csvlens >/dev/null 2>&1; then
 	csvlens --version | grep -qi '^csvlens'

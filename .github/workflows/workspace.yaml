@@ -15,24 +15,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Install workspace deps
+        run: nix profile install .#workspace-deps
+
       - name: Setup from lockfile
-        run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            export HOMEBREW_NO_AUTO_UPDATE=1
-            export HOMEBREW_NO_ENV_HINTS=1
-          fi
-          make setup
+        run: make setup-runtime
 
       - name: Neovim smoke tests after lockfile setup
         run: make nvim-test
 
       - name: Update latest plugins
         run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            export HOMEBREW_NO_AUTO_UPDATE=1
-            export HOMEBREW_NO_ENV_HINTS=1
-          fi
-          make update
+          make version-lock-update
+          make MODE=latest setup-runtime
 
       - name: Neovim smoke tests after latest update
         run: make nvim-test

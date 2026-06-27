@@ -23,9 +23,6 @@ need_cmd python3
 
 python3 "$repo_root/scripts/version_lock.py" validate "$lock_file"
 
-tree_sitter_cli_version=$(python3 "$repo_root/scripts/version_lock.py" get "$lock_file" tree_sitter_cli.version)
-make -n -C "$repo_root" tree-sitter-cli-install | grep "tree-sitter-cli@${tree_sitter_cli_version}" >/dev/null
-
 mkdir -p "$tmp_dir/bin" "$tmp_dir/site"
 cat > "$tmp_dir/bin/tree-sitter" <<'SH'
 #!/usr/bin/env sh

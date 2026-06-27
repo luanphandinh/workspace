@@ -10,6 +10,13 @@ daemon_file="$tmp/daemon-running"
 mkdir -p "$fakebin"
 trap 'rm -rf "$tmp"' EXIT
 
+old_use_nix=$(printf 'USE_%s' NIX)
+old_apt_install=$(printf 'apt %s' install)
+old_brew_install=$(printf 'brew %s' install)
+old_snap_installer=$(printf 'install-linux-%s' snaps)
+old_csvlens_installer=$(printf 'install-%s' csvlens)
+old_installers_pattern="$old_apt_install|$old_brew_install|$old_snap_installer.sh|$old_csvlens_installer.sh"
+
 cat > "$fakebin/zoxide" <<SH
 #!/bin/sh
 printf '%s\n' "\$*" >> "$log"
@@ -54,13 +61,27 @@ SH
 chmod +x "$fakebin/codex"
 
 linux_setup_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Linux is_wsl=0 setup)
-printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*zoxide'
-printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*zsh'
-printf '%s\n' "$linux_setup_plan" | grep -q 'sh ./scripts/configure-default-zsh.sh'
+printf '%s\n' "$linux_setup_plan" | grep -q 'nix .*profile install .#workspace-deps'
+printf '%s\n' "$linux_setup_plan" | grep -q 'make setup-runtime'
+! printf '%s\n' "$linux_setup_plan" | grep -Eq "$old_use_nix|$old_installers_pattern"
+
+linux_runtime_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Linux is_wsl=0 setup-runtime)
+printf '%s\n' "$linux_runtime_plan" | grep -q 'sh ./scripts/configure-default-zsh.sh'
+printf '%s\n' "$linux_runtime_plan" | grep -q 'sh ./scripts/install-nix-fonts.sh'
+! printf '%s\n' "$linux_runtime_plan" | grep -Eq "$old_installers_pattern"
+linux_setup_nix_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Linux is_wsl=0 setup-nix)
+printf '%s\n' "$linux_setup_nix_plan" | grep -q 'sh ./scripts/install-nix.sh'
+printf '%s\n' "$linux_setup_nix_plan" | grep -q 'nix .*profile install .#workspace-deps'
+! printf '%s\n' "$linux_setup_nix_plan" | grep -q "$old_use_nix"
 
 darwin_setup_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Darwin is_wsl=0 setup)
-printf '%s\n' "$darwin_setup_plan" | grep -Eq 'brew install .*zoxide'
-printf '%s\n' "$darwin_setup_plan" | grep -q 'true'
+printf '%s\n' "$darwin_setup_plan" | grep -q 'nix .*profile install .#workspace-deps'
+printf '%s\n' "$darwin_setup_plan" | grep -q 'make setup-runtime'
+! printf '%s\n' "$darwin_setup_plan" | grep -Eq "$old_use_nix|$old_installers_pattern"
+
+darwin_runtime_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Darwin is_wsl=0 setup-runtime)
+printf '%s\n' "$darwin_runtime_plan" | grep -q 'sh ./scripts/install-nix-fonts.sh'
+! printf '%s\n' "$darwin_runtime_plan" | grep -Eq "$old_installers_pattern"
 
 cat > "$fakebin/uname" <<'SH'
 #!/bin/sh

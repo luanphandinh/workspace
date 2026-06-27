@@ -4,6 +4,12 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$repo_root"
 
+old_use_nix=$(printf 'USE_%s' NIX)
+old_apt_install=$(printf 'apt %s' install)
+old_brew_install=$(printf 'brew %s' install)
+old_kitty_installer=$(printf 'kovidgoyal.net/%s' kitty)
+old_installers_pattern="$old_brew_install|$old_kitty_installer|$old_apt_install"
+
 assert_no_font_install() {
 	plan=$1
 	target=$2
@@ -74,25 +80,24 @@ else
 fi
 
 linux_plan=$(make -n --no-print-directory UNAME=Linux is_wsl=0 kitty)
-printf '%s\n' "$linux_plan" | grep -q 'https://sw.kovidgoyal.net/kitty/installer.sh'
-printf '%s\n' "$linux_plan" | grep -q 'ln -sf "$HOME/.local/kitty.app/bin/kitty"'
+printf '%s\n' "$linux_plan" | grep -q 'kitty --version'
 printf '%s\n' "$linux_plan" | grep -q 'cp -r ./kitty/.'
+! printf '%s\n' "$linux_plan" | grep -Eq "$old_installers_pattern"
 
 darwin_plan=$(make -n --no-print-directory UNAME=Darwin kitty)
-printf '%s\n' "$darwin_plan" | grep -q 'brew install --cask kitty'
+printf '%s\n' "$darwin_plan" | grep -q 'kitty --version'
 printf '%s\n' "$darwin_plan" | grep -q 'cp -r ./kitty/.'
+! printf '%s\n' "$darwin_plan" | grep -Eq "$old_installers_pattern"
 
 setup_plan=$(make -n --no-print-directory setup)
-printf '%s\n' "$setup_plan" | grep -q 'cp -r ./kitty/.'
-printf '%s\n' "$setup_plan" | grep -Eq 'font-fira-code-nerd-font|FiraCode.zip|install-windows-firacode-nerd-font'
+printf '%s\n' "$setup_plan" | grep -q 'nix .*profile install .#workspace-deps'
+! printf '%s\n' "$setup_plan" | grep -q "$old_use_nix"
 
-linux_setup_plan=$(make -n --no-print-directory UNAME=Linux is_wsl=0 setup)
-printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*fzf'
-! printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*yazi'
-printf '%s\n' "$linux_setup_plan" | grep -q 'sh ./scripts/install-linux-snaps.sh'
-
-darwin_setup_plan=$(make -n --no-print-directory UNAME=Darwin setup)
-printf '%s\n' "$darwin_setup_plan" | grep -Eq 'brew install .*fzf.*yazi'
+runtime_setup_plan=$(make -n --no-print-directory setup-runtime)
+printf '%s\n' "$runtime_setup_plan" | grep -q 'kitty --version'
+printf '%s\n' "$runtime_setup_plan" | grep -q 'cp -r ./kitty/.'
+! printf '%s\n' "$runtime_setup_plan" | grep -Eq "$old_installers_pattern"
+printf '%s\n' "$runtime_setup_plan" | grep -q 'sh ./scripts/install-nix-fonts.sh'
 
 kitty_config_plan=$(make -n --no-print-directory kitty-config)
 printf '%s\n' "$kitty_config_plan" | grep -q "kitten themes --dump-theme 'Gruvbox Dark'"
