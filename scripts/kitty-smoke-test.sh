@@ -80,13 +80,13 @@ else
 fi
 
 linux_plan=$(make -n --no-print-directory UNAME=Linux is_wsl=0 kitty)
-printf '%s\n' "$linux_plan" | grep -q 'kitty --version'
 printf '%s\n' "$linux_plan" | grep -q 'cp -r ./kitty/.'
+! printf '%s\n' "$linux_plan" | grep -q 'kitty --version'
 ! printf '%s\n' "$linux_plan" | grep -Eq "$old_installers_pattern"
 
 darwin_plan=$(make -n --no-print-directory UNAME=Darwin kitty)
-printf '%s\n' "$darwin_plan" | grep -q 'kitty --version'
 printf '%s\n' "$darwin_plan" | grep -q 'cp -r ./kitty/.'
+! printf '%s\n' "$darwin_plan" | grep -q 'kitty --version'
 ! printf '%s\n' "$darwin_plan" | grep -Eq "$old_installers_pattern"
 
 setup_plan=$(make -n --no-print-directory setup)
@@ -94,8 +94,8 @@ printf '%s\n' "$setup_plan" | grep -q 'nix .*profile install .#workspace-deps'
 ! printf '%s\n' "$setup_plan" | grep -q "$old_use_nix"
 
 runtime_setup_plan=$(make -n --no-print-directory setup-runtime)
-printf '%s\n' "$runtime_setup_plan" | grep -q 'kitty --version'
 printf '%s\n' "$runtime_setup_plan" | grep -q 'cp -r ./kitty/.'
+! printf '%s\n' "$runtime_setup_plan" | grep -q 'kitty --version'
 ! printf '%s\n' "$runtime_setup_plan" | grep -Eq "$old_installers_pattern"
 printf '%s\n' "$runtime_setup_plan" | grep -q 'sh ./scripts/install-nix-fonts.sh'
 

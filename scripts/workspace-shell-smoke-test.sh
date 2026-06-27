@@ -69,10 +69,6 @@ linux_runtime_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Linux is
 printf '%s\n' "$linux_runtime_plan" | grep -q 'sh ./scripts/configure-default-zsh.sh'
 printf '%s\n' "$linux_runtime_plan" | grep -q 'sh ./scripts/install-nix-fonts.sh'
 ! printf '%s\n' "$linux_runtime_plan" | grep -Eq "$old_installers_pattern"
-linux_setup_nix_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Linux is_wsl=0 setup-nix)
-printf '%s\n' "$linux_setup_nix_plan" | grep -q 'sh ./scripts/install-nix.sh'
-printf '%s\n' "$linux_setup_nix_plan" | grep -q 'nix .*profile install .#workspace-deps'
-! printf '%s\n' "$linux_setup_nix_plan" | grep -q "$old_use_nix"
 
 darwin_setup_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Darwin is_wsl=0 setup)
 printf '%s\n' "$darwin_setup_plan" | grep -q 'nix .*profile install .#workspace-deps'

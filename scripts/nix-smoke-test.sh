@@ -10,7 +10,10 @@ old_apt_install=$(printf 'apt %s' install)
 old_brew_install=$(printf 'brew %s' install)
 old_snap_installer=$(printf 'install-linux-%s' snaps)
 old_csvlens_installer=$(printf 'install-%s' csvlens)
+old_setup_nix=$(printf 'setup-%s' nix)
+old_nix_deps=$(printf 'nix-%s' deps)
 legacy_setup_pattern="$old_use_nix|$old_setup_legacy|$old_apt_install|$old_brew_install|$old_snap_installer|$old_csvlens_installer"
+redundant_target_pattern="^($old_setup_nix|$old_nix_deps|go|nvim-install|tmux-install|alacritty-install|kitty-install|csvlens-install|go-install|gopls-install):"
 
 test -f flake.nix
 test -f .github/workflows/tests.yaml
@@ -49,21 +52,21 @@ setup_deps_plan=$(make -n --no-print-directory setup-deps)
 printf '%s\n' "$setup_deps_plan" | grep -q 'nix .*profile install .#workspace-deps'
 ! printf '%s\n' "$setup_deps_plan" | grep -Eq "$old_apt_install|$old_brew_install|$old_snap_installer|$old_csvlens_installer"
 
-setup_nix_plan=$(make -n --no-print-directory setup-nix)
-printf '%s\n' "$setup_nix_plan" | grep -q 'sh ./scripts/install-nix.sh'
-printf '%s\n' "$setup_nix_plan" | grep -q 'nix .*profile install .#workspace-deps'
-! printf '%s\n' "$setup_nix_plan" | grep -q "$old_use_nix"
-
 runtime_plan=$(make -n --no-print-directory setup-runtime)
-for command in 'sh ./scripts/install-nix-fonts.sh' 'cp -r ./nvim/.' './scripts/install-agent-clis.sh install' 'cp -r ./alacritty/.' 'cp -r ./kitty/.' 'csvlens --version'; do
+for command in 'sh ./scripts/install-nix-fonts.sh' 'cp -r ./nvim/.' './scripts/install-agent-clis.sh install' 'cp -r ./alacritty/.' 'cp -r ./kitty/.'; do
 	printf '%s\n' "$runtime_plan" | grep -q "$command"
 done
+! printf '%s\n' "$runtime_plan" | grep -Eq 'nvim --version|tmux -V|alacritty --version|kitty --version|csvlens --version|go version|gopls version'
 
 nix_install_plan=$(make -n --no-print-directory nix-install)
 printf '%s\n' "$nix_install_plan" | grep -q 'sh ./scripts/install-nix.sh'
 
 if grep -Eq "$legacy_setup_pattern" Makefile; then
 	echo "legacy package-manager setup code should not exist in Makefile" >&2
+	exit 1
+fi
+if grep -Eq "$redundant_target_pattern" Makefile; then
+	echo "redundant installer aliases should not exist in Makefile" >&2
 	exit 1
 fi
 

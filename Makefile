@@ -29,7 +29,7 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup setup-nix setup-runtime nix-install update version-lock-update setup-deps nix-deps default-shell fonts-install newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-install tmux-config alacritty alacritty-install alacritty-config kitty kitty-install kitty-config csvlens-install go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test cleanup
+.PHONY: help setup setup-runtime nix-install update version-lock-update setup-deps default-shell fonts-install newsboat-config nvim nvim-config nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -37,10 +37,8 @@ setup:  ## Install all workspace tools, configs, and terminal agent CLIs using N
 setup: setup-deps
 	$(MAKE) setup-runtime
 
-setup-nix: setup ## Alias for setup
-
 setup-runtime: ## Install workspace configs and terminal agent CLIs after deps are available
-setup-runtime: default-shell fonts-install go-install gopls-install workspace-bin agent-clis codex-config nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config kitty-install kitty-config csvlens-install newsboat-config cleanup
+setup-runtime: default-shell fonts-install workspace-bin agent-clis codex-config nvim-config tmux-config alacritty-config kitty-config newsboat-config cleanup
 
 nix-install: ## Install Nix if missing
 	sh ./scripts/install-nix.sh
@@ -54,8 +52,6 @@ version-lock-update: ## Update native treesitter versions in version-lock.json
 setup-deps: ## Setup deps
 setup-deps: nix-install
 	. ./scripts/nix-profile.sh && nix --extra-experimental-features 'nix-command flakes' profile install .#workspace-deps
-
-nix-deps: setup-deps ## Install common CLI deps with Nix
 
 default-shell: ## Use zsh as the default login shell on Linux
 	@$(default_shell_install)
@@ -72,20 +68,14 @@ newsboat-config: ## Install Newsboat feed URLs from newsboat/urls.local
 	cp ./newsboat/urls.local ~/.newsboat/urls
 
 nvim: ## Install neovim + all plugins
-nvim: setup-deps nvim-install nvim-config cleanup
-nvim-install: ## Install neovim only, no config
-	@nvim --version | head -n 1
-	@rg --version | head -n 1
+nvim: setup-deps nvim-config cleanup
 
 nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
-nvim-config: tree-sitter-cli-install nvim-native-treesitter-parsers-install
+nvim-config: nvim-native-treesitter-parsers-install
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	rm -rf ~/.config/nvim/*
 	cp -r ./nvim/. ~/.config/nvim/
 	nvim --headless "+Lazy! $(lazy_command)" +qa
-
-tree-sitter-cli-install: ## Install tree-sitter CLI for native parser builds
-	@tree-sitter --version
 
 nvim-native-treesitter-parsers-install: ## Build native Neovim treesitter parsers
 	chmod +x ./scripts/install-native-treesitter-parsers.sh
@@ -109,54 +99,30 @@ codex-config: workspace-bin ## Merge workspace Codex config into the real Codex 
 	merge_toml "$(codex_config_file)" "$(workspace_codex_config_file)"
 
 tmux: ## Install tmux + configurations + plugins
-tmux: setup-deps tmux-install tmux-config cleanup
-tmux-install: ## Install tmux only, no config nor plugins
-	@tmux -V
-	tmux new -d
-	test -d ~/.tmux/plugins/tpm || git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+tmux: setup-deps tmux-config cleanup
 
 tmux-config: workspace-bin ## Install tmux-config
+	tmux new -d
+	test -d ~/.tmux/plugins/tpm || git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
 	cp ./tmux/.tmux.conf ~/.tmux.conf
 	tmux source ~/.tmux.conf
 	~/bin/tmux-session-sidebar/reload
 	~/.tmux/plugins/tpm/scripts/install_plugins.sh
 
 alacritty: ## install alacritty and all config
-alacritty: alacritty-install alacritty-config
-
-alacritty-install: ## Install alacritty only, now config
-	@alacritty --version
+alacritty: alacritty-config
 
 alacritty-config: ## Install alacritty + config + theme
 	test -d "$(alacritty_config_dir)" || mkdir -p "$(alacritty_config_dir)"
 	cp -r ./alacritty/. "$(alacritty_config_dir)/"
 
 kitty: ## Install kitty and config
-kitty: kitty-install kitty-config
-
-kitty-install: ## Install kitty only, no config
-	@kitty --version
+kitty: kitty-config
 
 kitty-config: ## Install kitty config
 	test -d "$(kitty_config_dir)" || mkdir -p "$(kitty_config_dir)"
 	cp -r ./kitty/. "$(kitty_config_dir)/"
 	kitten themes --dump-theme 'Gruvbox Dark' > "$(kitty_config_dir)/current-theme.conf"
-
-csvlens-install: ## Install csvlens CSV viewer
-	@csvlens --version | head -n 1
-
-go: ## Install Go plus gopls
-go: setup-deps go-install gopls-install cleanup
-go-install:
-	@go version
-
-gopls-install:
-	@if command -v gopls >/dev/null 2>&1; then \
-		gopls version | head -n 1 ; \
-	else \
-		GOWORK=off go install golang.org/x/tools/gopls@latest ; \
-		gopls version | head -n 1 ; \
-	fi
 
 scripts: ## chmod +x for all scripts
 	chmod -R +x ./scripts
