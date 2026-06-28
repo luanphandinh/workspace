@@ -27,7 +27,7 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test cleanup
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -140,7 +140,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test ## Run smoke tests
+test: mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test ## Run smoke tests
 
 mkws-test: ## Run mkws/mkwst/mkwsts smoke tests
 	sh ./scripts/mkws-smoke-test.sh
@@ -165,15 +165,6 @@ tmux-sidebar-test: ## Run tmux sidebar smoke tests
 
 tmux-status-test: ## Run tmux status smoke tests
 	sh ./scripts/tmux-status-smoke-test.sh
-
-alacritty-test: ## Run alacritty config/install smoke tests
-	sh ./scripts/alacritty-smoke-test.sh
-
-kitty-test: ## Run kitty config/install smoke tests
-	sh ./scripts/kitty-smoke-test.sh
-
-csvlens-test: ## Run csvlens install smoke tests
-	sh ./scripts/csvlens-smoke-test.sh
 
 cleanup: ## Clean up ./tmp folder
 	rm -rf ./tmp

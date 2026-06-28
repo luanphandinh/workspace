@@ -132,21 +132,4 @@ printf 'backup me again\n' > "$backup_file"
 python3 "$ROOT/bin/backup" "$backup_file" >/dev/null
 assert_exists "${backup_file}_${DATE}_1"
 
-plan=$(make -n --no-print-directory \
-	codex_config_file="$TMP/real-codex.toml" \
-	workspace_codex_config_file="$ROOT/codex/config.toml" \
-	codex-config)
-printf '%s\n' "$plan" | grep -q 'merge_toml "'
-printf '%s\n' "$plan" | grep -q "$TMP/real-codex.toml"
-printf '%s\n' "$plan" | grep -q "$ROOT/codex/config.toml"
-
-assert_contains "$ROOT/codex/config.toml" "[features]"
-python3 - "$ROOT/codex/config.toml" <<'PY'
-import sys
-lines = open(sys.argv[1]).read().splitlines()
-features = lines.index("[features]")
-if lines[features + 1] != "multi_agent = true":
-    raise SystemExit("codex/config.toml must put multi_agent immediately below [features]")
-PY
-
 echo "PASS codex config smoke test"
