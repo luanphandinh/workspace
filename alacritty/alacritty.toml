@@ -65,8 +65,8 @@ style = "Bold"
 
 [font.italic]
 family = "FiraCode Nerd Font"
-style = "Italic"
+style = "Regular"
 
 [font.bold_italic]
 family = "FiraCode Nerd Font"
-style = "Bold Italic"
+style = "Bold"

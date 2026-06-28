@@ -30,10 +30,12 @@ if grep -R -i "$old_terminal_name" Makefile AGENTS.md CLAUDE.md scripts >/dev/nu
 fi
 file kitty/kitty.app.png | grep -q 'PNG image data'
 grep -q 'MIT License' kitty/LICENSE.kitty-icon
-grep -qx 'font_family FiraCode Nerd Font Mono' kitty/kitty.conf
+grep -qx 'font_family family="FiraCode Nerd Font Mono" style="Regular"' kitty/kitty.conf
+grep -qx 'bold_font family="FiraCode Nerd Font Mono" style="Bold"' kitty/kitty.conf
 grep -qx 'font_size 12.0' kitty/kitty.conf
-grep -qx 'italic_font FiraCode Nerd Font Mono' kitty/kitty.conf
-grep -qx 'bold_italic_font FiraCode Nerd Font Mono' kitty/kitty.conf
+grep -qx 'italic_font family="FiraCode Nerd Font Mono" style="Regular"' kitty/kitty.conf
+grep -qx 'bold_italic_font family="FiraCode Nerd Font Mono" style="Bold"' kitty/kitty.conf
+! grep -Eq '(^|[[:space:]])style="[^"]*Italic|italic_font .*Italic|bold_italic_font .*Italic' kitty/kitty.conf
 grep -qx 'scrollback_lines 100' kitty/kitty.conf
 grep -qx 'enabled_layouts stack' kitty/kitty.conf
 grep -qx 'window_border_width 0' kitty/kitty.conf

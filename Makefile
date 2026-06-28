@@ -65,7 +65,7 @@ setup-deps: nix-install
 default-shell: ## Use zsh as the default login shell on Linux
 	@$(default_shell_install)
 
-fonts-install: ## Install terminal fonts
+fonts-install: ## Register Nix-installed terminal fonts with the OS
 	sh ./scripts/install-nix-fonts.sh
 
 newsboat-config: ## Install Newsboat feed URLs from newsboat/urls.local

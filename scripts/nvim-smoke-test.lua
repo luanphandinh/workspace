@@ -393,6 +393,18 @@ local function test_csv_preview_keymap()
   vim.env.PATH = old_path
 end
 
+local function test_no_italic_highlights()
+  local italic_groups = {}
+  for name, _ in pairs(vim.api.nvim_get_hl(0, {})) do
+    local ok, highlight = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
+    if ok and highlight.italic then
+      table.insert(italic_groups, name)
+    end
+  end
+  table.sort(italic_groups)
+  assert_true(#italic_groups == 0, "italic highlight groups should be disabled: " .. table.concat(italic_groups, ", "))
+end
+
 local function test_git_conflict_decoration_guard()
   local guard = require("luanphan.git_conflict_guard")
   assert_true(
@@ -1378,6 +1390,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("csv preview keymap", function()
     test_csv_preview_keymap()
+  end)
+
+  test("no italic highlights", function()
+    test_no_italic_highlights()
   end)
 
   test("git conflict decoration guard", function()

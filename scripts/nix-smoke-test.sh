@@ -31,7 +31,9 @@ grep -q 'devShells' flake.nix
 grep -q 'https://nixos.org/nix/install' scripts/install-nix.sh
 grep -q -- '--daemon --yes' scripts/install-nix.sh
 grep -q 'interactive sudo' scripts/install-nix.sh
-grep -q 'FiraCode' scripts/install-nix-fonts.sh
+grep -q 'FiraCodeNerdFont' scripts/install-nix-fonts.sh
+grep -q 'powershell.exe' scripts/install-nix-fonts.sh
+! grep -Eq 'github.com|curl|unzip|FiraCode.zip' scripts/install-nix-fonts.sh
 grep -q 'nix-daemon.sh' scripts/nix-profile.sh
 grep -q 'cachix/install-nix-action@v31' .github/workflows/tests.yaml
 grep -q 'cachix/install-nix-action@v31' .github/workflows/workspace.yaml
@@ -89,6 +91,7 @@ fi
 
 test ! -e "scripts/$old_snap_installer.sh"
 test ! -e "scripts/$old_csvlens_installer.sh"
+test ! -e scripts/install-windows-firacode-nerd-font.sh
 
 if command -v nix >/dev/null 2>&1 && git ls-files --error-unmatch flake.nix >/dev/null 2>&1; then
 	nix --extra-experimental-features 'nix-command flakes' flake check --no-build
