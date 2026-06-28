@@ -30,9 +30,7 @@ jobs:
         run: make nvim-test
 
       - name: Update latest plugins
-        run: |
-          make version-lock-update
-          make MODE=latest setup-runtime
+        run: make update
 
       - name: Neovim smoke tests after latest update
         run: make nvim-test

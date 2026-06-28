@@ -447,6 +447,32 @@ local function test_treesitter_uses_native_runtime()
   assert_true(package.loaded["nvim-treesitter.configs"] == nil, "native runtime setup should not load nvim-treesitter.configs")
 end
 
+local function runtimepath_contains(path)
+  for entry in string.gmatch(vim.o.runtimepath, "([^,]+)") do
+    if entry == path then
+      return true
+    end
+  end
+  return false
+end
+
+local function test_treesitter_uses_nix_parser_runtime()
+  local profile = vim.env.NIX_PROFILE
+  if profile == nil or profile == "" then
+    profile = vim.env.HOME .. "/.nix-profile"
+  end
+
+  assert_true(vim.fn.isdirectory(profile .. "/parser") == 1, "Nix parser runtime should exist")
+  assert_true(runtimepath_contains(profile), "runtimepath should include Nix parser runtime")
+
+  for _, lang in ipairs({ "go", "json", "yaml", "bash" }) do
+    assert_true(
+      vim.fn.filereadable(profile .. "/parser/" .. lang .. ".so") == 1,
+      lang .. " parser should be installed by Nix"
+    )
+  end
+end
+
 local function test_treesitter_required_parsers_available()
   local expected = {
     go = "go",
@@ -1406,6 +1432,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("treesitter uses native runtime", function()
     test_treesitter_uses_native_runtime()
+  end)
+
+  test("treesitter uses nix parser runtime", function()
+    test_treesitter_uses_nix_parser_runtime()
   end)
 
   test("treesitter required parsers available", function()

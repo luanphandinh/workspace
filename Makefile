@@ -1,5 +1,4 @@
 UNAME := $(shell uname)
-version_lock := ./version-lock.json
 export PATH := $(HOME)/.local/bin:$(HOME)/bin:$(HOME)/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$(HOME)/go/bin:$(PATH)
 ifneq (,$(findstring Linux,$(UNAME)))
 	newsboat_config := ./newsboat/config.linux
@@ -28,7 +27,7 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps version-lock-update setup-deps default-shell fonts-install newsboat-config nvim nvim-config nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test cleanup
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -42,15 +41,12 @@ setup-runtime: default-shell fonts-install workspace-bin agent-clis codex-config
 nix-install: ## Install Nix if missing
 	sh ./scripts/install-nix.sh
 
-update: version-lock-update ## Install all workspace tools while updating Neovim plugins and native treesitter locks to latest.
-	$(MAKE) MODE=latest setup
+update: upgrade-deps ## Update Nix dependencies and install workspace runtime while updating Neovim plugins to latest.
+	$(MAKE) MODE=latest setup-runtime
 
 upgrade-deps: nix-install ## Update Nix dependency lockfile and install the updated dependency profile.
 	. ./scripts/nix-profile.sh && nix --extra-experimental-features 'nix-command flakes' flake update
 	$(MAKE) setup-deps
-
-version-lock-update: ## Update native treesitter versions in version-lock.json
-	python3 ./scripts/update-version-lock.py $(version_lock)
 
 setup-deps: ## Setup deps
 setup-deps: nix-install
@@ -80,15 +76,10 @@ nvim: ## Install neovim + all plugins
 nvim: setup-deps nvim-config cleanup
 
 nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
-nvim-config: nvim-native-treesitter-parsers-install
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	rm -rf ~/.config/nvim/*
 	cp -r ./nvim/. ~/.config/nvim/
 	nvim --headless "+Lazy! $(lazy_command)" +qa
-
-nvim-native-treesitter-parsers-install: ## Build native Neovim treesitter parsers
-	chmod +x ./scripts/install-native-treesitter-parsers.sh
-	./scripts/install-native-treesitter-parsers.sh
 
 nvim-lock: ## Refresh nvim/lazy-lock.json from the installed Neovim config.
 	cp ~/.config/nvim/lazy-lock.json ./nvim/lazy-lock.json
@@ -149,10 +140,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test ## Run smoke tests
-
-version-lock-test: ## Run version-lock smoke tests
-	sh ./scripts/version-lock-smoke-test.sh
+test: mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test ## Run smoke tests
 
 mkws-test: ## Run mkws/mkwst/mkwsts smoke tests
 	sh ./scripts/mkws-smoke-test.sh

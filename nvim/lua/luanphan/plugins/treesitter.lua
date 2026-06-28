@@ -1,6 +1,17 @@
 local setup_done = false
 local fold_manual_line_threshold = 10000
 
+local function prepend_nix_parser_runtime()
+  local profile = vim.env.NIX_PROFILE
+  if profile == nil or profile == "" then
+    profile = vim.env.HOME .. "/.nix-profile"
+  end
+
+  if vim.fn.isdirectory(profile .. "/parser") == 1 then
+    vim.opt.runtimepath:prepend(profile)
+  end
+end
+
 local function window_folds_configured(buf)
   local configured = vim.w.luanphan_treesitter_folds_configured
   return type(configured) == "table" and configured[buf] == true
@@ -89,6 +100,8 @@ local function setup()
     return
   end
   setup_done = true
+
+  prepend_nix_parser_runtime()
 
   vim.treesitter.language.register("bash", { "bash", "sh" })
 

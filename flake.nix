@@ -20,6 +20,32 @@
             inherit system;
             config.allowUnfree = true;
           }));
+      treeSitterGrammars = pkgs: [
+        {
+          lang = "go";
+          grammar = pkgs.tree-sitter-grammars.tree-sitter-go;
+        }
+        {
+          lang = "json";
+          grammar = pkgs.tree-sitter-grammars.tree-sitter-json;
+        }
+        {
+          lang = "bash";
+          grammar = pkgs.tree-sitter-grammars.tree-sitter-bash;
+        }
+        {
+          lang = "yaml";
+          grammar = pkgs.tree-sitter-grammars.tree-sitter-yaml;
+        }
+      ];
+      nvimTreesitterParsers = pkgs:
+        pkgs.runCommand "workspace-nvim-treesitter-parsers" { } ''
+          mkdir -p "$out/parser" "$out/queries"
+          ${builtins.concatStringsSep "\n" (map (parser: ''
+            ln -s ${parser.grammar}/parser "$out/parser/${parser.lang}.so"
+            ln -s ${parser.grammar}/queries "$out/queries/${parser.lang}"
+          '') (treeSitterGrammars pkgs))}
+        '';
       packageList = system: pkgs:
         let
           x86DarwinPkgs = import nixpkgs {
@@ -30,6 +56,7 @@
             if system == "aarch64-darwin"
             then x86DarwinPkgs.go_1_25
             else pkgs.go_1_25;
+          treesitterParsersPackage = nvimTreesitterParsers pkgs;
           commonPackages = with pkgs; [
             bashInteractive
             alacritty
@@ -62,6 +89,7 @@
             zsh
           ] ++ [
             goPackage
+            treesitterParsersPackage
           ];
           darwinPackages = with pkgs; [
             terminal-notifier
@@ -72,6 +100,7 @@
     in
     {
       packages = forAllSystems (pkgs: {
+        nvim-treesitter-parsers = nvimTreesitterParsers pkgs;
         workspace-deps = pkgs.buildEnv {
           name = "workspace-deps";
           paths = packageList pkgs.stdenv.hostPlatform.system pkgs;

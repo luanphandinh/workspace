@@ -25,9 +25,15 @@ test -f scripts/nix-profile.sh
 grep -q 'nixos-unstable' flake.nix
 grep -q 'buildEnv' flake.nix
 grep -q 'workspace-deps' flake.nix
+grep -q 'workspace-nvim-treesitter-parsers' flake.nix
+grep -q 'tree-sitter-grammars.tree-sitter-go' flake.nix
+grep -q 'tree-sitter-grammars.tree-sitter-json' flake.nix
+grep -q 'tree-sitter-grammars.tree-sitter-bash' flake.nix
+grep -q 'tree-sitter-grammars.tree-sitter-yaml' flake.nix
 grep -q 'x86_64-darwin' flake.nix
 grep -q 'x86DarwinPkgs.go_1_25' flake.nix
 grep -q 'devShells' flake.nix
+grep -q 'vim.opt.runtimepath:prepend' nvim/lua/luanphan/plugins/treesitter.lua
 grep -q 'https://nixos.org/nix/install' scripts/install-nix.sh
 grep -q -- '--daemon --yes' scripts/install-nix.sh
 grep -q 'interactive sudo' scripts/install-nix.sh
@@ -77,6 +83,7 @@ runtime_plan=$(make -n --no-print-directory setup-runtime)
 for command in 'sh ./scripts/install-nix-fonts.sh' 'cp -r ./nvim/.' './scripts/install-agent-clis.sh install' 'cp -r ./alacritty/.' 'cp -r ./kitty/.'; do
 	printf '%s\n' "$runtime_plan" | grep -q "$command"
 done
+! printf '%s\n' "$runtime_plan" | grep -q 'install-native-treesitter-parsers'
 ! printf '%s\n' "$runtime_plan" | grep -Eq 'nvim --version|tmux -V|alacritty --version|kitty --version|csvlens --version|go version|gopls version'
 
 nix_install_plan=$(make -n --no-print-directory nix-install)
@@ -94,6 +101,13 @@ fi
 test ! -e "scripts/$old_snap_installer.sh"
 test ! -e "scripts/$old_csvlens_installer.sh"
 test ! -e scripts/install-windows-firacode-nerd-font.sh
+test ! -e version-lock.json
+test ! -e scripts/install-native-treesitter-parsers.sh
+test ! -e scripts/update-version-lock.py
+test ! -e scripts/version_lock.py
+test ! -e scripts/version-lock-smoke-test.sh
+! grep -q 'version-lock' Makefile .github/workflows/workspace.yaml
+! grep -q 'nvim-native-treesitter-parsers-install' Makefile
 
 if command -v nix >/dev/null 2>&1 && git ls-files --error-unmatch flake.nix >/dev/null 2>&1; then
 	nix --extra-experimental-features 'nix-command flakes' flake check --no-build
