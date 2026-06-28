@@ -18,14 +18,7 @@ windows_appdata := $(shell cmd.exe /C echo %APPDATA% 2>/dev/null | tr -d '\r')
 alacritty_config_dir := $(shell wslpath -u '$(windows_appdata)')/alacritty
 endif
 
-MODE ?= locked
-ifeq ($(MODE),latest)
-	lazy_command := sync
-else ifeq ($(MODE),locked)
-	lazy_command := restore
-else
-$(error MODE must be locked or latest)
-endif
+lazy_command ?= restore
 
 .PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test cleanup
 help:
@@ -41,8 +34,9 @@ setup-runtime: default-shell fonts-install workspace-bin agent-clis codex-config
 nix-install: ## Install Nix if missing
 	sh ./scripts/install-nix.sh
 
-update: upgrade-deps ## Update Nix dependencies and install workspace runtime while updating Neovim plugins to latest.
-	$(MAKE) MODE=latest setup-runtime
+update: upgrade-deps ## Update Nix dependencies, workspace runtime, and Neovim plugin lockfile.
+	$(MAKE) lazy_command=sync setup-runtime
+	$(MAKE) nvim-lock
 
 upgrade-deps: nix-install ## Update Nix dependency lockfile and install the updated dependency profile.
 	. ./scripts/nix-profile.sh && nix --extra-experimental-features 'nix-command flakes' flake update
