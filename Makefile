@@ -28,7 +28,7 @@ else
 $(error MODE must be locked or latest)
 endif
 
-.PHONY: help setup setup-runtime nix-install update version-lock-update setup-deps default-shell fonts-install newsboat-config nvim nvim-config nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test cleanup
+.PHONY: help setup setup-runtime nix-install update upgrade-deps version-lock-update setup-deps default-shell fonts-install newsboat-config nvim nvim-config nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -45,16 +45,21 @@ nix-install: ## Install Nix if missing
 update: version-lock-update ## Install all workspace tools while updating Neovim plugins and native treesitter locks to latest.
 	$(MAKE) MODE=latest setup
 
+upgrade-deps: nix-install ## Update Nix dependency lockfile and install the updated dependency profile.
+	. ./scripts/nix-profile.sh && nix --extra-experimental-features 'nix-command flakes' flake update
+	$(MAKE) setup-deps
+
 version-lock-update: ## Update native treesitter versions in version-lock.json
 	python3 ./scripts/update-version-lock.py $(version_lock)
 
 setup-deps: ## Setup deps
 setup-deps: nix-install
+	test -f flake.lock
 	. ./scripts/nix-profile.sh && \
 		if nix --extra-experimental-features 'nix-command flakes' profile list | awk '/^Name:.*workspace-deps/ { found = 1 } END { exit !found }'; then \
-			nix --extra-experimental-features 'nix-command flakes' profile upgrade workspace-deps; \
+			nix --extra-experimental-features 'nix-command flakes' profile upgrade --no-update-lock-file workspace-deps; \
 		else \
-			nix --extra-experimental-features 'nix-command flakes' profile add "path:$(CURDIR)#workspace-deps"; \
+			nix --extra-experimental-features 'nix-command flakes' profile add --no-update-lock-file "path:$(CURDIR)#workspace-deps"; \
 		fi
 
 default-shell: ## Use zsh as the default login shell on Linux

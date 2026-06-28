@@ -16,6 +16,7 @@ legacy_setup_pattern="$old_use_nix|$old_setup_legacy|$old_apt_install|$old_brew_
 redundant_target_pattern="^($old_setup_nix|$old_nix_deps|go|nvim-install|tmux-install|alacritty-install|kitty-install|csvlens-install|go-install|gopls-install):"
 
 test -f flake.nix
+test -f flake.lock
 test -f .github/workflows/tests.yaml
 test -f .github/workflows/workspace.yaml
 test -f scripts/install-nix.sh
@@ -46,19 +47,27 @@ done
 
 setup_plan=$(make -n --no-print-directory setup)
 printf '%s\n' "$setup_plan" | grep -q 'sh ./scripts/install-nix.sh'
+printf '%s\n' "$setup_plan" | grep -q 'test -f flake.lock'
 printf '%s\n' "$setup_plan" | grep -q 'nix .*profile list'
-printf '%s\n' "$setup_plan" | grep -q 'nix .*profile upgrade workspace-deps'
-printf '%s\n' "$setup_plan" | grep -q 'nix .*profile add "path:.*#workspace-deps"'
+printf '%s\n' "$setup_plan" | grep -q 'nix .*profile upgrade --no-update-lock-file workspace-deps'
+printf '%s\n' "$setup_plan" | grep -q 'nix .*profile add --no-update-lock-file "path:.*#workspace-deps"'
 ! printf '%s\n' "$setup_plan" | grep -q 'profile remove workspace-deps'
+! printf '%s\n' "$setup_plan" | grep -q 'flake update'
 printf '%s\n' "$setup_plan" | grep -q 'make setup-runtime'
 ! printf '%s\n' "$setup_plan" | grep -q "$old_use_nix"
 
 setup_deps_plan=$(make -n --no-print-directory setup-deps)
+printf '%s\n' "$setup_deps_plan" | grep -q 'test -f flake.lock'
 printf '%s\n' "$setup_deps_plan" | grep -q 'nix .*profile list'
-printf '%s\n' "$setup_deps_plan" | grep -q 'nix .*profile upgrade workspace-deps'
-printf '%s\n' "$setup_deps_plan" | grep -q 'nix .*profile add "path:.*#workspace-deps"'
+printf '%s\n' "$setup_deps_plan" | grep -q 'nix .*profile upgrade --no-update-lock-file workspace-deps'
+printf '%s\n' "$setup_deps_plan" | grep -q 'nix .*profile add --no-update-lock-file "path:.*#workspace-deps"'
 ! printf '%s\n' "$setup_deps_plan" | grep -q 'profile remove workspace-deps'
+! printf '%s\n' "$setup_deps_plan" | grep -q 'flake update'
 ! printf '%s\n' "$setup_deps_plan" | grep -Eq "$old_apt_install|$old_brew_install|$old_snap_installer|$old_csvlens_installer"
+
+upgrade_deps_plan=$(make -n --no-print-directory upgrade-deps)
+printf '%s\n' "$upgrade_deps_plan" | grep -q 'nix .*flake update'
+printf '%s\n' "$upgrade_deps_plan" | grep -q 'make setup-deps'
 
 runtime_plan=$(make -n --no-print-directory setup-runtime)
 for command in 'sh ./scripts/install-nix-fonts.sh' 'cp -r ./nvim/.' './scripts/install-agent-clis.sh install' 'cp -r ./alacritty/.' 'cp -r ./kitty/.'; do

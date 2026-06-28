@@ -90,7 +90,7 @@ printf '%s\n' "$darwin_plan" | grep -q 'cp -r ./kitty/.'
 ! printf '%s\n' "$darwin_plan" | grep -Eq "$old_installers_pattern"
 
 setup_plan=$(make -n --no-print-directory setup)
-printf '%s\n' "$setup_plan" | grep -q 'nix .*profile add "path:.*#workspace-deps"'
+printf '%s\n' "$setup_plan" | grep -q 'nix .*profile add --no-update-lock-file "path:.*#workspace-deps"'
 ! printf '%s\n' "$setup_plan" | grep -q "$old_use_nix"
 
 runtime_setup_plan=$(make -n --no-print-directory setup-runtime)

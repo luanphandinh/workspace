@@ -10,7 +10,7 @@ old_csvlens_installer=$(printf 'install-%s' csvlens)
 grep -q 'csvlens' flake.nix
 
 default_setup_plan=$(make -n --no-print-directory setup)
-printf '%s\n' "$default_setup_plan" | grep -q 'nix .*profile add "path:.*#workspace-deps"'
+printf '%s\n' "$default_setup_plan" | grep -q 'nix .*profile add --no-update-lock-file "path:.*#workspace-deps"'
 ! printf '%s\n' "$default_setup_plan" | grep -q "$old_use_nix"
 
 runtime_setup_plan=$(make -n --no-print-directory setup-runtime)
