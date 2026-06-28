@@ -30,7 +30,9 @@ copy_fonts() {
 	font_dest=$1
 	mkdir -p "$font_dest"
 	while IFS= read -r font_file; do
-		cp -f "$font_file" "$font_dest/"
+		font_target="$font_dest/$(basename "$font_file")"
+		rm -f "$font_target"
+		cp "$font_file" "$font_target"
 	done < "$tmp_file"
 }
 
@@ -79,7 +81,7 @@ Get-ChildItem $fontDir -Filter "FiraCodeNerdFont*.ttf" | ForEach-Object {
 
 case "$(uname)" in
 	Darwin)
-		link_fonts "$HOME/Library/Fonts"
+		copy_fonts "$HOME/Library/Fonts"
 		;;
 	*)
 		linux_font_dir="$HOME/.local/share/fonts"

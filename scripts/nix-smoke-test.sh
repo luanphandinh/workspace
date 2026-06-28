@@ -32,6 +32,8 @@ grep -q 'https://nixos.org/nix/install' scripts/install-nix.sh
 grep -q -- '--daemon --yes' scripts/install-nix.sh
 grep -q 'interactive sudo' scripts/install-nix.sh
 grep -q 'FiraCodeNerdFont' scripts/install-nix-fonts.sh
+grep -q 'copy_fonts "$HOME/Library/Fonts"' scripts/install-nix-fonts.sh
+grep -q 'rm -f "$font_target"' scripts/install-nix-fonts.sh
 grep -q 'powershell.exe' scripts/install-nix-fonts.sh
 ! grep -Eq 'github.com|curl|unzip|FiraCode.zip' scripts/install-nix-fonts.sh
 grep -q 'nix-daemon.sh' scripts/nix-profile.sh

@@ -33,6 +33,9 @@ grep -q 'MIT License' kitty/LICENSE.kitty-icon
 grep -qx 'font_family family="FiraCode Nerd Font Mono" style="Regular"' kitty/kitty.conf
 grep -qx 'bold_font family="FiraCode Nerd Font Mono" style="Bold"' kitty/kitty.conf
 grep -qx 'font_size 12.0' kitty/kitty.conf
+grep -qx 'disable_ligatures never' kitty/kitty.conf
+grep -qx 'font_features FiraCodeNFM-Reg +liga +calt' kitty/kitty.conf
+grep -qx 'font_features FiraCodeNFM-Bold +liga +calt' kitty/kitty.conf
 grep -qx 'italic_font family="FiraCode Nerd Font Mono" style="Regular"' kitty/kitty.conf
 grep -qx 'bold_italic_font family="FiraCode Nerd Font Mono" style="Bold"' kitty/kitty.conf
 ! grep -Eq '(^|[[:space:]])style="[^"]*Italic|italic_font .*Italic|bold_italic_font .*Italic' kitty/kitty.conf
