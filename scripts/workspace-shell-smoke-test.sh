@@ -145,8 +145,9 @@ test ! -e "$stale_home/app-server-daemon/app-server-updater.pid"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; ! command -v mcodex >/dev/null 2>&1"
 
-if command -v zsh >/dev/null 2>&1; then
-  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" zsh -fc ". '$repo_root/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = zsh"
+zsh_bin=$(command -v zsh || true)
+if [ -n "$zsh_bin" ]; then
+  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = zsh"
   grep -qx 'init zsh --cmd z' "$log"
 fi
 
