@@ -109,6 +109,10 @@ test ! -e scripts/version-lock-smoke-test.sh
 ! grep -q 'version-lock' Makefile .github/workflows/workspace.yaml
 ! grep -q 'nvim-native-treesitter-parsers-install' Makefile
 
+rm -rf ./tmp
+make --no-print-directory cleanup
+test ! -e ./tmp
+
 if command -v nix >/dev/null 2>&1 && git ls-files --error-unmatch flake.nix >/dev/null 2>&1; then
 	nix --extra-experimental-features 'nix-command flakes' flake check --no-build
 else

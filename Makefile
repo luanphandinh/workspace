@@ -176,4 +176,4 @@ csvlens-test: ## Run csvlens install smoke tests
 	sh ./scripts/csvlens-smoke-test.sh
 
 cleanup: ## Clean up ./tmp folder
-	test -d ./tmp && rm -rf ./tmp
+	rm -rf ./tmp
