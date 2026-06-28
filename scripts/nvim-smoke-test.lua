@@ -405,6 +405,14 @@ local function test_no_italic_highlights()
   assert_true(#italic_groups == 0, "italic highlight groups should be disabled: " .. table.concat(italic_groups, ", "))
 end
 
+local function test_yaml_devicon_uses_config_icon()
+  local devicons = require("nvim-web-devicons")
+  for _, file in ipairs({ "example.yaml", "example.yml" }) do
+    local icon = devicons.get_icon(file, nil, { default = true })
+    assert_true(icon == "", file .. " should use pre-change config icon instead of dev-yaml glyph")
+  end
+end
+
 local function test_git_conflict_decoration_guard()
   local guard = require("luanphan.git_conflict_guard")
   assert_true(
@@ -1394,6 +1402,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("no italic highlights", function()
     test_no_italic_highlights()
+  end)
+
+  test("yaml devicon uses config icon", function()
+    test_yaml_devicon_uses_config_icon()
   end)
 
   test("git conflict decoration guard", function()
