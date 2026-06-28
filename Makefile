@@ -1,6 +1,6 @@
 UNAME := $(shell uname)
 version_lock := ./version-lock.json
-export PATH := $(HOME)/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$(HOME)/.local/bin:$(HOME)/bin:$(PATH)
+export PATH := $(HOME)/.local/bin:$(HOME)/bin:$(HOME)/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$(HOME)/go/bin:$(PATH)
 ifneq (,$(findstring Linux,$(UNAME)))
 	newsboat_config := ./newsboat/config.linux
 	default_shell_install := sh ./scripts/configure-default-zsh.sh
@@ -19,7 +19,6 @@ windows_appdata := $(shell cmd.exe /C echo %APPDATA% 2>/dev/null | tr -d '\r')
 alacritty_config_dir := $(shell wslpath -u '$(windows_appdata)')/alacritty
 endif
 
-export PATH := $(HOME)/go/bin:$(PATH)
 MODE ?= locked
 ifeq ($(MODE),latest)
 	lazy_command := sync
@@ -51,7 +50,12 @@ version-lock-update: ## Update native treesitter versions in version-lock.json
 
 setup-deps: ## Setup deps
 setup-deps: nix-install
-	. ./scripts/nix-profile.sh && nix --extra-experimental-features 'nix-command flakes' profile install .#workspace-deps
+	. ./scripts/nix-profile.sh && \
+		if nix --extra-experimental-features 'nix-command flakes' profile list | awk '/^Name:.*workspace-deps/ { found = 1 } END { exit !found }'; then \
+			nix --extra-experimental-features 'nix-command flakes' profile upgrade workspace-deps; \
+		else \
+			nix --extra-experimental-features 'nix-command flakes' profile add "path:$(CURDIR)#workspace-deps"; \
+		fi
 
 default-shell: ## Use zsh as the default login shell on Linux
 	@$(default_shell_install)

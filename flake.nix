@@ -20,8 +20,16 @@
             inherit system;
             config.allowUnfree = true;
           }));
-      packageList = pkgs:
+      packageList = system: pkgs:
         let
+          x86DarwinPkgs = import nixpkgs {
+            system = "x86_64-darwin";
+            config.allowUnfree = true;
+          };
+          goPackage =
+            if system == "aarch64-darwin"
+            then x86DarwinPkgs.go_1_25
+            else pkgs.go_1_25;
           commonPackages = with pkgs; [
             bashInteractive
             alacritty
@@ -35,7 +43,6 @@
             git
             git-lfs
             gnumake
-            go
             gopls
             jq
             kitty
@@ -53,6 +60,8 @@
             yazi
             zoxide
             zsh
+          ] ++ [
+            goPackage
           ];
           darwinPackages = with pkgs; [
             terminal-notifier
@@ -65,17 +74,17 @@
       packages = forAllSystems (pkgs: {
         workspace-deps = pkgs.buildEnv {
           name = "workspace-deps";
-          paths = packageList pkgs;
+          paths = packageList pkgs.stdenv.hostPlatform.system pkgs;
         };
         default = pkgs.buildEnv {
           name = "workspace-deps";
-          paths = packageList pkgs;
+          paths = packageList pkgs.stdenv.hostPlatform.system pkgs;
         };
       });
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
-          packages = packageList pkgs;
+          packages = packageList pkgs.stdenv.hostPlatform.system pkgs;
         };
       });
     };

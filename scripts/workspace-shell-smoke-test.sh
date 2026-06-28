@@ -61,7 +61,7 @@ SH
 chmod +x "$fakebin/codex"
 
 linux_setup_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Linux is_wsl=0 setup)
-printf '%s\n' "$linux_setup_plan" | grep -q 'nix .*profile install .#workspace-deps'
+printf '%s\n' "$linux_setup_plan" | grep -q 'nix .*profile add "path:.*#workspace-deps"'
 printf '%s\n' "$linux_setup_plan" | grep -q 'make setup-runtime'
 ! printf '%s\n' "$linux_setup_plan" | grep -Eq "$old_use_nix|$old_installers_pattern"
 
@@ -71,7 +71,7 @@ printf '%s\n' "$linux_runtime_plan" | grep -q 'sh ./scripts/install-nix-fonts.sh
 ! printf '%s\n' "$linux_runtime_plan" | grep -Eq "$old_installers_pattern"
 
 darwin_setup_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Darwin is_wsl=0 setup)
-printf '%s\n' "$darwin_setup_plan" | grep -q 'nix .*profile install .#workspace-deps'
+printf '%s\n' "$darwin_setup_plan" | grep -q 'nix .*profile add "path:.*#workspace-deps"'
 printf '%s\n' "$darwin_setup_plan" | grep -q 'make setup-runtime'
 ! printf '%s\n' "$darwin_setup_plan" | grep -Eq "$old_use_nix|$old_installers_pattern"
 
@@ -109,7 +109,7 @@ grep -qx -- 'sudo chsh -s '"$fakebin"'/zsh example-user' "$tmp/chsh.log"
 grep -qx -- '-s '"$fakebin"'/zsh example-user' "$tmp/chsh.log"
 rm -f "$fakebin/uname" "$fakebin/zsh" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
 
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; case \"\$PATH\" in \"\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:\$HOME/.local/bin:\$HOME/bin:\"*) ;; *) exit 1 ;; esac"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:\"*) ;; *) exit 1 ;; esac"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" prompt

@@ -14,8 +14,8 @@
 # precedence rules as a normal lookup, skip-self only.
 # $LOCAL_REAL_GO still takes precedence as an explicit override.
 
-PATCHER="${LOCAL_GO_PATCHER}"
-GCFLAGS="${LOCAL_GO_GCFLAGS}"
+PATCHER="${LOCAL_GO_PATCHER:-}"
+GCFLAGS="${LOCAL_GO_GCFLAGS:-}"
 
 # Canonicalise the wrapper's own directory once so the PATH scrubbing below
 # matches whether $PATH lists a symlink or the real path.
@@ -41,7 +41,7 @@ scrub_self_from_path() {
 }
 
 find_real_go() {
-	if [ -n "$LOCAL_REAL_GO" ] && [ -x "$LOCAL_REAL_GO" ]; then
+	if [ -n "${LOCAL_REAL_GO:-}" ] && [ -x "$LOCAL_REAL_GO" ]; then
 		printf '%s\n' "$LOCAL_REAL_GO"
 		return 0
 	fi
