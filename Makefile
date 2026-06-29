@@ -20,7 +20,7 @@ endif
 
 lazy_command ?= restore
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test cleanup
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin test mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -134,13 +134,16 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test ## Run smoke tests
+test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test ## Run smoke tests
 
 mkws-test: ## Run mkws/mkwst/mkwsts smoke tests
 	sh ./scripts/mkws-smoke-test.sh
 
 skills-hub-test: ## Run skills-hub smoke tests
 	sh ./scripts/skills-hub-smoke-test.sh
+
+cmds-hub-test: ## Run cmds-hub smoke tests
+	sh ./scripts/cmds-hub-smoke-test.sh
 
 codex-config-test: ## Run Codex config smoke tests
 	sh ./scripts/codex-config-smoke-test.sh

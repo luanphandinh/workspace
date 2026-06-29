@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+def hub_dir() -> Path:
+    return Path(".cmds-hub")
+
+
+def history_file() -> Path:
+    return hub_dir() / "cmd_history"
+
+
+def die(message: str, code: int = 1) -> None:
+    print(f"error: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+def usage() -> None:
+    print(
+        """Usage:
+  cmds-hub exec <command>
+  cmds-hub replay [--all]
+  cmds-hub pick
+
+Commands:
+  exec    Execute <command> and append it to .cmds-hub/cmd_history on success.
+  replay  Replay the last command in .cmds-hub/cmd_history.
+  pick    Pick a command from .cmds-hub/cmd_history with fzf and execute it.
+
+Options:
+  replay --all  Replay every command from oldest to latest.
+"""
+    )
+
+
+def command_from_args(args: list[str]) -> str:
+    command = " ".join(args).strip()
+    if not command:
+        die("missing command")
+    if "\n" in command or "\r" in command:
+        die("command must be a single line")
+    return command
+
+
+def read_commands(path: Path) -> list[str]:
+    if not path.is_file():
+        return []
+    commands = []
+    for line in path.read_text().splitlines():
+        command = line.strip()
+        if not command or command.startswith("#"):
+            continue
+        commands.append(command)
+    return commands
+
+
+def append_command(command: str, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as file:
+        file.write(f"{command}\n")
+
+
+def run_command(command: str) -> int:
+    print(f"cmds-hub: running: {command}")
+    return subprocess.run(command, shell=True).returncode
+
+
+def require_history(commands: list[str], path: Path) -> None:
+    if not commands:
+        die(f"no commands in {path}")
+
+
+def require_fzf() -> None:
+    if shutil.which("fzf") is None:
+        die("fzf is required")
+
+
+def run_fzf(commands: list[str]) -> tuple[int, list[str]]:
+    require_fzf()
+    proc = subprocess.run(
+        ["fzf", "--prompt", "cmds-hub> "],
+        input="\n".join(commands) + ("\n" if commands else ""),
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode, proc.stdout.splitlines()
+
+
+def cmd_exec(args: list[str]) -> int:
+    command = command_from_args(args)
+    code = run_command(command)
+    if code != 0:
+        return code
+    append_command(command, history_file())
+    print(f"cmds-hub: cached: {history_file()}")
+    return 0
+
+
+def cmd_replay(args: list[str]) -> int:
+    replay_all = False
+    if args == ["--all"]:
+        replay_all = True
+    elif args:
+        die("replay takes no args except --all")
+
+    path = history_file()
+    commands = read_commands(path)
+    require_history(commands, path)
+
+    selected = commands if replay_all else [commands[-1]]
+    for command in selected:
+        code = run_command(command)
+        if code != 0:
+            return code
+    return 0
+
+
+def cmd_pick(args: list[str]) -> int:
+    if args:
+        die("pick takes no args")
+
+    path = history_file()
+    commands = read_commands(path)
+    require_history(commands, path)
+
+    code, output = run_fzf(commands)
+    if code == 130:
+        print("cmds-hub: no command selected")
+        return 0
+    if code != 0:
+        return code
+
+    selected = [line.strip() for line in output if line.strip()]
+    if not selected:
+        print("cmds-hub: no command selected")
+        return 0
+    return run_command(selected[-1])
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2 or argv[1] in ("-h", "--help", "help"):
+        usage()
+        return 0
+
+    command = argv[1]
+    args = argv[2:]
+    if command == "exec":
+        return cmd_exec(args)
+    if command == "replay":
+        return cmd_replay(args)
+    if command == "pick":
+        return cmd_pick(args)
+
+    die(f"unknown command: {command}")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

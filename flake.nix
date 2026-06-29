@@ -57,46 +57,54 @@
             then x86DarwinPkgs.go_1_25
             else pkgs.go_1_25;
           treesitterParsersPackage = nvimTreesitterParsers pkgs;
-          commonPackages = with pkgs; [
+          systemPackages = with pkgs; [
+            btop
+            newsboat
+            tmux
+            yazi
+          ];
+          codingPackages = with pkgs; [
+            gcc
+            gopls
+            nerd-fonts.fira-code
+            neovim
+            nodejs
+            python3
+            rust-analyzer
+            tree-sitter
+          ] ++ [
+            goPackage
+            treesitterParsersPackage
+          ];
+          terminalPackages = with pkgs; [
             bashInteractive
             alacritty
-            btop
             curl
             csvlens
             fd
             fontconfig
             fzf
-            gcc
             git
             git-lfs
             gnumake
-            gopls
             jq
             kitty
-            nerd-fonts.fira-code
-            neovim
-            newsboat
-            nodejs
-            python3
             ripgrep
-            rust-analyzer
-            tmux
-            tree-sitter
             unzip
             xz
-            yazi
             zoxide
             zsh
-          ] ++ [
-            goPackage
-            treesitterParsersPackage
           ];
           darwinPackages = with pkgs; [
             terminal-notifier
           ];
+          allPackages =
+            systemPackages
+            ++ codingPackages
+            ++ terminalPackages
+            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin darwinPackages;
         in
-        commonPackages
-        ++ pkgs.lib.optionals pkgs.stdenv.isDarwin darwinPackages;
+        allPackages;
     in
     {
       packages = forAllSystems (pkgs: {
