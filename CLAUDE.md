@@ -45,6 +45,13 @@ make workspace-bin
 
 - Configs live under `tmux/`, `alacritty/`, and `kitty/`. Use `make tmux-config`, `make alacritty-config`, or `make kitty-config` after edits to install them.
 
+## Test quality
+
+- Do not add tests that only grep static repository files to prove that fixed strings are present.
+- Static assertions against configuration files are not meaningful smoke tests in this workspace.
+- Prefer real behavior tests: execute the target CLI against fixtures, parse configuration with the real tool or an official parser, run Neovim headless for editor behavior, run tmux behavior through a fake or real tmux boundary, or evaluate/build Nix outputs.
+- If a change cannot be tested meaningfully, skip the test and state that no meaningful automated test was added.
+
 ## General
 
 - Prefer editing in this repo, then running the install target — never edit installed copies or symlinks under `~/.config/`, `~/bin/`, or agent skill directories directly, since they're overwritten or relinked on the next sync.

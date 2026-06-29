@@ -1,62 +1,10 @@
 UNAME := $(shell uname)
-ARCH := $(shell uname -m)
-version_lock := ./version-lock.json
-export PATH := $(HOME)/.local/bin:$(HOME)/bin:$(PATH)
-ifeq ($(UNAME),Darwin)
-	go_arch := amd64
-else ifeq ($(ARCH),arm64)
-	go_arch := arm64
-else ifeq ($(ARCH),aarch64)
-	go_arch := arm64
-else
-	go_arch := amd64
-endif
+export PATH := $(HOME)/.local/bin:$(HOME)/bin:$(HOME)/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$(HOME)/go/bin:$(PATH)
 ifneq (,$(findstring Linux,$(UNAME)))
-	LINUX_ID ?= $(shell . /etc/os-release 2>/dev/null && printf '%s' "$$ID" || printf linux)
-	install := sudo apt install
 	newsboat_config := ./newsboat/config.linux
-	nvim_linux_name := nvim-linux-x86_64
-	install_nvim := curl -fsSL https://github.com/neovim/neovim/releases/download/stable/$(nvim_linux_name).tar.gz -o ./tmp/$(nvim_linux_name).tar.gz \
-		&& sudo rm -rf /opt/$(nvim_linux_name) \
-		&& sudo tar -C /opt -xzf ./tmp/$(nvim_linux_name).tar.gz \
-		&& sudo ln -sf /opt/$(nvim_linux_name)/bin/nvim /usr/local/bin/nvim
-	deps := fd-find fzf python3-pip nodejs npm curl unzip xz-utils fontconfig git build-essential snapd zoxide zsh
-	optional_deps := jq btop
-	os_name := linux
-	fonts_install := test -f "$(HOME)/.local/share/fonts/FiraCodeNerdFont-Regular.ttf" || (mkdir -p "$(HOME)/.local/share/fonts" ./tmp \
-		&& curl -fsSL https://github.com/ryanoasis/nerd-fonts/releases/latest/download/FiraCode.zip -o ./tmp/FiraCode.zip \
-		&& unzip -o -q ./tmp/FiraCode.zip "FiraCodeNerdFont*.ttf" -d "$(HOME)/.local/share/fonts" \
-		&& fc-cache -f "$(HOME)/.local/share/fonts")
-	mac_apps_install := true
-	kitty_install := if command -v kitty >/dev/null 2>&1; then printf 'kitty already installed: %s\n' "$$(command -v kitty)"; else curl -fsSL https://sw.kovidgoyal.net/kitty/installer.sh | sh /dev/stdin; mkdir -p "$$HOME/.local/bin"; ln -sf "$$HOME/.local/kitty.app/bin/kitty" "$$HOME/.local/bin/kitty"; ln -sf "$$HOME/.local/kitty.app/bin/kitten" "$$HOME/.local/bin/kitten"; fi
-	kitty_setup := kitty-install kitty-config
-	csvlens_install := sh ./scripts/install-csvlens.sh
-	linux_snap_deps_install := sh ./scripts/install-linux-snaps.sh
 	default_shell_install := sh ./scripts/configure-default-zsh.sh
-	ifeq ($(LINUX_ID),ubuntu)
-		setup_script := echo "Run installer for linux" && sudo apt-get update \
-										&& sudo apt install software-properties-common -y \
-										&& sudo add-apt-repository universe -y \
-										&& sudo add-apt-repository ppa:aslatter/ppa -y \
-										&& sudo apt update -y
-	else
-		setup_script := echo "Run installer for linux" && sudo apt-get update \
-										&& sudo apt install software-properties-common -y
-	endif
 else
-	install := brew install
 	newsboat_config := ./newsboat/config.darwin
-	install_nvim := brew install neovim --HEAD
-	deps := fd fzf yazi csvlens python3 node terminal-notifier zoxide
-	optional_deps := jq btop newsboat
-	os_name := darwin
-	setup_script := echo "Run installer for macOs"
-	fonts_install := brew install --cask font-fira-code-nerd-font
-	mac_apps_install := brew install --cask alfred arc maccy
-	kitty_install := brew install --cask kitty
-	kitty_setup := kitty-install kitty-config
-	csvlens_install := true
-	linux_snap_deps_install := true
 	default_shell_install := true
 endif
 
@@ -68,53 +16,47 @@ workspace_codex_config_file := ./codex/config.toml
 ifeq ($(is_wsl),1)
 windows_appdata := $(shell cmd.exe /C echo %APPDATA% 2>/dev/null | tr -d '\r')
 alacritty_config_dir := $(shell wslpath -u '$(windows_appdata)')/alacritty
-fonts_install := sh ./scripts/install-windows-firacode-nerd-font.sh
-kitty_install := true
-kitty_setup :=
 endif
 
-go_version = $(shell python3 ./scripts/version_lock.py get $(version_lock) go.version)
-go_archive = go$(go_version).$(os_name)-$(go_arch).tar.gz
-tree_sitter_cli_version = $(shell python3 ./scripts/version_lock.py get $(version_lock) tree_sitter_cli.version)
-export PATH := /usr/local/go/bin:$(HOME)/go/bin:$(PATH)
-MODE ?= locked
-ifeq ($(MODE),latest)
-	lazy_command := sync
-else ifeq ($(MODE),locked)
-	lazy_command := restore
-else
-$(error MODE must be locked or latest)
-endif
+lazy_command ?= restore
 
-.PHONY: help setup update version-lock-update setup-deps default-shell linux-snap-deps fonts-install optional-deps newsboat-config nvim nvim-install nvim-config tree-sitter-cli-install nvim-native-treesitter-parsers-install nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-install tmux-config alacritty alacritty-install alacritty-config kitty kitty-install kitty-config csvlens-install mac-apps go go-install gopls-install scripts skills-sync workspace-bin test version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test cleanup
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
-setup:  ## Install all workspace tools, configs, and terminal agent CLIs.
-setup: setup-deps default-shell linux-snap-deps fonts-install go-install gopls-install workspace-bin agent-clis codex-config nvim-install nvim-config tmux-install tmux-config alacritty-install alacritty-config $(kitty_setup) csvlens-install optional-deps newsboat-config mac-apps cleanup
+setup:  ## Install all workspace tools, configs, and terminal agent CLIs using Nix.
+setup: setup-deps
+	$(MAKE) setup-runtime
 
-update: setup-deps version-lock-update ## Install all workspace tools while updating Neovim plugins and native treesitter locks to latest.
-	$(MAKE) MODE=latest setup
+setup-runtime: ## Install workspace configs and terminal agent CLIs after deps are available
+setup-runtime: default-shell fonts-install workspace-bin agent-clis codex-config nvim-config tmux-config alacritty-config kitty-config newsboat-config cleanup
 
-version-lock-update: ## Update native treesitter versions in version-lock.json
-	python3 ./scripts/update-version-lock.py $(version_lock)
+nix-install: ## Install Nix if missing
+	sh ./scripts/install-nix.sh
+
+update: upgrade-deps ## Update Nix dependencies, workspace runtime, and Neovim plugin lockfile.
+	$(MAKE) lazy_command=sync setup-runtime
+	$(MAKE) nvim-lock
+
+upgrade-deps: nix-install ## Update Nix dependency lockfile and install the updated dependency profile.
+	. ./scripts/nix-profile.sh && nix --extra-experimental-features 'nix-command flakes' flake update
+	$(MAKE) setup-deps
 
 setup-deps: ## Setup deps
-	test -d ./tmp || mkdir -p ./tmp
-	@$(setup_script)
-	@yes Y | $(install) $(deps)
+setup-deps: nix-install
+	test -f flake.lock
+	. ./scripts/nix-profile.sh && \
+		if nix --extra-experimental-features 'nix-command flakes' profile list | awk '/^Name:.*workspace-deps/ { found = 1 } END { exit !found }'; then \
+			nix --extra-experimental-features 'nix-command flakes' profile upgrade --no-update-lock-file workspace-deps; \
+		else \
+			nix --extra-experimental-features 'nix-command flakes' profile add --no-update-lock-file "path:$(CURDIR)#workspace-deps"; \
+		fi
 
 default-shell: ## Use zsh as the default login shell on Linux
 	@$(default_shell_install)
 
-linux-snap-deps: ## Install Linux snap deps
-	@$(linux_snap_deps_install)
-
-fonts-install: ## Install terminal fonts
-	@$(fonts_install)
-
-optional-deps: ## Setup optional CLI deps
-	@yes Y | $(install) $(optional_deps)
+fonts-install: ## Register Nix-installed terminal fonts with the OS
+	sh ./scripts/install-nix-fonts.sh
 
 newsboat-config: ## Install Newsboat feed URLs from newsboat/urls.local
 	test -d ./newsboat || mkdir -p ./newsboat
@@ -125,33 +67,13 @@ newsboat-config: ## Install Newsboat feed URLs from newsboat/urls.local
 	cp ./newsboat/urls.local ~/.newsboat/urls
 
 nvim: ## Install neovim + all plugins
-nvim: setup-deps nvim-install nvim-config cleanup
-nvim-install: ## Install neovim only, no config
-	@$(install_nvim)
-	@$(install) ripgrep
-	@nvim --version | head -n 1
+nvim: setup-deps nvim-config cleanup
 
 nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
-nvim-config: tree-sitter-cli-install nvim-native-treesitter-parsers-install
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	rm -rf ~/.config/nvim/*
 	cp -r ./nvim/. ~/.config/nvim/
 	nvim --headless "+Lazy! $(lazy_command)" +qa
-
-tree-sitter-cli-install: ## Install tree-sitter CLI for native parser builds
-	@if command -v tree-sitter >/dev/null 2>&1; then \
-		version=$$(tree-sitter --version | awk '{print $$2}'); \
-		if [ "$$version" = "$(tree_sitter_cli_version)" ]; then \
-			tree-sitter --version; \
-			exit 0; \
-		fi; \
-	fi; \
-	npm install --global --prefix "$(HOME)/.local" tree-sitter-cli@$(tree_sitter_cli_version); \
-	tree-sitter --version
-
-nvim-native-treesitter-parsers-install: ## Build native Neovim treesitter parsers
-	chmod +x ./scripts/install-native-treesitter-parsers.sh
-	./scripts/install-native-treesitter-parsers.sh
 
 nvim-lock: ## Refresh nvim/lazy-lock.json from the installed Neovim config.
 	cp ~/.config/nvim/lazy-lock.json ./nvim/lazy-lock.json
@@ -171,61 +93,30 @@ codex-config: workspace-bin ## Merge workspace Codex config into the real Codex 
 	merge_toml "$(codex_config_file)" "$(workspace_codex_config_file)"
 
 tmux: ## Install tmux + configurations + plugins
-tmux: setup-deps tmux-install tmux-config cleanup
-tmux-install: ## Install tmux only, no config nor plugins
-	@$(install) tmux
-	tmux new -d
-	test -d ~/.tmux/plugins/tpm || git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+tmux: setup-deps tmux-config cleanup
 
 tmux-config: workspace-bin ## Install tmux-config
+	tmux new -d
+	test -d ~/.tmux/plugins/tpm || git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
 	cp ./tmux/.tmux.conf ~/.tmux.conf
 	tmux source ~/.tmux.conf
 	~/bin/tmux-session-sidebar/reload
 	~/.tmux/plugins/tpm/scripts/install_plugins.sh
 
 alacritty: ## install alacritty and all config
-alacritty: alacritty-install alacritty-config
-
-alacritty-install: ## Install alacritty only, now config
-	@$(install) alacritty
+alacritty: alacritty-config
 
 alacritty-config: ## Install alacritty + config + theme
 	test -d "$(alacritty_config_dir)" || mkdir -p "$(alacritty_config_dir)"
 	cp -r ./alacritty/. "$(alacritty_config_dir)/"
 
 kitty: ## Install kitty and config
-kitty: kitty-install kitty-config
-
-kitty-install: ## Install kitty only, no config
-	@$(kitty_install)
+kitty: kitty-config
 
 kitty-config: ## Install kitty config
 	test -d "$(kitty_config_dir)" || mkdir -p "$(kitty_config_dir)"
 	cp -r ./kitty/. "$(kitty_config_dir)/"
 	kitten themes --dump-theme 'Gruvbox Dark' > "$(kitty_config_dir)/current-theme.conf"
-
-csvlens-install: ## Install csvlens CSV viewer
-	@$(csvlens_install)
-
-mac-apps: ## Install macOS workspace GUI apps
-	@$(mac_apps_install)
-
-go: ## Install Go with version from go_version, currently $(go_version), plus gopls
-go: setup-deps go-install gopls-install cleanup
-go-install:
-	curl -fsSL https://dl.google.com/go/$(go_archive) -o ./tmp/go.tar.gz
-	sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf ./tmp/go.tar.gz
-	@if [ -n "$${GITHUB_PATH:-}" ]; then \
-		printf '%s\n' "/usr/local/go/bin" "$(HOME)/go/bin" >> "$$GITHUB_PATH" ; \
-	fi
-
-gopls-install:
-	@if command -v gopls >/dev/null 2>&1; then \
-		gopls version | head -n 1 ; \
-	else \
-		GOWORK=off go install golang.org/x/tools/gopls@latest ; \
-		gopls version | head -n 1 ; \
-	fi
 
 scripts: ## chmod +x for all scripts
 	chmod -R +x ./scripts
@@ -243,10 +134,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: version-lock-test mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test tmux-sidebar-test tmux-status-test alacritty-test kitty-test csvlens-test linux-snaps-test ## Run smoke tests
-
-version-lock-test: ## Run version-lock smoke tests
-	sh ./scripts/version-lock-smoke-test.sh
+test: mkws-test skills-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test ## Run smoke tests
 
 mkws-test: ## Run mkws/mkwst/mkwsts smoke tests
 	sh ./scripts/mkws-smoke-test.sh
@@ -263,23 +151,14 @@ agent-notification-hooks-test: ## Run agent notification hook smoke tests
 workspace-shell-test: ## Run workspace shell smoke tests
 	sh ./scripts/workspace-shell-smoke-test.sh
 
+nix-test: ## Run Nix smoke tests
+	sh ./scripts/nix-smoke-test.sh
+
 tmux-sidebar-test: ## Run tmux sidebar smoke tests
 	sh ./scripts/tmux-sidebar-smoke-test.sh
 
 tmux-status-test: ## Run tmux status smoke tests
 	sh ./scripts/tmux-status-smoke-test.sh
 
-alacritty-test: ## Run alacritty config/install smoke tests
-	sh ./scripts/alacritty-smoke-test.sh
-
-kitty-test: ## Run kitty config/install smoke tests
-	sh ./scripts/kitty-smoke-test.sh
-
-csvlens-test: ## Run csvlens install smoke tests
-	sh ./scripts/csvlens-smoke-test.sh
-
-linux-snaps-test: ## Run Linux snap dependency smoke tests
-	sh ./scripts/linux-snaps-smoke-test.sh
-
 cleanup: ## Clean up ./tmp folder
-	test -d ./tmp && rm -rf ./tmp
+	rm -rf ./tmp

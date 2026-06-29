@@ -53,15 +53,6 @@ exit 1
 SH
 chmod +x "$fakebin/codex"
 
-linux_setup_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Linux is_wsl=0 setup)
-printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*zoxide'
-printf '%s\n' "$linux_setup_plan" | grep -Eq 'apt install .*zsh'
-printf '%s\n' "$linux_setup_plan" | grep -q 'sh ./scripts/configure-default-zsh.sh'
-
-darwin_setup_plan=$(make -n -C "$repo_root" --no-print-directory UNAME=Darwin is_wsl=0 setup)
-printf '%s\n' "$darwin_setup_plan" | grep -Eq 'brew install .*zoxide'
-printf '%s\n' "$darwin_setup_plan" | grep -q 'true'
-
 cat > "$fakebin/uname" <<'SH'
 #!/bin/sh
 echo Linux
@@ -92,7 +83,7 @@ grep -qx -- 'sudo chsh -s '"$fakebin"'/zsh example-user' "$tmp/chsh.log"
 grep -qx -- '-s '"$fakebin"'/zsh example-user' "$tmp/chsh.log"
 rm -f "$fakebin/uname" "$fakebin/zsh" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
 
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:\"*) ;; *) exit 1 ;; esac"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:\"*) ;; *) exit 1 ;; esac"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" prompt
@@ -128,8 +119,9 @@ test ! -e "$stale_home/app-server-daemon/app-server-updater.pid"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; ! command -v mcodex >/dev/null 2>&1"
 
-if command -v zsh >/dev/null 2>&1; then
-  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" zsh -fc ". '$repo_root/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = zsh"
+zsh_bin=$(command -v zsh || true)
+if [ -n "$zsh_bin" ]; then
+  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = zsh"
   grep -qx 'init zsh --cmd z' "$log"
 fi
 

@@ -393,6 +393,18 @@ local function test_csv_preview_keymap()
   vim.env.PATH = old_path
 end
 
+local function test_no_italic_highlights()
+  local italic_groups = {}
+  for name, _ in pairs(vim.api.nvim_get_hl(0, {})) do
+    local ok, highlight = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
+    if ok and highlight.italic then
+      table.insert(italic_groups, name)
+    end
+  end
+  table.sort(italic_groups)
+  assert_true(#italic_groups == 0, "italic highlight groups should be disabled: " .. table.concat(italic_groups, ", "))
+end
+
 local function test_git_conflict_decoration_guard()
   local guard = require("luanphan.git_conflict_guard")
   assert_true(
@@ -433,6 +445,32 @@ local function test_treesitter_uses_native_runtime()
   assert_true(plugin == nil, "native treesitter runtime should not register nvim-treesitter")
   assert_true(package.loaded["nvim-treesitter"] == nil, "native runtime setup should not load nvim-treesitter")
   assert_true(package.loaded["nvim-treesitter.configs"] == nil, "native runtime setup should not load nvim-treesitter.configs")
+end
+
+local function runtimepath_contains(path)
+  for entry in string.gmatch(vim.o.runtimepath, "([^,]+)") do
+    if entry == path then
+      return true
+    end
+  end
+  return false
+end
+
+local function test_treesitter_uses_nix_parser_runtime()
+  local profile = vim.env.NIX_PROFILE
+  if profile == nil or profile == "" then
+    profile = vim.env.HOME .. "/.nix-profile"
+  end
+
+  assert_true(vim.fn.isdirectory(profile .. "/parser") == 1, "Nix parser runtime should exist")
+  assert_true(runtimepath_contains(profile), "runtimepath should include Nix parser runtime")
+
+  for _, lang in ipairs({ "go", "json", "yaml", "bash" }) do
+    assert_true(
+      vim.fn.filereadable(profile .. "/parser/" .. lang .. ".so") == 1,
+      lang .. " parser should be installed by Nix"
+    )
+  end
 end
 
 local function test_treesitter_required_parsers_available()
@@ -1380,6 +1418,10 @@ local setup_ok, setup_err = xpcall(function()
     test_csv_preview_keymap()
   end)
 
+  test("no italic highlights", function()
+    test_no_italic_highlights()
+  end)
+
   test("git conflict decoration guard", function()
     test_git_conflict_decoration_guard()
   end)
@@ -1390,6 +1432,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("treesitter uses native runtime", function()
     test_treesitter_uses_native_runtime()
+  end)
+
+  test("treesitter uses nix parser runtime", function()
+    test_treesitter_uses_nix_parser_runtime()
   end)
 
   test("treesitter required parsers available", function()

@@ -51,9 +51,4 @@ else
 	printf 'skip codex status compact format; sqlite3 or jq missing\n'
 fi
 
-! grep -q 'tmux-short-path' "$ROOT/tmux/.tmux.conf"
-grep -q 'git rev-parse --abbrev-ref HEAD' "$ROOT/tmux/.tmux.conf"
-grep -q "set -g status-left ' ~ #(" "$ROOT/tmux/.tmux.conf"
-grep -q 'tmux-claude-codex-status' "$ROOT/tmux/.tmux.conf"
-
 echo "PASS tmux status smoke tests"
