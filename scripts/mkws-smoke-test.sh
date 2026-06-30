@@ -25,6 +25,10 @@ mkwsts() {
 	python3 "$ROOT/bin/mkwsts" "$@"
 }
 
+meta_hub() {
+	python3 "$ROOT/bin/meta-hub" "$@"
+}
+
 pass() {
 	printf 'ok %s\n' "$1"
 }
@@ -382,8 +386,166 @@ EOF
 	pass "mkwsts"
 }
 
+test_meta_hub() {
+	root="$TMP/meta-hub-root"
+	mkdir -p "$root/station-a"
+	root=$(cd "$root" && pwd -P)
+	init_repo "$root/station-a/repo-a"
+	git config --global user.name "Example User"
+	git config --global user.email "user@example.com"
+
+	cat > "$root/station-a/workstation.yml" <<EOF
+version: v1
+name: "station-a"
+repos:
+EOF
+	(
+		cd "$root/station-a"
+		mkws --name feature-a --branch feature/a --add repo-a >/dev/null
+	)
+	mkdir -p "$HOME/.skills-hub" "$HOME/.cmds-hub"
+	printf 'plugin-base\n' > "$HOME/.skills-hub/execute_plugins"
+	printf 'cmd-base\n' > "$HOME/.cmds-hub/cmd_history"
+
+	meta_seed="$TMP/meta-hub-seed"
+	meta_remote="$TMP/metadata.git"
+	init_repo "$meta_seed"
+	git clone -q --bare "$meta_seed" "$meta_remote"
+
+	meta_hub -f "$root" -r "$meta_remote" >/dev/null
+	registry="$HOME/.meta-hub/registry.yml"
+	clone="$HOME/.meta-hub/metadata"
+	assert_exists "$registry"
+	assert_exists "$clone/.git"
+	assert_contains "$registry" "root: \"$root\""
+	assert_contains "$registry" "repo: \"$meta_remote\""
+
+	meta_hub sync >/dev/null
+	assert_exists "$clone/workstations.yml"
+	assert_exists "$clone/station-a/workstation.yml"
+	assert_exists "$clone/station-a/local_workspaces/feature-a/workspace.yml"
+	assert_exists "$clone/.skills-hub/execute_plugins"
+	assert_exists "$clone/.cmds-hub/cmd_history"
+	assert_not_exists "$clone/station-a/local_workspaces/feature-a/repo-a/README.md"
+	assert_contains "$clone/station-a/workstation.yml" "name: \"repo-a\""
+	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-base"
+	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-base"
+
+	msg=$(git -C "$clone" log -1 --format=%s)
+	case "$msg" in
+		sync\ from\ *@*) ;;
+		*)
+			printf 'unexpected meta-hub commit message: %s\n' "$msg" >&2
+			exit 1
+			;;
+	esac
+
+	meta_hub push >/dev/null
+
+	other="$TMP/meta-hub-other"
+	git clone -q "$meta_remote" "$other"
+	git -C "$other" config user.name "Example User"
+	git -C "$other" config user.email "user@example.com"
+	cat >> "$other/workstations.yml" <<EOF
+  - name: "station-remote"
+    root: "station-remote"
+    manifest: "station-remote/workstation.yml"
+EOF
+	git -C "$other" add workstations.yml
+	git -C "$other" commit -q -m "remote metadata"
+	git -C "$other" push -q origin main
+
+	cat >> "$clone/workstations.yml" <<EOF
+  - name: "station-local"
+    root: "station-local"
+    manifest: "station-local/workstation.yml"
+EOF
+	git -C "$clone" add workstations.yml
+	git -C "$clone" commit -q -m "local metadata"
+
+	meta_hub pull >/dev/null
+	assert_contains "$clone/workstations.yml" "station-local/workstation.yml"
+	assert_contains "$clone/workstations.yml" "station-remote/workstation.yml"
+	assert_not_contains "$clone/workstations.yml" "<<<<<<<"
+
+	meta_hub push >/dev/null
+	git -C "$other" pull -q --ff-only
+	printf 'plugin-remote\n' >> "$other/.skills-hub/execute_plugins"
+	printf 'cmd-remote\n' >> "$other/.cmds-hub/cmd_history"
+	git -C "$other" add .skills-hub/execute_plugins .cmds-hub/cmd_history
+	git -C "$other" commit -q -m "remote extra metadata"
+	git -C "$other" push -q origin main
+
+	printf 'plugin-local\n' >> "$clone/.skills-hub/execute_plugins"
+	printf 'cmd-local\n' >> "$clone/.cmds-hub/cmd_history"
+	git -C "$clone" add .skills-hub/execute_plugins .cmds-hub/cmd_history
+	git -C "$clone" commit -q -m "local extra metadata"
+
+	meta_hub pull >/dev/null
+	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-local"
+	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-remote"
+	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-local"
+	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-remote"
+	assert_not_contains "$clone/.skills-hub/execute_plugins" "<<<<<<<"
+	assert_not_contains "$clone/.cmds-hub/cmd_history" "<<<<<<<"
+
+	empty_root="$TMP/meta-hub-empty-root"
+	mkdir -p "$empty_root/station-b"
+	empty_root=$(cd "$empty_root" && pwd -P)
+	init_repo "$empty_root/station-b/repo-b"
+	cat > "$empty_root/station-b/workstation.yml" <<EOF
+version: v1
+name: "station-b"
+repos:
+EOF
+	empty_remote="$TMP/empty-metadata.git"
+	git init -q --bare "$empty_remote"
+
+	meta_hub -f "$empty_root" -r "$empty_remote" >/dev/null
+	meta_hub sync >/dev/null
+	git -C "$HOME/.meta-hub/empty-metadata" config push.default matching
+	meta_hub push >/dev/null
+	if ! git -C "$empty_remote" show-ref --verify --quiet refs/heads/main &&
+		! git -C "$empty_remote" show-ref --verify --quiet refs/heads/master; then
+		printf 'expected meta-hub push to create main or master in empty remote\n' >&2
+		exit 1
+	fi
+
+	rm -rf "$HOME/.meta-hub" "$HOME/.meta-sync"
+	legacy_root="$TMP/meta-hub-legacy-root"
+	mkdir -p "$legacy_root/station-c"
+	legacy_root=$(cd "$legacy_root" && pwd -P)
+	init_repo "$legacy_root/station-c/repo-c"
+	cat > "$legacy_root/station-c/workstation.yml" <<EOF
+version: v1
+name: "station-c"
+repos:
+EOF
+	legacy_remote="$TMP/legacy-metadata.git"
+	legacy_clone="$HOME/.meta-sync/legacy-metadata"
+	mkdir -p "$HOME/.meta-sync"
+	git init -q --bare "$legacy_remote"
+	git clone -q "$legacy_remote" "$legacy_clone"
+	git -C "$legacy_clone" config user.name "Example User"
+	git -C "$legacy_clone" config user.email "user@example.com"
+	cat > "$HOME/.meta-sync/registry.yml" <<EOF
+version: v1
+entries:
+  - root: "$legacy_root"
+    repo: "$legacy_remote"
+    clone: "$legacy_clone"
+EOF
+	meta_hub sync >/dev/null
+	assert_exists "$HOME/.meta-hub/registry.yml"
+	assert_exists "$HOME/.meta-hub/legacy-metadata/.git"
+	assert_contains "$HOME/.meta-hub/registry.yml" "repo: \"$legacy_remote\""
+
+	pass "meta-hub"
+}
+
 test_mkws
 test_mkwst
 test_mkwsts
+test_meta_hub
 
 pass "all"
