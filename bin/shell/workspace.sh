@@ -33,5 +33,36 @@ if [ -n "${ZSH_VERSION:-}" ] && command -v zoxide >/dev/null 2>&1; then
 elif [ -n "${BASH_VERSION:-}" ] && [ -z "${POSIXLY_CORRECT:-}" ] && command -v zoxide >/dev/null 2>&1; then
   eval "$(zoxide init bash --cmd z)"
 fi
+case "${BASH:-}" in
+  */bash|bash) _meta_hub_is_bash=1 ;;
+  *) _meta_hub_is_bash=0 ;;
+esac
+if [ -n "${ZSH_VERSION:-}" ] || [ "$_meta_hub_is_bash" = 1 ]; then
+  eval '
+meta-hub() {
+  case "${1:-}" in
+    project|repo)
+      if [ "$#" -ne 1 ]; then
+        command meta-hub "$@"
+        return $?
+      fi
+      _meta_hub_target=$(command meta-hub "$@") || return $?
+      if [ -z "$_meta_hub_target" ]; then
+        unset _meta_hub_target
+        return 1
+      fi
+      cd "$_meta_hub_target"
+      _meta_hub_status=$?
+      unset _meta_hub_target
+      return $_meta_hub_status
+      ;;
+    *)
+      command meta-hub "$@"
+      ;;
+  esac
+}
+'
+fi
+unset _meta_hub_is_bash
 unalias mcodex 2>/dev/null || true
 unset -f mcodex 2>/dev/null || true

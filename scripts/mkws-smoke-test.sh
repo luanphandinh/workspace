@@ -11,7 +11,22 @@ trap cleanup EXIT INT TERM
 
 export HOME="$TMP/home"
 export PYTHONPYCACHEPREFIX="$TMP/pycache"
-mkdir -p "$HOME"
+FAKEBIN="$TMP/fakebin"
+FZF_INPUT="$TMP/fzf-input"
+export FZF_INPUT
+mkdir -p "$HOME" "$FAKEBIN"
+export PATH="$FAKEBIN:$PATH"
+
+cat > "$FAKEBIN/fzf" <<'SH'
+#!/bin/sh
+cat > "$FZF_INPUT"
+if [ -n "${FZF_SELECT:-}" ]; then
+	grep -F "$FZF_SELECT" "$FZF_INPUT" | head -n 1
+else
+	sed -n '1p' "$FZF_INPUT"
+fi
+SH
+chmod +x "$FAKEBIN/fzf"
 
 mkws() {
 	python3 "$ROOT/bin/mkws" "$@"
@@ -460,6 +475,16 @@ EOF
 	assert_contains "$clone/station-a/workstation.yml" "name: \"repo-a\""
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-base"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-base"
+
+	project_path=$(FZF_SELECT="feature-b" meta_hub project)
+	assert_eq "$root/station-b/local_workspaces/feature-b" "$project_path"
+	assert_contains "$FZF_INPUT" "$root/station-a/local_workspaces/feature-a"
+	assert_contains "$FZF_INPUT" "$root/station-b/local_workspaces/feature-b"
+
+	repo_path=$(FZF_SELECT="$root/station-b/local_workspaces/feature-b/repo-b" meta_hub repo)
+	assert_eq "$root/station-b/local_workspaces/feature-b/repo-b" "$repo_path"
+	assert_contains "$FZF_INPUT" "$root/station-a/repo-a"
+	assert_contains "$FZF_INPUT" "$root/station-b/local_workspaces/feature-b/repo-b"
 
 	(
 		cd "$TMP"

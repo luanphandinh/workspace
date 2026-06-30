@@ -34,6 +34,8 @@ meta-hub sync [pick]
 meta-hub sync_tech_doc [pick]
 meta-hub pull [pick]
 meta-hub push [pick]
+meta-hub project
+meta-hub repo
 ```
 - `--name` — workspace folder name, or a path to an existing workspace directory that contains `workspace.yml`. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). Plain names create/use `<root>/local_workspaces/<name>`; path values target that workspace directly.
 - `--branch` — default branch for repos that do not specify their own branch. **Required only when an added repo has no per-repo branch** (`--add repo-a`). **Optional** when every added repo uses `repo@branch`, when creating an empty workspace (no `--add`), or when extending an empty workspace with no repos. If the workspace already has a `branch_name` set and `--add` is present, a different `--branch` applies only to the newly added repo(s) and does not change the workspace default branch. If the workspace already has a `branch_name` set and `--add` is absent, a different `--branch` is rejected. If the workspace was created empty (`branch_name:` in yml is empty) and you later pass `--branch`, the value is persisted into the yml.
@@ -49,6 +51,8 @@ meta-hub push [pick]
 - `meta-hub sync_tech_doc [pick]` — from any folder, runs `mkwsts index` for registered source roots, then for every workstation listed in `workstations.yml`, mirrors workspace tech docs into that workstation's `tech_doc/<workspace-name>/tech_doc` symlink index. With `pick`, choose one registered mapping through `fzf`; without it, sync all.
 - `meta-hub pull [pick]` — pulls registered metadata repositories. If supported YAML metadata files conflict, it merges manifests by union and completes the merge commit. With `pick`, choose one registered mapping through `fzf`; without it, pull all.
 - `meta-hub push [pick]` — pushes registered metadata repositories explicitly to `main` or `master`. With `pick`, choose one registered mapping through `fzf`; without it, push all.
+- `meta-hub project` — from any folder, lists every registered workstation workspace folder under `local_workspaces/` in `fzf`, then changes the current shell to the selected workspace folder. This shell jump works through `~/bin/shell/workspace.sh`; direct executable use prints the selected path.
+- `meta-hub repo` — from any folder, lists registered workstation source repos plus git repos directly under registered `local_workspaces/<workspace>/` folders in `fzf`, then changes the current shell to the selected repo. This shell jump works through `~/bin/shell/workspace.sh`; direct executable use prints the selected path.
 - `open` — subcommand. Opens a recorded workspace link in the default browser. With no query, lists all workspace links. Query can match the link name or URL exactly, or a unique substring. Run from inside a workspace dir/worktree, or pass `--name <workspace>`. Examples: `mkws open`, `mkws open design-doc`, `mkws open design-doc --name myws`.
 - `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders and immediate git repos under `$PWD/_external/` when present. External repos are pulled in parallel and reported separately, but remain read-only context for workspace creation/coding. Rejects `--add`, `--branch`, `--name`.
   Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull _external`, `mkws pull ./local_workspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
@@ -181,6 +185,14 @@ The command can run from any folder. For each selected registered source root, i
 <workstation-root>/tech_doc/<workspace-name>/tech_doc -> <workstation-root>/local_workspaces/<workspace-name>/tech_doc
 ```
 If a workspace `tech_doc/` folder is removed, the matching generated symlink is removed on the next run. Real files and real directories are never deleted.
+
+## Jump to a workspace or repo
+User intent: "jump to a project", "open a workspace folder", "jump to a repo from anywhere".
+```
+meta-hub project  # pick a local_workspaces/<workspace> folder with fzf and cd there
+meta-hub repo     # pick a source/workspace git repo with fzf and cd there
+```
+Both commands can run from any folder. They read `~/.meta-hub/registry.yml`, refresh each registered source root with `mkwsts index`, and build `fzf` choices from every workstation listed in each `workstations.yml`. `meta-hub project` includes workspace folders under `local_workspaces/`. `meta-hub repo` includes workstation source repos and git repos directly under each workspace folder, including workspace worktrees. The interactive `cd` requires the shell setup installed by `make workspace-bin`; running the executable directly prints the selected absolute path.
 
 ## Pull or push metadata
 User intent: "pull metadata", "push metadata", "sync metadata repo with remote".
