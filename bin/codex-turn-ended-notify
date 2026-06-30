@@ -2,7 +2,8 @@
 set -eu
 
 notify_title="${AGENT_NOTIFY_TITLE:-${CODEX_NOTIFY_TITLE:-Codex}}"
-notify_group="${AGENT_NOTIFY_GROUP:-agent-notify-$notify_title}"
+notify_group_override="${AGENT_NOTIFY_GROUP:-${CODEX_NOTIFY_GROUP:-}}"
+notify_group="${notify_group_override:-agent-notify-$notify_title}"
 activate_app="${AGENT_NOTIFY_ACTIVATE_APP:-${CODEX_NOTIFY_ACTIVATE_APP:-}}"
 
 get_tmux_cmd() {
@@ -103,6 +104,16 @@ shell_quote() {
 	printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
 }
 
+notification_group() {
+	suffix="${1:-}"
+	if [ -n "$notify_group_override" ] || [ -z "$suffix" ]; then
+		printf '%s\n' "$notify_group"
+		return 0
+	fi
+	safe_suffix="$(printf '%s' "$suffix" | sed 's/[^[:alnum:]_.-]/_/g')"
+	printf '%s-%s\n' "$notify_group" "$safe_suffix"
+}
+
 if [ "${1:-}" = "--jump-tmux" ]; then
 	jump_to_tmux_pane "${2:-}"
 	exit 0
@@ -129,6 +140,7 @@ if command -v terminal-notifier >/dev/null 2>&1; then
 	if [ -n "$tmux_cmd" ]; then
 		notify_pane="$(resolve_tmux_pane "$tmux_cmd")"
 	fi
+	notify_group_current="$(notification_group "$notify_pane")"
 
 	if [ -n "$notify_pane" ]; then
 		tmux_target="$(tmux_format "$tmux_cmd" "$notify_pane" '#{session_name}:#{window_index}.#{pane_index}')"
@@ -143,12 +155,12 @@ if command -v terminal-notifier >/dev/null 2>&1; then
 			click_cmd="TMUX=$(shell_quote "$TMUX") $click_cmd"
 		fi
 		if [ -n "$tmux_target" ]; then
-			terminal-notifier -title "$notify_title" -message "$message" -subtitle "tmux $tmux_target" -group "$notify_group" -ignoreDnD -execute "$click_cmd" >/dev/null 2>&1 || :
+			terminal-notifier -title "$notify_title" -message "$message" -subtitle "tmux $tmux_target" -group "$notify_group_current" -ignoreDnD -execute "$click_cmd" >/dev/null 2>&1 || :
 		else
-			terminal-notifier -title "$notify_title" -message "$message" -group "$notify_group" -ignoreDnD -execute "$click_cmd" >/dev/null 2>&1 || :
+			terminal-notifier -title "$notify_title" -message "$message" -group "$notify_group_current" -ignoreDnD -execute "$click_cmd" >/dev/null 2>&1 || :
 		fi
 	else
-		terminal-notifier -title "$notify_title" -message "$message" -group "$notify_group" -ignoreDnD >/dev/null 2>&1 || :
+		terminal-notifier -title "$notify_title" -message "$message" -group "$notify_group_current" -ignoreDnD >/dev/null 2>&1 || :
 	fi
 elif command -v osascript >/dev/null 2>&1; then
 	osascript \

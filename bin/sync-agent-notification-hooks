@@ -27,6 +27,46 @@ def write_json(path, data):
     path.write_text(text, encoding="utf-8")
 
 
+def remove_legacy_codex_notify_config():
+    path = HOME / ".codex" / "config.toml"
+    if not path.exists():
+        return False
+
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    output = []
+    changed = False
+    index = 0
+    in_table = False
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.lstrip()
+        if stripped.startswith("["):
+            in_table = True
+        if not in_table and stripped.startswith("notify") and stripped.split("=", 1)[0].strip() == "notify":
+            block = [line]
+            index += 1
+            while index < len(lines) and block_text_needs_continuation(block):
+                block.append(lines[index])
+                index += 1
+            text = "".join(block)
+            if "codex-turn-ended-notify" in text or "SkyComputerUseClient.app" in text:
+                changed = True
+                continue
+            output.extend(block)
+            continue
+        output.append(line)
+        index += 1
+
+    if changed:
+        path.write_text("".join(output), encoding="utf-8")
+    return changed
+
+
+def block_text_needs_continuation(lines):
+    text = "".join(lines)
+    return text.count("[") > text.count("]")
+
+
 def command(title):
     return " ".join(
         [
@@ -104,10 +144,56 @@ def sync_cursor():
     write_json(path, data)
 
 
+def sync_codex():
+    remove_legacy_codex_notify_config()
+
+    path = HOME / ".codex" / "hooks.json"
+    data = read_json(path, {"hooks": {}})
+    if not isinstance(data, dict):
+        print(f"sync-agent-notification-hooks: expected object in {path}", file=sys.stderr)
+        raise SystemExit(1)
+
+    hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        print(f"sync-agent-notification-hooks: expected hooks object in {path}", file=sys.stderr)
+        raise SystemExit(1)
+
+    stop = hooks.setdefault("Stop", [])
+    if not isinstance(stop, list):
+        print(f"sync-agent-notification-hooks: expected hooks.Stop array in {path}", file=sys.stderr)
+        raise SystemExit(1)
+
+    notify_command = command("Codex")
+    for group in stop:
+        if not isinstance(group, dict):
+            continue
+        group_hooks = group.get("hooks")
+        if not isinstance(group_hooks, list):
+            continue
+        for hook in group_hooks:
+            if isinstance(hook, dict) and hook.get("command") == notify_command:
+                write_json(path, data)
+                return
+
+    stop.append(
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": notify_command,
+                    "timeout": 30,
+                }
+            ]
+        }
+    )
+    write_json(path, data)
+
+
 def main():
     sync_claude()
     sync_cursor()
-    print("sync-agent-notification-hooks: updated Claude and Cursor notification hooks")
+    sync_codex()
+    print("sync-agent-notification-hooks: updated Claude, Cursor, and Codex notification hooks")
 
 
 if __name__ == "__main__":

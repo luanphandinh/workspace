@@ -109,10 +109,19 @@ TERMINAL_NOTIFIER_LOG="$TMP/terminal-notifier.log" \
 	sh "$ROOT/bin/codex-turn-ended-notify" '{"type":"agent-turn-complete"}'
 grep -q -- "--jump-tmux '%current'" "$TMP/terminal-notifier.log"
 grep -q -- '-subtitle tmux workspace:3.2' "$TMP/terminal-notifier.log"
+grep -q -- '-group agent-notify-Codex-_current' "$TMP/terminal-notifier.log"
 if grep -q -- "--jump-tmux '%stale'" "$TMP/terminal-notifier.log"; then
 	printf 'expected stale TMUX_PANE to be ignored\n' >&2
 	exit 1
 fi
+
+cat >"$TMP/home/.codex/config.toml" <<TOML
+model = "example-model"
+notify = ["$TMP/home/bin/codex-turn-ended-notify", "--no-implicit-tmux-pane"]
+
+[features]
+multi_agent = true
+TOML
 
 HOME="$TMP/home" python3 "$ROOT/bin/sync-agent-notification-hooks"
 HOME="$TMP/home" python3 "$ROOT/bin/sync-agent-notification-hooks"
@@ -139,4 +148,19 @@ cursor = json.loads((home / ".cursor" / "hooks.json").read_text())
 cursor_stop = [hook["command"] for hook in cursor["hooks"]["stop"]]
 assert len([cmd for cmd in cursor_stop if notify in cmd]) == 1, cursor_stop
 assert any("AGENT_NOTIFY_TITLE=Cursor" in cmd for cmd in cursor_stop), cursor_stop
+
+codex = json.loads((home / ".codex" / "hooks.json").read_text())
+codex_stop = [
+    hook["command"]
+    for group in codex["hooks"]["Stop"]
+    for hook in group["hooks"]
+    if hook.get("type") == "command"
+]
+assert len([cmd for cmd in codex_stop if notify in cmd]) == 1, codex_stop
+assert any("AGENT_NOTIFY_TITLE=Codex" in cmd for cmd in codex_stop), codex_stop
+
+config = (home / ".codex" / "config.toml").read_text()
+assert "notify =" not in config, config
+assert 'model = "example-model"' in config, config
+assert "multi_agent = true" in config, config
 PY
