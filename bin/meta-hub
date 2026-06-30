@@ -16,6 +16,7 @@ WORKSTATIONS_FILE = "workstations.yml"
 WORKSTATION_FILE = "workstation.yml"
 WORKSPACE_FILE = "workspace.yml"
 WS_CONTAINER = "local_workspaces"
+TECH_DOC_DIR = "tech_doc"
 EXTRA_SYNC_PATHS = (
     (Path(".skills-hub") / "execute_plugins", Path(".skills-hub") / "execute_plugins"),
     (Path(".cmds-hub") / "cmd_history", Path(".cmds-hub") / "cmd_history"),
@@ -552,6 +553,98 @@ def sync_entry(entry: dict) -> bool:
     return True
 
 
+def sync_workstation_tech_docs(workstation_root: Path) -> dict:
+    workspaces_dir = workstation_root / WS_CONTAINER
+    index_dir = workstation_root / TECH_DOC_DIR
+    desired = {}
+
+    if workspaces_dir.is_dir():
+        for workspace_yml in sorted(workspaces_dir.glob(f"*/{WORKSPACE_FILE}")):
+            workspace_dir = workspace_yml.parent
+            tech_doc = workspace_dir / TECH_DOC_DIR
+            if not tech_doc.is_dir():
+                continue
+            data = read_workspace_manifest_text(workspace_yml.read_text())
+            name = data.get("name") or workspace_dir.name
+            desired[name] = tech_doc.resolve()
+
+    counts = {"created": 0, "updated": 0, "removed": 0, "skipped": 0}
+    if not desired and not index_dir.exists():
+        return counts
+
+    index_dir.mkdir(parents=True, exist_ok=True)
+    for name, target in desired.items():
+        link_parent = index_dir / name
+        link_path = link_parent / TECH_DOC_DIR
+        if link_parent.exists() and not link_parent.is_dir():
+            warn(f"{workstation_root.name}/{name}: {link_parent} exists and is not a directory, skipping")
+            counts["skipped"] += 1
+            continue
+        link_parent.mkdir(parents=True, exist_ok=True)
+
+        if link_path.is_symlink():
+            if link_path.resolve() == target:
+                counts["skipped"] += 1
+                continue
+            link_path.unlink()
+            link_path.symlink_to(target, target_is_directory=True)
+            counts["updated"] += 1
+            continue
+
+        if link_path.exists():
+            warn(f"{workstation_root.name}/{name}: {link_path} exists and is not a symlink, skipping")
+            counts["skipped"] += 1
+            continue
+
+        link_path.symlink_to(target, target_is_directory=True)
+        counts["created"] += 1
+
+    if index_dir.is_dir():
+        for entry in sorted(p for p in index_dir.iterdir() if p.is_dir()):
+            if entry.name in desired:
+                continue
+            link_path = entry / TECH_DOC_DIR
+            if not link_path.is_symlink():
+                continue
+            link_path.unlink()
+            counts["removed"] += 1
+            try:
+                entry.rmdir()
+            except OSError:
+                pass
+
+    return counts
+
+
+def sync_tech_doc_entry(entry: dict) -> bool:
+    root = Path(entry["root"]).resolve()
+    if not root.is_dir():
+        die(f"registered root is missing: {root}")
+
+    heading(f"sync tech docs {root.name}")
+    proc = run([*script_cmd("mkwsts"), "index"], cwd=root)
+    if proc.returncode != 0:
+        die(f"mkwsts index failed at {root}\n{(proc.stderr or proc.stdout).rstrip()}")
+
+    workstations_yml = root / WORKSTATIONS_FILE
+    if not workstations_yml.is_file():
+        die(f"missing {WORKSTATIONS_FILE} after indexing: {root}")
+
+    totals = {"created": 0, "updated": 0, "removed": 0, "skipped": 0}
+    for workstation in read_workstations_manifest(workstations_yml)["workstations"]:
+        rel_root = workstation.get("root") or "."
+        workstation_root = safe_source_path(root, rel_root)
+        counts = sync_workstation_tech_docs(workstation_root)
+        for key, value in counts.items():
+            totals[key] += value
+
+    ok(
+        f"created {totals['created']}, updated {totals['updated']}, "
+        f"removed {totals['removed']}, skipped {totals['skipped']}"
+    )
+    return True
+
+
 def merge_by_key(local_items: list, remote_items: list, key_fn) -> list:
     out = []
     positions = {}
@@ -780,6 +873,8 @@ def run_entries(mode: str, pick: bool) -> int:
         if mode == "sync":
             sync_entry(entry)
             ok_count += 1
+        elif mode == "sync_tech_doc":
+            ok_count += 1 if sync_tech_doc_entry(entry) else 0
         elif mode == "pull":
             ok_count += 1 if pull_entry(entry) else 0
         elif mode == "push":
@@ -794,6 +889,7 @@ Usage:
   meta-hub -f <folder> -r <git-repository>
   meta-hub -r <git-repository>
   meta-hub sync [pick]
+  meta-hub sync_tech_doc [pick]
   meta-hub pull [pick]
   meta-hub push [pick]
 
@@ -809,7 +905,7 @@ def main() -> None:
         print(USAGE)
         sys.exit(0)
 
-    if argv[0] in ("sync", "pull", "push"):
+    if argv[0] in ("sync", "sync_tech_doc", "pull", "push"):
         mode = argv.pop(0)
         pick = False
         if argv == ["pick"]:

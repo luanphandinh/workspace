@@ -23,7 +23,6 @@ mkws sync [--push] [<folder>...]
 mkws clean [<workspace-folder>]
 mkws migrate [<workspace-folder>]
 mkws skill-sync
-mkws sync_tech_doc
 mkws open [<name-or-link>]
 mkwst index
 mkwst setup
@@ -32,6 +31,7 @@ mkwsts index
 meta-hub -f <folder> -r <git-repository>
 meta-hub -r <git-repository>
 meta-hub sync [pick]
+meta-hub sync_tech_doc [pick]
 meta-hub pull [pick]
 meta-hub push [pick]
 ```
@@ -46,6 +46,7 @@ meta-hub push [pick]
 - `mkwsts index` — builds or refreshes `<root>/workstations.yml` for the current folder. Scans the current folder and immediate child folders for `workstation.yml`, skips hidden directories and `local_workspaces/`, refreshes each discovered workstation with `mkwst index`, and records workstation-level details only: `name`, `root`, and `manifest`.
 - `meta-hub -f <folder> -r <git-repository>` — registers a metadata source root and metadata git repository. `-f` defaults to the current folder. The command clones the repository under `~/.meta-hub/<git-repo>` and stores the mapping in `~/.meta-hub/registry.yml`.
 - `meta-hub sync [pick]` — from any folder, runs `mkwsts index` for registered source roots, copies metadata into the registered metadata repositories, and commits changed metadata with `sync from <machineusername>@<machinename>`. It copies workstation/workspace manifests plus `~/.skills-hub/execute_plugins` and `~/.cmds-hub/cmd_history` when present. With `pick`, choose one registered mapping through `fzf`; without it, sync all.
+- `meta-hub sync_tech_doc [pick]` — from any folder, runs `mkwsts index` for registered source roots, then for every workstation listed in `workstations.yml`, mirrors workspace tech docs into that workstation's `tech_doc/<workspace-name>/tech_doc` symlink index. With `pick`, choose one registered mapping through `fzf`; without it, sync all.
 - `meta-hub pull [pick]` — pulls registered metadata repositories. If supported YAML metadata files conflict, it merges manifests by union and completes the merge commit. With `pick`, choose one registered mapping through `fzf`; without it, pull all.
 - `meta-hub push [pick]` — pushes registered metadata repositories explicitly to `main` or `master`. With `pick`, choose one registered mapping through `fzf`; without it, push all.
 - `open` — subcommand. Opens a recorded workspace link in the default browser. With no query, lists all workspace links. Query can match the link name or URL exactly, or a unique substring. Run from inside a workspace dir/worktree, or pass `--name <workspace>`. Examples: `mkws open`, `mkws open design-doc`, `mkws open design-doc --name myws`.
@@ -62,7 +63,6 @@ meta-hub push [pick]
 - `sync` — subcommand. Composite: for every matching repo, `pull` the current branch → merge the repo's configured `base_branch` (or default `main`/`master`) into the current branch. With `--push`, also push the current branch to the remote after the base merge. Serial. **Halts on merge conflict**. Pull/push failures for one repo are recorded but don't halt — the run continues to the next repo. Same folder-args form as `pull`.
 - `migrate` — subcommand. Rewrites an existing `workspace.yml` into v2 format. Takes an optional workspace folder path; no arg means the current directory. Rejects `--add`, `--branch`, and `--name`.
 - `skill-sync` — subcommand. Copies workspace-scoped skills from `<workspace>/skills/<skill-name>/` into project-local agent skill folders for service repos: `.agent/skills/`, `.claude/skills/`, and `.cursor/skills/`. Run from the workspace root to sync every repo listed in `workspace.yml`; run from inside a service repo under that workspace to sync only that repo. It overwrites same-named copied skill folders and leaves unrelated target skills alone. Takes no args and rejects `--add`, `--branch`, `--name`, and `--link`.
-- `sync_tech_doc` — subcommand. Builds a root-level tech-doc index by symlinking each workspace tech doc into `<root>/tech_doc/<workspace-name>/tech_doc`. Creates links for newly created workspace tech docs and removes stale generated symlinks for workspace tech docs that disappeared. It never deletes real files or real directories. Takes no args and rejects `--add`, `--branch`, and `--name`.
 
 ## Layout — all workspaces live under `local_workspaces/`
 Every workspace is placed at `<root>/local_workspaces/<name>/` instead of directly under the root. This keeps the root folder clean even when many workspaces accumulate. `mkws` creates the `local_workspaces/` container on demand and initializes `<workspace>/tech_doc/` as a standalone git repo for technical-design milestone commits.
@@ -169,6 +169,18 @@ meta-hub sync       # all registered metadata repos
 meta-hub sync pick  # choose one with fzf
 ```
 The command can run from any folder. For each selected entry, it runs `mkwsts index`, copies metadata manifests plus `~/.skills-hub/execute_plugins` and `~/.cmds-hub/cmd_history` when present, removes stale copied metadata, and commits if anything changed.
+
+## Sync workspace tech docs
+User intent: "preview all tech docs per workstation", "refresh the tech doc index", "link every workspace tech doc under each workstation".
+```
+meta-hub sync_tech_doc       # all registered source roots
+meta-hub sync_tech_doc pick  # choose one with fzf
+```
+The command can run from any folder. For each selected registered source root, it runs `mkwsts index`, reads `workstations.yml`, and processes every workstation listed there. For every workspace in a workstation that has a `tech_doc/` folder, it creates or updates:
+```
+<workstation-root>/tech_doc/<workspace-name>/tech_doc -> <workstation-root>/local_workspaces/<workspace-name>/tech_doc
+```
+If a workspace `tech_doc/` folder is removed, the matching generated symlink is removed on the next run. Real files and real directories are never deleted.
 
 ## Pull or push metadata
 User intent: "pull metadata", "push metadata", "sync metadata repo with remote".
@@ -350,18 +362,6 @@ cd <root>/local_workspaces/<name> && mkws clean
 After removing code worktrees, `mkws clean` rewrites `workspace.yml` with the same workspace name, blank `branch_name`, preserved `links:`, and an empty `repos:` list. Removing the workspace directory itself is a separate user decision.
 
 **Warn the user** before running if there may be uncommitted changes in the worktrees — `mkws clean` runs `git worktree remove --force` without a confirmation prompt, so local edits inside code worktrees are lost. If unsure, ask the user to commit/push first (or inspect with `git -C <root>/<repo> worktree list`).
-
-## Sync workspace tech docs
-User intent: "preview all tech docs in one folder", "refresh the tech doc index", "link workspace tech docs into the root tech_doc folder".
-```
-cd <root>
-mkws sync_tech_doc
-```
-The command scans `<root>/local_workspaces/*/workspace.yml`. For every workspace that has a `tech_doc/` folder, it creates or updates:
-```
-<root>/tech_doc/<workspace-name>/tech_doc -> <root>/local_workspaces/<workspace-name>/tech_doc
-```
-If a workspace `tech_doc/` folder is removed, the matching generated symlink is removed on the next run. If `<root>/tech_doc/<workspace-name>/tech_doc` already exists as a real file or directory, `mkws sync_tech_doc` warns and skips it rather than deleting user content.
 
 ## Sync workspace skills to service repos
 User intent: "sync workspace skills into each service repo", "copy this workspace's skills for Codex and Claude Code", "refresh project-local skills".

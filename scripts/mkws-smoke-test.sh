@@ -47,6 +47,23 @@ assert_not_exists() {
 	}
 }
 
+assert_symlink_target() {
+	test -L "$1" || {
+		printf 'expected symlink: %s\n' "$1" >&2
+		exit 1
+	}
+	python3 - "$1" "$2" <<'PY'
+from pathlib import Path
+import sys
+
+link = Path(sys.argv[1])
+target = Path(sys.argv[2])
+if link.resolve() != target.resolve():
+    print(f"expected {link} to point at {target}, got {link.resolve()}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
 assert_git_repo() {
 	git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
 		printf 'expected git repo: %s\n' "$1" >&2
@@ -131,6 +148,7 @@ test_mkws() {
 	mkws --help >/dev/null
 	EXPECT='`mkws index` moved to `mkwst index`' expect_fail_contains mkws index
 	EXPECT='`mkws setup` moved to `mkwst setup`' expect_fail_contains mkws setup
+	EXPECT='`mkws sync_tech_doc` moved to `meta-hub sync_tech_doc`' expect_fail_contains mkws sync_tech_doc
 
 	(
 		cd "$root"
@@ -388,9 +406,10 @@ EOF
 
 test_meta_hub() {
 	root="$TMP/meta-hub-root"
-	mkdir -p "$root/station-a"
+	mkdir -p "$root/station-a" "$root/station-b"
 	root=$(cd "$root" && pwd -P)
 	init_repo "$root/station-a/repo-a"
+	init_repo "$root/station-b/repo-b"
 	git config --global user.name "Example User"
 	git config --global user.email "user@example.com"
 
@@ -399,9 +418,18 @@ version: v1
 name: "station-a"
 repos:
 EOF
+	cat > "$root/station-b/workstation.yml" <<EOF
+version: v1
+name: "station-b"
+repos:
+EOF
 	(
 		cd "$root/station-a"
 		mkws --name feature-a --branch feature/a --add repo-a >/dev/null
+	)
+	(
+		cd "$root/station-b"
+		mkws --name feature-b --branch feature/b --add repo-b >/dev/null
 	)
 	mkdir -p "$HOME/.skills-hub" "$HOME/.cmds-hub"
 	printf 'plugin-base\n' > "$HOME/.skills-hub/execute_plugins"
@@ -423,13 +451,35 @@ EOF
 	meta_hub sync >/dev/null
 	assert_exists "$clone/workstations.yml"
 	assert_exists "$clone/station-a/workstation.yml"
+	assert_exists "$clone/station-b/workstation.yml"
 	assert_exists "$clone/station-a/local_workspaces/feature-a/workspace.yml"
+	assert_exists "$clone/station-b/local_workspaces/feature-b/workspace.yml"
 	assert_exists "$clone/.skills-hub/execute_plugins"
 	assert_exists "$clone/.cmds-hub/cmd_history"
 	assert_not_exists "$clone/station-a/local_workspaces/feature-a/repo-a/README.md"
 	assert_contains "$clone/station-a/workstation.yml" "name: \"repo-a\""
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-base"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-base"
+
+	(
+		cd "$TMP"
+		meta_hub sync_tech_doc >/dev/null
+	)
+	assert_symlink_target \
+		"$root/station-a/tech_doc/feature-a/tech_doc" \
+		"$root/station-a/local_workspaces/feature-a/tech_doc"
+	assert_symlink_target \
+		"$root/station-b/tech_doc/feature-b/tech_doc" \
+		"$root/station-b/local_workspaces/feature-b/tech_doc"
+	rm -rf "$root/station-a/local_workspaces/feature-a/tech_doc"
+	(
+		cd "$TMP"
+		meta_hub sync_tech_doc >/dev/null
+	)
+	assert_not_exists "$root/station-a/tech_doc/feature-a/tech_doc"
+	assert_symlink_target \
+		"$root/station-b/tech_doc/feature-b/tech_doc" \
+		"$root/station-b/local_workspaces/feature-b/tech_doc"
 
 	msg=$(git -C "$clone" log -1 --format=%s)
 	case "$msg" in
