@@ -122,6 +122,7 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/worksp
 zsh_bin=$(command -v zsh || true)
 if [ -n "$zsh_bin" ]; then
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = zsh"
+  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/shell/workspace.sh'; test \"\$PROMPT\" = '%1~ %# '"
   grep -qx 'init zsh --cmd z' "$log"
 fi
 
