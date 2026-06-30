@@ -3,9 +3,9 @@ if [ -r /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
 elif [ -r "$HOME/.nix-profile/etc/profile.d/nix.sh" ]; then
   . "$HOME/.nix-profile/etc/profile.d/nix.sh"
 fi
-export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
-export PATH="$PATH:/usr/local/go/bin"
-export PATH="$PATH:$HOME/go/bin"
+export GOPATH="${GOPATH:-$HOME/go}"
+export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
+export PATH="$PATH:/usr/local/go/bin:$GOPATH/bin"
 hash -r 2>/dev/null || true
 export COLORTERM=truecolor
 export FORCE_COLOR=1
