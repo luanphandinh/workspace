@@ -481,6 +481,20 @@ EOF
 	assert_contains "$FZF_INPUT" "$root/station-a/local_workspaces/feature-a"
 	assert_contains "$FZF_INPUT" "$root/station-b/local_workspaces/feature-b"
 
+	mkdir -p "$root/station-c"
+	init_repo "$root/station-c/repo-c"
+	cat > "$root/station-c/workstation.yml" <<EOF
+version: v1
+name: "station-c"
+repos:
+EOF
+	(
+		cd "$root/station-c"
+		mkws --name feature-c --branch feature/c --add repo-c >/dev/null
+	)
+	FZF_SELECT="feature-b" meta_hub project >/dev/null
+	assert_not_contains "$FZF_INPUT" "$root/station-c/local_workspaces/feature-c"
+
 	repo_path=$(FZF_SELECT="$root/station-b/local_workspaces/feature-b/repo-b" meta_hub repo)
 	assert_eq "$root/station-b/local_workspaces/feature-b/repo-b" "$repo_path"
 	assert_contains "$FZF_INPUT" "$root/station-a/repo-a"

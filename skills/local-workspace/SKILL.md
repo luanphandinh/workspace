@@ -192,7 +192,7 @@ User intent: "jump to a project", "open a workspace folder", "jump to a repo fro
 meta-hub project  # pick a local_workspaces/<workspace> folder with fzf and cd there
 meta-hub repo     # pick a source/workspace git repo with fzf and cd there
 ```
-Both commands can run from any folder. They read `~/.meta-hub/registry.yml`, refresh each registered source root with `mkwsts index`, and build `fzf` choices from every workstation listed in each `workstations.yml`. `meta-hub project` includes workspace folders under `local_workspaces/`. `meta-hub repo` includes workstation source repos and git repos directly under each workspace folder, including workspace worktrees. The interactive `cd` requires the shell setup installed by `make workspace-bin`; running the executable directly prints the selected absolute path.
+Both commands can run from any folder. They read `~/.meta-hub/registry.yml` and the existing `workstations.yml` in each registered source root, then build `fzf` choices from every indexed workstation. They do not run `mkwsts index` on each jump, so they stay fast; run `meta-hub sync`, `meta-hub sync_tech_doc`, or `mkwsts index` when the workstation list needs refreshing. `meta-hub project` includes workspace folders under `local_workspaces/`. `meta-hub repo` includes workstation source repos and git repos directly under each workspace folder, including workspace worktrees. The interactive `cd` requires the shell setup installed by `make workspace-bin`; running the executable directly prints the selected absolute path.
 
 ## Pull or push metadata
 User intent: "pull metadata", "push metadata", "sync metadata repo with remote".

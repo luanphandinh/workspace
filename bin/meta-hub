@@ -268,6 +268,10 @@ def refresh_workstations(root: Path) -> list:
 
 
 def registered_workstations() -> list:
+    return read_registered_workstations(refresh=True)
+
+
+def read_registered_workstations(refresh: bool = False) -> list:
     entries = read_registry()
     if not entries:
         die("no registry entries; run `meta-hub -f . -r <git-repository>` first")
@@ -280,7 +284,14 @@ def registered_workstations() -> list:
         seen_roots.add(str(root))
         if not root.is_dir():
             die(f"registered root is missing: {root}")
-        for workstation in refresh_workstations(root):
+        workstations_yml = root / WORKSTATIONS_FILE
+        if refresh:
+            workstations = refresh_workstations(root)
+        elif workstations_yml.is_file():
+            workstations = read_workstations_manifest(workstations_yml)["workstations"]
+        else:
+            die(f"missing {WORKSTATIONS_FILE} at {root}; run `mkwsts index` or `meta-hub sync` first")
+        for workstation in workstations:
             rel_root = workstation.get("root") or "."
             station_root = safe_source_path(root, rel_root)
             out.append((root, workstation, station_root))
@@ -304,7 +315,7 @@ def add_candidate(candidates: list, seen_paths: set, label: str, path: Path) -> 
 def project_candidates() -> list:
     candidates = []
     seen_paths = set()
-    for _, workstation, station_root in registered_workstations():
+    for _, workstation, station_root in read_registered_workstations(refresh=False):
         station_name = workstation.get("name") or station_root.name
         for workspace_yml in sorted((station_root / WS_CONTAINER).glob(f"*/{WORKSPACE_FILE}")):
             name = workspace_name(workspace_yml)
@@ -315,7 +326,7 @@ def project_candidates() -> list:
 def repo_candidates() -> list:
     candidates = []
     seen_paths = set()
-    for root, workstation, station_root in registered_workstations():
+    for root, workstation, station_root in read_registered_workstations(refresh=False):
         station_name = workstation.get("name") or station_root.name
         manifest_rel = workstation.get("manifest") or WORKSTATION_FILE
         manifest = safe_source_path(root, manifest_rel)
@@ -324,13 +335,13 @@ def repo_candidates() -> list:
             for repo in data.get("repos", []):
                 repo_data = normalize_repo_record(repo)
                 repo_path = station_root / (repo_data["path"] or repo_data["name"])
-                if repo_path.exists() and is_git_worktree(repo_path):
+                if (repo_path / ".git").exists():
                     add_candidate(candidates, seen_paths, f"{repo_data['name']} | {station_name} | source", repo_path)
         for workspace_yml in sorted((station_root / WS_CONTAINER).glob(f"*/{WORKSPACE_FILE}")):
             project_name = workspace_name(workspace_yml)
             workspace_dir = workspace_yml.parent
             for child in sorted(p for p in workspace_dir.iterdir() if p.is_dir()):
-                if (child / ".git").exists() and is_git_worktree(child):
+                if (child / ".git").exists():
                     add_candidate(candidates, seen_paths, f"{child.name} | {station_name}/{project_name} | workspace", child)
     return sorted(candidates, key=lambda item: item["label"])
 
