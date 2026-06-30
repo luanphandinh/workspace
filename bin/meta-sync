@@ -1,0 +1,767 @@
+#!/usr/bin/env python3
+"""meta-sync - sync workspace metadata into a git repository."""
+
+import getpass
+import hashlib
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+REGISTRY_FILE = "registry.yml"
+WORKSTATIONS_FILE = "workstations.yml"
+WORKSTATION_FILE = "workstation.yml"
+WORKSPACE_FILE = "workspace.yml"
+WS_CONTAINER = "local_workspaces"
+
+_USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+
+def _c(code: str) -> str:
+    return f"\033[{code}m" if _USE_COLOR else ""
+
+
+RESET = _c("0")
+BOLD = _c("1")
+RED = _c("31")
+GREEN = _c("32")
+YELLOW = _c("33")
+CYAN = _c("36")
+
+
+def heading(text: str) -> None:
+    print(f"\n{BOLD}{CYAN}=== {text} ==={RESET}", flush=True)
+
+
+def info(text: str) -> None:
+    print(f"  {text}", flush=True)
+
+
+def ok(text: str) -> None:
+    print(f"  {GREEN}ok{RESET} {text}", flush=True)
+
+
+def warn(text: str) -> None:
+    print(f"  {YELLOW}!{RESET} {text}", flush=True)
+
+
+def die(text: str, code: int = 1) -> None:
+    print(f"{RED}error:{RESET} {text}", file=sys.stderr)
+    sys.exit(code)
+
+
+def run(cmd: list, cwd: Path = None, capture: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        capture_output=capture,
+        text=True,
+    )
+
+
+def parse_yml_scalar(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        body = value[1:-1]
+        return body.replace('\\"', '"').replace("\\\\", "\\")
+    return value
+
+
+def quote_yml_scalar(value: str) -> str:
+    text = str(value or "")
+    text = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
+def meta_home() -> Path:
+    return Path.home() / ".meta-sync"
+
+
+def registry_path() -> Path:
+    return meta_home() / REGISTRY_FILE
+
+
+def read_registry() -> list:
+    yml = registry_path()
+    entries = []
+    current = None
+    if not yml.is_file():
+        return entries
+    for line in yml.read_text().splitlines():
+        if line.startswith("  - root:"):
+            current = {
+                "root": parse_yml_scalar(line.split(":", 1)[1]),
+                "repo": "",
+                "clone": "",
+            }
+            entries.append(current)
+        elif current is not None and line.startswith("    repo:"):
+            current["repo"] = parse_yml_scalar(line.split(":", 1)[1])
+        elif current is not None and line.startswith("    clone:"):
+            current["clone"] = parse_yml_scalar(line.split(":", 1)[1])
+    return [e for e in entries if e.get("root") and e.get("repo") and e.get("clone")]
+
+
+def write_registry(entries: list) -> None:
+    meta_home().mkdir(parents=True, exist_ok=True)
+    lines = ["version: v1", "entries:"]
+    for entry in sorted(entries, key=lambda item: (item["repo"], item["root"])):
+        lines.append(f"  - root: {quote_yml_scalar(entry['root'])}")
+        lines.append(f"    repo: {quote_yml_scalar(entry['repo'])}")
+        lines.append(f"    clone: {quote_yml_scalar(entry['clone'])}")
+    registry_path().write_text("\n".join(lines) + "\n")
+
+
+def repo_basename(repo: str) -> str:
+    raw = repo.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    if raw.endswith(".git"):
+        raw = raw[:-4]
+    raw = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip(".-")
+    return raw or "metadata"
+
+
+def git_origin(clone: Path) -> str:
+    proc = run(["git", "-C", str(clone), "remote", "get-url", "origin"])
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def is_git_worktree(path: Path) -> bool:
+    proc = run(["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"])
+    return proc.returncode == 0 and proc.stdout.strip() == "true"
+
+
+def clone_path_for_repo(repo: str) -> Path:
+    base = meta_home() / repo_basename(repo)
+    if not base.exists() or git_origin(base) == repo:
+        return base
+    digest = hashlib.sha1(repo.encode("utf-8")).hexdigest()[:8]
+    return meta_home() / f"{base.name}-{digest}"
+
+
+def ensure_clone(repo: str, clone: Path) -> None:
+    meta_home().mkdir(parents=True, exist_ok=True)
+    if clone.exists():
+        if is_git_worktree(clone) and git_origin(clone) == repo:
+            return
+        if is_git_worktree(clone):
+            die(f"clone path points at a different git remote: {clone}")
+        die(f"clone path exists but is not a git repository: {clone}")
+    proc = run(["git", "clone", repo, str(clone)])
+    if proc.returncode != 0:
+        die(f"failed to clone metadata repository: {repo}\n{(proc.stderr or proc.stdout).rstrip()}")
+
+
+def validate_repo(repo: str) -> None:
+    proc = run(["git", "ls-remote", repo])
+    if proc.returncode != 0:
+        die(f"invalid git repository: {repo}\n{(proc.stderr or proc.stdout).rstrip()}")
+
+
+def script_cmd(name: str) -> list:
+    sibling = Path(__file__).resolve().parent / name
+    if sibling.is_file():
+        return [sys.executable, str(sibling)]
+    return [name]
+
+
+def cmd_register(folder: str, repo: str) -> int:
+    root = Path(folder or ".").expanduser()
+    if not root.is_absolute():
+        root = (Path.cwd() / root).resolve()
+    else:
+        root = root.resolve()
+    if not root.is_dir():
+        die(f"not a directory: {root}")
+
+    validate_repo(repo)
+    clone = clone_path_for_repo(repo)
+    ensure_clone(repo, clone)
+
+    entries = read_registry()
+    updated = False
+    entry = {"root": str(root), "repo": repo, "clone": str(clone)}
+    for existing in entries:
+        if existing["repo"] == repo:
+            existing.update(entry)
+            updated = True
+            break
+    if not updated:
+        entries.append(entry)
+    write_registry(entries)
+
+    heading("meta-sync register")
+    info(f"root:  {BOLD}{root}{RESET}")
+    info(f"repo:  {BOLD}{repo}{RESET}")
+    info(f"clone: {BOLD}{clone}{RESET}")
+    ok("registry updated")
+    return 0
+
+
+def choose_entries(entries: list, pick: bool) -> list:
+    if not entries:
+        die(f"no registry entries; run `meta-sync -f . -r <git-repository>` first")
+    if not pick:
+        return entries
+    if shutil.which("fzf") is None:
+        die("`pick` requires fzf on PATH")
+    labels = [f"{entry['root']} | {entry['repo']}" for entry in entries]
+    proc = subprocess.run(
+        ["fzf"],
+        input="\n".join(labels) + "\n",
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        die("no meta-sync entry selected")
+    selected = proc.stdout.strip()
+    for idx, label in enumerate(labels):
+        if label == selected:
+            return [entries[idx]]
+    die("selected entry was not found")
+
+
+def read_workstations_manifest(yml: Path) -> dict:
+    data = {"version": "v1", "name": "", "workstations": []}
+    section = ""
+    current = None
+    for line in yml.read_text().splitlines():
+        if line.startswith("version:"):
+            data["version"] = parse_yml_scalar(line.split(":", 1)[1]) or "v1"
+            section = ""
+        elif line.startswith("name:"):
+            data["name"] = parse_yml_scalar(line.split(":", 1)[1])
+            section = ""
+        elif line.startswith("workstations:"):
+            section = "workstations"
+            current = None
+        elif section == "workstations" and line.startswith("  - name:"):
+            current = {
+                "name": parse_yml_scalar(line.split(":", 1)[1]),
+                "root": "",
+                "manifest": "",
+            }
+            data["workstations"].append(current)
+        elif section == "workstations" and current is not None and line.startswith("    "):
+            key, sep, value = line.strip().partition(":")
+            if sep and key in current:
+                current[key] = parse_yml_scalar(value)
+    return data
+
+
+def render_workstations_manifest(data: dict) -> str:
+    lines = [
+        "version: v1",
+        f"name: {quote_yml_scalar(data.get('name') or '')}",
+        "workstations:",
+    ]
+    for item in data.get("workstations", []):
+        lines.append(f"  - name: {quote_yml_scalar(item.get('name') or '')}")
+        lines.append(f"    root: {quote_yml_scalar(item.get('root') or '')}")
+        lines.append(f"    manifest: {quote_yml_scalar(item.get('manifest') or '')}")
+    return "\n".join(lines) + "\n"
+
+
+def normalize_repo_record(repo: dict) -> dict:
+    return {
+        "name": str(repo.get("name") or "").strip(),
+        "path": str(repo.get("path") or "").strip(),
+        "remote": str(repo.get("remote") or "").strip(),
+        "remote_url": str(repo.get("remote_url") or "").strip(),
+        "upstream": str(repo.get("upstream") or "").strip(),
+        "branch": str(repo.get("branch") or "").strip(),
+    }
+
+
+def read_workstation_manifest_text(text: str) -> dict:
+    data = {"version": "v1", "name": "", "repos": [], "_external": {"repos": []}}
+    section = ""
+    current = None
+    for line in text.splitlines():
+        if line.startswith("version:"):
+            data["version"] = parse_yml_scalar(line.split(":", 1)[1]) or "v1"
+            section = ""
+        elif line.startswith("name:"):
+            data["name"] = parse_yml_scalar(line.split(":", 1)[1])
+            section = ""
+        elif line.startswith("repos:"):
+            section = "repos"
+            current = None
+        elif line.startswith("_external:"):
+            section = "_external"
+            current = None
+        elif section == "_external" and line.startswith("  repos:"):
+            section = "_external.repos"
+            current = None
+        elif section == "repos" and line.startswith("  - name:"):
+            current = {"name": parse_yml_scalar(line.split(":", 1)[1])}
+            data["repos"].append(current)
+        elif section == "repos" and current is not None and line.startswith("    "):
+            key, sep, value = line.strip().partition(":")
+            if sep:
+                current[key] = parse_yml_scalar(value)
+        elif section == "_external.repos" and line.startswith("    - name:"):
+            current = {"name": parse_yml_scalar(line.split(":", 1)[1])}
+            data["_external"]["repos"].append(current)
+        elif section == "_external.repos" and current is not None and line.startswith("      "):
+            key, sep, value = line.strip().partition(":")
+            if sep:
+                current[key] = parse_yml_scalar(value)
+    return data
+
+
+def render_repo_records(lines: list, repos: list, indent: str) -> None:
+    for raw in repos:
+        repo = normalize_repo_record(raw)
+        if not repo["name"]:
+            continue
+        lines.append(f"{indent}- name: {quote_yml_scalar(repo['name'])}")
+        lines.append(f"{indent}  path: {quote_yml_scalar(repo['path'] or repo['name'])}")
+        lines.append(f"{indent}  remote: {quote_yml_scalar(repo['remote'])}")
+        lines.append(f"{indent}  remote_url: {quote_yml_scalar(repo['remote_url'])}")
+        lines.append(f"{indent}  upstream: {quote_yml_scalar(repo['upstream'])}")
+        lines.append(f"{indent}  branch: {quote_yml_scalar(repo['branch'])}")
+
+
+def render_workstation_manifest(data: dict) -> str:
+    lines = ["version: v1", f"name: {quote_yml_scalar(data.get('name') or '')}", "repos:"]
+    render_repo_records(lines, data.get("repos", []), "  ")
+    external = data.get("_external", {}).get("repos", [])
+    if external:
+        lines.append("_external:")
+        lines.append("  repos:")
+        render_repo_records(lines, external, "    ")
+    return "\n".join(lines) + "\n"
+
+
+def read_workspace_manifest_text(text: str) -> dict:
+    data = {"version": "v1", "name": "", "branch_name": "", "links": [], "repos": []}
+    section = ""
+    current_repo = None
+    current_link = None
+    for line in text.splitlines():
+        if line.startswith("version:"):
+            data["version"] = parse_yml_scalar(line.split(":", 1)[1]) or "v1"
+            section = ""
+        elif line.startswith("name:"):
+            data["name"] = parse_yml_scalar(line.split(":", 1)[1])
+            section = ""
+        elif line.startswith("branch_name:"):
+            data["branch_name"] = parse_yml_scalar(line.split(":", 1)[1])
+            section = ""
+        elif line.startswith("links:"):
+            section = "links"
+            current_link = None
+        elif line.startswith("repos:"):
+            section = "repos"
+            current_repo = None
+        elif section == "links" and line.startswith("  - name:"):
+            current_link = {"name": parse_yml_scalar(line.split(":", 1)[1]), "link": ""}
+            data["links"].append(current_link)
+        elif section == "links" and current_link is not None and line.startswith("    link:"):
+            current_link["link"] = parse_yml_scalar(line.split(":", 1)[1])
+        elif section == "repos" and line.startswith("  - name:"):
+            current_repo = {"name": parse_yml_scalar(line.split(":", 1)[1]), "branch_name": "", "base_branch": ""}
+            data["repos"].append(current_repo)
+        elif section == "repos" and current_repo is not None and line.startswith("    "):
+            key, sep, value = line.strip().partition(":")
+            if sep and key in current_repo:
+                current_repo[key] = parse_yml_scalar(value)
+        elif section == "repos" and line.startswith("  - "):
+            data["repos"].append({
+                "name": parse_yml_scalar(line[4:]),
+                "branch_name": data["branch_name"],
+                "base_branch": "",
+            })
+    return data
+
+
+def render_workspace_manifest(data: dict) -> str:
+    lines = [
+        "version: v2",
+        f"name: {data.get('name') or ''}",
+        f"branch_name: {data.get('branch_name') or ''}",
+    ]
+    links = [item for item in data.get("links", []) if item.get("name") and item.get("link")]
+    if links:
+        lines.append("links:")
+        for item in links:
+            lines.append(f"  - name: {item['name']}")
+            lines.append(f"    link: {item['link']}")
+    lines.append("repos:")
+    for repo in data.get("repos", []):
+        name = repo.get("name") or ""
+        if not name:
+            continue
+        lines.append(f"  - name: {name}")
+        lines.append(f"    branch_name: {repo.get('branch_name') or data.get('branch_name') or ''}")
+        if repo.get("base_branch"):
+            lines.append(f"    base_branch: {repo['base_branch']}")
+    return "\n".join(lines) + "\n"
+
+
+def safe_source_path(root: Path, rel: str) -> Path:
+    path = root if rel == "." else (root / rel)
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        die(f"metadata path escapes source root: {rel}")
+    return resolved
+
+
+def clean_clone_contents(clone: Path) -> None:
+    for child in clone.iterdir():
+        if child.name == ".git":
+            continue
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+
+def copy_file(src: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+
+
+def copy_workspace_manifests(workstation_root: Path, clone: Path, dest_prefix: Path) -> int:
+    count = 0
+    local_workspaces = workstation_root / WS_CONTAINER
+    if not local_workspaces.is_dir():
+        return count
+    for workspace_yml in sorted(local_workspaces.glob(f"*/{WORKSPACE_FILE}")):
+        rel = workspace_yml.relative_to(workstation_root)
+        copy_file(workspace_yml, clone / dest_prefix / rel)
+        count += 1
+    return count
+
+
+def sync_entry(entry: dict) -> bool:
+    root = Path(entry["root"]).resolve()
+    repo = entry["repo"]
+    clone = Path(entry["clone"]).expanduser().resolve()
+    if not root.is_dir():
+        die(f"registered root is missing: {root}")
+    ensure_clone(repo, clone)
+
+    heading(f"sync {repo_basename(repo)}")
+    proc = run([*script_cmd("mkwsts"), "index"], cwd=root)
+    if proc.returncode != 0:
+        die(f"mkwsts index failed at {root}\n{(proc.stderr or proc.stdout).rstrip()}")
+
+    workstations_yml = root / WORKSTATIONS_FILE
+    if not workstations_yml.is_file():
+        die(f"missing {WORKSTATIONS_FILE} after indexing: {root}")
+    data = read_workstations_manifest(workstations_yml)
+
+    clean_clone_contents(clone)
+    copy_file(workstations_yml, clone / WORKSTATIONS_FILE)
+
+    workstation_count = 0
+    workspace_count = 0
+    for workstation in data["workstations"]:
+        rel_root = workstation.get("root") or "."
+        workstation_root = safe_source_path(root, rel_root)
+        manifest_rel = workstation.get("manifest") or WORKSTATION_FILE
+        manifest = safe_source_path(root, manifest_rel)
+        if not manifest.is_file():
+            warn(f"missing workstation manifest: {manifest}")
+            continue
+        dest_prefix = Path() if rel_root == "." else Path(rel_root)
+        copy_file(manifest, clone / manifest_rel)
+        workstation_count += 1
+        workspace_count += copy_workspace_manifests(workstation_root, clone, dest_prefix)
+
+    proc = run(["git", "-C", str(clone), "add", "-A"])
+    if proc.returncode != 0:
+        die(f"git add failed in {clone}\n{(proc.stderr or proc.stdout).rstrip()}")
+    status = run(["git", "-C", str(clone), "status", "--porcelain"])
+    if not status.stdout.strip():
+        info("no metadata changes")
+        return False
+
+    message = f"sync from {getpass.getuser()}@{socket.gethostname()}"
+    proc = run(["git", "-C", str(clone), "commit", "-m", message])
+    if proc.returncode != 0:
+        die(f"git commit failed in {clone}\n{(proc.stderr or proc.stdout).rstrip()}")
+    ok(f"copied {workstation_count} workstation manifest(s), {workspace_count} workspace manifest(s)")
+    return True
+
+
+def merge_by_key(local_items: list, remote_items: list, key_fn) -> list:
+    out = []
+    positions = {}
+    for item in local_items:
+        key = key_fn(item)
+        if not key:
+            continue
+        positions[key] = len(out)
+        out.append(dict(item))
+    for item in remote_items:
+        key = key_fn(item)
+        if not key:
+            continue
+        if key not in positions:
+            positions[key] = len(out)
+            out.append(dict(item))
+            continue
+        existing = out[positions[key]]
+        for field, value in item.items():
+            if not existing.get(field) and value:
+                existing[field] = value
+    return out
+
+
+def merge_workstations(local_text: str, remote_text: str) -> str:
+    local = read_workstations_manifest_text(local_text)
+    remote = read_workstations_manifest_text(remote_text)
+    return render_workstations_manifest({
+        "name": local.get("name") or remote.get("name") or "",
+        "workstations": merge_by_key(
+            local.get("workstations", []),
+            remote.get("workstations", []),
+            lambda item: item.get("manifest") or item.get("root"),
+        ),
+    })
+
+
+def read_workstations_manifest_text(text: str) -> dict:
+    data = {"version": "v1", "name": "", "workstations": []}
+    section = ""
+    current = None
+    for line in text.splitlines():
+        if line.startswith("version:"):
+            data["version"] = parse_yml_scalar(line.split(":", 1)[1]) or "v1"
+            section = ""
+        elif line.startswith("name:"):
+            data["name"] = parse_yml_scalar(line.split(":", 1)[1])
+            section = ""
+        elif line.startswith("workstations:"):
+            section = "workstations"
+            current = None
+        elif section == "workstations" and line.startswith("  - name:"):
+            current = {"name": parse_yml_scalar(line.split(":", 1)[1]), "root": "", "manifest": ""}
+            data["workstations"].append(current)
+        elif section == "workstations" and current is not None and line.startswith("    "):
+            key, sep, value = line.strip().partition(":")
+            if sep and key in current:
+                current[key] = parse_yml_scalar(value)
+    return data
+
+
+def merge_workstation(local_text: str, remote_text: str) -> str:
+    local = read_workstation_manifest_text(local_text)
+    remote = read_workstation_manifest_text(remote_text)
+    return render_workstation_manifest({
+        "name": local.get("name") or remote.get("name") or "",
+        "repos": merge_by_key(
+            local.get("repos", []),
+            remote.get("repos", []),
+            lambda item: item.get("path") or item.get("name"),
+        ),
+        "_external": {
+            "repos": merge_by_key(
+                local.get("_external", {}).get("repos", []),
+                remote.get("_external", {}).get("repos", []),
+                lambda item: item.get("path") or item.get("name"),
+            ),
+        },
+    })
+
+
+def merge_workspace(local_text: str, remote_text: str) -> str:
+    local = read_workspace_manifest_text(local_text)
+    remote = read_workspace_manifest_text(remote_text)
+    return render_workspace_manifest({
+        "name": local.get("name") or remote.get("name") or "",
+        "branch_name": local.get("branch_name") or remote.get("branch_name") or "",
+        "links": merge_by_key(
+            local.get("links", []),
+            remote.get("links", []),
+            lambda item: item.get("name") or item.get("link"),
+        ),
+        "repos": merge_by_key(
+            local.get("repos", []),
+            remote.get("repos", []),
+            lambda item: item.get("name"),
+        ),
+    })
+
+
+def git_stage_text(clone: Path, stage: int, path: str) -> str:
+    proc = run(["git", "-C", str(clone), "show", f":{stage}:{path}"])
+    return proc.stdout if proc.returncode == 0 else ""
+
+
+def resolve_conflicted_file(clone: Path, path: str) -> bool:
+    local = git_stage_text(clone, 2, path)
+    remote = git_stage_text(clone, 3, path)
+    name = Path(path).name
+    if path == WORKSTATIONS_FILE:
+        merged = merge_workstations(local, remote)
+    elif name == WORKSTATION_FILE:
+        merged = merge_workstation(local, remote)
+    elif name == WORKSPACE_FILE:
+        merged = merge_workspace(local, remote)
+    else:
+        return False
+    target = clone / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(merged)
+    proc = run(["git", "-C", str(clone), "add", path])
+    if proc.returncode != 0:
+        die(f"failed to stage resolved metadata file: {path}")
+    return True
+
+
+def unmerged_paths(clone: Path) -> list:
+    proc = run(["git", "-C", str(clone), "diff", "--name-only", "--diff-filter=U"])
+    if proc.returncode != 0:
+        return []
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def resolve_metadata_conflicts(clone: Path) -> bool:
+    paths = unmerged_paths(clone)
+    if not paths:
+        return False
+    unresolved = []
+    for path in paths:
+        if not resolve_conflicted_file(clone, path):
+            unresolved.append(path)
+    if unresolved:
+        warn(f"manual conflict resolution required: {', '.join(unresolved)}")
+        return False
+    remaining = unmerged_paths(clone)
+    if remaining:
+        warn(f"unresolved metadata conflicts remain: {', '.join(remaining)}")
+        return False
+    proc = run(["git", "-C", str(clone), "commit", "--no-edit"])
+    if proc.returncode != 0:
+        die(f"failed to finish metadata merge in {clone}\n{(proc.stderr or proc.stdout).rstrip()}")
+    ok("resolved metadata conflicts")
+    return True
+
+
+def pull_entry(entry: dict) -> bool:
+    clone = Path(entry["clone"]).expanduser().resolve()
+    ensure_clone(entry["repo"], clone)
+    heading(f"pull {repo_basename(entry['repo'])}")
+    proc = run(["git", "-C", str(clone), "pull", "--no-rebase"])
+    if proc.returncode == 0:
+        ok("pulled")
+        return True
+    if unmerged_paths(clone):
+        return resolve_metadata_conflicts(clone)
+    warn((proc.stderr or proc.stdout).rstrip() or "pull failed")
+    return False
+
+
+def remote_branch_exists(clone: Path, branch: str) -> bool:
+    proc = run(["git", "-C", str(clone), "ls-remote", "--exit-code", "--heads", "origin", branch])
+    return proc.returncode == 0
+
+
+def current_branch(clone: Path) -> str:
+    proc = run(["git", "-C", str(clone), "rev-parse", "--abbrev-ref", "HEAD"])
+    branch = proc.stdout.strip() if proc.returncode == 0 else ""
+    return "" if branch == "HEAD" else branch
+
+
+def metadata_push_branch(clone: Path) -> str:
+    for branch in ("main", "master"):
+        if remote_branch_exists(clone, branch):
+            return branch
+    branch = current_branch(clone)
+    if branch in ("main", "master"):
+        return branch
+    return "main"
+
+
+def push_entry(entry: dict) -> bool:
+    clone = Path(entry["clone"]).expanduser().resolve()
+    ensure_clone(entry["repo"], clone)
+    heading(f"push {repo_basename(entry['repo'])}")
+    branch = metadata_push_branch(clone)
+    proc = run(["git", "-C", str(clone), "push", "-u", "origin", f"HEAD:{branch}"])
+    if proc.returncode == 0:
+        ok(f"pushed {branch}")
+        return True
+    warn((proc.stderr or proc.stdout).rstrip() or "push failed")
+    return False
+
+
+def run_entries(mode: str, pick: bool) -> int:
+    entries = choose_entries(read_registry(), pick)
+    ok_count = 0
+    for entry in entries:
+        if mode == "sync":
+            sync_entry(entry)
+            ok_count += 1
+        elif mode == "pull":
+            ok_count += 1 if pull_entry(entry) else 0
+        elif mode == "push":
+            ok_count += 1 if push_entry(entry) else 0
+    heading("summary")
+    info(f"{mode}: {ok_count}/{len(entries)}")
+    return 0 if ok_count == len(entries) else 1
+
+
+USAGE = """\
+Usage:
+  meta-sync -f <folder> -r <git-repository>
+  meta-sync -r <git-repository>
+  meta-sync sync [pick]
+  meta-sync pull [pick]
+  meta-sync push [pick]
+
+Options:
+  -f <folder>          source folder containing workstation metadata; defaults to .
+  -r <git-repository> metadata git repository to clone/register
+"""
+
+
+def main() -> None:
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("-h", "--help"):
+        print(USAGE)
+        sys.exit(0)
+
+    if argv[0] in ("sync", "pull", "push"):
+        mode = argv.pop(0)
+        pick = False
+        if argv == ["pick"]:
+            pick = True
+        elif argv:
+            die(f"unexpected args for {mode}: {' '.join(argv)}\n\n{USAGE}")
+        sys.exit(run_entries(mode, pick))
+
+    folder = "."
+    repo = ""
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "-f":
+            i += 1
+            if i >= len(argv):
+                die("-f requires a folder")
+            folder = argv[i]
+        elif arg == "-r":
+            i += 1
+            if i >= len(argv):
+                die("-r requires a git repository")
+            repo = argv[i]
+        else:
+            die(f"unknown argument: {arg}\n\n{USAGE}")
+        i += 1
+
+    if not repo:
+        die("-r <git-repository> is required for registration")
+    sys.exit(cmd_register(folder, repo))
+
+
+if __name__ == "__main__":
+    main()

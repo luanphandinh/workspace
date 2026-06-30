@@ -25,6 +25,10 @@ mkwsts() {
 	python3 "$ROOT/bin/mkwsts" "$@"
 }
 
+meta_sync() {
+	python3 "$ROOT/bin/meta-sync" "$@"
+}
+
 pass() {
 	printf 'ok %s\n' "$1"
 }
@@ -382,8 +386,109 @@ EOF
 	pass "mkwsts"
 }
 
+test_meta_sync() {
+	root="$TMP/meta-sync-root"
+	mkdir -p "$root/station-a"
+	root=$(cd "$root" && pwd -P)
+	init_repo "$root/station-a/repo-a"
+	git config --global user.name "Example User"
+	git config --global user.email "user@example.com"
+
+	cat > "$root/station-a/workstation.yml" <<EOF
+version: v1
+name: "station-a"
+repos:
+EOF
+	(
+		cd "$root/station-a"
+		mkws --name feature-a --branch feature/a --add repo-a >/dev/null
+	)
+
+	meta_seed="$TMP/meta-sync-seed"
+	meta_remote="$TMP/metadata.git"
+	init_repo "$meta_seed"
+	git clone -q --bare "$meta_seed" "$meta_remote"
+
+	meta_sync -f "$root" -r "$meta_remote" >/dev/null
+	registry="$HOME/.meta-sync/registry.yml"
+	clone="$HOME/.meta-sync/metadata"
+	assert_exists "$registry"
+	assert_exists "$clone/.git"
+	assert_contains "$registry" "root: \"$root\""
+	assert_contains "$registry" "repo: \"$meta_remote\""
+
+	meta_sync sync >/dev/null
+	assert_exists "$clone/workstations.yml"
+	assert_exists "$clone/station-a/workstation.yml"
+	assert_exists "$clone/station-a/local_workspaces/feature-a/workspace.yml"
+	assert_not_exists "$clone/station-a/local_workspaces/feature-a/repo-a/README.md"
+	assert_contains "$clone/station-a/workstation.yml" "name: \"repo-a\""
+
+	msg=$(git -C "$clone" log -1 --format=%s)
+	case "$msg" in
+		sync\ from\ *@*) ;;
+		*)
+			printf 'unexpected meta-sync commit message: %s\n' "$msg" >&2
+			exit 1
+			;;
+	esac
+
+	meta_sync push >/dev/null
+
+	other="$TMP/meta-sync-other"
+	git clone -q "$meta_remote" "$other"
+	git -C "$other" config user.name "Example User"
+	git -C "$other" config user.email "user@example.com"
+	cat >> "$other/workstations.yml" <<EOF
+  - name: "station-remote"
+    root: "station-remote"
+    manifest: "station-remote/workstation.yml"
+EOF
+	git -C "$other" add workstations.yml
+	git -C "$other" commit -q -m "remote metadata"
+	git -C "$other" push -q origin main
+
+	cat >> "$clone/workstations.yml" <<EOF
+  - name: "station-local"
+    root: "station-local"
+    manifest: "station-local/workstation.yml"
+EOF
+	git -C "$clone" add workstations.yml
+	git -C "$clone" commit -q -m "local metadata"
+
+	meta_sync pull >/dev/null
+	assert_contains "$clone/workstations.yml" "station-local/workstation.yml"
+	assert_contains "$clone/workstations.yml" "station-remote/workstation.yml"
+	assert_not_contains "$clone/workstations.yml" "<<<<<<<"
+
+	empty_root="$TMP/meta-sync-empty-root"
+	mkdir -p "$empty_root/station-b"
+	empty_root=$(cd "$empty_root" && pwd -P)
+	init_repo "$empty_root/station-b/repo-b"
+	cat > "$empty_root/station-b/workstation.yml" <<EOF
+version: v1
+name: "station-b"
+repos:
+EOF
+	empty_remote="$TMP/empty-metadata.git"
+	git init -q --bare "$empty_remote"
+
+	meta_sync -f "$empty_root" -r "$empty_remote" >/dev/null
+	meta_sync sync >/dev/null
+	git -C "$HOME/.meta-sync/empty-metadata" config push.default matching
+	meta_sync push >/dev/null
+	if ! git -C "$empty_remote" show-ref --verify --quiet refs/heads/main &&
+		! git -C "$empty_remote" show-ref --verify --quiet refs/heads/master; then
+		printf 'expected meta-sync push to create main or master in empty remote\n' >&2
+		exit 1
+	fi
+
+	pass "meta-sync"
+}
+
 test_mkws
 test_mkwst
 test_mkwsts
+test_meta_sync
 
 pass "all"

@@ -2,6 +2,7 @@
 """mkwsts - plural workstation registry manager."""
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -109,9 +110,30 @@ def write_workstations_manifest(yml: Path, name: str, workstations: list) -> boo
     return True
 
 
+def run_mkwst_index(workstation_root: Path) -> None:
+    sibling = Path(__file__).resolve().parent / "mkwst"
+    if sibling.is_file():
+        cmd = [sys.executable, str(sibling), "index"]
+    else:
+        cmd = ["mkwst", "index"]
+    proc = subprocess.run(cmd, cwd=str(workstation_root), capture_output=True, text=True)
+    if proc.returncode != 0:
+        out = (proc.stdout or "") + (proc.stderr or "")
+        die(f"failed to refresh workstation index at {workstation_root}\n{out.rstrip()}")
+
+
+def refresh_discovered_workstations(root: Path, workstations: list) -> None:
+    for workstation in workstations:
+        rel_root = workstation.get("root") or "."
+        workstation_root = root if rel_root == "." else (root / rel_root)
+        run_mkwst_index(workstation_root)
+
+
 def cmd_index() -> int:
     root = Path.cwd().resolve()
     yml = root / WORKSTATIONS_FILE
+    workstations = discover_workstations(root)
+    refresh_discovered_workstations(root, workstations)
     workstations = discover_workstations(root)
     changed = write_workstations_manifest(yml, root.name, workstations)
 
