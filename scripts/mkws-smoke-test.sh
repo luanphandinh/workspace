@@ -452,6 +452,8 @@ EOF
 	assert_eq "$root/station-b/local_workspaces/feature-b" "$project_path"
 	assert_contains "$FZF_INPUT" "$root/station-a/local_workspaces/feature-a"
 	assert_contains "$FZF_INPUT" "$root/station-b/local_workspaces/feature-b"
+	project_path=$(FZF_SELECT="feature-b" meta_hub p)
+	assert_eq "$root/station-b/local_workspaces/feature-b" "$project_path"
 
 	mkdir -p "$root/station-c"
 	init_repo "$root/station-c/repo-c"
@@ -475,6 +477,8 @@ EOF
 	assert_eq "$root/station-b/local_workspaces/feature-b/repo-b" "$repo_path"
 	assert_contains "$FZF_INPUT" "$root/station-a/repo-a"
 	assert_contains "$FZF_INPUT" "$root/station-b/local_workspaces/feature-b/repo-b"
+	repo_path=$(FZF_SELECT="$root/station-b/local_workspaces/feature-b/repo-b" meta_hub r)
+	assert_eq "$root/station-b/local_workspaces/feature-b/repo-b" "$repo_path"
 
 	(
 		cd "$TMP"

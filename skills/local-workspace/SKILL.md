@@ -33,7 +33,9 @@ meta-hub sync [pick]
 meta-hub sync_tech_doc [pick]
 meta-hub push [pick]
 meta-hub project
+meta-hub p
 meta-hub repo
+meta-hub r
 ```
 - `--name` — workspace folder name, or a path to an existing workspace directory that contains `workspace.yml`. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). Plain names create/use `<root>/local_workspaces/<name>`; path values target that workspace directly.
 - `--branch` — default branch for repos that do not specify their own branch. **Required only when an added repo has no per-repo branch** (`--add repo-a`). **Optional** when every added repo uses `repo@branch`, when creating an empty workspace (no `--add`), or when extending an empty workspace with no repos. If the workspace already has a `branch_name` set and `--add` is present, a different `--branch` applies only to the newly added repo(s) and does not change the workspace default branch. If the workspace already has a `branch_name` set and `--add` is absent, a different `--branch` is rejected. If the workspace was created empty (`branch_name:` in yml is empty) and you later pass `--branch`, the value is persisted into the yml.
@@ -47,8 +49,8 @@ meta-hub repo
 - `meta-hub sync [pick]` — from any folder, pulls each metadata repository first, resolves supported metadata conflicts by unioning YAML entries and line-based extras, scans each registered source root for immediate `workstation.yml` files, refreshes each workstation with `mkwst index`, writes the synced workstation list to `<metadata-repo>/registry.yml`, merges source metadata into the pulled metadata repository without deleting remote-only metadata, and commits changed metadata with `sync from <machineusername>@<machinename>`. It syncs workstation/workspace manifests plus `~/.skills-hub/execute_plugins` and `~/.cmds-hub/cmd_history` when present. With `pick`, choose one registered mapping through `fzf`; without it, sync all.
 - `meta-hub sync_tech_doc [pick]` — from any folder, scans each registered source root for immediate `workstation.yml` files, refreshes each workstation with `mkwst index`, then mirrors workspace tech docs into that workstation's `tech_doc/<workspace-name>/tech_doc` symlink index. With `pick`, choose one registered mapping through `fzf`; without it, sync all.
 - `meta-hub push [pick]` — pushes registered metadata repositories explicitly to `main` or `master`. With `pick`, choose one registered mapping through `fzf`; without it, push all.
-- `meta-hub project` — from any folder, lists every registered workstation workspace folder under `local_workspaces/` in `fzf`, then changes the current shell to the selected workspace folder. This shell jump works through `~/bin/shell/workspace.sh`; direct executable use prints the selected path.
-- `meta-hub repo` — from any folder, lists registered workstation source repos plus git repos directly under registered `local_workspaces/<workspace>/` folders in `fzf`, then changes the current shell to the selected repo. This shell jump works through `~/bin/shell/workspace.sh`; direct executable use prints the selected path.
+- `meta-hub project` / `meta-hub p` — from any folder, lists every registered workstation workspace folder under `local_workspaces/` in `fzf`, then changes the current shell to the selected workspace folder. This shell jump works through `~/bin/shell/workspace.sh`; direct executable use prints the selected path.
+- `meta-hub repo` / `meta-hub r` — from any folder, lists registered workstation source repos plus git repos directly under registered `local_workspaces/<workspace>/` folders in `fzf`, then changes the current shell to the selected repo. This shell jump works through `~/bin/shell/workspace.sh`; direct executable use prints the selected path.
 - `open` — subcommand. Opens a recorded workspace link in the default browser. With no query, lists all workspace links. Query can match the link name or URL exactly, or a unique substring. Run from inside a workspace dir/worktree, or pass `--name <workspace>`. Examples: `mkws open`, `mkws open design-doc`, `mkws open design-doc --name myws`.
 - `pull` — subcommand. `git pull --ff-only` on the currently checked-out branch of every matching repo. Accepts **zero or more folder args** (absolute, relative, or a bare name under `$PWD`). Each arg is either a git repo (pulled directly) or a directory whose immediate git-repo subfolders are pulled. Results are deduped. Detached HEADs skipped. No args → iterate `$PWD`'s subfolders and immediate git repos under `$PWD/_external/` when present. External repos are pulled in parallel and reported separately, but remain read-only context for workspace creation/coding. Rejects `--add`, `--branch`, `--name`.
   Examples: `mkws pull`, `mkws pull repo-a`, `mkws pull repo-a repo-b`, `mkws pull _external`, `mkws pull ./local_workspaces/myws`, `mkws pull /abs/repo-a ./repo-b`.
@@ -173,8 +175,8 @@ If a workspace `tech_doc/` folder is removed, the matching generated symlink is 
 ## Jump to a workspace or repo
 User intent: "jump to a project", "open a workspace folder", "jump to a repo from anywhere".
 ```
-meta-hub project  # pick a local_workspaces/<workspace> folder with fzf and cd there
-meta-hub repo     # pick a source/workspace git repo with fzf and cd there
+meta-hub project  # or: meta-hub p
+meta-hub repo     # or: meta-hub r
 ```
 Both commands can run from any folder. They read `~/.meta-hub/info.yml` and the synced `registry.yml` in each metadata clone, then build `fzf` choices from every indexed workstation. They do not run workstation discovery on each jump, so they stay fast; run `meta-hub sync` or `meta-hub sync_tech_doc` when the workstation list needs refreshing. `meta-hub project` includes workspace folders under `local_workspaces/`. `meta-hub repo` includes workstation source repos and git repos directly under each workspace folder, including workspace worktrees. The interactive `cd` requires the shell setup installed by `make workspace-bin`; running the executable directly prints the selected absolute path.
 

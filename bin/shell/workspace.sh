@@ -41,7 +41,7 @@ if [ -n "${ZSH_VERSION:-}" ] || [ "$_meta_hub_is_bash" = 1 ]; then
   eval '
 meta-hub() {
   case "${1:-}" in
-    project|repo)
+    project|p|repo|r)
       if [ "$#" -ne 1 ]; then
         command meta-hub "$@"
         return $?

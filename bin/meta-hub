@@ -1120,7 +1120,9 @@ Usage:
   meta-hub sync_tech_doc [pick]
   meta-hub push [pick]
   meta-hub project
+  meta-hub p
   meta-hub repo
+  meta-hub r
 
 Options:
   -f <folder>          source folder containing workstation metadata; defaults to .
@@ -1143,11 +1145,11 @@ def main() -> None:
             die(f"unexpected args for {mode}: {' '.join(argv)}\n\n{USAGE}")
         sys.exit(run_entries(mode, pick))
 
-    if argv[0] in ("project", "repo"):
+    if argv[0] in ("project", "p", "repo", "r"):
         mode = argv.pop(0)
         if argv:
             die(f"unexpected args for {mode}: {' '.join(argv)}\n\n{USAGE}")
-        if mode == "project":
+        if mode in ("project", "p"):
             sys.exit(cmd_project())
         sys.exit(cmd_repo())
 
