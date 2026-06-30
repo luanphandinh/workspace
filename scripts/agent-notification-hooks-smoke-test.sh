@@ -81,6 +81,16 @@ if [ "$1" = "display-message" ] && [ "${2:-}" = "-p" ]; then
 				*) printf '%s\n' '' ;;
 			esac
 			;;
+		%cwd:*)
+			case "$format" in
+				'#{session_name}:#{window_index}.#{pane_index}') printf '%s\n' 'project:4.2' ;;
+				'#{session_name}:#{window_index}') printf '%s\n' 'project:4' ;;
+				'#{session_name}') printf '%s\n' 'project' ;;
+				'#{pane_id}') printf '%s\n' '%cwd' ;;
+				'#{pane_tty}') printf '%s\n' '' ;;
+				*) printf '%s\n' '' ;;
+			esac
+			;;
 		*:*)
 			case "$format" in
 				'#{session_name}:#{window_index}.#{pane_index}') printf '%s\n' 'workspace:3.2' ;;
@@ -92,6 +102,18 @@ if [ "$1" = "display-message" ] && [ "${2:-}" = "-p" ]; then
 			esac
 			;;
 	esac
+	exit 0
+fi
+
+if [ "$1" = "list-panes" ]; then
+	printf '%%current\t/tmp/other\t1\t1\t1\n'
+	printf '%%cwd\t%s\t1\t1\t1\n' "$TMUX_FAKE_CWD"
+	exit 0
+fi
+
+if [ "$1" = "list-clients" ]; then
+	printf '100\tclient-old\n'
+	printf '200\tclient-new\n'
 	exit 0
 fi
 
@@ -114,6 +136,35 @@ if grep -q -- "--jump-tmux '%stale'" "$TMP/terminal-notifier.log"; then
 	printf 'expected stale TMUX_PANE to be ignored\n' >&2
 	exit 1
 fi
+
+mkdir -p "$TMP/project"
+: > "$TMP/terminal-notifier.log"
+: > "$TMP/tmux.log"
+project_cwd="$(CDPATH= cd "$TMP/project" && pwd -P)"
+cd "$TMP/project"
+TERMINAL_NOTIFIER_LOG="$TMP/terminal-notifier.log" \
+	TMUX_FAKE_LOG="$TMP/tmux.log" \
+	TMUX_FAKE_CWD="$project_cwd" \
+	PATH="$TMP/fakebin:$PATH" \
+	HOME="$TMP/home" \
+	TMUX="/tmp/tmux-test/default,1,0" \
+	TMUX_PANE="%current" \
+	sh "$ROOT/bin/codex-turn-ended-notify" '{"type":"agent-turn-complete"}'
+cd "$ROOT"
+grep -q -- "--jump-tmux '%cwd'" "$TMP/terminal-notifier.log"
+grep -q -- '-subtitle tmux project:4.2' "$TMP/terminal-notifier.log"
+if grep -q -- "--jump-tmux '%current'" "$TMP/terminal-notifier.log"; then
+	printf 'expected cwd-matched pane to override inherited TMUX_PANE\n' >&2
+	exit 1
+fi
+
+: > "$TMP/tmux.log"
+TMUX_FAKE_LOG="$TMP/tmux.log" \
+	PATH="$TMP/fakebin:$PATH" \
+	HOME="$TMP/home" \
+	AGENT_NOTIFY_ACTIVATE_APP="" \
+	sh "$ROOT/bin/codex-turn-ended-notify" --jump-tmux "%current"
+grep -q -- 'switch-client -c client-new -t %current' "$TMP/tmux.log"
 
 cat >"$TMP/home/.codex/config.toml" <<TOML
 model = "example-model"

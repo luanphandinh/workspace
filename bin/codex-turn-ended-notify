@@ -25,6 +25,28 @@ tmux_format() {
 	fi
 }
 
+pane_for_cwd() {
+	tmux_cmd="$1"
+	cwd="$2"
+	cwd_logical="${3:-$cwd}"
+	[ -n "$cwd" ] || return 1
+
+	tab="$(printf '\t')"
+	"$tmux_cmd" list-panes -a -F '#{pane_id}	#{pane_current_path}	#{pane_active}	#{window_active}	#{session_attached}' 2>/dev/null |
+		awk -F "$tab" -v cwd="$cwd" -v cwd_logical="$cwd_logical" '
+			$1 ~ /^%/ && ($2 == cwd || $2 == cwd_logical) {
+				score = ($3 == "1") + ($4 == "1") + ($5 != "0")
+				if (score >= best) {
+					best = score
+					pane = $1
+				}
+			}
+			END {
+				if (pane != "") print pane
+			}
+		'
+}
+
 usable_tmux_pane() {
 	tmux_cmd="$1"
 	pane="$2"
@@ -45,6 +67,16 @@ usable_tmux_pane() {
 
 resolve_tmux_pane() {
 	tmux_cmd="$1"
+	cwd="$(pwd -P 2>/dev/null || pwd)"
+	cwd_pane="$(pane_for_cwd "$tmux_cmd" "$cwd" "${PWD:-$cwd}" || :)"
+	if [ -n "$cwd_pane" ]; then
+		resolved_pane="$(usable_tmux_pane "$tmux_cmd" "$cwd_pane" || :)"
+		if [ -n "$resolved_pane" ]; then
+			printf '%s\n' "$resolved_pane"
+			return 0
+		fi
+	fi
+
 	if [ -n "${TMUX_PANE:-}" ]; then
 		resolved_pane="$(usable_tmux_pane "$tmux_cmd" "$TMUX_PANE" || :)"
 		if [ -n "$resolved_pane" ]; then
@@ -68,7 +100,6 @@ jump_to_tmux_pane() {
 	target_pane="$(usable_tmux_pane "$tmux_cmd" "$pane" || :)"
 	[ -n "$target_pane" ] || exit 0
 	target_window="$(tmux_format "$tmux_cmd" "$target_pane" '#{session_name}:#{window_index}')"
-	target_session="$(tmux_format "$tmux_cmd" "$target_pane" '#{session_name}')"
 	case "$target_window" in
 		"" | ":" | ":." | ".") exit 0 ;;
 	esac
@@ -77,16 +108,11 @@ jump_to_tmux_pane() {
 	"$tmux_cmd" select-pane -t "$target_pane" >/dev/null 2>&1 || :
 	"$tmux_cmd" display-message -t "$target_pane" "$notify_title notification focused #{session_name}:#{window_index}.#{pane_index}" >/dev/null 2>&1 || :
 
-	if [ -n "$target_session" ]; then
-		tab="$(printf '\t')"
-		client_count="$("$tmux_cmd" list-clients 2>/dev/null | wc -l | tr -d ' ')"
-		"$tmux_cmd" list-clients -F '#{client_tty}	#{session_name}' 2>/dev/null |
-			while IFS="$tab" read -r client_tty client_session; do
-				[ -n "$client_tty" ] || continue
-				if [ "$client_session" = "$target_session" ] || [ "$client_count" = "1" ]; then
-					"$tmux_cmd" switch-client -c "$client_tty" -t "$target_pane" >/dev/null 2>&1 || :
-				fi
-			done
+	tab="$(printf '\t')"
+	target_client="$("$tmux_cmd" list-clients -F '#{client_activity}	#{client_name}' 2>/dev/null |
+		awk -F "$tab" 'NF >= 2 && $1 >= max { max = $1; client = $2 } END { print client }')"
+	if [ -n "$target_client" ]; then
+		"$tmux_cmd" switch-client -c "$target_client" -t "$target_pane" >/dev/null 2>&1 || :
 	fi
 
 	if [ -n "$activate_app" ] && command -v open >/dev/null 2>&1; then
