@@ -93,12 +93,12 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" resume
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" resume -C "$tmp/resume-other" explicit
 test "$(grep -Fxc 'remote-control start --json' "$codex_log")" = 1
 grep -Fxq 'app-server daemon version' "$codex_log"
-grep -Fxq -- 'resume --remote unix:// -C '"$repo_root"' -c notify=["'"$tmp/home"'/bin/codex-turn-ended-notify"]' "$codex_log"
-grep -Fxq -- '--remote unix:// -C '"$repo_root"' -c notify=["'"$tmp/home"'/bin/codex-turn-ended-notify"] prompt' "$codex_log"
-grep -Fxq -- '--remote unix:// -C '"$repo_root"' -c notify=["'"$tmp/home"'/bin/codex-turn-ended-notify"] next' "$codex_log"
-grep -Fxq -- '--remote unix:// -c notify=["'"$tmp/home"'/bin/codex-turn-ended-notify"] -C '"$tmp/other"' explicit' "$codex_log"
-grep -Fxq -- 'resume --remote unix:// -C '"$repo_root"' -c notify=["'"$tmp/home"'/bin/codex-turn-ended-notify"] --last' "$codex_log"
-grep -Fxq -- 'resume --remote unix:// -c notify=["'"$tmp/home"'/bin/codex-turn-ended-notify"] -C '"$tmp/resume-other"' explicit' "$codex_log"
+grep -Fxq -- 'resume --remote unix:// -C '"$repo_root" "$codex_log"
+grep -Fxq -- '--remote unix:// -C '"$repo_root"' prompt' "$codex_log"
+grep -Fxq -- '--remote unix:// -C '"$repo_root"' next' "$codex_log"
+grep -Fxq -- '--remote unix:// -C '"$tmp/other"' explicit' "$codex_log"
+grep -Fxq -- 'resume --remote unix:// -C '"$repo_root"' --last' "$codex_log"
+grep -Fxq -- 'resume --remote unix:// -C '"$tmp/resume-other"' explicit' "$codex_log"
 
 stale_home="$tmp/stale-codex-home"
 mkdir -p "$stale_home/app-server-control" "$stale_home/app-server-daemon"
@@ -112,7 +112,7 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" CODEX_HOME="$stale_home" CODEX_FA
 	sh "$repo_root/bin/mcodex" stale-prompt
 grep -Fxq 'app-server daemon version' "$codex_log"
 grep -Fxq 'remote-control start --json' "$codex_log"
-grep -Fxq -- '--remote unix:// -C '"$repo_root"' -c notify=["'"$tmp/home"'/bin/codex-turn-ended-notify"] stale-prompt' "$codex_log"
+grep -Fxq -- '--remote unix:// -C '"$repo_root"' stale-prompt' "$codex_log"
 test ! -e "$stale_home/app-server-control/app-server-control.sock"
 test ! -e "$stale_home/app-server-daemon/app-server.pid"
 test ! -e "$stale_home/app-server-daemon/app-server-updater.pid"

@@ -81,6 +81,16 @@ if [ "$1" = "display-message" ] && [ "${2:-}" = "-p" ]; then
 				*) printf '%s\n' '' ;;
 			esac
 			;;
+		%cwd:*)
+			case "$format" in
+				'#{session_name}:#{window_index}.#{pane_index}') printf '%s\n' 'project:4.2' ;;
+				'#{session_name}:#{window_index}') printf '%s\n' 'project:4' ;;
+				'#{session_name}') printf '%s\n' 'project' ;;
+				'#{pane_id}') printf '%s\n' '%cwd' ;;
+				'#{pane_tty}') printf '%s\n' '' ;;
+				*) printf '%s\n' '' ;;
+			esac
+			;;
 		*:*)
 			case "$format" in
 				'#{session_name}:#{window_index}.#{pane_index}') printf '%s\n' 'workspace:3.2' ;;
@@ -92,6 +102,18 @@ if [ "$1" = "display-message" ] && [ "${2:-}" = "-p" ]; then
 			esac
 			;;
 	esac
+	exit 0
+fi
+
+if [ "$1" = "list-panes" ]; then
+	printf '%%current\t/tmp/other\t1\t1\t1\n'
+	printf '%%cwd\t%s\t1\t1\t1\n' "$TMUX_FAKE_CWD"
+	exit 0
+fi
+
+if [ "$1" = "list-clients" ]; then
+	printf '100\tclient-old\n'
+	printf '200\tclient-new\n'
 	exit 0
 fi
 
@@ -109,10 +131,48 @@ TERMINAL_NOTIFIER_LOG="$TMP/terminal-notifier.log" \
 	sh "$ROOT/bin/codex-turn-ended-notify" '{"type":"agent-turn-complete"}'
 grep -q -- "--jump-tmux '%current'" "$TMP/terminal-notifier.log"
 grep -q -- '-subtitle tmux workspace:3.2' "$TMP/terminal-notifier.log"
+grep -q -- '-group agent-notify-Codex-_current' "$TMP/terminal-notifier.log"
 if grep -q -- "--jump-tmux '%stale'" "$TMP/terminal-notifier.log"; then
 	printf 'expected stale TMUX_PANE to be ignored\n' >&2
 	exit 1
 fi
+
+mkdir -p "$TMP/project"
+: > "$TMP/terminal-notifier.log"
+: > "$TMP/tmux.log"
+project_cwd="$(CDPATH= cd "$TMP/project" && pwd -P)"
+cd "$TMP/project"
+TERMINAL_NOTIFIER_LOG="$TMP/terminal-notifier.log" \
+	TMUX_FAKE_LOG="$TMP/tmux.log" \
+	TMUX_FAKE_CWD="$project_cwd" \
+	PATH="$TMP/fakebin:$PATH" \
+	HOME="$TMP/home" \
+	TMUX="/tmp/tmux-test/default,1,0" \
+	TMUX_PANE="%current" \
+	sh "$ROOT/bin/codex-turn-ended-notify" '{"type":"agent-turn-complete"}'
+cd "$ROOT"
+grep -q -- "--jump-tmux '%cwd'" "$TMP/terminal-notifier.log"
+grep -q -- '-subtitle tmux project:4.2' "$TMP/terminal-notifier.log"
+if grep -q -- "--jump-tmux '%current'" "$TMP/terminal-notifier.log"; then
+	printf 'expected cwd-matched pane to override inherited TMUX_PANE\n' >&2
+	exit 1
+fi
+
+: > "$TMP/tmux.log"
+TMUX_FAKE_LOG="$TMP/tmux.log" \
+	PATH="$TMP/fakebin:$PATH" \
+	HOME="$TMP/home" \
+	AGENT_NOTIFY_ACTIVATE_APP="" \
+	sh "$ROOT/bin/codex-turn-ended-notify" --jump-tmux "%current"
+grep -q -- 'switch-client -c client-new -t %current' "$TMP/tmux.log"
+
+cat >"$TMP/home/.codex/config.toml" <<TOML
+model = "example-model"
+notify = ["$TMP/home/bin/codex-turn-ended-notify", "--no-implicit-tmux-pane"]
+
+[features]
+multi_agent = true
+TOML
 
 HOME="$TMP/home" python3 "$ROOT/bin/sync-agent-notification-hooks"
 HOME="$TMP/home" python3 "$ROOT/bin/sync-agent-notification-hooks"
@@ -139,4 +199,19 @@ cursor = json.loads((home / ".cursor" / "hooks.json").read_text())
 cursor_stop = [hook["command"] for hook in cursor["hooks"]["stop"]]
 assert len([cmd for cmd in cursor_stop if notify in cmd]) == 1, cursor_stop
 assert any("AGENT_NOTIFY_TITLE=Cursor" in cmd for cmd in cursor_stop), cursor_stop
+
+codex = json.loads((home / ".codex" / "hooks.json").read_text())
+codex_stop = [
+    hook["command"]
+    for group in codex["hooks"]["Stop"]
+    for hook in group["hooks"]
+    if hook.get("type") == "command"
+]
+assert len([cmd for cmd in codex_stop if notify in cmd]) == 1, codex_stop
+assert any("AGENT_NOTIFY_TITLE=Codex" in cmd for cmd in codex_stop), codex_stop
+
+config = (home / ".codex" / "config.toml").read_text()
+assert "notify =" not in config, config
+assert 'model = "example-model"' in config, config
+assert "multi_agent = true" in config, config
 PY

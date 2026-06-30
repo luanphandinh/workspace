@@ -149,7 +149,6 @@ if [ ! -f "$stamp_file" ]; then
 	: > "$stamp_file"
 fi
 
-notify_arg="notify=[\"$HOME/bin/codex-turn-ended-notify\"]"
 has_cd_arg=0
 for arg in "$@"; do
 	case "$arg" in
@@ -165,18 +164,18 @@ case "${1:-}" in
 		subcmd="$1"
 		shift
 		if [ "$has_cd_arg" -eq 1 ]; then
-			exec codex "$subcmd" --remote unix:// -c "$notify_arg" "$@"
+			exec codex "$subcmd" --remote unix:// "$@"
 		fi
-		exec codex "$subcmd" --remote unix:// -C "$PWD" -c "$notify_arg" "$@"
+		exec codex "$subcmd" --remote unix:// -C "$PWD" "$@"
 		;;
 esac
 
 if [ "$#" -eq 0 ]; then
-	exec codex resume --remote unix:// -C "$PWD" -c "$notify_arg"
+	exec codex resume --remote unix:// -C "$PWD"
 fi
 
 if [ "$has_cd_arg" -eq 1 ]; then
-	exec codex --remote unix:// -c "$notify_arg" "$@"
+	exec codex --remote unix:// "$@"
 fi
 
-exec codex --remote unix:// -C "$PWD" -c "$notify_arg" "$@"
+exec codex --remote unix:// -C "$PWD" "$@"

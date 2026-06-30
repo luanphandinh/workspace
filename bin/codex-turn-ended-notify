@@ -2,7 +2,8 @@
 set -eu
 
 notify_title="${AGENT_NOTIFY_TITLE:-${CODEX_NOTIFY_TITLE:-Codex}}"
-notify_group="${AGENT_NOTIFY_GROUP:-agent-notify-$notify_title}"
+notify_group_override="${AGENT_NOTIFY_GROUP:-${CODEX_NOTIFY_GROUP:-}}"
+notify_group="${notify_group_override:-agent-notify-$notify_title}"
 activate_app="${AGENT_NOTIFY_ACTIVATE_APP:-${CODEX_NOTIFY_ACTIVATE_APP:-}}"
 
 get_tmux_cmd() {
@@ -22,6 +23,28 @@ tmux_format() {
 	else
 		"$tmux_cmd" display-message -p "$format" 2>/dev/null || :
 	fi
+}
+
+pane_for_cwd() {
+	tmux_cmd="$1"
+	cwd="$2"
+	cwd_logical="${3:-$cwd}"
+	[ -n "$cwd" ] || return 1
+
+	tab="$(printf '\t')"
+	"$tmux_cmd" list-panes -a -F '#{pane_id}	#{pane_current_path}	#{pane_active}	#{window_active}	#{session_attached}' 2>/dev/null |
+		awk -F "$tab" -v cwd="$cwd" -v cwd_logical="$cwd_logical" '
+			$1 ~ /^%/ && ($2 == cwd || $2 == cwd_logical) {
+				score = ($3 == "1") + ($4 == "1") + ($5 != "0")
+				if (score >= best) {
+					best = score
+					pane = $1
+				}
+			}
+			END {
+				if (pane != "") print pane
+			}
+		'
 }
 
 usable_tmux_pane() {
@@ -44,6 +67,16 @@ usable_tmux_pane() {
 
 resolve_tmux_pane() {
 	tmux_cmd="$1"
+	cwd="$(pwd -P 2>/dev/null || pwd)"
+	cwd_pane="$(pane_for_cwd "$tmux_cmd" "$cwd" "${PWD:-$cwd}" || :)"
+	if [ -n "$cwd_pane" ]; then
+		resolved_pane="$(usable_tmux_pane "$tmux_cmd" "$cwd_pane" || :)"
+		if [ -n "$resolved_pane" ]; then
+			printf '%s\n' "$resolved_pane"
+			return 0
+		fi
+	fi
+
 	if [ -n "${TMUX_PANE:-}" ]; then
 		resolved_pane="$(usable_tmux_pane "$tmux_cmd" "$TMUX_PANE" || :)"
 		if [ -n "$resolved_pane" ]; then
@@ -67,7 +100,6 @@ jump_to_tmux_pane() {
 	target_pane="$(usable_tmux_pane "$tmux_cmd" "$pane" || :)"
 	[ -n "$target_pane" ] || exit 0
 	target_window="$(tmux_format "$tmux_cmd" "$target_pane" '#{session_name}:#{window_index}')"
-	target_session="$(tmux_format "$tmux_cmd" "$target_pane" '#{session_name}')"
 	case "$target_window" in
 		"" | ":" | ":." | ".") exit 0 ;;
 	esac
@@ -76,16 +108,11 @@ jump_to_tmux_pane() {
 	"$tmux_cmd" select-pane -t "$target_pane" >/dev/null 2>&1 || :
 	"$tmux_cmd" display-message -t "$target_pane" "$notify_title notification focused #{session_name}:#{window_index}.#{pane_index}" >/dev/null 2>&1 || :
 
-	if [ -n "$target_session" ]; then
-		tab="$(printf '\t')"
-		client_count="$("$tmux_cmd" list-clients 2>/dev/null | wc -l | tr -d ' ')"
-		"$tmux_cmd" list-clients -F '#{client_tty}	#{session_name}' 2>/dev/null |
-			while IFS="$tab" read -r client_tty client_session; do
-				[ -n "$client_tty" ] || continue
-				if [ "$client_session" = "$target_session" ] || [ "$client_count" = "1" ]; then
-					"$tmux_cmd" switch-client -c "$client_tty" -t "$target_pane" >/dev/null 2>&1 || :
-				fi
-			done
+	tab="$(printf '\t')"
+	target_client="$("$tmux_cmd" list-clients -F '#{client_activity}	#{client_name}' 2>/dev/null |
+		awk -F "$tab" 'NF >= 2 && $1 >= max { max = $1; client = $2 } END { print client }')"
+	if [ -n "$target_client" ]; then
+		"$tmux_cmd" switch-client -c "$target_client" -t "$target_pane" >/dev/null 2>&1 || :
 	fi
 
 	if [ -n "$activate_app" ] && command -v open >/dev/null 2>&1; then
@@ -101,6 +128,16 @@ jump_to_tmux_pane() {
 
 shell_quote() {
 	printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
+}
+
+notification_group() {
+	suffix="${1:-}"
+	if [ -n "$notify_group_override" ] || [ -z "$suffix" ]; then
+		printf '%s\n' "$notify_group"
+		return 0
+	fi
+	safe_suffix="$(printf '%s' "$suffix" | sed 's/[^[:alnum:]_.-]/_/g')"
+	printf '%s-%s\n' "$notify_group" "$safe_suffix"
 }
 
 if [ "${1:-}" = "--jump-tmux" ]; then
@@ -129,6 +166,7 @@ if command -v terminal-notifier >/dev/null 2>&1; then
 	if [ -n "$tmux_cmd" ]; then
 		notify_pane="$(resolve_tmux_pane "$tmux_cmd")"
 	fi
+	notify_group_current="$(notification_group "$notify_pane")"
 
 	if [ -n "$notify_pane" ]; then
 		tmux_target="$(tmux_format "$tmux_cmd" "$notify_pane" '#{session_name}:#{window_index}.#{pane_index}')"
@@ -143,12 +181,12 @@ if command -v terminal-notifier >/dev/null 2>&1; then
 			click_cmd="TMUX=$(shell_quote "$TMUX") $click_cmd"
 		fi
 		if [ -n "$tmux_target" ]; then
-			terminal-notifier -title "$notify_title" -message "$message" -subtitle "tmux $tmux_target" -group "$notify_group" -ignoreDnD -execute "$click_cmd" >/dev/null 2>&1 || :
+			terminal-notifier -title "$notify_title" -message "$message" -subtitle "tmux $tmux_target" -group "$notify_group_current" -ignoreDnD -execute "$click_cmd" >/dev/null 2>&1 || :
 		else
-			terminal-notifier -title "$notify_title" -message "$message" -group "$notify_group" -ignoreDnD -execute "$click_cmd" >/dev/null 2>&1 || :
+			terminal-notifier -title "$notify_title" -message "$message" -group "$notify_group_current" -ignoreDnD -execute "$click_cmd" >/dev/null 2>&1 || :
 		fi
 	else
-		terminal-notifier -title "$notify_title" -message "$message" -group "$notify_group" -ignoreDnD >/dev/null 2>&1 || :
+		terminal-notifier -title "$notify_title" -message "$message" -group "$notify_group_current" -ignoreDnD >/dev/null 2>&1 || :
 	fi
 elif command -v osascript >/dev/null 2>&1; then
 	osascript \
