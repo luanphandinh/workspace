@@ -5,6 +5,7 @@ repo_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 tmp=${TMPDIR:-/tmp}/workspace-shell-smoke-test.$$
 fakebin="$tmp/bin"
 log="$tmp/zoxide.log"
+fzf_log="$tmp/fzf.log"
 codex_log="$tmp/codex.log"
 daemon_file="$tmp/daemon-running"
 mkdir -p "$fakebin"
@@ -18,6 +19,23 @@ if [ "\${1:-}" = "init" ]; then
 fi
 SH
 chmod +x "$fakebin/zoxide"
+
+cat > "$fakebin/fzf" <<SH
+#!/bin/sh
+printf '%s\n' "\$*" >> "$fzf_log"
+case "\${1:-}" in
+  --zsh)
+    printf 'export FZF_INIT_SHELL=zsh\n'
+    ;;
+  --bash)
+    printf 'export FZF_INIT_SHELL=bash\n'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+SH
+chmod +x "$fakebin/fzf"
 
 cat > "$fakebin/codex" <<SH
 #!/bin/sh
@@ -122,9 +140,11 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/worksp
 zsh_bin=$(command -v zsh || true)
 if [ -n "$zsh_bin" ]; then
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = zsh"
+  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/shell/workspace.sh'; test \"\$FZF_INIT_SHELL\" = zsh"
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/shell/workspace.sh'; test \"\$PROMPT\" = '%1~ %# '"
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/shell/workspace.sh'; test \"\$HISTSIZE\" = 2000; test \"\$SAVEHIST\" = 1000; test \"\$options[histexpiredupsfirst]\" = on; test \"\$options[histfindnodups]\" = on; test \"\$options[histignorealldups]\" = on; test \"\$options[histsavenodups]\" = on"
   grep -qx 'init zsh --cmd z' "$log"
+  grep -qx -- '--zsh' "$fzf_log"
 fi
 
 : > "$log"
@@ -133,6 +153,19 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/worksp
 
 : > "$log"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = bash"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/shell/workspace.sh'; test \"\$FZF_INIT_SHELL\" = bash"
 grep -qx 'init bash --cmd z' "$log"
+grep -qx -- '--bash' "$fzf_log"
+
+mkdir -p "$tmp/sync-home"
+printf '[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh\nkeep-zsh\n' > "$tmp/sync-home/.zshrc"
+printf '[ -f ~/.fzf.bash ] && source ~/.fzf.bash\nkeep-bash\n' > "$tmp/sync-home/.bashrc"
+printf 'keep-profile\n' > "$tmp/sync-home/.profile"
+HOME="$tmp/sync-home" sh "$repo_root/bin/workspace-shell-sync" "$repo_root/shell/workspace.sh" >/dev/null
+! grep -Fq 'source ~/.fzf.zsh' "$tmp/sync-home/.zshrc"
+! grep -Fq 'source ~/.fzf.bash' "$tmp/sync-home/.bashrc"
+grep -Fxq 'keep-zsh' "$tmp/sync-home/.zshrc"
+grep -Fxq 'keep-bash' "$tmp/sync-home/.bashrc"
+grep -Fxq 'keep-profile' "$tmp/sync-home/.profile"
 
 echo "PASS workspace shell smoke test"

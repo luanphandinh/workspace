@@ -18,6 +18,10 @@ printf '%s\n' 'alias mcodex='"'"'codex -c notify=["$HOME/bin/codex-turn-ended-no
 printf '%s\n' 'unalias mcodex 2>/dev/null || true' >> "$remove_file"
 printf '%s\n' 'mcodex() { codex -c "notify=[\"$HOME/bin/codex-turn-ended-notify\"]" "$@"; }' >> "$remove_file"
 printf '%s\n' 'mcodex() { codex-remote -c "notify=[\"$HOME/bin/codex-turn-ended-notify\"]" "$@"; }' >> "$remove_file"
+printf '%s\n' '[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh' >> "$remove_file"
+printf '%s\n' '[ -f ~/.fzf.bash ] && source ~/.fzf.bash' >> "$remove_file"
+printf '%s\n' '[ -f "$HOME/.fzf.zsh" ] && source "$HOME/.fzf.zsh"' >> "$remove_file"
+printf '%s\n' '[ -f "$HOME/.fzf.bash" ] && source "$HOME/.fzf.bash"' >> "$remove_file"
 
 for profile in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
 	touch "$profile"

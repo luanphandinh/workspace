@@ -21,6 +21,13 @@ if [ -n "${ZSH_VERSION:-}" ]; then
   setopt HIST_SAVE_NO_DUPS
   PROMPT='%1~ %# '
 fi
+if command -v fzf >/dev/null 2>&1; then
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    eval "$(fzf --zsh)"
+  elif [ -n "${BASH_VERSION:-}" ]; then
+    eval "$(fzf --bash)"
+  fi
+fi
 if [ -n "${ZSH_VERSION:-}" ] && command -v zoxide >/dev/null 2>&1; then
   eval "$(zoxide init zsh --cmd z)"
 elif [ -n "${BASH_VERSION:-}" ] && [ -z "${POSIXLY_CORRECT:-}" ] && command -v zoxide >/dev/null 2>&1; then
