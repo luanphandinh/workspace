@@ -1,28 +1,50 @@
 #!/bin/sh
 set -eu
 
-workspace_file="${1:-./shell/workspace.sh}"
+workspace_file="${1:-$HOME/bin/shell/workspace.sh}"
 [ -f "$workspace_file" ] || {
 	printf 'workspace-shell-sync: missing %s\n' "$workspace_file" >&2
 	exit 1
 }
+source_line='[ -f "$HOME/bin/shell/workspace.sh" ] && . "$HOME/bin/shell/workspace.sh"'
 
 remove_file="$(mktemp -t workspace-shell-lines.XXXXXX)"
 trap 'rm -f "$remove_file"' EXIT
 
-while IFS= read -r line || [ -n "$line" ]; do
-	[ -n "$line" ] || continue
-	printf '%s\n' "$line"
-done < "$workspace_file" > "$remove_file"
+: > "$remove_file"
 printf '%s\n' 'alias mcodex='"'"'codex -c notify=["$HOME/bin/codex-turn-ended-notify"]'"'" >> "$remove_file"
 printf '%s\n' 'unalias mcodex 2>/dev/null || true' >> "$remove_file"
 printf '%s\n' 'mcodex() { codex -c "notify=[\"$HOME/bin/codex-turn-ended-notify\"]" "$@"; }' >> "$remove_file"
 printf '%s\n' 'mcodex() { codex-remote -c "notify=[\"$HOME/bin/codex-turn-ended-notify\"]" "$@"; }' >> "$remove_file"
+printf '%s\n' '[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh' >> "$remove_file"
+printf '%s\n' '[ -f ~/.fzf.bash ] && source ~/.fzf.bash' >> "$remove_file"
+printf '%s\n' '[ -f "$HOME/.fzf.zsh" ] && source "$HOME/.fzf.zsh"' >> "$remove_file"
+printf '%s\n' '[ -f "$HOME/.fzf.bash" ] && source "$HOME/.fzf.bash"' >> "$remove_file"
+printf '%s\n' 'export PATH=$PATH:/usr/local/go/bin' >> "$remove_file"
+printf '%s\n' 'export PATH="$PATH:/usr/local/go/bin"' >> "$remove_file"
+printf '%s\n' 'export PATH=$PATH:~/go/bin' >> "$remove_file"
+printf '%s\n' 'export PATH="$PATH:~/go/bin"' >> "$remove_file"
+printf '%s\n' 'export PATH="$PATH:$HOME/go/bin"' >> "$remove_file"
+printf '%s\n' 'export GOPATH=~/go' >> "$remove_file"
+printf '%s\n' 'export GOPATH=$HOME/go' >> "$remove_file"
+printf '%s\n' 'export GOPATH="$HOME/go"' >> "$remove_file"
+printf '%s\n' 'export PATH="$HOME/.local/bin:$PATH"' >> "$remove_file"
+printf '%s\n' 'export PATH=$HOME/.local/bin:$PATH' >> "$remove_file"
+printf '%s\n' 'export PATH="$HOME/bin:$PATH"' >> "$remove_file"
+printf '%s\n' 'export PATH=$HOME/bin:$PATH' >> "$remove_file"
+printf '%s\n' 'export PATH="/usr/local/bin:$PATH"' >> "$remove_file"
+printf '%s\n' 'export PATH=/usr/local/bin:$PATH' >> "$remove_file"
+printf '%s\n' 'export PATH="/opt/homebrew/bin:$PATH"' >> "$remove_file"
+printf '%s\n' 'export PATH="$HOME/bin:/opt/homebrew/bin:$PATH"' >> "$remove_file"
+printf 'export PATH=%s/.local/bin:$PATH\n' "$HOME" >> "$remove_file"
+printf 'export PATH="%s/.local/bin:$PATH"\n' "$HOME" >> "$remove_file"
+printf 'export PATH=%s/bin:$PATH\n' "$HOME" >> "$remove_file"
+printf 'export PATH="%s/bin:$PATH"\n' "$HOME" >> "$remove_file"
 
 for profile in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
 	touch "$profile"
 	tmp="$(mktemp -t workspace-shell-profile.XXXXXX)"
-	awk -v remove_file="$remove_file" '
+	awk -v remove_file="$remove_file" -v source_line="$source_line" '
 		BEGIN {
 			while ((getline line < remove_file) > 0) {
 				remove[line] = 1
@@ -43,23 +65,41 @@ for profile in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
 		($0 in remove) {
 			next
 		}
+		$0 == source_line {
+			if (!source_seen) {
+				print
+				source_seen = 1
+			}
+			next
+		}
 		{
 			print
 		}
+		END {
+			if (!source_seen) {
+				print source_line
+			}
+		}
 	' "$profile" > "$tmp"
-
-	cat "$tmp" > "$profile"
-	rm -f "$tmp"
 
 	if [ -s "$profile" ]; then
 		last_hex="$(tail -c 1 "$profile" | od -An -tx1 | tr -d ' \n')"
-		[ "$last_hex" = "0a" ] || printf '\n' >> "$profile"
+		if [ "$last_hex" != "0a" ]; then
+			with_newline="$(mktemp -t workspace-shell-profile.XXXXXX)"
+			cat "$profile" > "$with_newline"
+			printf '\n' >> "$with_newline"
+			cat "$with_newline" > "$profile"
+			rm -f "$with_newline"
+		fi
 	fi
 
-	printf '# >>> workspace-bin\n' >> "$profile"
-	while IFS= read -r line || [ -n "$line" ]; do
-		printf '%s\n' "$line"
-	done < "$workspace_file" >> "$profile"
-	printf '# <<< workspace-bin\n' >> "$profile"
+	if cmp -s "$tmp" "$profile"; then
+		rm -f "$tmp"
+		printf 'workspace-bin: unchanged %s\n' "$profile"
+		continue
+	fi
+
+	cat "$tmp" > "$profile"
+	rm -f "$tmp"
 	printf 'workspace-bin: updated %s\n' "$profile"
 done

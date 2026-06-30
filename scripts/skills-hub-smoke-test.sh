@@ -344,6 +344,6 @@ if [ "$where_path" != "$HUB" ]; then
 	exit 1
 fi
 
-sh -c ". '$ROOT/shell/workspace.sh'"
+sh -c ". '$ROOT/bin/shell/workspace.sh'"
 
 echo "PASS skills-hub smoke test"

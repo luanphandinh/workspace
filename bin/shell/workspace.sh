@@ -3,9 +3,9 @@ if [ -r /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
 elif [ -r "$HOME/.nix-profile/etc/profile.d/nix.sh" ]; then
   . "$HOME/.nix-profile/etc/profile.d/nix.sh"
 fi
-export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
-export PATH="$PATH:/usr/local/go/bin"
-export PATH="$PATH:$HOME/go/bin"
+export GOPATH="${GOPATH:-$HOME/go}"
+export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$PATH"
+export PATH="$PATH:/usr/local/go/bin:$GOPATH/bin"
 hash -r 2>/dev/null || true
 export COLORTERM=truecolor
 export FORCE_COLOR=1
@@ -20,6 +20,13 @@ if [ -n "${ZSH_VERSION:-}" ]; then
   setopt HIST_IGNORE_ALL_DUPS
   setopt HIST_SAVE_NO_DUPS
   PROMPT='%1~ %# '
+fi
+if command -v fzf >/dev/null 2>&1; then
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    eval "$(fzf --zsh)"
+  elif [ -n "${BASH_VERSION:-}" ]; then
+    eval "$(fzf --bash)"
+  fi
 fi
 if [ -n "${ZSH_VERSION:-}" ] && command -v zoxide >/dev/null 2>&1; then
   eval "$(zoxide init zsh --cmd z)"

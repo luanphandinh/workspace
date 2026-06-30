@@ -21,7 +21,6 @@ has_child_process() {
 	ps -axo ppid=,pid= 2>/dev/null | awk -v pid="$pid" '$1 == pid { found = 1 } END { exit found ? 0 : 1 }'
 }
 
-timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
 tab="$(printf '\t')"
 refreshed=0
 skipped=0
@@ -37,7 +36,7 @@ while IFS="$tab" read -r pane pid command dead in_mode pin_sidebar; do
 		continue
 	fi
 
-	refresh_cmd="source \"\$HOME/.zshrc\"; printf '\\n[workspace-bin] refreshed ~/.zshrc at %s\\n' '$timestamp'"
+	refresh_cmd=" setopt HIST_IGNORE_SPACE; source \"\$HOME/.zshrc\""
 	"$tmux_cmd" send-keys -t "$pane" "$refresh_cmd" Enter C-l >/dev/null 2>&1 || :
 	refreshed=$((refreshed + 1))
 done <<EOF
