@@ -11,8 +11,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+INFO_FILE = "info.yml"
 REGISTRY_FILE = "registry.yml"
-WORKSTATIONS_FILE = "workstations.yml"
+LEGACY_WORKSTATIONS_FILE = "workstations.yml"
 WORKSTATION_FILE = "workstation.yml"
 WORKSPACE_FILE = "workspace.yml"
 WS_CONTAINER = "local_workspaces"
@@ -90,7 +91,11 @@ def legacy_meta_home() -> Path:
     return Path.home() / ".meta-sync"
 
 
-def registry_path() -> Path:
+def info_path() -> Path:
+    return meta_home() / INFO_FILE
+
+
+def local_legacy_registry_path() -> Path:
     return meta_home() / REGISTRY_FILE
 
 
@@ -137,9 +142,30 @@ def parse_registry_file(yml: Path) -> list:
     return [e for e in entries if e.get("root") and e.get("repo") and e.get("clone")]
 
 
+def parse_info_file(yml: Path) -> list:
+    entries = []
+    current = None
+    for line in yml.read_text().splitlines():
+        if line.startswith("  - path:"):
+            current = {
+                "root": parse_yml_scalar(line.split(":", 1)[1]),
+                "clone": "",
+            }
+            entries.append(current)
+        elif current is not None and line.startswith("    clone:"):
+            current["clone"] = parse_yml_scalar(line.split(":", 1)[1])
+    out = []
+    for entry in entries:
+        clone = Path(entry.get("clone") or "").expanduser()
+        repo = git_origin(clone) if clone else ""
+        if entry.get("root") and entry.get("clone") and repo:
+            out.append({"root": entry["root"], "repo": repo, "clone": entry["clone"]})
+    return out
+
+
 def migrate_legacy_registry() -> list:
     old_yml = legacy_registry_path()
-    if registry_path().is_file() or not old_yml.is_file():
+    if info_path().is_file() or local_legacy_registry_path().is_file() or not old_yml.is_file():
         return []
     migrated = []
     for entry in parse_registry_file(old_yml):
@@ -155,26 +181,38 @@ def migrate_legacy_registry() -> list:
 
 
 def read_registry() -> list:
-    yml = registry_path()
-    if not yml.is_file():
+    yml = info_path()
+    if yml.is_file():
+        old_yml = local_legacy_registry_path()
+        if old_yml.is_file() or old_yml.is_symlink():
+            old_yml.unlink()
+        return parse_info_file(yml)
+    old_yml = local_legacy_registry_path()
+    if old_yml.is_file():
+        entries = parse_registry_file(old_yml)
+        if entries:
+            write_registry(entries)
+            return parse_info_file(info_path())
         return migrate_legacy_registry()
-    return parse_registry_file(yml)
+    return migrate_legacy_registry()
 
 
 def write_registry(entries: list) -> None:
     meta_home().mkdir(parents=True, exist_ok=True)
-    lines = ["version: v2", "remotes:"]
-    grouped = {}
+    lines = ["version: v3", "roots:"]
+    seen = set()
     for entry in entries:
-        key = (entry["repo"], entry["clone"])
-        grouped.setdefault(key, set()).add(entry["root"])
-    for repo, clone in sorted(grouped):
-        lines.append(f"  - remote: {quote_yml_scalar(repo)}")
+        key = (entry["root"], entry["clone"])
+        if key in seen:
+            continue
+        seen.add(key)
+    for root, clone in sorted(seen):
+        lines.append(f"  - path: {quote_yml_scalar(root)}")
         lines.append(f"    clone: {quote_yml_scalar(clone)}")
-        lines.append("    roots:")
-        for root in sorted(grouped[(repo, clone)]):
-            lines.append(f"      - path: {quote_yml_scalar(root)}")
-    registry_path().write_text("\n".join(lines) + "\n")
+    info_path().write_text("\n".join(lines) + "\n")
+    old_yml = local_legacy_registry_path()
+    if old_yml.is_file() or old_yml.is_symlink():
+        old_yml.unlink()
 
 
 def repo_basename(repo: str) -> str:
@@ -246,7 +284,7 @@ def cmd_register(folder: str, repo: str) -> int:
     updated = False
     entry = {"root": str(root), "repo": repo, "clone": str(clone)}
     for existing in entries:
-        if existing["repo"] == repo and Path(existing["root"]).expanduser().resolve() == root:
+        if Path(existing["root"]).expanduser().resolve() == root:
             existing.update(entry)
             updated = True
             break
@@ -258,13 +296,13 @@ def cmd_register(folder: str, repo: str) -> int:
     info(f"root:  {BOLD}{root}{RESET}")
     info(f"repo:  {BOLD}{repo}{RESET}")
     info(f"clone: {BOLD}{clone}{RESET}")
-    ok("registry updated")
+    ok("info updated")
     return 0
 
 
 def choose_entries(entries: list, pick: bool) -> list:
     if not entries:
-        die(f"no registry entries; run `meta-hub -f . -r <git-repository>` first")
+        die(f"no info entries; run `meta-hub -f . -r <git-repository>` first")
     if not pick:
         return entries
     if shutil.which("fzf") is None:
@@ -329,9 +367,6 @@ def read_cached_workstations(entry: dict) -> list:
     registry = synced_registry_path(entry)
     if registry.is_file():
         return read_synced_registry_text(registry.read_text())["workstations"]
-    workstations_yml = Path(entry["root"]).resolve() / WORKSTATIONS_FILE
-    if workstations_yml.is_file():
-        return read_workstations_manifest(workstations_yml)["workstations"]
     die(f"missing synced registry at {registry}; run `meta-hub sync` first")
 
 
@@ -342,7 +377,7 @@ def registered_workstations() -> list:
 def read_registered_workstations(refresh: bool = False) -> list:
     entries = read_registry()
     if not entries:
-        die("no registry entries; run `meta-hub -f . -r <git-repository>` first")
+        die("no info entries; run `meta-hub -f . -r <git-repository>` first")
     out = []
     seen_roots = set()
     for entry in entries:
@@ -440,47 +475,6 @@ def cmd_project() -> int:
 def cmd_repo() -> int:
     print(pick_path(repo_candidates(), "meta-repo> "))
     return 0
-
-
-def read_workstations_manifest(yml: Path) -> dict:
-    data = {"version": "v1", "name": "", "workstations": []}
-    section = ""
-    current = None
-    for line in yml.read_text().splitlines():
-        if line.startswith("version:"):
-            data["version"] = parse_yml_scalar(line.split(":", 1)[1]) or "v1"
-            section = ""
-        elif line.startswith("name:"):
-            data["name"] = parse_yml_scalar(line.split(":", 1)[1])
-            section = ""
-        elif line.startswith("workstations:"):
-            section = "workstations"
-            current = None
-        elif section == "workstations" and line.startswith("  - name:"):
-            current = {
-                "name": parse_yml_scalar(line.split(":", 1)[1]),
-                "root": "",
-                "manifest": "",
-            }
-            data["workstations"].append(current)
-        elif section == "workstations" and current is not None and line.startswith("    "):
-            key, sep, value = line.strip().partition(":")
-            if sep and key in current:
-                current[key] = parse_yml_scalar(value)
-    return data
-
-
-def render_workstations_manifest(data: dict) -> str:
-    lines = [
-        "version: v1",
-        f"name: {quote_yml_scalar(data.get('name') or '')}",
-        "workstations:",
-    ]
-    for item in data.get("workstations", []):
-        lines.append(f"  - name: {quote_yml_scalar(item.get('name') or '')}")
-        lines.append(f"    root: {quote_yml_scalar(item.get('root') or '')}")
-        lines.append(f"    manifest: {quote_yml_scalar(item.get('manifest') or '')}")
-    return "\n".join(lines) + "\n"
 
 
 def read_synced_registry_text(text: str) -> dict:
@@ -673,8 +667,6 @@ def merge_metadata_text(rel_path: Path, source_text: str, existing_text: str) ->
     name = rel_path.name
     if path_text == REGISTRY_FILE:
         return merge_synced_registry(source_text, existing_text)
-    if path_text == WORKSTATIONS_FILE:
-        return merge_workstations(source_text, existing_text)
     if name == WORKSTATION_FILE:
         return merge_workstation(source_text, existing_text)
     if name == WORKSPACE_FILE:
@@ -708,6 +700,14 @@ def merge_write_text(dest: Path, rel_path: Path, text: str) -> None:
         dest.write_text(merge_metadata_text(rel_path, text, dest.read_text()))
         return
     dest.write_text(text)
+
+
+def remove_legacy_workstations_file(clone: Path) -> None:
+    legacy = clone / LEGACY_WORKSTATIONS_FILE
+    if legacy.is_symlink() or legacy.is_file():
+        legacy.unlink()
+    elif legacy.exists():
+        warn(f"{legacy} exists and is not a file, skipping legacy cleanup")
 
 
 def merge_copy_path(src: Path, dest: Path, rel_path: Path) -> bool:
@@ -768,6 +768,7 @@ def sync_entry(entry: dict) -> bool:
         Path(REGISTRY_FILE),
         render_synced_registry(repo, workstations),
     )
+    remove_legacy_workstations_file(clone)
     extra_count = copy_extra_metadata(clone)
 
     workstation_count = 0
@@ -912,19 +913,6 @@ def merge_by_key(local_items: list, remote_items: list, key_fn) -> list:
     return out
 
 
-def merge_workstations(local_text: str, remote_text: str) -> str:
-    local = read_workstations_manifest_text(local_text)
-    remote = read_workstations_manifest_text(remote_text)
-    return render_workstations_manifest({
-        "name": local.get("name") or remote.get("name") or "",
-        "workstations": merge_by_key(
-            local.get("workstations", []),
-            remote.get("workstations", []),
-            lambda item: item.get("manifest") or item.get("root"),
-        ),
-    })
-
-
 def merge_synced_registry(local_text: str, remote_text: str) -> str:
     local = read_synced_registry_text(local_text)
     remote = read_synced_registry_text(remote_text)
@@ -936,30 +924,6 @@ def merge_synced_registry(local_text: str, remote_text: str) -> str:
             lambda item: item.get("manifest") or item.get("root"),
         ),
     )
-
-
-def read_workstations_manifest_text(text: str) -> dict:
-    data = {"version": "v1", "name": "", "workstations": []}
-    section = ""
-    current = None
-    for line in text.splitlines():
-        if line.startswith("version:"):
-            data["version"] = parse_yml_scalar(line.split(":", 1)[1]) or "v1"
-            section = ""
-        elif line.startswith("name:"):
-            data["name"] = parse_yml_scalar(line.split(":", 1)[1])
-            section = ""
-        elif line.startswith("workstations:"):
-            section = "workstations"
-            current = None
-        elif section == "workstations" and line.startswith("  - name:"):
-            current = {"name": parse_yml_scalar(line.split(":", 1)[1]), "root": "", "manifest": ""}
-            data["workstations"].append(current)
-        elif section == "workstations" and current is not None and line.startswith("    "):
-            key, sep, value = line.strip().partition(":")
-            if sep and key in current:
-                current[key] = parse_yml_scalar(value)
-    return data
 
 
 def merge_workstation(local_text: str, remote_text: str) -> str:
@@ -1024,8 +988,6 @@ def resolve_conflicted_file(clone: Path, path: str) -> bool:
     path_obj = Path(path)
     if path == REGISTRY_FILE:
         merged = merge_synced_registry(local, remote)
-    elif path == WORKSTATIONS_FILE:
-        merged = merge_workstations(local, remote)
     elif name == WORKSTATION_FILE:
         merged = merge_workstation(local, remote)
     elif name == WORKSPACE_FILE:

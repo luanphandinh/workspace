@@ -1,6 +1,6 @@
 ---
 name: "local-workspace"
-description: "Use when the user wants to create, extend, migrate, inspect, or open quick links for a multi-repo git-worktree workspace, index/setup/clean a parent-folder workstation, index multiple workstation manifests, or sync workstation/workspace metadata to a git repository. Drives `mkws` for workspace operations, `mkwst` for workstation.yml operations, `mkwsts` for workstations.yml operations, and `meta-hub` for metadata repository sync. Works in any folder containing multiple git repos as siblings. Does not touch go.work — per-module semantics (GOWORK=off) is the default here; cross-module navigation uses `<leader>gw` worktree switching instead."
+description: "Use when the user wants to create, extend, migrate, inspect, or open quick links for a multi-repo git-worktree workspace, index/setup/clean a parent-folder workstation, discover workstation manifests, or sync workstation/workspace metadata to a git repository. Drives `mkws` for workspace operations, `mkwst` for workstation.yml operations, and `meta-hub` for metadata repository sync. Works in any folder containing multiple git repos as siblings. Does not touch go.work — per-module semantics (GOWORK=off) is the default here; cross-module navigation uses `<leader>gw` worktree switching instead."
 ---
 
 # About you
@@ -8,7 +8,7 @@ description: "Use when the user wants to create, extend, migrate, inspect, or op
 - You are a very cost efficient engineer, you don't want to waste too much tokens, so your response is extremely concise.
 
 # What this skill does
-Drives `mkws`, `mkwst`, `mkwsts`, and `meta-hub` (installed on `$PATH`). `mkws` manages multi-repo git-worktree workspaces. `mkwst` manages one parent-folder workstation index in `workstation.yml`. `mkwsts` remains available as a standalone plural workstation indexer for `workstations.yml`. `meta-hub` discovers workstation manifests directly, writes a synced `registry.yml` into the metadata repository, and syncs workstation/workspace metadata into that repository. These commands operate on `$PWD` unless a supported folder argument is passed. A workspace is a subfolder of the root containing one worktree per repo, a default branch plus optional per-repo branch and base-branch overrides, glued together by `workspace.yml`, and a `tech_doc/` folder initialized as its own git repo. A workstation is the parent folder index recorded in `workstation.yml`.
+Drives `mkws`, `mkwst`, and `meta-hub` (installed on `$PATH`). `mkws` manages multi-repo git-worktree workspaces. `mkwst` manages one parent-folder workstation index in `workstation.yml`. `meta-hub` discovers workstation manifests directly, writes a synced `registry.yml` into the metadata repository, and syncs workstation/workspace metadata into that repository. These commands operate on `$PWD` unless a supported folder argument is passed. A workspace is a subfolder of the root containing one worktree per repo, a default branch plus optional per-repo branch and base-branch overrides, glued together by `workspace.yml`, and a `tech_doc/` folder initialized as its own git repo. A workstation is the parent folder index recorded in `workstation.yml`.
 
 **Go note:** `mkws` does NOT create a `go.work`. Per-module semantics (`GOWORK=off`) is the standard; the `bin/go` wrapper and gopls `cmd_env` both force `GOWORK=off` so tests/diagnostics run against each module's own deps. For cross-module navigation, use `<leader>gw` to switch worktrees instead of stitching modules with `go.work`.
 
@@ -27,7 +27,6 @@ mkws open [<name-or-link>]
 mkwst index
 mkwst setup
 mkwst clean [<workstation-folder>]
-mkwsts index
 meta-hub -f <folder> -r <git-repository>
 meta-hub -r <git-repository>
 meta-hub sync [pick]
@@ -44,8 +43,7 @@ meta-hub repo
 - `mkwst setup` — reads `<root>/workstation.yml` and clones any recorded repo whose path is missing. Existing git repos are skipped; existing non-git paths fail. Uses `remote_url` and the recorded upstream branch when available. It does not fetch or pull existing repos.
 - `mkws clean` — removes code worktrees listed in `workspace.yml`, prunes source repos, keeps workspace-level files such as `tech_doc/`, preserves links, and resets `workspace.yml` to an empty branch/repo list. No confirmation prompt.
 - `mkwst clean` — removes stale repo metadata from `workstation.yml` when a recorded path is missing or no longer a git repo. It does not delete repo directories.
-- `mkwsts index` — builds or refreshes `<root>/workstations.yml` for the current folder. Scans the current folder and immediate child folders for `workstation.yml`, skips hidden directories and `local_workspaces/`, refreshes each discovered workstation with `mkwst index`, and records workstation-level details only: `name`, `root`, and `manifest`.
-- `meta-hub -f <folder> -r <git-repository>` — registers a metadata source root and metadata git repository. `-f` defaults to the current folder. The command clones the repository under `~/.meta-hub/<git-repo>` and stores the local root/remote/clone mapping in `~/.meta-hub/registry.yml`.
+- `meta-hub -f <folder> -r <git-repository>` — registers a metadata source root and metadata git repository. `-f` defaults to the current folder. The command clones the repository under `~/.meta-hub/<git-repo>` and stores the local root/clone mapping in `~/.meta-hub/info.yml`. The remote is read from the clone's Git config.
 - `meta-hub sync [pick]` — from any folder, pulls each metadata repository first, resolves supported metadata conflicts by unioning YAML entries and line-based extras, scans each registered source root for immediate `workstation.yml` files, refreshes each workstation with `mkwst index`, writes the synced workstation list to `<metadata-repo>/registry.yml`, merges source metadata into the pulled metadata repository without deleting remote-only metadata, and commits changed metadata with `sync from <machineusername>@<machinename>`. It syncs workstation/workspace manifests plus `~/.skills-hub/execute_plugins` and `~/.cmds-hub/cmd_history` when present. With `pick`, choose one registered mapping through `fzf`; without it, sync all.
 - `meta-hub sync_tech_doc [pick]` — from any folder, scans each registered source root for immediate `workstation.yml` files, refreshes each workstation with `mkwst index`, then mirrors workspace tech docs into that workstation's `tech_doc/<workspace-name>/tech_doc` symlink index. With `pick`, choose one registered mapping through `fzf`; without it, sync all.
 - `meta-hub push [pick]` — pushes registered metadata repositories explicitly to `main` or `master`. With `pick`, choose one registered mapping through `fzf`; without it, push all.
@@ -120,29 +118,15 @@ _external:
 ```
 Run `mkwst index` from the parent folder to create or refresh this file. Existing entries that are not currently present on disk are kept and reported as missing; they are not deleted automatically unless you run `mkwst clean`. `_external.repos` is for read-only context used by exploration/design skills; `mkwst setup` uses only top-level `repos`.
 
-# Workstations registry format (workstations.yml)
-At `<root>/workstations.yml`:
+# Local metadata info format
+At `~/.meta-hub/info.yml`:
 ```yaml
-version: v1
-name: <workstations-name>
-workstations:
-  - name: <workstation-name>
-    root: <relative-path-to-workstation-root>
-    manifest: <relative-path-to-workstation-root>/workstation.yml
-```
-Run `mkwsts index` from a parent folder to create or refresh this file. The registry is intentionally thin: it does not include repo, remote, upstream, or branch details. Each listed `workstation.yml` remains the source of truth for its own repos. `mkwsts index` refreshes each discovered workstation by running `mkwst index` in that workstation root.
-
-# Metadata sync registry format
-At `~/.meta-hub/registry.yml`:
-```yaml
-version: v2
-remotes:
-  - remote: "git@example.com:example-repo.git"
+version: v3
+roots:
+  - path: "/absolute/path/to/source-root"
     clone: "/home/user/.meta-hub/example-repo"
-    roots:
-      - path: "/absolute/path/to/workstations-root"
 ```
-The local registry maps source roots to metadata repositories and keeps machine-local absolute paths out of the synced metadata repo. The metadata repository stores its portable workstation list in `registry.yml`:
+The local info file maps source roots to metadata repository clones and keeps machine-local absolute paths out of the synced metadata repo. The remote URL is not stored here; it is read from each clone's Git config. The metadata repository stores its portable workstation list in `registry.yml`:
 ```yaml
 version: v2
 remote: "git@example.com:example-repo.git"
@@ -155,15 +139,6 @@ The metadata repository also stores each listed `workstation.yml`, each `local_w
 
 # Playbook
 
-## Index all workstations
-User intent: "index all workstation manifests", "refresh workstations.yml", "record every workstation under this folder".
-```
-cd <root>
-mkwsts index
-```
-The command scans the current folder and immediate child folders for `workstation.yml`, skips hidden directories and `local_workspaces/`, refreshes each discovered workstation with `mkwst index`, reads each workstation `name`, and writes `<root>/workstations.yml`. It does not scan grandchildren. If the scan root itself has `workstation.yml`, the entry uses `root: .` and `manifest: workstation.yml`.
-`meta-hub sync` does not require `workstations.yml`; it performs the same shallow workstation discovery directly and writes the portable workstation list to the metadata repository's `registry.yml`.
-
 ## Register metadata sync
 User intent: "sync this workstation metadata to a git repo", "remember this metadata repo", "set up metadata sync".
 ```
@@ -173,7 +148,7 @@ meta-hub -f . -r <git-repository>
 # equivalent when already in the source root
 meta-hub -r <git-repository>
 ```
-The command validates the folder, validates the repository with git, clones it under `~/.meta-hub/<git-repo>`, and records the local root, remote, and clone path in `~/.meta-hub/registry.yml`.
+The command validates the folder, validates the repository with git, clones it under `~/.meta-hub/<git-repo>`, and records the local root and clone path in `~/.meta-hub/info.yml`.
 
 ## Sync metadata
 User intent: "sync metadata", "copy workstation, workspace, skill hub, and command history metadata to the metadata repo".
@@ -201,7 +176,7 @@ User intent: "jump to a project", "open a workspace folder", "jump to a repo fro
 meta-hub project  # pick a local_workspaces/<workspace> folder with fzf and cd there
 meta-hub repo     # pick a source/workspace git repo with fzf and cd there
 ```
-Both commands can run from any folder. They read `~/.meta-hub/registry.yml` and the synced `registry.yml` in each metadata clone, then build `fzf` choices from every indexed workstation. They do not run workstation discovery on each jump, so they stay fast; run `meta-hub sync` or `meta-hub sync_tech_doc` when the workstation list needs refreshing. `meta-hub project` includes workspace folders under `local_workspaces/`. `meta-hub repo` includes workstation source repos and git repos directly under each workspace folder, including workspace worktrees. The interactive `cd` requires the shell setup installed by `make workspace-bin`; running the executable directly prints the selected absolute path.
+Both commands can run from any folder. They read `~/.meta-hub/info.yml` and the synced `registry.yml` in each metadata clone, then build `fzf` choices from every indexed workstation. They do not run workstation discovery on each jump, so they stay fast; run `meta-hub sync` or `meta-hub sync_tech_doc` when the workstation list needs refreshing. `meta-hub project` includes workspace folders under `local_workspaces/`. `meta-hub repo` includes workstation source repos and git repos directly under each workspace folder, including workspace worktrees. The interactive `cd` requires the shell setup installed by `make workspace-bin`; running the executable directly prints the selected absolute path.
 
 ## Push metadata
 User intent: "push metadata", "send metadata repo changes to remote".
@@ -209,7 +184,7 @@ User intent: "push metadata", "send metadata repo changes to remote".
 meta-hub push
 meta-hub push pick
 ```
-`push` can run from any folder. If `~/.meta-hub/registry.yml` is missing but an older `~/.meta-sync/registry.yml` exists, `meta-hub` copies the old registry and local clones into `~/.meta-hub` on first use. Pulling and conflict resolution are part of `meta-hub sync`; supported YAML metadata conflicts are resolved by unioning manifest entries, and conflicts in `.skills-hub/execute_plugins` and `.cmds-hub/cmd_history` are resolved by unioning lines. Unsupported conflicts are left for manual resolution. `push` sends the current metadata commit to `main` or `master` explicitly, so first pushes to empty metadata repositories do not depend on local git upstream configuration.
+`push` can run from any folder. If `~/.meta-hub/info.yml` is missing but an older local `~/.meta-hub/registry.yml` or `~/.meta-sync/registry.yml` exists, `meta-hub` migrates it into `~/.meta-hub/info.yml` on first use. Pulling and conflict resolution are part of `meta-hub sync`; supported YAML metadata conflicts are resolved by unioning manifest entries, and conflicts in `.skills-hub/execute_plugins` and `.cmds-hub/cmd_history` are resolved by unioning lines. Unsupported conflicts are left for manual resolution. `push` sends the current metadata commit to `main` or `master` explicitly, so first pushes to empty metadata repositories do not depend on local git upstream configuration.
 
 ## Index a workstation
 User intent: "index this parent folder", "refresh workstation.yml", "record every repo under this folder".
@@ -432,5 +407,5 @@ Gather these from the user if unclear — don't guess:
 Report the workspace path, the default branch, any per-repo branch/base overrides that matter, and the added/skipped/failed summary.
 
 # Troubleshooting
-- `mkws: command not found`, `mkwst: command not found`, `mkwsts: command not found`, or `meta-hub: command not found` — run `make workspace-bin` from this repo root, then start a new shell (or `source ~/.zshrc`).
+- `mkws: command not found`, `mkwst: command not found`, or `meta-hub: command not found` — run `make workspace-bin` from this repo root, then start a new shell (or `source ~/.zshrc`).
 - `error: --branch ... does not match workspace.yml branch ...` — the workspace already exists on a different branch and you passed `--branch` without `--add`. Either omit `--branch`, match the yml, use `--add` to apply the branch to new repo(s), or use a different `--name`.

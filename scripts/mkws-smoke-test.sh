@@ -36,10 +36,6 @@ mkwst() {
 	python3 "$ROOT/bin/mkwst" "$@"
 }
 
-mkwsts() {
-	python3 "$ROOT/bin/mkwsts" "$@"
-}
-
 meta_hub() {
 	python3 "$ROOT/bin/meta-hub" "$@"
 }
@@ -370,53 +366,12 @@ EOF
 	pass "mkwst"
 }
 
-test_mkwsts() {
-	root="$TMP/mkwsts-root"
-	mkdir -p "$root/ws-a" "$root/ws-b" "$root/group-c/ws-c" "$root/.hidden/ws-hidden" "$root/local_workspaces/ignored"
-	cat > "$root/workstation.yml" <<EOF
-version: v1
-name: root-ws
-repos:
-EOF
-	cat > "$root/ws-a/workstation.yml" <<EOF
-version: v1
-name: ws-a
-repos:
-EOF
-	cat > "$root/ws-b/workstation.yml" <<EOF
-version: v1
-name: ws-b
-repos:
-EOF
-	cat > "$root/group-c/ws-c/workstation.yml" <<EOF
-version: v1
-name: ws-c
-repos:
-EOF
-	cat > "$root/.hidden/ws-hidden/workstation.yml" <<EOF
-version: v1
-name: hidden
-repos:
-EOF
-	cat > "$root/local_workspaces/ignored/workstation.yml" <<EOF
-version: v1
-name: ignored
-repos:
-EOF
-
-	(
-		cd "$root"
-		mkwsts index >/dev/null
-	)
-	assert_exists "$root/workstations.yml"
-	assert_contains "$root/workstations.yml" "root: \".\""
-	assert_contains "$root/workstations.yml" "root: \"ws-a\""
-	assert_contains "$root/workstations.yml" "root: \"ws-b\""
-	assert_not_contains "$root/workstations.yml" "ws-c"
-	assert_not_contains "$root/workstations.yml" "hidden"
-	assert_not_contains "$root/workstations.yml" "ignored"
-
-	pass "mkwsts"
+test_mkwsts_removed() {
+	if PATH="$ROOT/bin:/usr/bin:/bin" command -v mkwsts >/dev/null 2>&1; then
+		printf 'expected mkwsts to be removed from repo bin\n' >&2
+		exit 1
+	fi
+	pass "mkwsts removed"
 }
 
 test_meta_hub() {
@@ -456,13 +411,15 @@ EOF
 	git clone -q --bare "$meta_seed" "$meta_remote"
 
 	meta_hub -f "$root" -r "$meta_remote" >/dev/null
-	registry="$HOME/.meta-hub/registry.yml"
+	info_yml="$HOME/.meta-hub/info.yml"
 	clone="$HOME/.meta-hub/metadata"
-	assert_exists "$registry"
+	assert_exists "$info_yml"
+	assert_not_exists "$HOME/.meta-hub/registry.yml"
 	assert_exists "$clone/.git"
-	assert_contains "$registry" "remotes:"
-	assert_contains "$registry" "remote: \"$meta_remote\""
-	assert_contains "$registry" "path: \"$root\""
+	assert_contains "$info_yml" "version: v3"
+	assert_contains "$info_yml" "path: \"$root\""
+	assert_contains "$info_yml" "clone: \"$clone\""
+	assert_not_contains "$info_yml" "remote:"
 
 	meta_hub sync >/dev/null
 	assert_exists "$clone/registry.yml"
@@ -480,6 +437,16 @@ EOF
 	assert_contains "$clone/station-a/workstation.yml" "name: \"repo-a\""
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-base"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-base"
+
+	cat > "$clone/workstations.yml" <<EOF
+version: v1
+name: "legacy"
+workstations: []
+EOF
+	git -C "$clone" add workstations.yml
+	git -C "$clone" commit -q -m "legacy workstations"
+	meta_hub sync >/dev/null
+	assert_not_exists "$clone/workstations.yml"
 
 	project_path=$(FZF_SELECT="feature-b" meta_hub project)
 	assert_eq "$root/station-b/local_workspaces/feature-b" "$project_path"
@@ -615,6 +582,37 @@ EOF
 	fi
 
 	rm -rf "$HOME/.meta-hub" "$HOME/.meta-sync"
+	old_root="$TMP/meta-hub-old-root"
+	mkdir -p "$old_root/station-old"
+	old_root=$(cd "$old_root" && pwd -P)
+	init_repo "$old_root/station-old/repo-old"
+	cat > "$old_root/station-old/workstation.yml" <<EOF
+version: v1
+name: "station-old"
+repos:
+EOF
+	old_remote="$TMP/old-metadata.git"
+	old_clone="$HOME/.meta-hub/old-metadata"
+	mkdir -p "$HOME/.meta-hub"
+	git init -q --bare "$old_remote"
+	git clone -q "$old_remote" "$old_clone"
+	git -C "$old_clone" config user.name "Example User"
+	git -C "$old_clone" config user.email "user@example.com"
+	cat > "$HOME/.meta-hub/registry.yml" <<EOF
+version: v2
+remotes:
+  - remote: "$old_remote"
+    clone: "$old_clone"
+    roots:
+      - path: "$old_root"
+EOF
+	meta_hub sync >/dev/null
+	assert_exists "$HOME/.meta-hub/info.yml"
+	assert_not_exists "$HOME/.meta-hub/registry.yml"
+	assert_contains "$HOME/.meta-hub/info.yml" "clone: \"$old_clone\""
+	assert_not_contains "$HOME/.meta-hub/info.yml" "remote:"
+
+	rm -rf "$HOME/.meta-hub" "$HOME/.meta-sync"
 	legacy_root="$TMP/meta-hub-legacy-root"
 	mkdir -p "$legacy_root/station-c"
 	legacy_root=$(cd "$legacy_root" && pwd -P)
@@ -639,16 +637,18 @@ entries:
     clone: "$legacy_clone"
 EOF
 	meta_hub sync >/dev/null
-	assert_exists "$HOME/.meta-hub/registry.yml"
+	assert_exists "$HOME/.meta-hub/info.yml"
+	assert_not_exists "$HOME/.meta-hub/registry.yml"
 	assert_exists "$HOME/.meta-hub/legacy-metadata/.git"
-	assert_contains "$HOME/.meta-hub/registry.yml" "remote: \"$legacy_remote\""
+	assert_contains "$HOME/.meta-hub/info.yml" "clone: \"$HOME/.meta-hub/legacy-metadata\""
+	assert_not_contains "$HOME/.meta-hub/info.yml" "remote:"
 
 	pass "meta-hub"
 }
 
 test_mkws
 test_mkwst
-test_mkwsts
+test_mkwsts_removed
 test_meta_hub
 
 pass "all"
