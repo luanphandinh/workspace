@@ -17,7 +17,7 @@ WORKSTATION_FILE = "workstation.yml"
 WORKSPACE_FILE = "workspace.yml"
 WS_CONTAINER = "local_workspaces"
 EXTRA_SYNC_PATHS = (
-    (Path(".skill-hubs") / "execute-plugins", Path(".skill-hubs") / "execute-plugins"),
+    (Path(".skills-hub") / "execute_plugins", Path(".skills-hub") / "execute_plugins"),
     (Path(".cmds-hub") / "cmd_history", Path(".cmds-hub") / "cmd_history"),
 )
 
@@ -681,8 +681,8 @@ def resolve_conflicted_file(clone: Path, path: str) -> bool:
         merged = merge_workspace(local, remote)
     elif path_obj == Path(".cmds-hub") / "cmd_history":
         merged = merge_lines(local, remote)
-    elif path_obj == Path(".skill-hubs") / "execute-plugins" or (
-        len(path_obj.parts) > 2 and path_obj.parts[:2] == (".skill-hubs", "execute-plugins")
+    elif path_obj == Path(".skills-hub") / "execute_plugins" or (
+        len(path_obj.parts) > 2 and path_obj.parts[:2] == (".skills-hub", "execute_plugins")
     ):
         merged = merge_lines(local, remote)
     else:
