@@ -403,6 +403,9 @@ EOF
 		cd "$root/station-a"
 		mkws --name feature-a --branch feature/a --add repo-a >/dev/null
 	)
+	mkdir -p "$HOME/.skills-hub" "$HOME/.cmds-hub"
+	printf 'plugin-base\n' > "$HOME/.skills-hub/execute_plugins"
+	printf 'cmd-base\n' > "$HOME/.cmds-hub/cmd_history"
 
 	meta_seed="$TMP/meta-sync-seed"
 	meta_remote="$TMP/metadata.git"
@@ -421,8 +424,12 @@ EOF
 	assert_exists "$clone/workstations.yml"
 	assert_exists "$clone/station-a/workstation.yml"
 	assert_exists "$clone/station-a/local_workspaces/feature-a/workspace.yml"
+	assert_exists "$clone/.skills-hub/execute_plugins"
+	assert_exists "$clone/.cmds-hub/cmd_history"
 	assert_not_exists "$clone/station-a/local_workspaces/feature-a/repo-a/README.md"
 	assert_contains "$clone/station-a/workstation.yml" "name: \"repo-a\""
+	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-base"
+	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-base"
 
 	msg=$(git -C "$clone" log -1 --format=%s)
 	case "$msg" in
@@ -460,6 +467,27 @@ EOF
 	assert_contains "$clone/workstations.yml" "station-local/workstation.yml"
 	assert_contains "$clone/workstations.yml" "station-remote/workstation.yml"
 	assert_not_contains "$clone/workstations.yml" "<<<<<<<"
+
+	meta_sync push >/dev/null
+	git -C "$other" pull -q --ff-only
+	printf 'plugin-remote\n' >> "$other/.skills-hub/execute_plugins"
+	printf 'cmd-remote\n' >> "$other/.cmds-hub/cmd_history"
+	git -C "$other" add .skills-hub/execute_plugins .cmds-hub/cmd_history
+	git -C "$other" commit -q -m "remote extra metadata"
+	git -C "$other" push -q origin main
+
+	printf 'plugin-local\n' >> "$clone/.skills-hub/execute_plugins"
+	printf 'cmd-local\n' >> "$clone/.cmds-hub/cmd_history"
+	git -C "$clone" add .skills-hub/execute_plugins .cmds-hub/cmd_history
+	git -C "$clone" commit -q -m "local extra metadata"
+
+	meta_sync pull >/dev/null
+	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-local"
+	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-remote"
+	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-local"
+	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-remote"
+	assert_not_contains "$clone/.skills-hub/execute_plugins" "<<<<<<<"
+	assert_not_contains "$clone/.cmds-hub/cmd_history" "<<<<<<<"
 
 	empty_root="$TMP/meta-sync-empty-root"
 	mkdir -p "$empty_root/station-b"

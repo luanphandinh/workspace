@@ -45,7 +45,7 @@ meta-sync push [pick]
 - `mkwst clean` — removes stale repo metadata from `workstation.yml` when a recorded path is missing or no longer a git repo. It does not delete repo directories.
 - `mkwsts index` — builds or refreshes `<root>/workstations.yml` for the current folder. Scans the current folder and immediate child folders for `workstation.yml`, skips hidden directories and `local_workspaces/`, refreshes each discovered workstation with `mkwst index`, and records workstation-level details only: `name`, `root`, and `manifest`.
 - `meta-sync -f <folder> -r <git-repository>` — registers a metadata source root and metadata git repository. `-f` defaults to the current folder. The command clones the repository under `~/.meta-sync/<git-repo>` and stores the mapping in `~/.meta-sync/registry.yml`.
-- `meta-sync sync [pick]` — from any folder, runs `mkwsts index` for registered source roots, copies only metadata manifests into the registered metadata repositories, and commits changed metadata with `sync from <machineusername>@<machinename>`. With `pick`, choose one registered mapping through `fzf`; without it, sync all.
+- `meta-sync sync [pick]` — from any folder, runs `mkwsts index` for registered source roots, copies metadata into the registered metadata repositories, and commits changed metadata with `sync from <machineusername>@<machinename>`. It copies workstation/workspace manifests plus `~/.skills-hub/execute_plugins` and `~/.cmds-hub/cmd_history` when present. With `pick`, choose one registered mapping through `fzf`; without it, sync all.
 - `meta-sync pull [pick]` — pulls registered metadata repositories. If supported YAML metadata files conflict, it merges manifests by union and completes the merge commit. With `pick`, choose one registered mapping through `fzf`; without it, pull all.
 - `meta-sync push [pick]` — pushes registered metadata repositories explicitly to `main` or `master`. With `pick`, choose one registered mapping through `fzf`; without it, push all.
 - `open` — subcommand. Opens a recorded workspace link in the default browser. With no query, lists all workspace links. Query can match the link name or URL exactly, or a unique substring. Run from inside a workspace dir/worktree, or pass `--name <workspace>`. Examples: `mkws open`, `mkws open design-doc`, `mkws open design-doc --name myws`.
@@ -139,7 +139,7 @@ entries:
     repo: "git@example.com:example-repo.git"
     clone: "/home/user/.meta-sync/example-repo"
 ```
-The registry maps one source root to one metadata repository entry. The metadata repository stores only YAML metadata copied from the source root: `workstations.yml`, each listed `workstation.yml`, and each `local_workspaces/<workspace-name>/workspace.yml`.
+The registry maps one source root to one metadata repository entry. The metadata repository stores YAML metadata copied from the source root: `workstations.yml`, each listed `workstation.yml`, and each `local_workspaces/<workspace-name>/workspace.yml`. It also stores optional home-scoped metadata at `.skills-hub/execute_plugins` and `.cmds-hub/cmd_history`.
 
 # Playbook
 
@@ -163,12 +163,12 @@ meta-sync -r <git-repository>
 The command validates the folder, validates the repository with git, clones it under `~/.meta-sync/<git-repo>`, and records `root`, `repo`, and `clone` in `~/.meta-sync/registry.yml`.
 
 ## Sync metadata
-User intent: "sync metadata", "copy workstation and workspace manifests to the metadata repo".
+User intent: "sync metadata", "copy workstation, workspace, skill hub, and command history metadata to the metadata repo".
 ```
 meta-sync sync       # all registered metadata repos
 meta-sync sync pick  # choose one with fzf
 ```
-The command can run from any folder. For each selected entry, it runs `mkwsts index`, copies only metadata manifests into the metadata clone, removes stale copied metadata, and commits if anything changed.
+The command can run from any folder. For each selected entry, it runs `mkwsts index`, copies metadata manifests plus `~/.skills-hub/execute_plugins` and `~/.cmds-hub/cmd_history` when present, removes stale copied metadata, and commits if anything changed.
 
 ## Pull or push metadata
 User intent: "pull metadata", "push metadata", "sync metadata repo with remote".
@@ -178,7 +178,7 @@ meta-sync pull pick
 meta-sync push
 meta-sync push pick
 ```
-`pull` and `push` can run from any folder. `pull` attempts to resolve supported YAML metadata conflicts by unioning manifest entries; unsupported conflicts are left for manual resolution. `push` sends the current metadata commit to `main` or `master` explicitly, so first pushes to empty metadata repositories do not depend on local git upstream configuration.
+`pull` and `push` can run from any folder. `pull` attempts to resolve supported YAML metadata conflicts by unioning manifest entries; conflicts in `.skills-hub/execute_plugins` and `.cmds-hub/cmd_history` are resolved by unioning lines. Unsupported conflicts are left for manual resolution. `push` sends the current metadata commit to `main` or `master` explicitly, so first pushes to empty metadata repositories do not depend on local git upstream configuration.
 
 ## Index a workstation
 User intent: "index this parent folder", "refresh workstation.yml", "record every repo under this folder".

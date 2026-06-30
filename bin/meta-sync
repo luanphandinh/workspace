@@ -16,6 +16,10 @@ WORKSTATIONS_FILE = "workstations.yml"
 WORKSTATION_FILE = "workstation.yml"
 WORKSPACE_FILE = "workspace.yml"
 WS_CONTAINER = "local_workspaces"
+EXTRA_SYNC_PATHS = (
+    (Path(".skills-hub") / "execute_plugins", Path(".skills-hub") / "execute_plugins"),
+    (Path(".cmds-hub") / "cmd_history", Path(".cmds-hub") / "cmd_history"),
+)
 
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
@@ -427,6 +431,22 @@ def copy_file(src: Path, dest: Path) -> None:
     shutil.copy2(src, dest)
 
 
+def copy_path(src: Path, dest: Path) -> bool:
+    if not src.exists():
+        return False
+    if src.is_dir():
+        if dest.exists():
+            if dest.is_dir():
+                shutil.rmtree(dest)
+            else:
+                dest.unlink()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, dest)
+        return True
+    copy_file(src, dest)
+    return True
+
+
 def copy_workspace_manifests(workstation_root: Path, clone: Path, dest_prefix: Path) -> int:
     count = 0
     local_workspaces = workstation_root / WS_CONTAINER
@@ -436,6 +456,14 @@ def copy_workspace_manifests(workstation_root: Path, clone: Path, dest_prefix: P
         rel = workspace_yml.relative_to(workstation_root)
         copy_file(workspace_yml, clone / dest_prefix / rel)
         count += 1
+    return count
+
+
+def copy_extra_metadata(clone: Path) -> int:
+    count = 0
+    for source_rel, dest_rel in EXTRA_SYNC_PATHS:
+        if copy_path(Path.home() / source_rel, clone / dest_rel):
+            count += 1
     return count
 
 
@@ -459,6 +487,7 @@ def sync_entry(entry: dict) -> bool:
 
     clean_clone_contents(clone)
     copy_file(workstations_yml, clone / WORKSTATIONS_FILE)
+    extra_count = copy_extra_metadata(clone)
 
     workstation_count = 0
     workspace_count = 0
@@ -487,7 +516,10 @@ def sync_entry(entry: dict) -> bool:
     proc = run(["git", "-C", str(clone), "commit", "-m", message])
     if proc.returncode != 0:
         die(f"git commit failed in {clone}\n{(proc.stderr or proc.stdout).rstrip()}")
-    ok(f"copied {workstation_count} workstation manifest(s), {workspace_count} workspace manifest(s)")
+    ok(
+        f"copied {workstation_count} workstation manifest(s), "
+        f"{workspace_count} workspace manifest(s), {extra_count} extra path(s)"
+    )
     return True
 
 
@@ -591,6 +623,17 @@ def merge_workspace(local_text: str, remote_text: str) -> str:
     })
 
 
+def merge_lines(local_text: str, remote_text: str) -> str:
+    lines = []
+    seen = set()
+    for line in [*local_text.splitlines(), *remote_text.splitlines()]:
+        if line in seen:
+            continue
+        seen.add(line)
+        lines.append(line)
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
 def git_stage_text(clone: Path, stage: int, path: str) -> str:
     proc = run(["git", "-C", str(clone), "show", f":{stage}:{path}"])
     return proc.stdout if proc.returncode == 0 else ""
@@ -600,12 +643,19 @@ def resolve_conflicted_file(clone: Path, path: str) -> bool:
     local = git_stage_text(clone, 2, path)
     remote = git_stage_text(clone, 3, path)
     name = Path(path).name
+    path_obj = Path(path)
     if path == WORKSTATIONS_FILE:
         merged = merge_workstations(local, remote)
     elif name == WORKSTATION_FILE:
         merged = merge_workstation(local, remote)
     elif name == WORKSPACE_FILE:
         merged = merge_workspace(local, remote)
+    elif path_obj == Path(".cmds-hub") / "cmd_history":
+        merged = merge_lines(local, remote)
+    elif path_obj == Path(".skills-hub") / "execute_plugins" or (
+        len(path_obj.parts) > 2 and path_obj.parts[:2] == (".skills-hub", "execute_plugins")
+    ):
+        merged = merge_lines(local, remote)
     else:
         return False
     target = clone / path
