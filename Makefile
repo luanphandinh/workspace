@@ -20,7 +20,7 @@ endif
 
 lazy_command ?= restore
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin test mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test cleanup
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test agent-clis verify-agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin test mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test cleanup
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -51,6 +51,17 @@ setup-deps: nix-install
 		else \
 			nix --extra-experimental-features 'nix-command flakes' profile add --no-update-lock-file "path:$(CURDIR)#workspace-deps"; \
 		fi
+
+apps: ## Install macOS GUI apps via Homebrew cask
+ifeq ($(UNAME),Darwin)
+	@if ! command -v brew >/dev/null 2>&1; then \
+		echo "apps: Homebrew is required on macOS" >&2; \
+		exit 1; \
+	fi
+	@for app in maccy alfred arc; do brew install --cask "$$app" || true; done
+else
+	@echo "apps: skipped; macOS-only"
+endif
 
 default-shell: ## Use zsh as the default login shell on Linux
 	@$(default_shell_install)
