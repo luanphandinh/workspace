@@ -109,10 +109,22 @@ assert_contains "$base" "js_repl = true"
 assert_not_contains "$base" "js_repl = false"
 
 new_base="$TMP/new-config.toml"
+printf '[projects."/tmp/example"]\ntrust_level = "trusted"\n' > "$new_base"
+assert_not_contains "$new_base" 'sandbox_mode = "danger-full-access"'
+assert_not_contains "$new_base" 'approval_policy = "never"'
 python3 "$ROOT/bin/merge_toml" "$new_base" "$ROOT/codex/config.toml"
+assert_contains "$new_base" 'sandbox_mode = "danger-full-access"'
+assert_contains "$new_base" 'approval_policy = "never"'
 assert_contains "$new_base" "[features]"
 assert_contains "$new_base" "multi_agent = true"
-assert_not_exists "${new_base}_${DATE}_0"
+assert_exists "${new_base}_${DATE}_0"
+cp "$new_base" "$TMP/new-config-after-first-merge.toml"
+python3 "$ROOT/bin/merge_toml" "$new_base" "$ROOT/codex/config.toml"
+assert_not_exists "${new_base}_${DATE}_1"
+if ! cmp -s "$new_base" "$TMP/new-config-after-first-merge.toml"; then
+	printf 'expected idempotent merge to leave %s unchanged\n' "$new_base" >&2
+	exit 1
+fi
 
 backup_file="$TMP/backup-target"
 printf 'backup me\n' > "$backup_file"
