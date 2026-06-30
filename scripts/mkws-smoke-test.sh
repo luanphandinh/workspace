@@ -460,11 +460,16 @@ EOF
 	clone="$HOME/.meta-hub/metadata"
 	assert_exists "$registry"
 	assert_exists "$clone/.git"
-	assert_contains "$registry" "root: \"$root\""
-	assert_contains "$registry" "repo: \"$meta_remote\""
+	assert_contains "$registry" "remotes:"
+	assert_contains "$registry" "remote: \"$meta_remote\""
+	assert_contains "$registry" "path: \"$root\""
 
 	meta_hub sync >/dev/null
-	assert_exists "$clone/workstations.yml"
+	assert_exists "$clone/registry.yml"
+	assert_not_exists "$clone/workstations.yml"
+	assert_not_exists "$root/workstations.yml"
+	assert_contains "$clone/registry.yml" "station-a/workstation.yml"
+	assert_contains "$clone/registry.yml" "station-b/workstation.yml"
 	assert_exists "$clone/station-a/workstation.yml"
 	assert_exists "$clone/station-b/workstation.yml"
 	assert_exists "$clone/station-a/local_workspaces/feature-a/workspace.yml"
@@ -494,6 +499,10 @@ EOF
 	)
 	FZF_SELECT="feature-b" meta_hub project >/dev/null
 	assert_not_contains "$FZF_INPUT" "$root/station-c/local_workspaces/feature-c"
+	meta_hub sync >/dev/null
+	assert_contains "$clone/registry.yml" "station-c/workstation.yml"
+	project_path=$(FZF_SELECT="feature-c" meta_hub project)
+	assert_eq "$root/station-c/local_workspaces/feature-c" "$project_path"
 
 	repo_path=$(FZF_SELECT="$root/station-b/local_workspaces/feature-b/repo-b" meta_hub repo)
 	assert_eq "$root/station-b/local_workspaces/feature-b/repo-b" "$repo_path"
@@ -530,32 +539,37 @@ EOF
 	esac
 
 	meta_hub push >/dev/null
+	if meta_hub pull >"$TMP/meta-hub-pull.out" 2>&1; then
+		printf 'expected meta-hub pull to be removed\n' >&2
+		exit 1
+	fi
+	assert_contains "$TMP/meta-hub-pull.out" "pull"
 
 	other="$TMP/meta-hub-other"
 	git clone -q "$meta_remote" "$other"
 	git -C "$other" config user.name "Example User"
 	git -C "$other" config user.email "user@example.com"
-	cat >> "$other/workstations.yml" <<EOF
+	cat >> "$other/registry.yml" <<EOF
   - name: "station-remote"
     root: "station-remote"
     manifest: "station-remote/workstation.yml"
 EOF
-	git -C "$other" add workstations.yml
+	git -C "$other" add registry.yml
 	git -C "$other" commit -q -m "remote metadata"
 	git -C "$other" push -q origin main
 
-	cat >> "$clone/workstations.yml" <<EOF
+	cat >> "$clone/registry.yml" <<EOF
   - name: "station-local"
     root: "station-local"
     manifest: "station-local/workstation.yml"
 EOF
-	git -C "$clone" add workstations.yml
+	git -C "$clone" add registry.yml
 	git -C "$clone" commit -q -m "local metadata"
 
-	meta_hub pull >/dev/null
-	assert_contains "$clone/workstations.yml" "station-local/workstation.yml"
-	assert_contains "$clone/workstations.yml" "station-remote/workstation.yml"
-	assert_not_contains "$clone/workstations.yml" "<<<<<<<"
+	meta_hub sync >/dev/null
+	assert_contains "$clone/registry.yml" "station-local/workstation.yml"
+	assert_contains "$clone/registry.yml" "station-remote/workstation.yml"
+	assert_not_contains "$clone/registry.yml" "<<<<<<<"
 
 	meta_hub push >/dev/null
 	git -C "$other" pull -q --ff-only
@@ -570,7 +584,7 @@ EOF
 	git -C "$clone" add .skills-hub/execute_plugins .cmds-hub/cmd_history
 	git -C "$clone" commit -q -m "local extra metadata"
 
-	meta_hub pull >/dev/null
+	meta_hub sync >/dev/null
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-local"
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-remote"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-local"
@@ -627,7 +641,7 @@ EOF
 	meta_hub sync >/dev/null
 	assert_exists "$HOME/.meta-hub/registry.yml"
 	assert_exists "$HOME/.meta-hub/legacy-metadata/.git"
-	assert_contains "$HOME/.meta-hub/registry.yml" "repo: \"$legacy_remote\""
+	assert_contains "$HOME/.meta-hub/registry.yml" "remote: \"$legacy_remote\""
 
 	pass "meta-hub"
 }
