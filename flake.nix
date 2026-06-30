@@ -79,6 +79,7 @@
           terminalPackages = with pkgs; [
             bashInteractive
             alacritty
+            bat
             curl
             csvlens
             fd
