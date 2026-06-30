@@ -41,16 +41,17 @@ chmod +x "$fakebin/pgrep"
 PATH="$fakebin:$PATH" TMUX_REFRESH_SMOKE_LOG="$log" \
 	sh "$ROOT/bin/tmux-refresh-idle-zshrc" >/dev/null
 
-grep -F -- '-t %1  setopt HIST_IGNORE_SPACE' "$log" >/dev/null || {
-	printf 'expected refresh command to begin with leading-space HIST_IGNORE_SPACE\n' >&2
+expected='-t %1  setopt HIST_IGNORE_SPACE; source "$HOME/.zshrc" Enter C-l'
+grep -Fx -- "$expected" "$log" >/dev/null || {
+	printf 'expected silent zshrc refresh command:\n%s\n\ngot:\n' "$expected" >&2
 	cat "$log" >&2
 	exit 1
 }
 
-grep -F 'source "$HOME/.zshrc"' "$log" >/dev/null || {
-	printf 'expected refresh command to source ~/.zshrc\n' >&2
+if grep -F 'printf' "$log" >/dev/null; then
+	printf 'refresh command should not print into idle panes:\n' >&2
 	cat "$log" >&2
 	exit 1
-}
+fi
 
 echo "PASS tmux refresh idle zshrc smoke test"
