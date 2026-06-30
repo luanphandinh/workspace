@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""meta-sync - sync workspace metadata into a git repository."""
+"""meta-hub - sync workspace metadata into a git repository."""
 
 import getpass
 import hashlib
@@ -17,7 +17,7 @@ WORKSTATION_FILE = "workstation.yml"
 WORKSPACE_FILE = "workspace.yml"
 WS_CONTAINER = "local_workspaces"
 EXTRA_SYNC_PATHS = (
-    (Path(".skills-hub") / "execute_plugins", Path(".skills-hub") / "execute_plugins"),
+    (Path(".skill-hubs") / "execute-plugins", Path(".skill-hubs") / "execute-plugins"),
     (Path(".cmds-hub") / "cmd_history", Path(".cmds-hub") / "cmd_history"),
 )
 
@@ -81,6 +81,10 @@ def quote_yml_scalar(value: str) -> str:
 
 
 def meta_home() -> Path:
+    return Path.home() / ".meta-hub"
+
+
+def legacy_meta_home() -> Path:
     return Path.home() / ".meta-sync"
 
 
@@ -88,12 +92,13 @@ def registry_path() -> Path:
     return meta_home() / REGISTRY_FILE
 
 
-def read_registry() -> list:
-    yml = registry_path()
+def legacy_registry_path() -> Path:
+    return legacy_meta_home() / REGISTRY_FILE
+
+
+def parse_registry_file(yml: Path) -> list:
     entries = []
     current = None
-    if not yml.is_file():
-        return entries
     for line in yml.read_text().splitlines():
         if line.startswith("  - root:"):
             current = {
@@ -107,6 +112,30 @@ def read_registry() -> list:
         elif current is not None and line.startswith("    clone:"):
             current["clone"] = parse_yml_scalar(line.split(":", 1)[1])
     return [e for e in entries if e.get("root") and e.get("repo") and e.get("clone")]
+
+
+def migrate_legacy_registry() -> list:
+    old_yml = legacy_registry_path()
+    if registry_path().is_file() or not old_yml.is_file():
+        return []
+    migrated = []
+    for entry in parse_registry_file(old_yml):
+        clone = clone_path_for_repo(entry["repo"])
+        old_clone = Path(entry["clone"]).expanduser()
+        if old_clone.is_dir() and not clone.exists():
+            clone.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(old_clone, clone)
+        migrated.append({"root": entry["root"], "repo": entry["repo"], "clone": str(clone)})
+    if migrated:
+        write_registry(migrated)
+    return migrated
+
+
+def read_registry() -> list:
+    yml = registry_path()
+    if not yml.is_file():
+        return migrate_legacy_registry()
+    return parse_registry_file(yml)
 
 
 def write_registry(entries: list) -> None:
@@ -196,7 +225,7 @@ def cmd_register(folder: str, repo: str) -> int:
         entries.append(entry)
     write_registry(entries)
 
-    heading("meta-sync register")
+    heading("meta-hub register")
     info(f"root:  {BOLD}{root}{RESET}")
     info(f"repo:  {BOLD}{repo}{RESET}")
     info(f"clone: {BOLD}{clone}{RESET}")
@@ -206,7 +235,7 @@ def cmd_register(folder: str, repo: str) -> int:
 
 def choose_entries(entries: list, pick: bool) -> list:
     if not entries:
-        die(f"no registry entries; run `meta-sync -f . -r <git-repository>` first")
+        die(f"no registry entries; run `meta-hub -f . -r <git-repository>` first")
     if not pick:
         return entries
     if shutil.which("fzf") is None:
@@ -219,7 +248,7 @@ def choose_entries(entries: list, pick: bool) -> list:
         text=True,
     )
     if proc.returncode != 0 or not proc.stdout.strip():
-        die("no meta-sync entry selected")
+        die("no meta-hub entry selected")
     selected = proc.stdout.strip()
     for idx, label in enumerate(labels):
         if label == selected:
@@ -652,8 +681,8 @@ def resolve_conflicted_file(clone: Path, path: str) -> bool:
         merged = merge_workspace(local, remote)
     elif path_obj == Path(".cmds-hub") / "cmd_history":
         merged = merge_lines(local, remote)
-    elif path_obj == Path(".skills-hub") / "execute_plugins" or (
-        len(path_obj.parts) > 2 and path_obj.parts[:2] == (".skills-hub", "execute_plugins")
+    elif path_obj == Path(".skill-hubs") / "execute-plugins" or (
+        len(path_obj.parts) > 2 and path_obj.parts[:2] == (".skill-hubs", "execute-plugins")
     ):
         merged = merge_lines(local, remote)
     else:
@@ -762,11 +791,11 @@ def run_entries(mode: str, pick: bool) -> int:
 
 USAGE = """\
 Usage:
-  meta-sync -f <folder> -r <git-repository>
-  meta-sync -r <git-repository>
-  meta-sync sync [pick]
-  meta-sync pull [pick]
-  meta-sync push [pick]
+  meta-hub -f <folder> -r <git-repository>
+  meta-hub -r <git-repository>
+  meta-hub sync [pick]
+  meta-hub pull [pick]
+  meta-hub push [pick]
 
 Options:
   -f <folder>          source folder containing workstation metadata; defaults to .
