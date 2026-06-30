@@ -101,7 +101,7 @@ grep -qx -- 'sudo chsh -s '"$fakebin"'/zsh example-user' "$tmp/chsh.log"
 grep -qx -- '-s '"$fakebin"'/zsh example-user' "$tmp/chsh.log"
 rm -f "$fakebin/uname" "$fakebin/zsh" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
 
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; test \"\$GOPATH\" = \"\$HOME/go\"; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:/usr/local/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:\"*) ;; *) exit 1 ;; esac; case \":\$PATH:\" in *\":\$GOPATH/bin:\"*) ;; *) exit 1 ;; esac"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/bin/shell/workspace.sh'; test \"\$GOPATH\" = \"\$HOME/go\"; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:/usr/local/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:\"*) ;; *) exit 1 ;; esac; case \":\$PATH:\" in *\":\$GOPATH/bin:\"*) ;; *) exit 1 ;; esac"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" prompt
@@ -135,33 +135,55 @@ test ! -e "$stale_home/app-server-control/app-server-control.sock"
 test ! -e "$stale_home/app-server-daemon/app-server.pid"
 test ! -e "$stale_home/app-server-daemon/app-server-updater.pid"
 
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; ! command -v mcodex >/dev/null 2>&1"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/bin/shell/workspace.sh'; ! command -v mcodex >/dev/null 2>&1"
 
 zsh_bin=$(command -v zsh || true)
 if [ -n "$zsh_bin" ]; then
-  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = zsh"
-  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/shell/workspace.sh'; test \"\$FZF_INIT_SHELL\" = zsh"
-  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/shell/workspace.sh'; test \"\$PROMPT\" = '%1~ %# '"
-  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/shell/workspace.sh'; test \"\$HISTSIZE\" = 2000; test \"\$SAVEHIST\" = 1000; test \"\$options[histexpiredupsfirst]\" = on; test \"\$options[histfindnodups]\" = on; test \"\$options[histignorealldups]\" = on; test \"\$options[histsavenodups]\" = on"
+  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/bin/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = zsh"
+  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/bin/shell/workspace.sh'; test \"\$FZF_INIT_SHELL\" = zsh"
+  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/bin/shell/workspace.sh'; test \"\$PROMPT\" = '%1~ %# '"
+  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/bin/shell/workspace.sh'; test \"\$HISTSIZE\" = 2000; test \"\$SAVEHIST\" = 1000; test \"\$options[histexpiredupsfirst]\" = on; test \"\$options[histfindnodups]\" = on; test \"\$options[histignorealldups]\" = on; test \"\$options[histsavenodups]\" = on"
   grep -qx 'init zsh --cmd z' "$log"
   grep -qx -- '--zsh' "$fzf_log"
 fi
 
 : > "$log"
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/shell/workspace.sh'; test \"\${ZOXIDE_INIT_SHELL:-}\" = \"\""
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/bin/shell/workspace.sh'; test \"\${ZOXIDE_INIT_SHELL:-}\" = \"\""
 ! grep -q '^init ' "$log"
 
 : > "$log"
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = bash"
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/shell/workspace.sh'; test \"\$FZF_INIT_SHELL\" = bash"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = bash"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; test \"\$FZF_INIT_SHELL\" = bash"
 grep -qx 'init bash --cmd z' "$log"
 grep -qx -- '--bash' "$fzf_log"
 
 mkdir -p "$tmp/sync-home"
-printf '[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh\nexport PATH=$PATH:/usr/local/go/bin\nexport PATH=$PATH:~/go/bin\nexport GOPATH=~/go\nexport PATH="$HOME/.local/bin:$PATH"\nexport PATH=%s/.local/bin:$PATH\nexport PATH="/usr/local/bin:$PATH"\nexport PATH="$HOME/bin:/opt/homebrew/bin:$PATH"\nkeep-zsh\n' "$tmp/sync-home" > "$tmp/sync-home/.zshrc"
+mkdir -p "$tmp/sync-home/bin/shell"
+cp "$repo_root/bin/shell/workspace.sh" "$tmp/sync-home/bin/shell/workspace.sh"
+cat > "$tmp/sync-home/.zshrc" <<SH
+# >>> workspace-bin
+old managed block
+# <<< workspace-bin
+[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
+export PATH=\$PATH:/usr/local/go/bin
+export PATH=\$PATH:~/go/bin
+export GOPATH=~/go
+export PATH="\$HOME/.local/bin:\$PATH"
+export PATH=$tmp/sync-home/.local/bin:\$PATH
+export PATH="/usr/local/bin:\$PATH"
+export PATH="\$HOME/bin:/opt/homebrew/bin:\$PATH"
+keep-zsh
+SH
 printf '[ -f ~/.fzf.bash ] && source ~/.fzf.bash\nexport PATH=$PATH:/usr/local/go/bin\nexport PATH=$PATH:~/go/bin\nexport GOPATH=~/go\nkeep-bash\n' > "$tmp/sync-home/.bashrc"
 printf 'keep-profile\n' > "$tmp/sync-home/.profile"
-HOME="$tmp/sync-home" sh "$repo_root/bin/workspace-shell-sync" "$repo_root/shell/workspace.sh" >/dev/null
+HOME="$tmp/sync-home" sh "$repo_root/bin/workspace-shell-sync" >/dev/null
+source_line='[ -f "$HOME/bin/shell/workspace.sh" ] && . "$HOME/bin/shell/workspace.sh"'
+grep -Fxq "$source_line" "$tmp/sync-home/.zshrc"
+grep -Fxq "$source_line" "$tmp/sync-home/.bashrc"
+grep -Fxq "$source_line" "$tmp/sync-home/.profile"
+test "$(grep -Fxc "$source_line" "$tmp/sync-home/.zshrc")" = 1
+! grep -Fq '# >>> workspace-bin' "$tmp/sync-home/.zshrc"
+! grep -Fq 'old managed block' "$tmp/sync-home/.zshrc"
 ! grep -Fq 'source ~/.fzf.zsh' "$tmp/sync-home/.zshrc"
 ! grep -Fq 'source ~/.fzf.bash' "$tmp/sync-home/.bashrc"
 ! grep -Fq 'export PATH=$PATH:/usr/local/go/bin' "$tmp/sync-home/.zshrc"
@@ -177,5 +199,8 @@ HOME="$tmp/sync-home" sh "$repo_root/bin/workspace-shell-sync" "$repo_root/shell
 grep -Fxq 'keep-zsh' "$tmp/sync-home/.zshrc"
 grep -Fxq 'keep-bash' "$tmp/sync-home/.bashrc"
 grep -Fxq 'keep-profile' "$tmp/sync-home/.profile"
+cp "$tmp/sync-home/.zshrc" "$tmp/sync-home/.zshrc.after-first-sync"
+HOME="$tmp/sync-home" sh "$repo_root/bin/workspace-shell-sync" >/dev/null
+cmp -s "$tmp/sync-home/.zshrc" "$tmp/sync-home/.zshrc.after-first-sync"
 
 echo "PASS workspace shell smoke test"

@@ -142,7 +142,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	cp -r ./bin/. ~/bin/
 	find ~/bin -type f -exec chmod +x {} +
 	@python3 ./bin/sync-agent-notification-hooks
-	@sh ./bin/workspace-shell-sync ./shell/workspace.sh
+	@sh ./bin/workspace-shell-sync
 	@sh ./bin/tmux-refresh-idle-zshrc
 
 test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test ## Run smoke tests
