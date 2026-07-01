@@ -1252,12 +1252,12 @@ def cmd_clean(folder: str = "") -> int:
         target = path.resolve()
         if (target / "workspace.yml").is_file():
             return cmd_clean_workspace(str(target))
-        die(f"no workspace.yml at {target}; use `mkwst clean` for workstation.yml")
+        die(f"no workspace.yml at {target}")
 
     pwd = Path.cwd().resolve()
     if (pwd / "workspace.yml").is_file():
         return cmd_clean_workspace(str(pwd))
-    die(f"no workspace.yml at {pwd}; use `mkwst clean` for workstation.yml")
+    die(f"no workspace.yml at {pwd}")
 
 
 def cmd_migrate(folder: str) -> int:
@@ -1697,8 +1697,7 @@ Modes:
              source repos, keep workspace-level files, and reset workspace.yml
              to an empty branch/repo list. DESTRUCTIVE for code worktrees —
              uncommitted work there is lost (runs `git worktree remove
-             --force`). No confirmation prompt. Use `mkwst clean` for
-             workstation.yml metadata cleanup.
+             --force`). No confirmation prompt.
              Examples:
                mkws clean                    # current workspace
                mkws clean ./local_workspaces/myws
@@ -1772,11 +1771,7 @@ def parse_args(argv):
 
     if argv and not argv[0].startswith("-"):
         sub = argv[0]
-        if sub == "index":
-            die("`mkws index` moved to `mkwst index`")
-        elif sub == "setup":
-            die("`mkws setup` moved to `mkwst setup`")
-        elif sub == "pull":
+        if sub == "pull":
             mode = "pull"
             argv.pop(0)
             while argv and not argv[0].startswith("-"):

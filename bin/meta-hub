@@ -18,7 +18,7 @@ WORKSTATION_FILE = "workstation.yml"
 WORKSPACE_FILE = "workspace.yml"
 WS_CONTAINER = "local_workspaces"
 TECH_DOC_DIR = "tech_doc"
-SKIP_WORKSTATION_SCAN_DIRS = {WS_CONTAINER}
+EXTERNAL_DIR = "_external"
 EXTRA_SYNC_PATHS = (
     (Path(".skills-hub") / "execute_plugins", Path(".skills-hub") / "execute_plugins"),
     (Path(".cmds-hub") / "cmd_history", Path(".cmds-hub") / "cmd_history"),
@@ -233,6 +233,36 @@ def is_git_worktree(path: Path) -> bool:
     return proc.returncode == 0 and proc.stdout.strip() == "true"
 
 
+def is_git_repo_path(path: Path) -> bool:
+    return path.is_dir() and (path / ".git").exists()
+
+
+def git_output(repo: Path, args: list) -> str:
+    proc = run(["git", "-C", str(repo), *args])
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def remote_names(repo: Path) -> list:
+    return [line.strip() for line in git_output(repo, ["remote"]).splitlines() if line.strip()]
+
+
+def preferred_remote(repo: Path, upstream: str) -> str:
+    if "/" in upstream:
+        return upstream.split("/", 1)[0]
+    remotes = remote_names(repo)
+    if "origin" in remotes:
+        return "origin"
+    return remotes[0] if remotes else ""
+
+
+def remote_url(repo: Path, remote: str) -> str:
+    if not remote:
+        return ""
+    return git_output(repo, ["remote", "get-url", remote])
+
+
 def clone_path_for_repo(repo: str) -> Path:
     base = meta_home() / repo_basename(repo)
     if not base.exists() or git_origin(base) == repo:
@@ -258,13 +288,6 @@ def validate_repo(repo: str) -> None:
     proc = run(["git", "ls-remote", repo])
     if proc.returncode != 0:
         die(f"invalid git repository: {repo}\n{(proc.stderr or proc.stdout).rstrip()}")
-
-
-def script_cmd(name: str) -> list:
-    sibling = Path(__file__).resolve().parent / name
-    if sibling.is_file():
-        return [sys.executable, str(sibling)]
-    return [name]
 
 
 def cmd_register(folder: str, repo: str) -> int:
@@ -323,78 +346,41 @@ def choose_entries(entries: list, pick: bool) -> list:
     die("selected entry was not found")
 
 
-def workstation_scan_candidates(root: Path) -> list:
-    candidates = [root]
-    candidates.extend(
-        child for child in sorted(root.iterdir())
-        if child.is_dir()
-        and not child.name.startswith(".")
-        and child.name not in SKIP_WORKSTATION_SCAN_DIRS
-    )
-    return candidates
-
-
-def run_mkwst_index(workstation_root: Path) -> None:
-    proc = run([*script_cmd("mkwst"), "index"], cwd=workstation_root)
-    if proc.returncode != 0:
-        die(f"mkwst index failed at {workstation_root}\n{(proc.stderr or proc.stdout).rstrip()}")
-
-
-def discover_workstations(root: Path, refresh: bool = False) -> list:
-    workstations = []
-    for cur in workstation_scan_candidates(root):
-        manifest = cur / WORKSTATION_FILE
-        if not manifest.is_file():
-            continue
-        if refresh:
-            run_mkwst_index(cur)
-        rel_root = "." if cur == root else cur.relative_to(root).as_posix()
-        manifest_rel = WORKSTATION_FILE if rel_root == "." else f"{rel_root}/{WORKSTATION_FILE}"
-        data = read_workstation_manifest_text(manifest.read_text())
-        workstations.append({
-            "name": data.get("name") or (root.name if rel_root == "." else cur.name),
-            "root": rel_root,
-            "manifest": manifest_rel,
-        })
-    return sorted(workstations, key=lambda item: (item["root"], item["name"]))
-
-
 def synced_registry_path(entry: dict) -> Path:
     return Path(entry["clone"]).expanduser().resolve() / REGISTRY_FILE
 
 
-def read_cached_workstations(entry: dict) -> list:
+def read_cached_workstations(entry: dict, required: bool = True) -> list:
     registry = synced_registry_path(entry)
     if registry.is_file():
         return read_synced_registry_text(registry.read_text())["workstations"]
-    die(f"missing synced registry at {registry}; run `meta-hub sync` first")
+    if required:
+        die(f"missing synced registry at {registry}; run `meta-hub index -p <workstation-folder>` first")
+    return []
 
 
-def registered_workstations() -> list:
-    return read_registered_workstations(refresh=True)
-
-
-def read_registered_workstations(refresh: bool = False) -> list:
-    entries = read_registry()
+def registered_workstation_contexts(entries: list = None, required: bool = True) -> list:
+    entries = read_registry() if entries is None else entries
     if not entries:
         die("no info entries; run `meta-hub -f . -r <git-repository>` first")
     out = []
-    seen_roots = set()
     for entry in entries:
         root = Path(entry["root"]).resolve()
-        if str(root) in seen_roots:
-            continue
-        seen_roots.add(str(root))
-        if not root.is_dir():
-            die(f"registered root is missing: {root}")
-        if refresh:
-            workstations = discover_workstations(root, refresh=True)
-        else:
-            workstations = read_cached_workstations(entry)
+        clone = Path(entry["clone"]).expanduser().resolve()
+        ensure_clone(entry["repo"], clone)
+        workstations = read_cached_workstations(entry, required=required)
         for workstation in workstations:
             rel_root = workstation.get("root") or "."
             station_root = safe_source_path(root, rel_root)
-            out.append((root, workstation, station_root))
+            metadata_prefix = Path() if rel_root == "." else Path(rel_root)
+            out.append({
+                "entry": entry,
+                "root": root,
+                "clone": clone,
+                "workstation": workstation,
+                "station_root": station_root,
+                "metadata_prefix": metadata_prefix,
+            })
     return out
 
 
@@ -415,21 +401,29 @@ def add_candidate(candidates: list, seen_paths: set, label: str, path: Path) -> 
 def project_candidates() -> list:
     candidates = []
     seen_paths = set()
-    for _, workstation, station_root in read_registered_workstations(refresh=False):
+    for ctx in registered_workstation_contexts(required=True):
+        workstation = ctx["workstation"]
+        station_root = ctx["station_root"]
+        metadata_root = ctx["clone"] / ctx["metadata_prefix"]
         station_name = workstation.get("name") or station_root.name
-        for workspace_yml in sorted((station_root / WS_CONTAINER).glob(f"*/{WORKSPACE_FILE}")):
+        for workspace_yml in sorted((metadata_root / WS_CONTAINER).glob(f"*/{WORKSPACE_FILE}")):
             name = workspace_name(workspace_yml)
-            add_candidate(candidates, seen_paths, f"{name} | {station_name}", workspace_yml.parent)
+            local_workspace = station_root / WS_CONTAINER / workspace_yml.parent.name
+            if local_workspace.is_dir():
+                add_candidate(candidates, seen_paths, f"{name} | {station_name}", local_workspace)
     return sorted(candidates, key=lambda item: item["label"])
 
 
 def repo_candidates() -> list:
     candidates = []
     seen_paths = set()
-    for root, workstation, station_root in read_registered_workstations(refresh=False):
+    for ctx in registered_workstation_contexts(required=True):
+        workstation = ctx["workstation"]
+        station_root = ctx["station_root"]
+        metadata_root = ctx["clone"] / ctx["metadata_prefix"]
         station_name = workstation.get("name") or station_root.name
         manifest_rel = workstation.get("manifest") or WORKSTATION_FILE
-        manifest = safe_source_path(root, manifest_rel)
+        manifest = ctx["clone"] / manifest_rel
         if manifest.is_file():
             data = read_workstation_manifest_text(manifest.read_text())
             for repo in data.get("repos", []):
@@ -437,9 +431,11 @@ def repo_candidates() -> list:
                 repo_path = station_root / (repo_data["path"] or repo_data["name"])
                 if (repo_path / ".git").exists():
                     add_candidate(candidates, seen_paths, f"{repo_data['name']} | {station_name} | source", repo_path)
-        for workspace_yml in sorted((station_root / WS_CONTAINER).glob(f"*/{WORKSPACE_FILE}")):
+        for workspace_yml in sorted((metadata_root / WS_CONTAINER).glob(f"*/{WORKSPACE_FILE}")):
             project_name = workspace_name(workspace_yml)
-            workspace_dir = workspace_yml.parent
+            workspace_dir = station_root / WS_CONTAINER / workspace_yml.parent.name
+            if not workspace_dir.is_dir():
+                continue
             for child in sorted(p for p in workspace_dir.iterdir() if p.is_dir()):
                 if (child / ".git").exists():
                     add_candidate(candidates, seen_paths, f"{child.name} | {station_name}/{project_name} | workspace", child)
@@ -525,6 +521,25 @@ def normalize_repo_record(repo: dict) -> dict:
     }
 
 
+def normalize_workstation_repos(repos: list) -> list:
+    out = []
+    seen = set()
+    for repo in repos or []:
+        if not isinstance(repo, dict):
+            continue
+        item = normalize_repo_record(repo)
+        if not item["name"]:
+            continue
+        if not item["path"]:
+            item["path"] = item["name"]
+        key = item["path"]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return sorted(out, key=lambda item: (item["path"], item["name"]))
+
+
 def read_workstation_manifest_text(text: str) -> dict:
     data = {"version": "v1", "name": "", "repos": [], "_external": {"repos": []}}
     section = ""
@@ -563,10 +578,7 @@ def read_workstation_manifest_text(text: str) -> dict:
 
 
 def render_repo_records(lines: list, repos: list, indent: str) -> None:
-    for raw in repos:
-        repo = normalize_repo_record(raw)
-        if not repo["name"]:
-            continue
+    for repo in normalize_workstation_repos(repos):
         lines.append(f"{indent}- name: {quote_yml_scalar(repo['name'])}")
         lines.append(f"{indent}  path: {quote_yml_scalar(repo['path'] or repo['name'])}")
         lines.append(f"{indent}  remote: {quote_yml_scalar(repo['remote'])}")
@@ -584,6 +596,204 @@ def render_workstation_manifest(data: dict) -> str:
         lines.append("  repos:")
         render_repo_records(lines, external, "    ")
     return "\n".join(lines) + "\n"
+
+
+def discover_workstation_repos(workstation_root: Path) -> list:
+    skipped = {WS_CONTAINER, TECH_DOC_DIR, EXTERNAL_DIR}
+    repos = []
+    for child in sorted(p for p in workstation_root.iterdir() if p.is_dir()):
+        if child.name.startswith(".") or child.name in skipped:
+            continue
+        if is_git_repo_path(child):
+            repos.append(child)
+    return repos
+
+
+def discover_external_workstation_repos(workstation_root: Path) -> list:
+    external_root = workstation_root / EXTERNAL_DIR
+    if not external_root.is_dir():
+        return []
+    return sorted(child for child in external_root.iterdir() if child.is_dir() and is_git_repo_path(child))
+
+
+def workstation_repo_record(workstation_root: Path, repo: Path) -> dict:
+    branch = git_output(repo, ["rev-parse", "--abbrev-ref", "HEAD"])
+    upstream = git_output(repo, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])
+    remote = preferred_remote(repo, upstream)
+    try:
+        rel_path = repo.relative_to(workstation_root).as_posix()
+    except ValueError:
+        rel_path = repo.name
+    return {
+        "name": repo.name,
+        "path": rel_path,
+        "remote": remote,
+        "remote_url": remote_url(repo, remote),
+        "upstream": upstream,
+        "branch": branch,
+    }
+
+
+def upsert_repo_records_with_stats(existing: list, discovered: list) -> tuple:
+    indexed = normalize_workstation_repos(existing)
+    by_path = {repo["path"]: repo for repo in indexed}
+    by_name = {repo["name"]: repo for repo in indexed}
+    stats = {
+        "added": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "missing": [],
+        "missing_upstream": 0,
+        "events": [],
+    }
+    discovered_paths = set()
+    for record in discovered:
+        discovered_paths.add(record["path"])
+        current = by_path.get(record["path"]) or by_name.get(record["name"])
+        if current is None:
+            indexed.append(record)
+            by_path[record["path"]] = record
+            by_name[record["name"]] = record
+            status = "added"
+            stats["added"] += 1
+        else:
+            if any(current.get(k, "") != record[k] for k in record):
+                current.update(record)
+                by_path[record["path"]] = current
+                by_name[record["name"]] = current
+                status = "updated"
+                stats["updated"] += 1
+            else:
+                status = "unchanged"
+                stats["unchanged"] += 1
+        if not record["upstream"]:
+            stats["missing_upstream"] += 1
+        stats["events"].append({"status": status, "record": dict(record)})
+    existing_paths = {repo["path"] for repo in normalize_workstation_repos(indexed)}
+    stats["missing"] = sorted(existing_paths - discovered_paths)
+    return normalize_workstation_repos(indexed), stats
+
+
+def index_workstation_data(workstation_root: Path, existing: dict = None) -> tuple:
+    data = existing or {"version": "v1", "name": "", "repos": [], "_external": {"repos": []}}
+    repos = [
+        workstation_repo_record(workstation_root, repo)
+        for repo in discover_workstation_repos(workstation_root)
+    ]
+    external_repos = [
+        workstation_repo_record(workstation_root, repo)
+        for repo in discover_external_workstation_repos(workstation_root)
+    ]
+    indexed_repos, repo_stats = upsert_repo_records_with_stats(data.get("repos", []), repos)
+    indexed_external_repos, external_stats = upsert_repo_records_with_stats(
+        data.get("_external", {}).get("repos", []),
+        external_repos,
+    )
+    return {
+        "version": "v1",
+        "name": data.get("name") or workstation_root.name,
+        "repos": indexed_repos,
+        "_external": {
+            "repos": indexed_external_repos,
+        },
+    }, {
+        "discovered": len(repos),
+        "external_discovered": len(external_repos),
+        "repos": repo_stats,
+        "external": external_stats,
+    }
+
+
+def print_repo_index_events(stats: dict) -> None:
+    for event in stats.get("events", []):
+        record = event.get("record", {})
+        label = record.get("path") or record.get("name") or "(unknown)"
+        status = event.get("status")
+        if status == "added":
+            ok(f"added {label}")
+        elif status == "updated":
+            ok(f"updated {label}")
+        else:
+            info(f"{label}: already indexed")
+        if not record.get("upstream"):
+            warn(f"{label}: no upstream branch configured")
+
+
+def print_workstation_index_summary(workstation_root: Path, manifest_dest: Path, stats: dict, changed: bool) -> None:
+    repo_stats = stats["repos"]
+    external_stats = stats["external"]
+
+    heading("workstation index")
+    print_repo_index_events(repo_stats)
+    if external_stats.get("events"):
+        heading("external index")
+        print_repo_index_events(external_stats)
+
+    heading("summary")
+    info(f"workstation: {BOLD}{workstation_root}{RESET}")
+    info(f"manifest:    {BOLD}{manifest_dest}{RESET}")
+    info(f"discovered:  {stats['discovered']}")
+    info(
+        f"added: {repo_stats['added']}, updated: {repo_stats['updated']}, "
+        f"unchanged: {repo_stats['unchanged']}, missing: {len(repo_stats['missing'])}"
+    )
+    info(
+        f"external:    {stats['external_discovered']} "
+        f"(added: {external_stats['added']}, updated: {external_stats['updated']}, "
+        f"unchanged: {external_stats['unchanged']}, missing: {len(external_stats['missing'])})"
+    )
+    if repo_stats["missing"]:
+        info(f"kept missing entries: {YELLOW}{', '.join(repo_stats['missing'])}{RESET}")
+    if external_stats["missing"]:
+        info(f"kept missing external entries: {YELLOW}{', '.join(external_stats['missing'])}{RESET}")
+    if repo_stats["missing_upstream"]:
+        info(f"repos without upstream: {YELLOW}{repo_stats['missing_upstream']}{RESET}")
+    if external_stats["missing_upstream"]:
+        info(f"external repos without upstream: {YELLOW}{external_stats['missing_upstream']}{RESET}")
+    if changed:
+        ok("metadata workstation.yml updated")
+    else:
+        ok("metadata workstation.yml already current")
+
+
+def print_resolved_metadata_records(records: list) -> None:
+    for record in records:
+        if record.get("status") == "merged":
+            ok(f"resolved metadata conflict: {record['rel']}")
+
+
+def print_indexed_metadata_files(manifest_record: dict, workspace_records: list) -> None:
+    heading("indexed metadata")
+    info(f"workstation.yml: {manifest_record['rel']} ({manifest_record['status']})")
+    for record in workspace_records:
+        info(f"workspace.yml: {record['rel']} ({record['status']})")
+    print_resolved_metadata_records([manifest_record, *workspace_records])
+
+
+def workstation_clone_branch(repo: dict) -> str:
+    upstream = repo.get("upstream", "")
+    remote = repo.get("remote", "")
+    if upstream and "/" in upstream:
+        up_remote, up_branch = upstream.split("/", 1)
+        if not remote or remote == up_remote:
+            return up_branch
+    branch = repo.get("branch", "")
+    return "" if branch == "HEAD" else branch
+
+
+def resolve_workstation_repo_path(workstation_root: Path, repo: dict) -> Path:
+    rel = repo.get("path") or repo.get("name") or ""
+    if not rel:
+        raise ValueError("missing repo path")
+    path = Path(rel)
+    if path.is_absolute():
+        raise ValueError(f"path must be relative to workstation root: {rel}")
+    resolved = (workstation_root / path).resolve()
+    try:
+        resolved.relative_to(workstation_root)
+    except ValueError:
+        raise ValueError(f"path escapes workstation root: {rel}")
+    return resolved
 
 
 def read_workspace_manifest_text(text: str) -> dict:
@@ -680,26 +890,47 @@ def merge_metadata_text(rel_path: Path, source_text: str, existing_text: str) ->
     return source_text
 
 
-def merge_copy_file(src: Path, dest: Path, rel_path: Path) -> None:
+def metadata_file_record(rel_path: Path, dest: Path, status: str) -> dict:
+    return {
+        "rel": rel_path.as_posix(),
+        "path": str(dest),
+        "status": status,
+    }
+
+
+def merge_text_status(rel_path: Path, source_text: str, existing_text: str) -> tuple:
+    merged = merge_metadata_text(rel_path, source_text, existing_text)
+    if merged == existing_text:
+        return merged, "unchanged"
+    if merged != source_text:
+        return merged, "merged"
+    return merged, "updated"
+
+
+def merge_copy_file(src: Path, dest: Path, rel_path: Path) -> dict:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and dest.is_dir():
         warn(f"{dest} exists as a directory, skipping file sync")
-        return
+        return metadata_file_record(rel_path, dest, "skipped")
     if dest.is_file():
-        dest.write_text(merge_metadata_text(rel_path, src.read_text(), dest.read_text()))
-        return
+        text, status = merge_text_status(rel_path, src.read_text(), dest.read_text())
+        dest.write_text(text)
+        return metadata_file_record(rel_path, dest, status)
     shutil.copy2(src, dest)
+    return metadata_file_record(rel_path, dest, "copied")
 
 
-def merge_write_text(dest: Path, rel_path: Path, text: str) -> None:
+def merge_write_text(dest: Path, rel_path: Path, text: str) -> dict:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and dest.is_dir():
         warn(f"{dest} exists as a directory, skipping file sync")
-        return
+        return metadata_file_record(rel_path, dest, "skipped")
     if dest.is_file():
-        dest.write_text(merge_metadata_text(rel_path, text, dest.read_text()))
-        return
+        merged, status = merge_text_status(rel_path, text, dest.read_text())
+        dest.write_text(merged)
+        return metadata_file_record(rel_path, dest, status)
     dest.write_text(text)
+    return metadata_file_record(rel_path, dest, "created")
 
 
 def remove_legacy_workstations_file(clone: Path) -> None:
@@ -710,99 +941,307 @@ def remove_legacy_workstations_file(clone: Path) -> None:
         warn(f"{legacy} exists and is not a file, skipping legacy cleanup")
 
 
-def merge_copy_path(src: Path, dest: Path, rel_path: Path) -> bool:
+def merge_copy_path(src: Path, dest: Path, rel_path: Path) -> list:
     if not src.exists():
-        return False
+        return []
     if src.is_dir():
         if dest.exists() and not dest.is_dir():
             warn(f"{dest} exists as a file, skipping directory sync")
-            return False
-        copied = False
+            return [metadata_file_record(rel_path, dest, "skipped")]
+        records = []
         for child in sorted(src.rglob("*")):
             if child.is_dir():
                 continue
             child_rel = child.relative_to(src)
-            merge_copy_file(child, dest / child_rel, rel_path / child_rel)
-            copied = True
-        return copied
-    merge_copy_file(src, dest, rel_path)
-    return True
+            records.append(merge_copy_file(child, dest / child_rel, rel_path / child_rel))
+        return records
+    return [merge_copy_file(src, dest, rel_path)]
 
 
-def copy_workspace_manifests(workstation_root: Path, clone: Path, dest_prefix: Path) -> int:
-    count = 0
+def copy_workspace_manifests(workstation_root: Path, clone: Path, dest_prefix: Path) -> list:
+    records = []
     local_workspaces = workstation_root / WS_CONTAINER
     if not local_workspaces.is_dir():
-        return count
+        return records
     for workspace_yml in sorted(local_workspaces.glob(f"*/{WORKSPACE_FILE}")):
         rel = workspace_yml.relative_to(workstation_root)
-        merge_copy_file(workspace_yml, clone / dest_prefix / rel, dest_prefix / rel)
-        count += 1
-    return count
+        records.append(merge_copy_file(workspace_yml, clone / dest_prefix / rel, dest_prefix / rel))
+    return records
 
 
-def copy_extra_metadata(clone: Path) -> int:
-    count = 0
+def copy_extra_metadata(clone: Path) -> list:
+    records = []
     for source_rel, dest_rel in EXTRA_SYNC_PATHS:
-        if merge_copy_path(Path.home() / source_rel, clone / dest_rel, dest_rel):
-            count += 1
-    return count
+        records.extend(merge_copy_path(Path.home() / source_rel, clone / dest_rel, dest_rel))
+    return records
 
 
-def sync_entry(entry: dict) -> bool:
-    root = Path(entry["root"]).resolve()
-    repo = entry["repo"]
-    clone = Path(entry["clone"]).expanduser().resolve()
-    if not root.is_dir():
-        die(f"registered root is missing: {root}")
-    ensure_clone(repo, clone)
-
-    heading(f"sync {repo_basename(repo)}")
-    if not pull_metadata(entry):
-        warn("skipping local metadata sync because remote pull did not complete")
-        return False
-
-    workstations = discover_workstations(root, refresh=True)
-    merge_write_text(
-        clone / REGISTRY_FILE,
-        Path(REGISTRY_FILE),
-        render_synced_registry(repo, workstations),
-    )
-    remove_legacy_workstations_file(clone)
-    extra_count = copy_extra_metadata(clone)
-
-    workstation_count = 0
-    workspace_count = 0
-    for workstation in workstations:
-        rel_root = workstation.get("root") or "."
-        workstation_root = safe_source_path(root, rel_root)
-        manifest_rel = workstation.get("manifest") or WORKSTATION_FILE
-        manifest = safe_source_path(root, manifest_rel)
-        if not manifest.is_file():
-            warn(f"missing workstation manifest: {manifest}")
-            continue
-        dest_prefix = Path() if rel_root == "." else Path(rel_root)
-        merge_copy_file(manifest, clone / manifest_rel, Path(manifest_rel))
-        workstation_count += 1
-        workspace_count += copy_workspace_manifests(workstation_root, clone, dest_prefix)
-
+def commit_metadata_changes(clone: Path) -> bool:
     proc = run(["git", "-C", str(clone), "add", "-A"])
     if proc.returncode != 0:
         die(f"git add failed in {clone}\n{(proc.stderr or proc.stdout).rstrip()}")
     status = run(["git", "-C", str(clone), "status", "--porcelain"])
     if not status.stdout.strip():
         info("no metadata changes")
-        return True
+        return False
 
     message = f"sync from {getpass.getuser()}@{socket.gethostname()}"
     proc = run(["git", "-C", str(clone), "commit", "-m", message])
     if proc.returncode != 0:
         die(f"git commit failed in {clone}\n{(proc.stderr or proc.stdout).rstrip()}")
-    ok(
-        f"copied {workstation_count} workstation manifest(s), "
-        f"{workspace_count} workspace manifest(s), {extra_count} extra path(s)"
-    )
     return True
+
+
+def upsert_workstation(workstations: list, item: dict) -> list:
+    key = item.get("manifest") or item.get("root")
+    out = []
+    replaced = False
+    for existing in workstations:
+        existing_key = existing.get("manifest") or existing.get("root")
+        if existing_key == key:
+            out.append(dict(item))
+            replaced = True
+        else:
+            out.append(dict(existing))
+    if not replaced:
+        out.append(dict(item))
+    return sorted(out, key=lambda value: (value.get("root") or "", value.get("name") or ""))
+
+
+def registered_entry_for_workstation(workstation_root: Path) -> tuple:
+    entries = read_registry()
+    matches = []
+    for entry in entries:
+        root = Path(entry["root"]).resolve()
+        try:
+            rel = workstation_root.relative_to(root)
+        except ValueError:
+            continue
+        matches.append((len(root.parts), entry, root, rel))
+    if not matches:
+        die(f"workstation path is not under a registered root: {workstation_root}")
+    _, entry, root, rel = sorted(matches, key=lambda item: item[0], reverse=True)[0]
+    rel_text = "." if rel == Path(".") else rel.as_posix()
+    return entry, root, rel_text
+
+
+def indexed_workstations_for_entry(entry: dict) -> list:
+    registry = synced_registry_path(entry)
+    return read_synced_registry_text(registry.read_text())["workstations"] if registry.is_file() else []
+
+
+def index_workstation_metadata(entry: dict, rel_root: str, workstation_root: Path, workstations: list) -> tuple:
+    repo = entry["repo"]
+    clone = Path(entry["clone"]).expanduser().resolve()
+    manifest_rel = WORKSTATION_FILE if rel_root == "." else f"{rel_root}/{WORKSTATION_FILE}"
+    manifest_dest = clone / manifest_rel
+    existing = read_workstation_manifest_text(manifest_dest.read_text()) if manifest_dest.is_file() else None
+    data, stats = index_workstation_data(workstation_root, existing)
+    manifest_record = merge_write_text(manifest_dest, Path(manifest_rel), render_workstation_manifest(data))
+    print_workstation_index_summary(
+        workstation_root,
+        manifest_dest,
+        stats,
+        manifest_record["status"] not in ("unchanged", "skipped"),
+    )
+
+    workstations = upsert_workstation(workstations, {
+        "name": data.get("name") or workstation_root.name,
+        "root": rel_root,
+        "manifest": manifest_rel,
+    })
+    dest_prefix = Path() if rel_root == "." else Path(rel_root)
+    workspace_records = copy_workspace_manifests(workstation_root, clone, dest_prefix)
+    print_indexed_metadata_files(manifest_record, workspace_records)
+    return workstations, len(data.get("repos", [])), len(workspace_records)
+
+
+def write_indexed_workstations(entry: dict, workstations: list) -> None:
+    registry = synced_registry_path(entry)
+    merge_write_text(
+        registry,
+        Path(REGISTRY_FILE),
+        render_synced_registry(entry["repo"], workstations),
+    )
+
+
+def index_entry_path(path: str) -> bool:
+    workstation_root = Path(path).expanduser()
+    if not workstation_root.is_absolute():
+        workstation_root = (Path.cwd() / workstation_root).resolve()
+    else:
+        workstation_root = workstation_root.resolve()
+    if not workstation_root.is_dir():
+        die(f"not a directory: {workstation_root}")
+
+    entry, root, rel_root = registered_entry_for_workstation(workstation_root)
+    clone = Path(entry["clone"]).expanduser().resolve()
+    ensure_clone(entry["repo"], clone)
+
+    heading(f"index {rel_root}")
+    if not pull_metadata(entry):
+        warn("skipping workstation index because remote pull did not complete")
+        return False
+
+    workstations = indexed_workstations_for_entry(entry)
+    workstations, repo_count, workspace_count = index_workstation_metadata(
+        entry,
+        rel_root,
+        workstation_root,
+        workstations,
+    )
+    write_indexed_workstations(entry, workstations)
+    remove_legacy_workstations_file(clone)
+    extra_records = copy_extra_metadata(clone)
+    print_resolved_metadata_records(extra_records)
+
+    changed = commit_metadata_changes(clone)
+    if changed:
+        ok(
+            f"indexed {repo_count} repo(s), "
+            f"{workspace_count} workspace manifest(s), {len(extra_records)} extra file(s)"
+        )
+    return True
+
+
+def index_entry(entry: dict) -> bool:
+    root = Path(entry["root"]).resolve()
+    if not root.is_dir():
+        die(f"registered root is missing: {root}")
+    clone = Path(entry["clone"]).expanduser().resolve()
+    ensure_clone(entry["repo"], clone)
+
+    heading(f"index {repo_basename(entry['repo'])}")
+    if not pull_metadata(entry):
+        warn("skipping workstation index because remote pull did not complete")
+        return False
+
+    workstations = indexed_workstations_for_entry(entry)
+    if not workstations:
+        die(f"missing synced registry at {synced_registry_path(entry)}; run `meta-hub index -p <workstation-folder>` first")
+
+    indexed = skipped = repo_count = workspace_count = 0
+    for workstation in list(workstations):
+        rel_root = workstation.get("root") or "."
+        station_root = safe_source_path(root, rel_root)
+        if not station_root.is_dir():
+            warn(f"missing local workstation folder: {station_root}")
+            skipped += 1
+            continue
+        workstations, repos, workspaces = index_workstation_metadata(
+            entry,
+            rel_root,
+            station_root,
+            workstations,
+        )
+        indexed += 1
+        repo_count += repos
+        workspace_count += workspaces
+
+    write_indexed_workstations(entry, workstations)
+    remove_legacy_workstations_file(clone)
+    extra_records = copy_extra_metadata(clone)
+    print_resolved_metadata_records(extra_records)
+    changed = commit_metadata_changes(clone)
+    if changed:
+        ok(
+            f"indexed {indexed} workstation(s), {repo_count} repo(s), "
+            f"{workspace_count} workspace manifest(s), {len(extra_records)} extra file(s)"
+        )
+    elif skipped:
+        info(f"skipped {skipped} missing workstation(s)")
+    return indexed > 0
+
+
+def setup_repo_from_metadata(workstation_root: Path, repo: dict) -> str:
+    repo_data = normalize_repo_record(repo)
+    if not repo_data["name"]:
+        return "skipped"
+    if not repo_data["path"]:
+        repo_data["path"] = repo_data["name"]
+    try:
+        dest = resolve_workstation_repo_path(workstation_root, repo_data)
+    except ValueError as exc:
+        warn(str(exc))
+        return "failed"
+
+    if dest.exists():
+        if is_git_repo_path(dest):
+            return "skipped"
+        warn(f"path exists but is not a git repo: {dest}")
+        return "failed"
+
+    remote_url_value = repo_data.get("remote_url", "")
+    if not remote_url_value:
+        warn(f"{repo_data['path']}: missing remote_url in metadata")
+        return "failed"
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = ["git", "clone"]
+    if repo_data.get("remote"):
+        cmd.extend(["--origin", repo_data["remote"]])
+    branch = workstation_clone_branch(repo_data)
+    if branch:
+        cmd.extend(["--branch", branch])
+    cmd.extend([remote_url_value, str(dest)])
+    proc = run(cmd)
+    if proc.returncode != 0:
+        warn(f"clone failed for {repo_data['path']}: {(proc.stderr or proc.stdout).rstrip()}")
+        return "failed"
+    return "cloned"
+
+
+def ensure_workspace_dirs_from_metadata(clone: Path, station_root: Path, metadata_prefix: Path) -> int:
+    count = 0
+    metadata_root = clone / metadata_prefix
+    for workspace_yml in sorted((metadata_root / WS_CONTAINER).glob(f"*/{WORKSPACE_FILE}")):
+        workspace_dir = station_root / WS_CONTAINER / workspace_yml.parent.name
+        if not workspace_dir.exists():
+            workspace_dir.mkdir(parents=True, exist_ok=True)
+            count += 1
+    return count
+
+
+def sync_entry(entry: dict) -> bool:
+    root = Path(entry["root"]).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    clone = Path(entry["clone"]).expanduser().resolve()
+    ensure_clone(entry["repo"], clone)
+
+    heading(f"sync {repo_basename(entry['repo'])}")
+    if not pull_metadata(entry):
+        warn("skipping workstation setup because remote pull did not complete")
+        return False
+
+    workstations = read_cached_workstations(entry, required=False)
+    if not workstations:
+        info("no indexed workstations")
+        return True
+
+    cloned = skipped = failed = workspace_dirs = 0
+    for workstation in workstations:
+        rel_root = workstation.get("root") or "."
+        station_root = safe_source_path(root, rel_root)
+        station_root.mkdir(parents=True, exist_ok=True)
+        manifest_rel = workstation.get("manifest") or WORKSTATION_FILE
+        manifest = clone / manifest_rel
+        if not manifest.is_file():
+            warn(f"missing metadata workstation manifest: {manifest_rel}")
+            continue
+        data = read_workstation_manifest_text(manifest.read_text())
+        for repo in normalize_workstation_repos(data.get("repos", [])):
+            result = setup_repo_from_metadata(station_root, repo)
+            if result == "cloned":
+                cloned += 1
+            elif result == "skipped":
+                skipped += 1
+            else:
+                failed += 1
+        metadata_prefix = Path() if rel_root == "." else Path(rel_root)
+        workspace_dirs += ensure_workspace_dirs_from_metadata(clone, station_root, metadata_prefix)
+
+    ok(f"cloned {cloned}, skipped {skipped}, failed {failed}, workspace dirs {workspace_dirs}")
+    return failed == 0
 
 
 def sync_workstation_tech_docs(workstation_root: Path) -> dict:
@@ -875,9 +1314,10 @@ def sync_tech_doc_entry(entry: dict) -> bool:
 
     heading(f"sync tech docs {root.name}")
     totals = {"created": 0, "updated": 0, "removed": 0, "skipped": 0}
-    for workstation in discover_workstations(root, refresh=True):
-        rel_root = workstation.get("root") or "."
-        workstation_root = safe_source_path(root, rel_root)
+    for ctx in registered_workstation_contexts([entry], required=True):
+        workstation_root = ctx["station_root"]
+        if not workstation_root.is_dir():
+            continue
         counts = sync_workstation_tech_docs(workstation_root)
         for key, value in counts.items():
             totals[key] += value
@@ -1022,7 +1462,9 @@ def resolve_metadata_conflicts(clone: Path) -> bool:
         return False
     unresolved = []
     for path in paths:
-        if not resolve_conflicted_file(clone, path):
+        if resolve_conflicted_file(clone, path):
+            ok(f"resolved metadata conflict: {path}")
+        else:
             unresolved.append(path)
     if unresolved:
         warn(f"manual conflict resolution required: {', '.join(unresolved)}")
@@ -1116,6 +1558,8 @@ USAGE = """\
 Usage:
   meta-hub -f <folder> -r <git-repository>
   meta-hub -r <git-repository>
+  meta-hub index
+  meta-hub index -p <workstation-folder>
   meta-hub sync [pick]
   meta-hub sync_tech_doc [pick]
   meta-hub push [pick]
@@ -1126,6 +1570,7 @@ Usage:
 
 Options:
   -f <folder>          source folder containing workstation metadata; defaults to .
+  -p <folder>          workstation folder to index into metadata
   -r <git-repository> metadata git repository to clone/register
 """
 
@@ -1135,6 +1580,28 @@ def main() -> None:
     if not argv or argv[0] in ("-h", "--help"):
         print(USAGE)
         sys.exit(0)
+
+    if argv[0] == "index":
+        argv.pop(0)
+        path = ""
+        i = 0
+        while i < len(argv):
+            arg = argv[i]
+            if arg == "-p":
+                i += 1
+                if i >= len(argv):
+                    die("-p requires a workstation folder")
+                path = argv[i]
+            else:
+                die(f"unexpected args for index: {' '.join(argv)}\n\n{USAGE}")
+            i += 1
+        if path:
+            sys.exit(0 if index_entry_path(path) else 1)
+        entries = choose_entries(read_registry(), False)
+        ok_count = sum(1 for entry in entries if index_entry(entry))
+        heading("summary")
+        info(f"index: {ok_count}/{len(entries)}")
+        sys.exit(0 if ok_count == len(entries) else 1)
 
     if argv[0] in ("sync", "sync_tech_doc", "push"):
         mode = argv.pop(0)

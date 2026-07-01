@@ -147,7 +147,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 
 test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test ## Run smoke tests
 
-mkws-test: ## Run mkws/mkwst/meta-hub smoke tests
+mkws-test: ## Run mkws/meta-hub smoke tests
 	sh ./scripts/mkws-smoke-test.sh
 
 skills-hub-test: ## Run skills-hub smoke tests
