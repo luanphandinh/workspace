@@ -756,6 +756,20 @@ def print_workstation_index_summary(workstation_root: Path, manifest_dest: Path,
         ok("metadata workstation.yml already current")
 
 
+def print_resolved_metadata_records(records: list) -> None:
+    for record in records:
+        if record.get("status") == "merged":
+            ok(f"resolved metadata conflict: {record['rel']}")
+
+
+def print_indexed_metadata_files(manifest_record: dict, workspace_records: list) -> None:
+    heading("indexed metadata")
+    info(f"workstation.yml: {manifest_record['rel']} ({manifest_record['status']})")
+    for record in workspace_records:
+        info(f"workspace.yml: {record['rel']} ({record['status']})")
+    print_resolved_metadata_records([manifest_record, *workspace_records])
+
+
 def workstation_clone_branch(repo: dict) -> str:
     upstream = repo.get("upstream", "")
     remote = repo.get("remote", "")
@@ -876,26 +890,47 @@ def merge_metadata_text(rel_path: Path, source_text: str, existing_text: str) ->
     return source_text
 
 
-def merge_copy_file(src: Path, dest: Path, rel_path: Path) -> None:
+def metadata_file_record(rel_path: Path, dest: Path, status: str) -> dict:
+    return {
+        "rel": rel_path.as_posix(),
+        "path": str(dest),
+        "status": status,
+    }
+
+
+def merge_text_status(rel_path: Path, source_text: str, existing_text: str) -> tuple:
+    merged = merge_metadata_text(rel_path, source_text, existing_text)
+    if merged == existing_text:
+        return merged, "unchanged"
+    if merged != source_text:
+        return merged, "merged"
+    return merged, "updated"
+
+
+def merge_copy_file(src: Path, dest: Path, rel_path: Path) -> dict:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and dest.is_dir():
         warn(f"{dest} exists as a directory, skipping file sync")
-        return
+        return metadata_file_record(rel_path, dest, "skipped")
     if dest.is_file():
-        dest.write_text(merge_metadata_text(rel_path, src.read_text(), dest.read_text()))
-        return
+        text, status = merge_text_status(rel_path, src.read_text(), dest.read_text())
+        dest.write_text(text)
+        return metadata_file_record(rel_path, dest, status)
     shutil.copy2(src, dest)
+    return metadata_file_record(rel_path, dest, "copied")
 
 
-def merge_write_text(dest: Path, rel_path: Path, text: str) -> None:
+def merge_write_text(dest: Path, rel_path: Path, text: str) -> dict:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and dest.is_dir():
         warn(f"{dest} exists as a directory, skipping file sync")
-        return
+        return metadata_file_record(rel_path, dest, "skipped")
     if dest.is_file():
-        dest.write_text(merge_metadata_text(rel_path, text, dest.read_text()))
-        return
+        merged, status = merge_text_status(rel_path, text, dest.read_text())
+        dest.write_text(merged)
+        return metadata_file_record(rel_path, dest, status)
     dest.write_text(text)
+    return metadata_file_record(rel_path, dest, "created")
 
 
 def remove_legacy_workstations_file(clone: Path) -> None:
@@ -906,43 +941,39 @@ def remove_legacy_workstations_file(clone: Path) -> None:
         warn(f"{legacy} exists and is not a file, skipping legacy cleanup")
 
 
-def merge_copy_path(src: Path, dest: Path, rel_path: Path) -> bool:
+def merge_copy_path(src: Path, dest: Path, rel_path: Path) -> list:
     if not src.exists():
-        return False
+        return []
     if src.is_dir():
         if dest.exists() and not dest.is_dir():
             warn(f"{dest} exists as a file, skipping directory sync")
-            return False
-        copied = False
+            return [metadata_file_record(rel_path, dest, "skipped")]
+        records = []
         for child in sorted(src.rglob("*")):
             if child.is_dir():
                 continue
             child_rel = child.relative_to(src)
-            merge_copy_file(child, dest / child_rel, rel_path / child_rel)
-            copied = True
-        return copied
-    merge_copy_file(src, dest, rel_path)
-    return True
+            records.append(merge_copy_file(child, dest / child_rel, rel_path / child_rel))
+        return records
+    return [merge_copy_file(src, dest, rel_path)]
 
 
-def copy_workspace_manifests(workstation_root: Path, clone: Path, dest_prefix: Path) -> int:
-    count = 0
+def copy_workspace_manifests(workstation_root: Path, clone: Path, dest_prefix: Path) -> list:
+    records = []
     local_workspaces = workstation_root / WS_CONTAINER
     if not local_workspaces.is_dir():
-        return count
+        return records
     for workspace_yml in sorted(local_workspaces.glob(f"*/{WORKSPACE_FILE}")):
         rel = workspace_yml.relative_to(workstation_root)
-        merge_copy_file(workspace_yml, clone / dest_prefix / rel, dest_prefix / rel)
-        count += 1
-    return count
+        records.append(merge_copy_file(workspace_yml, clone / dest_prefix / rel, dest_prefix / rel))
+    return records
 
 
-def copy_extra_metadata(clone: Path) -> int:
-    count = 0
+def copy_extra_metadata(clone: Path) -> list:
+    records = []
     for source_rel, dest_rel in EXTRA_SYNC_PATHS:
-        if merge_copy_path(Path.home() / source_rel, clone / dest_rel, dest_rel):
-            count += 1
-    return count
+        records.extend(merge_copy_path(Path.home() / source_rel, clone / dest_rel, dest_rel))
+    return records
 
 
 def commit_metadata_changes(clone: Path) -> bool:
@@ -1006,10 +1037,13 @@ def index_workstation_metadata(entry: dict, rel_root: str, workstation_root: Pat
     manifest_dest = clone / manifest_rel
     existing = read_workstation_manifest_text(manifest_dest.read_text()) if manifest_dest.is_file() else None
     data, stats = index_workstation_data(workstation_root, existing)
-    old_text = manifest_dest.read_text() if manifest_dest.is_file() else ""
-    merge_write_text(manifest_dest, Path(manifest_rel), render_workstation_manifest(data))
-    new_text = manifest_dest.read_text() if manifest_dest.is_file() else ""
-    print_workstation_index_summary(workstation_root, manifest_dest, stats, old_text != new_text)
+    manifest_record = merge_write_text(manifest_dest, Path(manifest_rel), render_workstation_manifest(data))
+    print_workstation_index_summary(
+        workstation_root,
+        manifest_dest,
+        stats,
+        manifest_record["status"] not in ("unchanged", "skipped"),
+    )
 
     workstations = upsert_workstation(workstations, {
         "name": data.get("name") or workstation_root.name,
@@ -1017,8 +1051,9 @@ def index_workstation_metadata(entry: dict, rel_root: str, workstation_root: Pat
         "manifest": manifest_rel,
     })
     dest_prefix = Path() if rel_root == "." else Path(rel_root)
-    workspace_count = copy_workspace_manifests(workstation_root, clone, dest_prefix)
-    return workstations, len(data.get("repos", [])), workspace_count
+    workspace_records = copy_workspace_manifests(workstation_root, clone, dest_prefix)
+    print_indexed_metadata_files(manifest_record, workspace_records)
+    return workstations, len(data.get("repos", [])), len(workspace_records)
 
 
 def write_indexed_workstations(entry: dict, workstations: list) -> None:
@@ -1057,13 +1092,14 @@ def index_entry_path(path: str) -> bool:
     )
     write_indexed_workstations(entry, workstations)
     remove_legacy_workstations_file(clone)
-    extra_count = copy_extra_metadata(clone)
+    extra_records = copy_extra_metadata(clone)
+    print_resolved_metadata_records(extra_records)
 
     changed = commit_metadata_changes(clone)
     if changed:
         ok(
             f"indexed {repo_count} repo(s), "
-            f"{workspace_count} workspace manifest(s), {extra_count} extra path(s)"
+            f"{workspace_count} workspace manifest(s), {len(extra_records)} extra file(s)"
         )
     return True
 
@@ -1104,12 +1140,13 @@ def index_entry(entry: dict) -> bool:
 
     write_indexed_workstations(entry, workstations)
     remove_legacy_workstations_file(clone)
-    extra_count = copy_extra_metadata(clone)
+    extra_records = copy_extra_metadata(clone)
+    print_resolved_metadata_records(extra_records)
     changed = commit_metadata_changes(clone)
     if changed:
         ok(
             f"indexed {indexed} workstation(s), {repo_count} repo(s), "
-            f"{workspace_count} workspace manifest(s), {extra_count} extra path(s)"
+            f"{workspace_count} workspace manifest(s), {len(extra_records)} extra file(s)"
         )
     elif skipped:
         info(f"skipped {skipped} missing workstation(s)")
@@ -1425,7 +1462,9 @@ def resolve_metadata_conflicts(clone: Path) -> bool:
         return False
     unresolved = []
     for path in paths:
-        if not resolve_conflicted_file(clone, path):
+        if resolve_conflicted_file(clone, path):
+            ok(f"resolved metadata conflict: {path}")
+        else:
             unresolved.append(path)
     if unresolved:
         warn(f"manual conflict resolution required: {', '.join(unresolved)}")

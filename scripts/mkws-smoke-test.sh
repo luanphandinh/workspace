@@ -428,6 +428,8 @@ test_meta_hub() {
 	assert_contains "$TMP/meta-index-a.out" "=== workstation index ==="
 	assert_contains "$TMP/meta-index-a.out" "repo-a"
 	assert_contains "$TMP/meta-index-a.out" "=== summary ==="
+	assert_contains "$TMP/meta-index-a.out" "workstation.yml: station-a/workstation.yml"
+	assert_contains "$TMP/meta-index-a.out" "workspace.yml: station-a/local_workspaces/feature-a/workspace.yml"
 	meta_hub index -p "$root/station-b" > "$TMP/meta-index-b.out"
 	init_repo "$root/station-b/repo-b2"
 	add_origin_remote "$root/station-b/repo-b2" "$TMP/repo-b2.git"
@@ -435,6 +437,7 @@ test_meta_hub() {
 	assert_contains "$TMP/meta-index-all.out" "repo-b: already indexed"
 	assert_contains "$TMP/meta-index-all.out" "repo-b2"
 	assert_contains "$TMP/meta-index-all.out" "=== summary ==="
+	assert_contains "$TMP/meta-index-all.out" "workspace.yml: station-b/local_workspaces/feature-b/workspace.yml"
 	assert_exists "$clone/registry.yml"
 	assert_not_exists "$clone/workstations.yml"
 	assert_not_exists "$root/workstations.yml"
@@ -561,7 +564,8 @@ EOF
 	git -C "$clone" add registry.yml
 	git -C "$clone" commit -q -m "local metadata"
 
-	meta_hub sync >/dev/null
+	meta_hub index > "$TMP/meta-hub-registry-conflict.out"
+	assert_contains "$TMP/meta-hub-registry-conflict.out" "resolved metadata conflict: registry.yml"
 	assert_contains "$clone/registry.yml" "station-local/workstation.yml"
 	assert_contains "$clone/registry.yml" "station-remote/workstation.yml"
 	assert_not_contains "$clone/registry.yml" "<<<<<<<"
