@@ -11,7 +11,22 @@ trap cleanup EXIT INT TERM
 
 export HOME="$TMP/home"
 export PYTHONPYCACHEPREFIX="$TMP/pycache"
-mkdir -p "$HOME"
+FAKEBIN="$TMP/fakebin"
+FZF_INPUT="$TMP/fzf-input"
+export FZF_INPUT
+mkdir -p "$HOME" "$FAKEBIN"
+export PATH="$FAKEBIN:$PATH"
+
+cat > "$FAKEBIN/fzf" <<'SH'
+#!/bin/sh
+cat > "$FZF_INPUT"
+if [ -n "${FZF_SELECT:-}" ]; then
+	grep -F "$FZF_SELECT" "$FZF_INPUT" | head -n 1
+else
+	sed -n '1p' "$FZF_INPUT"
+fi
+SH
+chmod +x "$FAKEBIN/fzf"
 
 mkws() {
 	python3 "$ROOT/bin/mkws" "$@"
@@ -19,10 +34,6 @@ mkws() {
 
 mkwst() {
 	python3 "$ROOT/bin/mkwst" "$@"
-}
-
-mkwsts() {
-	python3 "$ROOT/bin/mkwsts" "$@"
 }
 
 meta_hub() {
@@ -45,6 +56,23 @@ assert_not_exists() {
 		printf 'unexpected path exists: %s\n' "$1" >&2
 		exit 1
 	}
+}
+
+assert_symlink_target() {
+	test -L "$1" || {
+		printf 'expected symlink: %s\n' "$1" >&2
+		exit 1
+	}
+	python3 - "$1" "$2" <<'PY'
+from pathlib import Path
+import sys
+
+link = Path(sys.argv[1])
+target = Path(sys.argv[2])
+if link.resolve() != target.resolve():
+    print(f"expected {link} to point at {target}, got {link.resolve()}", file=sys.stderr)
+    raise SystemExit(1)
+PY
 }
 
 assert_git_repo() {
@@ -131,6 +159,7 @@ test_mkws() {
 	mkws --help >/dev/null
 	EXPECT='`mkws index` moved to `mkwst index`' expect_fail_contains mkws index
 	EXPECT='`mkws setup` moved to `mkwst setup`' expect_fail_contains mkws setup
+	EXPECT='`mkws sync_tech_doc` moved to `meta-hub sync_tech_doc`' expect_fail_contains mkws sync_tech_doc
 
 	(
 		cd "$root"
@@ -337,60 +366,20 @@ EOF
 	pass "mkwst"
 }
 
-test_mkwsts() {
-	root="$TMP/mkwsts-root"
-	mkdir -p "$root/ws-a" "$root/ws-b" "$root/group-c/ws-c" "$root/.hidden/ws-hidden" "$root/local_workspaces/ignored"
-	cat > "$root/workstation.yml" <<EOF
-version: v1
-name: root-ws
-repos:
-EOF
-	cat > "$root/ws-a/workstation.yml" <<EOF
-version: v1
-name: ws-a
-repos:
-EOF
-	cat > "$root/ws-b/workstation.yml" <<EOF
-version: v1
-name: ws-b
-repos:
-EOF
-	cat > "$root/group-c/ws-c/workstation.yml" <<EOF
-version: v1
-name: ws-c
-repos:
-EOF
-	cat > "$root/.hidden/ws-hidden/workstation.yml" <<EOF
-version: v1
-name: hidden
-repos:
-EOF
-	cat > "$root/local_workspaces/ignored/workstation.yml" <<EOF
-version: v1
-name: ignored
-repos:
-EOF
-
-	(
-		cd "$root"
-		mkwsts index >/dev/null
-	)
-	assert_exists "$root/workstations.yml"
-	assert_contains "$root/workstations.yml" "root: \".\""
-	assert_contains "$root/workstations.yml" "root: \"ws-a\""
-	assert_contains "$root/workstations.yml" "root: \"ws-b\""
-	assert_not_contains "$root/workstations.yml" "ws-c"
-	assert_not_contains "$root/workstations.yml" "hidden"
-	assert_not_contains "$root/workstations.yml" "ignored"
-
-	pass "mkwsts"
+test_mkwsts_removed() {
+	if PATH="$ROOT/bin:/usr/bin:/bin" command -v mkwsts >/dev/null 2>&1; then
+		printf 'expected mkwsts to be removed from repo bin\n' >&2
+		exit 1
+	fi
+	pass "mkwsts removed"
 }
 
 test_meta_hub() {
 	root="$TMP/meta-hub-root"
-	mkdir -p "$root/station-a"
+	mkdir -p "$root/station-a" "$root/station-b"
 	root=$(cd "$root" && pwd -P)
 	init_repo "$root/station-a/repo-a"
+	init_repo "$root/station-b/repo-b"
 	git config --global user.name "Example User"
 	git config --global user.email "user@example.com"
 
@@ -399,9 +388,18 @@ version: v1
 name: "station-a"
 repos:
 EOF
+	cat > "$root/station-b/workstation.yml" <<EOF
+version: v1
+name: "station-b"
+repos:
+EOF
 	(
 		cd "$root/station-a"
 		mkws --name feature-a --branch feature/a --add repo-a >/dev/null
+	)
+	(
+		cd "$root/station-b"
+		mkws --name feature-b --branch feature/b --add repo-b >/dev/null
 	)
 	mkdir -p "$HOME/.skills-hub" "$HOME/.cmds-hub"
 	printf 'plugin-base\n' > "$HOME/.skills-hub/execute_plugins"
@@ -413,23 +411,94 @@ EOF
 	git clone -q --bare "$meta_seed" "$meta_remote"
 
 	meta_hub -f "$root" -r "$meta_remote" >/dev/null
-	registry="$HOME/.meta-hub/registry.yml"
+	info_yml="$HOME/.meta-hub/info.yml"
 	clone="$HOME/.meta-hub/metadata"
-	assert_exists "$registry"
+	assert_exists "$info_yml"
+	assert_not_exists "$HOME/.meta-hub/registry.yml"
 	assert_exists "$clone/.git"
-	assert_contains "$registry" "root: \"$root\""
-	assert_contains "$registry" "repo: \"$meta_remote\""
+	assert_contains "$info_yml" "version: v3"
+	assert_contains "$info_yml" "path: \"$root\""
+	assert_contains "$info_yml" "clone: \"$clone\""
+	assert_not_contains "$info_yml" "remote:"
 
 	meta_hub sync >/dev/null
-	assert_exists "$clone/workstations.yml"
+	assert_exists "$clone/registry.yml"
+	assert_not_exists "$clone/workstations.yml"
+	assert_not_exists "$root/workstations.yml"
+	assert_contains "$clone/registry.yml" "station-a/workstation.yml"
+	assert_contains "$clone/registry.yml" "station-b/workstation.yml"
 	assert_exists "$clone/station-a/workstation.yml"
+	assert_exists "$clone/station-b/workstation.yml"
 	assert_exists "$clone/station-a/local_workspaces/feature-a/workspace.yml"
+	assert_exists "$clone/station-b/local_workspaces/feature-b/workspace.yml"
 	assert_exists "$clone/.skills-hub/execute_plugins"
 	assert_exists "$clone/.cmds-hub/cmd_history"
 	assert_not_exists "$clone/station-a/local_workspaces/feature-a/repo-a/README.md"
 	assert_contains "$clone/station-a/workstation.yml" "name: \"repo-a\""
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-base"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-base"
+
+	cat > "$clone/workstations.yml" <<EOF
+version: v1
+name: "legacy"
+workstations: []
+EOF
+	git -C "$clone" add workstations.yml
+	git -C "$clone" commit -q -m "legacy workstations"
+	meta_hub sync >/dev/null
+	assert_not_exists "$clone/workstations.yml"
+
+	project_path=$(FZF_SELECT="feature-b" meta_hub project)
+	assert_eq "$root/station-b/local_workspaces/feature-b" "$project_path"
+	assert_contains "$FZF_INPUT" "$root/station-a/local_workspaces/feature-a"
+	assert_contains "$FZF_INPUT" "$root/station-b/local_workspaces/feature-b"
+	project_path=$(FZF_SELECT="feature-b" meta_hub p)
+	assert_eq "$root/station-b/local_workspaces/feature-b" "$project_path"
+
+	mkdir -p "$root/station-c"
+	init_repo "$root/station-c/repo-c"
+	cat > "$root/station-c/workstation.yml" <<EOF
+version: v1
+name: "station-c"
+repos:
+EOF
+	(
+		cd "$root/station-c"
+		mkws --name feature-c --branch feature/c --add repo-c >/dev/null
+	)
+	FZF_SELECT="feature-b" meta_hub project >/dev/null
+	assert_not_contains "$FZF_INPUT" "$root/station-c/local_workspaces/feature-c"
+	meta_hub sync >/dev/null
+	assert_contains "$clone/registry.yml" "station-c/workstation.yml"
+	project_path=$(FZF_SELECT="feature-c" meta_hub project)
+	assert_eq "$root/station-c/local_workspaces/feature-c" "$project_path"
+
+	repo_path=$(FZF_SELECT="$root/station-b/local_workspaces/feature-b/repo-b" meta_hub repo)
+	assert_eq "$root/station-b/local_workspaces/feature-b/repo-b" "$repo_path"
+	assert_contains "$FZF_INPUT" "$root/station-a/repo-a"
+	assert_contains "$FZF_INPUT" "$root/station-b/local_workspaces/feature-b/repo-b"
+	repo_path=$(FZF_SELECT="$root/station-b/local_workspaces/feature-b/repo-b" meta_hub r)
+	assert_eq "$root/station-b/local_workspaces/feature-b/repo-b" "$repo_path"
+
+	(
+		cd "$TMP"
+		meta_hub sync_tech_doc >/dev/null
+	)
+	assert_symlink_target \
+		"$root/station-a/tech_doc/feature-a/tech_doc" \
+		"$root/station-a/local_workspaces/feature-a/tech_doc"
+	assert_symlink_target \
+		"$root/station-b/tech_doc/feature-b/tech_doc" \
+		"$root/station-b/local_workspaces/feature-b/tech_doc"
+	rm -rf "$root/station-a/local_workspaces/feature-a/tech_doc"
+	(
+		cd "$TMP"
+		meta_hub sync_tech_doc >/dev/null
+	)
+	assert_not_exists "$root/station-a/tech_doc/feature-a/tech_doc"
+	assert_symlink_target \
+		"$root/station-b/tech_doc/feature-b/tech_doc" \
+		"$root/station-b/local_workspaces/feature-b/tech_doc"
 
 	msg=$(git -C "$clone" log -1 --format=%s)
 	case "$msg" in
@@ -441,32 +510,37 @@ EOF
 	esac
 
 	meta_hub push >/dev/null
+	if meta_hub pull >"$TMP/meta-hub-pull.out" 2>&1; then
+		printf 'expected meta-hub pull to be removed\n' >&2
+		exit 1
+	fi
+	assert_contains "$TMP/meta-hub-pull.out" "pull"
 
 	other="$TMP/meta-hub-other"
 	git clone -q "$meta_remote" "$other"
 	git -C "$other" config user.name "Example User"
 	git -C "$other" config user.email "user@example.com"
-	cat >> "$other/workstations.yml" <<EOF
+	cat >> "$other/registry.yml" <<EOF
   - name: "station-remote"
     root: "station-remote"
     manifest: "station-remote/workstation.yml"
 EOF
-	git -C "$other" add workstations.yml
+	git -C "$other" add registry.yml
 	git -C "$other" commit -q -m "remote metadata"
 	git -C "$other" push -q origin main
 
-	cat >> "$clone/workstations.yml" <<EOF
+	cat >> "$clone/registry.yml" <<EOF
   - name: "station-local"
     root: "station-local"
     manifest: "station-local/workstation.yml"
 EOF
-	git -C "$clone" add workstations.yml
+	git -C "$clone" add registry.yml
 	git -C "$clone" commit -q -m "local metadata"
 
-	meta_hub pull >/dev/null
-	assert_contains "$clone/workstations.yml" "station-local/workstation.yml"
-	assert_contains "$clone/workstations.yml" "station-remote/workstation.yml"
-	assert_not_contains "$clone/workstations.yml" "<<<<<<<"
+	meta_hub sync >/dev/null
+	assert_contains "$clone/registry.yml" "station-local/workstation.yml"
+	assert_contains "$clone/registry.yml" "station-remote/workstation.yml"
+	assert_not_contains "$clone/registry.yml" "<<<<<<<"
 
 	meta_hub push >/dev/null
 	git -C "$other" pull -q --ff-only
@@ -481,7 +555,7 @@ EOF
 	git -C "$clone" add .skills-hub/execute_plugins .cmds-hub/cmd_history
 	git -C "$clone" commit -q -m "local extra metadata"
 
-	meta_hub pull >/dev/null
+	meta_hub sync >/dev/null
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-local"
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-remote"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-local"
@@ -512,6 +586,37 @@ EOF
 	fi
 
 	rm -rf "$HOME/.meta-hub" "$HOME/.meta-sync"
+	old_root="$TMP/meta-hub-old-root"
+	mkdir -p "$old_root/station-old"
+	old_root=$(cd "$old_root" && pwd -P)
+	init_repo "$old_root/station-old/repo-old"
+	cat > "$old_root/station-old/workstation.yml" <<EOF
+version: v1
+name: "station-old"
+repos:
+EOF
+	old_remote="$TMP/old-metadata.git"
+	old_clone="$HOME/.meta-hub/old-metadata"
+	mkdir -p "$HOME/.meta-hub"
+	git init -q --bare "$old_remote"
+	git clone -q "$old_remote" "$old_clone"
+	git -C "$old_clone" config user.name "Example User"
+	git -C "$old_clone" config user.email "user@example.com"
+	cat > "$HOME/.meta-hub/registry.yml" <<EOF
+version: v2
+remotes:
+  - remote: "$old_remote"
+    clone: "$old_clone"
+    roots:
+      - path: "$old_root"
+EOF
+	meta_hub sync >/dev/null
+	assert_exists "$HOME/.meta-hub/info.yml"
+	assert_not_exists "$HOME/.meta-hub/registry.yml"
+	assert_contains "$HOME/.meta-hub/info.yml" "clone: \"$old_clone\""
+	assert_not_contains "$HOME/.meta-hub/info.yml" "remote:"
+
+	rm -rf "$HOME/.meta-hub" "$HOME/.meta-sync"
 	legacy_root="$TMP/meta-hub-legacy-root"
 	mkdir -p "$legacy_root/station-c"
 	legacy_root=$(cd "$legacy_root" && pwd -P)
@@ -536,16 +641,18 @@ entries:
     clone: "$legacy_clone"
 EOF
 	meta_hub sync >/dev/null
-	assert_exists "$HOME/.meta-hub/registry.yml"
+	assert_exists "$HOME/.meta-hub/info.yml"
+	assert_not_exists "$HOME/.meta-hub/registry.yml"
 	assert_exists "$HOME/.meta-hub/legacy-metadata/.git"
-	assert_contains "$HOME/.meta-hub/registry.yml" "repo: \"$legacy_remote\""
+	assert_contains "$HOME/.meta-hub/info.yml" "clone: \"$HOME/.meta-hub/legacy-metadata\""
+	assert_not_contains "$HOME/.meta-hub/info.yml" "remote:"
 
 	pass "meta-hub"
 }
 
 test_mkws
 test_mkwst
-test_mkwsts
+test_mkwsts_removed
 test_meta_hub
 
 pass "all"

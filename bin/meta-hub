@@ -11,11 +11,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+INFO_FILE = "info.yml"
 REGISTRY_FILE = "registry.yml"
-WORKSTATIONS_FILE = "workstations.yml"
+LEGACY_WORKSTATIONS_FILE = "workstations.yml"
 WORKSTATION_FILE = "workstation.yml"
 WORKSPACE_FILE = "workspace.yml"
 WS_CONTAINER = "local_workspaces"
+TECH_DOC_DIR = "tech_doc"
+SKIP_WORKSTATION_SCAN_DIRS = {WS_CONTAINER}
 EXTRA_SYNC_PATHS = (
     (Path(".skills-hub") / "execute_plugins", Path(".skills-hub") / "execute_plugins"),
     (Path(".cmds-hub") / "cmd_history", Path(".cmds-hub") / "cmd_history"),
@@ -88,7 +91,11 @@ def legacy_meta_home() -> Path:
     return Path.home() / ".meta-sync"
 
 
-def registry_path() -> Path:
+def info_path() -> Path:
+    return meta_home() / INFO_FILE
+
+
+def local_legacy_registry_path() -> Path:
     return meta_home() / REGISTRY_FILE
 
 
@@ -98,7 +105,9 @@ def legacy_registry_path() -> Path:
 
 def parse_registry_file(yml: Path) -> list:
     entries = []
+    remotes = []
     current = None
+    section = ""
     for line in yml.read_text().splitlines():
         if line.startswith("  - root:"):
             current = {
@@ -107,16 +116,56 @@ def parse_registry_file(yml: Path) -> list:
                 "clone": "",
             }
             entries.append(current)
+            section = "entries"
         elif current is not None and line.startswith("    repo:"):
             current["repo"] = parse_yml_scalar(line.split(":", 1)[1])
         elif current is not None and line.startswith("    clone:"):
             current["clone"] = parse_yml_scalar(line.split(":", 1)[1])
+        elif line.startswith("  - remote:"):
+            current = {
+                "repo": parse_yml_scalar(line.split(":", 1)[1]),
+                "clone": "",
+                "roots": [],
+            }
+            remotes.append(current)
+            section = "remotes"
+        elif section == "remotes" and current is not None and line.startswith("    clone:"):
+            current["clone"] = parse_yml_scalar(line.split(":", 1)[1])
+        elif section == "remotes" and current is not None and line.startswith("      - path:"):
+            current["roots"].append(parse_yml_scalar(line.split(":", 1)[1]))
+    if remotes:
+        out = []
+        for remote in remotes:
+            for root in remote["roots"]:
+                out.append({"root": root, "repo": remote["repo"], "clone": remote["clone"]})
+        return [e for e in out if e.get("root") and e.get("repo") and e.get("clone")]
     return [e for e in entries if e.get("root") and e.get("repo") and e.get("clone")]
+
+
+def parse_info_file(yml: Path) -> list:
+    entries = []
+    current = None
+    for line in yml.read_text().splitlines():
+        if line.startswith("  - path:"):
+            current = {
+                "root": parse_yml_scalar(line.split(":", 1)[1]),
+                "clone": "",
+            }
+            entries.append(current)
+        elif current is not None and line.startswith("    clone:"):
+            current["clone"] = parse_yml_scalar(line.split(":", 1)[1])
+    out = []
+    for entry in entries:
+        clone = Path(entry.get("clone") or "").expanduser()
+        repo = git_origin(clone) if clone else ""
+        if entry.get("root") and entry.get("clone") and repo:
+            out.append({"root": entry["root"], "repo": repo, "clone": entry["clone"]})
+    return out
 
 
 def migrate_legacy_registry() -> list:
     old_yml = legacy_registry_path()
-    if registry_path().is_file() or not old_yml.is_file():
+    if info_path().is_file() or local_legacy_registry_path().is_file() or not old_yml.is_file():
         return []
     migrated = []
     for entry in parse_registry_file(old_yml):
@@ -132,20 +181,38 @@ def migrate_legacy_registry() -> list:
 
 
 def read_registry() -> list:
-    yml = registry_path()
-    if not yml.is_file():
+    yml = info_path()
+    if yml.is_file():
+        old_yml = local_legacy_registry_path()
+        if old_yml.is_file() or old_yml.is_symlink():
+            old_yml.unlink()
+        return parse_info_file(yml)
+    old_yml = local_legacy_registry_path()
+    if old_yml.is_file():
+        entries = parse_registry_file(old_yml)
+        if entries:
+            write_registry(entries)
+            return parse_info_file(info_path())
         return migrate_legacy_registry()
-    return parse_registry_file(yml)
+    return migrate_legacy_registry()
 
 
 def write_registry(entries: list) -> None:
     meta_home().mkdir(parents=True, exist_ok=True)
-    lines = ["version: v1", "entries:"]
-    for entry in sorted(entries, key=lambda item: (item["repo"], item["root"])):
-        lines.append(f"  - root: {quote_yml_scalar(entry['root'])}")
-        lines.append(f"    repo: {quote_yml_scalar(entry['repo'])}")
-        lines.append(f"    clone: {quote_yml_scalar(entry['clone'])}")
-    registry_path().write_text("\n".join(lines) + "\n")
+    lines = ["version: v3", "roots:"]
+    seen = set()
+    for entry in entries:
+        key = (entry["root"], entry["clone"])
+        if key in seen:
+            continue
+        seen.add(key)
+    for root, clone in sorted(seen):
+        lines.append(f"  - path: {quote_yml_scalar(root)}")
+        lines.append(f"    clone: {quote_yml_scalar(clone)}")
+    info_path().write_text("\n".join(lines) + "\n")
+    old_yml = local_legacy_registry_path()
+    if old_yml.is_file() or old_yml.is_symlink():
+        old_yml.unlink()
 
 
 def repo_basename(repo: str) -> str:
@@ -217,7 +284,7 @@ def cmd_register(folder: str, repo: str) -> int:
     updated = False
     entry = {"root": str(root), "repo": repo, "clone": str(clone)}
     for existing in entries:
-        if existing["repo"] == repo:
+        if Path(existing["root"]).expanduser().resolve() == root:
             existing.update(entry)
             updated = True
             break
@@ -229,13 +296,13 @@ def cmd_register(folder: str, repo: str) -> int:
     info(f"root:  {BOLD}{root}{RESET}")
     info(f"repo:  {BOLD}{repo}{RESET}")
     info(f"clone: {BOLD}{clone}{RESET}")
-    ok("registry updated")
+    ok("info updated")
     return 0
 
 
 def choose_entries(entries: list, pick: bool) -> list:
     if not entries:
-        die(f"no registry entries; run `meta-hub -f . -r <git-repository>` first")
+        die(f"no info entries; run `meta-hub -f . -r <git-repository>` first")
     if not pick:
         return entries
     if shutil.which("fzf") is None:
@@ -256,16 +323,170 @@ def choose_entries(entries: list, pick: bool) -> list:
     die("selected entry was not found")
 
 
-def read_workstations_manifest(yml: Path) -> dict:
-    data = {"version": "v1", "name": "", "workstations": []}
+def workstation_scan_candidates(root: Path) -> list:
+    candidates = [root]
+    candidates.extend(
+        child for child in sorted(root.iterdir())
+        if child.is_dir()
+        and not child.name.startswith(".")
+        and child.name not in SKIP_WORKSTATION_SCAN_DIRS
+    )
+    return candidates
+
+
+def run_mkwst_index(workstation_root: Path) -> None:
+    proc = run([*script_cmd("mkwst"), "index"], cwd=workstation_root)
+    if proc.returncode != 0:
+        die(f"mkwst index failed at {workstation_root}\n{(proc.stderr or proc.stdout).rstrip()}")
+
+
+def discover_workstations(root: Path, refresh: bool = False) -> list:
+    workstations = []
+    for cur in workstation_scan_candidates(root):
+        manifest = cur / WORKSTATION_FILE
+        if not manifest.is_file():
+            continue
+        if refresh:
+            run_mkwst_index(cur)
+        rel_root = "." if cur == root else cur.relative_to(root).as_posix()
+        manifest_rel = WORKSTATION_FILE if rel_root == "." else f"{rel_root}/{WORKSTATION_FILE}"
+        data = read_workstation_manifest_text(manifest.read_text())
+        workstations.append({
+            "name": data.get("name") or (root.name if rel_root == "." else cur.name),
+            "root": rel_root,
+            "manifest": manifest_rel,
+        })
+    return sorted(workstations, key=lambda item: (item["root"], item["name"]))
+
+
+def synced_registry_path(entry: dict) -> Path:
+    return Path(entry["clone"]).expanduser().resolve() / REGISTRY_FILE
+
+
+def read_cached_workstations(entry: dict) -> list:
+    registry = synced_registry_path(entry)
+    if registry.is_file():
+        return read_synced_registry_text(registry.read_text())["workstations"]
+    die(f"missing synced registry at {registry}; run `meta-hub sync` first")
+
+
+def registered_workstations() -> list:
+    return read_registered_workstations(refresh=True)
+
+
+def read_registered_workstations(refresh: bool = False) -> list:
+    entries = read_registry()
+    if not entries:
+        die("no info entries; run `meta-hub -f . -r <git-repository>` first")
+    out = []
+    seen_roots = set()
+    for entry in entries:
+        root = Path(entry["root"]).resolve()
+        if str(root) in seen_roots:
+            continue
+        seen_roots.add(str(root))
+        if not root.is_dir():
+            die(f"registered root is missing: {root}")
+        if refresh:
+            workstations = discover_workstations(root, refresh=True)
+        else:
+            workstations = read_cached_workstations(entry)
+        for workstation in workstations:
+            rel_root = workstation.get("root") or "."
+            station_root = safe_source_path(root, rel_root)
+            out.append((root, workstation, station_root))
+    return out
+
+
+def workspace_name(workspace_yml: Path) -> str:
+    data = read_workspace_manifest_text(workspace_yml.read_text())
+    return data.get("name") or workspace_yml.parent.name
+
+
+def add_candidate(candidates: list, seen_paths: set, label: str, path: Path) -> None:
+    resolved = path.resolve()
+    key = str(resolved)
+    if key in seen_paths:
+        return
+    seen_paths.add(key)
+    candidates.append({"label": f"{label} | {resolved}", "path": key})
+
+
+def project_candidates() -> list:
+    candidates = []
+    seen_paths = set()
+    for _, workstation, station_root in read_registered_workstations(refresh=False):
+        station_name = workstation.get("name") or station_root.name
+        for workspace_yml in sorted((station_root / WS_CONTAINER).glob(f"*/{WORKSPACE_FILE}")):
+            name = workspace_name(workspace_yml)
+            add_candidate(candidates, seen_paths, f"{name} | {station_name}", workspace_yml.parent)
+    return sorted(candidates, key=lambda item: item["label"])
+
+
+def repo_candidates() -> list:
+    candidates = []
+    seen_paths = set()
+    for root, workstation, station_root in read_registered_workstations(refresh=False):
+        station_name = workstation.get("name") or station_root.name
+        manifest_rel = workstation.get("manifest") or WORKSTATION_FILE
+        manifest = safe_source_path(root, manifest_rel)
+        if manifest.is_file():
+            data = read_workstation_manifest_text(manifest.read_text())
+            for repo in data.get("repos", []):
+                repo_data = normalize_repo_record(repo)
+                repo_path = station_root / (repo_data["path"] or repo_data["name"])
+                if (repo_path / ".git").exists():
+                    add_candidate(candidates, seen_paths, f"{repo_data['name']} | {station_name} | source", repo_path)
+        for workspace_yml in sorted((station_root / WS_CONTAINER).glob(f"*/{WORKSPACE_FILE}")):
+            project_name = workspace_name(workspace_yml)
+            workspace_dir = workspace_yml.parent
+            for child in sorted(p for p in workspace_dir.iterdir() if p.is_dir()):
+                if (child / ".git").exists():
+                    add_candidate(candidates, seen_paths, f"{child.name} | {station_name}/{project_name} | workspace", child)
+    return sorted(candidates, key=lambda item: item["label"])
+
+
+def pick_path(candidates: list, prompt: str) -> str:
+    if not candidates:
+        die(f"no {prompt.rstrip('> ')} candidates found")
+    if shutil.which("fzf") is None:
+        die("fzf is required")
+    labels = [item["label"] for item in candidates]
+    paths = {item["label"]: item["path"] for item in candidates}
+    proc = subprocess.run(
+        ["fzf", "--prompt", prompt],
+        input="\n".join(labels) + "\n",
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    selected = proc.stdout.strip()
+    if proc.returncode != 0 or not selected:
+        die(f"no {prompt.rstrip('> ')} selected")
+    if selected not in paths:
+        die("selected path was not found")
+    return paths[selected]
+
+
+def cmd_project() -> int:
+    print(pick_path(project_candidates(), "meta-project> "))
+    return 0
+
+
+def cmd_repo() -> int:
+    print(pick_path(repo_candidates(), "meta-repo> "))
+    return 0
+
+
+def read_synced_registry_text(text: str) -> dict:
+    data = {"version": "v2", "remote": "", "workstations": []}
     section = ""
     current = None
-    for line in yml.read_text().splitlines():
+    for line in text.splitlines():
         if line.startswith("version:"):
-            data["version"] = parse_yml_scalar(line.split(":", 1)[1]) or "v1"
+            data["version"] = parse_yml_scalar(line.split(":", 1)[1]) or "v2"
             section = ""
-        elif line.startswith("name:"):
-            data["name"] = parse_yml_scalar(line.split(":", 1)[1])
+        elif line.startswith("remote:"):
+            data["remote"] = parse_yml_scalar(line.split(":", 1)[1])
             section = ""
         elif line.startswith("workstations:"):
             section = "workstations"
@@ -284,13 +505,9 @@ def read_workstations_manifest(yml: Path) -> dict:
     return data
 
 
-def render_workstations_manifest(data: dict) -> str:
-    lines = [
-        "version: v1",
-        f"name: {quote_yml_scalar(data.get('name') or '')}",
-        "workstations:",
-    ]
-    for item in data.get("workstations", []):
+def render_synced_registry(remote: str, workstations: list) -> str:
+    lines = ["version: v2", f"remote: {quote_yml_scalar(remote)}", "workstations:"]
+    for item in workstations:
         lines.append(f"  - name: {quote_yml_scalar(item.get('name') or '')}")
         lines.append(f"    root: {quote_yml_scalar(item.get('root') or '')}")
         lines.append(f"    manifest: {quote_yml_scalar(item.get('manifest') or '')}")
@@ -445,34 +662,70 @@ def safe_source_path(root: Path, rel: str) -> Path:
     return resolved
 
 
-def clean_clone_contents(clone: Path) -> None:
-    for child in clone.iterdir():
-        if child.name == ".git":
-            continue
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
+def merge_metadata_text(rel_path: Path, source_text: str, existing_text: str) -> str:
+    path_text = rel_path.as_posix()
+    name = rel_path.name
+    if path_text == REGISTRY_FILE:
+        return merge_synced_registry(source_text, existing_text)
+    if name == WORKSTATION_FILE:
+        return merge_workstation(source_text, existing_text)
+    if name == WORKSPACE_FILE:
+        return merge_workspace(source_text, existing_text)
+    if rel_path == Path(".cmds-hub") / "cmd_history":
+        return merge_lines(source_text, existing_text)
+    if rel_path == Path(".skills-hub") / "execute_plugins" or (
+        len(rel_path.parts) > 2 and rel_path.parts[:2] == (".skills-hub", "execute_plugins")
+    ):
+        return merge_lines(source_text, existing_text)
+    return source_text
 
 
-def copy_file(src: Path, dest: Path) -> None:
+def merge_copy_file(src: Path, dest: Path, rel_path: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and dest.is_dir():
+        warn(f"{dest} exists as a directory, skipping file sync")
+        return
+    if dest.is_file():
+        dest.write_text(merge_metadata_text(rel_path, src.read_text(), dest.read_text()))
+        return
     shutil.copy2(src, dest)
 
 
-def copy_path(src: Path, dest: Path) -> bool:
+def merge_write_text(dest: Path, rel_path: Path, text: str) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and dest.is_dir():
+        warn(f"{dest} exists as a directory, skipping file sync")
+        return
+    if dest.is_file():
+        dest.write_text(merge_metadata_text(rel_path, text, dest.read_text()))
+        return
+    dest.write_text(text)
+
+
+def remove_legacy_workstations_file(clone: Path) -> None:
+    legacy = clone / LEGACY_WORKSTATIONS_FILE
+    if legacy.is_symlink() or legacy.is_file():
+        legacy.unlink()
+    elif legacy.exists():
+        warn(f"{legacy} exists and is not a file, skipping legacy cleanup")
+
+
+def merge_copy_path(src: Path, dest: Path, rel_path: Path) -> bool:
     if not src.exists():
         return False
     if src.is_dir():
-        if dest.exists():
-            if dest.is_dir():
-                shutil.rmtree(dest)
-            else:
-                dest.unlink()
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src, dest)
-        return True
-    copy_file(src, dest)
+        if dest.exists() and not dest.is_dir():
+            warn(f"{dest} exists as a file, skipping directory sync")
+            return False
+        copied = False
+        for child in sorted(src.rglob("*")):
+            if child.is_dir():
+                continue
+            child_rel = child.relative_to(src)
+            merge_copy_file(child, dest / child_rel, rel_path / child_rel)
+            copied = True
+        return copied
+    merge_copy_file(src, dest, rel_path)
     return True
 
 
@@ -483,7 +736,7 @@ def copy_workspace_manifests(workstation_root: Path, clone: Path, dest_prefix: P
         return count
     for workspace_yml in sorted(local_workspaces.glob(f"*/{WORKSPACE_FILE}")):
         rel = workspace_yml.relative_to(workstation_root)
-        copy_file(workspace_yml, clone / dest_prefix / rel)
+        merge_copy_file(workspace_yml, clone / dest_prefix / rel, dest_prefix / rel)
         count += 1
     return count
 
@@ -491,7 +744,7 @@ def copy_workspace_manifests(workstation_root: Path, clone: Path, dest_prefix: P
 def copy_extra_metadata(clone: Path) -> int:
     count = 0
     for source_rel, dest_rel in EXTRA_SYNC_PATHS:
-        if copy_path(Path.home() / source_rel, clone / dest_rel):
+        if merge_copy_path(Path.home() / source_rel, clone / dest_rel, dest_rel):
             count += 1
     return count
 
@@ -505,22 +758,22 @@ def sync_entry(entry: dict) -> bool:
     ensure_clone(repo, clone)
 
     heading(f"sync {repo_basename(repo)}")
-    proc = run([*script_cmd("mkwsts"), "index"], cwd=root)
-    if proc.returncode != 0:
-        die(f"mkwsts index failed at {root}\n{(proc.stderr or proc.stdout).rstrip()}")
+    if not pull_metadata(entry):
+        warn("skipping local metadata sync because remote pull did not complete")
+        return False
 
-    workstations_yml = root / WORKSTATIONS_FILE
-    if not workstations_yml.is_file():
-        die(f"missing {WORKSTATIONS_FILE} after indexing: {root}")
-    data = read_workstations_manifest(workstations_yml)
-
-    clean_clone_contents(clone)
-    copy_file(workstations_yml, clone / WORKSTATIONS_FILE)
+    workstations = discover_workstations(root, refresh=True)
+    merge_write_text(
+        clone / REGISTRY_FILE,
+        Path(REGISTRY_FILE),
+        render_synced_registry(repo, workstations),
+    )
+    remove_legacy_workstations_file(clone)
     extra_count = copy_extra_metadata(clone)
 
     workstation_count = 0
     workspace_count = 0
-    for workstation in data["workstations"]:
+    for workstation in workstations:
         rel_root = workstation.get("root") or "."
         workstation_root = safe_source_path(root, rel_root)
         manifest_rel = workstation.get("manifest") or WORKSTATION_FILE
@@ -529,7 +782,7 @@ def sync_entry(entry: dict) -> bool:
             warn(f"missing workstation manifest: {manifest}")
             continue
         dest_prefix = Path() if rel_root == "." else Path(rel_root)
-        copy_file(manifest, clone / manifest_rel)
+        merge_copy_file(manifest, clone / manifest_rel, Path(manifest_rel))
         workstation_count += 1
         workspace_count += copy_workspace_manifests(workstation_root, clone, dest_prefix)
 
@@ -539,7 +792,7 @@ def sync_entry(entry: dict) -> bool:
     status = run(["git", "-C", str(clone), "status", "--porcelain"])
     if not status.stdout.strip():
         info("no metadata changes")
-        return False
+        return True
 
     message = f"sync from {getpass.getuser()}@{socket.gethostname()}"
     proc = run(["git", "-C", str(clone), "commit", "-m", message])
@@ -548,6 +801,90 @@ def sync_entry(entry: dict) -> bool:
     ok(
         f"copied {workstation_count} workstation manifest(s), "
         f"{workspace_count} workspace manifest(s), {extra_count} extra path(s)"
+    )
+    return True
+
+
+def sync_workstation_tech_docs(workstation_root: Path) -> dict:
+    workspaces_dir = workstation_root / WS_CONTAINER
+    index_dir = workstation_root / TECH_DOC_DIR
+    desired = {}
+
+    if workspaces_dir.is_dir():
+        for workspace_yml in sorted(workspaces_dir.glob(f"*/{WORKSPACE_FILE}")):
+            workspace_dir = workspace_yml.parent
+            tech_doc = workspace_dir / TECH_DOC_DIR
+            if not tech_doc.is_dir():
+                continue
+            data = read_workspace_manifest_text(workspace_yml.read_text())
+            name = data.get("name") or workspace_dir.name
+            desired[name] = tech_doc.resolve()
+
+    counts = {"created": 0, "updated": 0, "removed": 0, "skipped": 0}
+    if not desired and not index_dir.exists():
+        return counts
+
+    index_dir.mkdir(parents=True, exist_ok=True)
+    for name, target in desired.items():
+        link_parent = index_dir / name
+        link_path = link_parent / TECH_DOC_DIR
+        if link_parent.exists() and not link_parent.is_dir():
+            warn(f"{workstation_root.name}/{name}: {link_parent} exists and is not a directory, skipping")
+            counts["skipped"] += 1
+            continue
+        link_parent.mkdir(parents=True, exist_ok=True)
+
+        if link_path.is_symlink():
+            if link_path.resolve() == target:
+                counts["skipped"] += 1
+                continue
+            link_path.unlink()
+            link_path.symlink_to(target, target_is_directory=True)
+            counts["updated"] += 1
+            continue
+
+        if link_path.exists():
+            warn(f"{workstation_root.name}/{name}: {link_path} exists and is not a symlink, skipping")
+            counts["skipped"] += 1
+            continue
+
+        link_path.symlink_to(target, target_is_directory=True)
+        counts["created"] += 1
+
+    if index_dir.is_dir():
+        for entry in sorted(p for p in index_dir.iterdir() if p.is_dir()):
+            if entry.name in desired:
+                continue
+            link_path = entry / TECH_DOC_DIR
+            if not link_path.is_symlink():
+                continue
+            link_path.unlink()
+            counts["removed"] += 1
+            try:
+                entry.rmdir()
+            except OSError:
+                pass
+
+    return counts
+
+
+def sync_tech_doc_entry(entry: dict) -> bool:
+    root = Path(entry["root"]).resolve()
+    if not root.is_dir():
+        die(f"registered root is missing: {root}")
+
+    heading(f"sync tech docs {root.name}")
+    totals = {"created": 0, "updated": 0, "removed": 0, "skipped": 0}
+    for workstation in discover_workstations(root, refresh=True):
+        rel_root = workstation.get("root") or "."
+        workstation_root = safe_source_path(root, rel_root)
+        counts = sync_workstation_tech_docs(workstation_root)
+        for key, value in counts.items():
+            totals[key] += value
+
+    ok(
+        f"created {totals['created']}, updated {totals['updated']}, "
+        f"removed {totals['removed']}, skipped {totals['skipped']}"
     )
     return True
 
@@ -576,41 +913,17 @@ def merge_by_key(local_items: list, remote_items: list, key_fn) -> list:
     return out
 
 
-def merge_workstations(local_text: str, remote_text: str) -> str:
-    local = read_workstations_manifest_text(local_text)
-    remote = read_workstations_manifest_text(remote_text)
-    return render_workstations_manifest({
-        "name": local.get("name") or remote.get("name") or "",
-        "workstations": merge_by_key(
+def merge_synced_registry(local_text: str, remote_text: str) -> str:
+    local = read_synced_registry_text(local_text)
+    remote = read_synced_registry_text(remote_text)
+    return render_synced_registry(
+        local.get("remote") or remote.get("remote") or "",
+        merge_by_key(
             local.get("workstations", []),
             remote.get("workstations", []),
             lambda item: item.get("manifest") or item.get("root"),
         ),
-    })
-
-
-def read_workstations_manifest_text(text: str) -> dict:
-    data = {"version": "v1", "name": "", "workstations": []}
-    section = ""
-    current = None
-    for line in text.splitlines():
-        if line.startswith("version:"):
-            data["version"] = parse_yml_scalar(line.split(":", 1)[1]) or "v1"
-            section = ""
-        elif line.startswith("name:"):
-            data["name"] = parse_yml_scalar(line.split(":", 1)[1])
-            section = ""
-        elif line.startswith("workstations:"):
-            section = "workstations"
-            current = None
-        elif section == "workstations" and line.startswith("  - name:"):
-            current = {"name": parse_yml_scalar(line.split(":", 1)[1]), "root": "", "manifest": ""}
-            data["workstations"].append(current)
-        elif section == "workstations" and current is not None and line.startswith("    "):
-            key, sep, value = line.strip().partition(":")
-            if sep and key in current:
-                current[key] = parse_yml_scalar(value)
-    return data
+    )
 
 
 def merge_workstation(local_text: str, remote_text: str) -> str:
@@ -673,8 +986,8 @@ def resolve_conflicted_file(clone: Path, path: str) -> bool:
     remote = git_stage_text(clone, 3, path)
     name = Path(path).name
     path_obj = Path(path)
-    if path == WORKSTATIONS_FILE:
-        merged = merge_workstations(local, remote)
+    if path == REGISTRY_FILE:
+        merged = merge_synced_registry(local, remote)
     elif name == WORKSTATION_FILE:
         merged = merge_workstation(local, remote)
     elif name == WORKSPACE_FILE:
@@ -725,11 +1038,22 @@ def resolve_metadata_conflicts(clone: Path) -> bool:
     return True
 
 
-def pull_entry(entry: dict) -> bool:
+def metadata_pull_branch(clone: Path) -> str:
+    for branch in ("main", "master"):
+        if remote_branch_exists(clone, branch):
+            return branch
+    return ""
+
+
+def pull_metadata(entry: dict) -> bool:
     clone = Path(entry["clone"]).expanduser().resolve()
     ensure_clone(entry["repo"], clone)
-    heading(f"pull {repo_basename(entry['repo'])}")
-    proc = run(["git", "-C", str(clone), "pull", "--no-rebase"])
+    branch = metadata_pull_branch(clone)
+    if not branch:
+        ok("remote has no branches")
+        return True
+    info(f"pulling origin/{branch}")
+    proc = run(["git", "-C", str(clone), "pull", "--no-rebase", "origin", branch])
     if proc.returncode == 0:
         ok("pulled")
         return True
@@ -778,10 +1102,9 @@ def run_entries(mode: str, pick: bool) -> int:
     ok_count = 0
     for entry in entries:
         if mode == "sync":
-            sync_entry(entry)
-            ok_count += 1
-        elif mode == "pull":
-            ok_count += 1 if pull_entry(entry) else 0
+            ok_count += 1 if sync_entry(entry) else 0
+        elif mode == "sync_tech_doc":
+            ok_count += 1 if sync_tech_doc_entry(entry) else 0
         elif mode == "push":
             ok_count += 1 if push_entry(entry) else 0
     heading("summary")
@@ -794,8 +1117,12 @@ Usage:
   meta-hub -f <folder> -r <git-repository>
   meta-hub -r <git-repository>
   meta-hub sync [pick]
-  meta-hub pull [pick]
+  meta-hub sync_tech_doc [pick]
   meta-hub push [pick]
+  meta-hub project
+  meta-hub p
+  meta-hub repo
+  meta-hub r
 
 Options:
   -f <folder>          source folder containing workstation metadata; defaults to .
@@ -809,7 +1136,7 @@ def main() -> None:
         print(USAGE)
         sys.exit(0)
 
-    if argv[0] in ("sync", "pull", "push"):
+    if argv[0] in ("sync", "sync_tech_doc", "push"):
         mode = argv.pop(0)
         pick = False
         if argv == ["pick"]:
@@ -817,6 +1144,14 @@ def main() -> None:
         elif argv:
             die(f"unexpected args for {mode}: {' '.join(argv)}\n\n{USAGE}")
         sys.exit(run_entries(mode, pick))
+
+    if argv[0] in ("project", "p", "repo", "r"):
+        mode = argv.pop(0)
+        if argv:
+            die(f"unexpected args for {mode}: {' '.join(argv)}\n\n{USAGE}")
+        if mode in ("project", "p"):
+            sys.exit(cmd_project())
+        sys.exit(cmd_repo())
 
     folder = "."
     repo = ""
