@@ -32,10 +32,6 @@ mkws() {
 	python3 "$ROOT/bin/mkws" "$@"
 }
 
-mkwst() {
-	python3 "$ROOT/bin/mkwst" "$@"
-}
-
 meta_hub() {
 	python3 "$ROOT/bin/meta-hub" "$@"
 }
@@ -165,8 +161,8 @@ test_mkws() {
 	init_repo "$root/repo-c"
 
 	mkws --help >/dev/null
-	EXPECT='`mkws index` moved to `mkwst index`' expect_fail_contains mkws index
-	EXPECT='`mkws setup` moved to `mkwst setup`' expect_fail_contains mkws setup
+	EXPECT='unknown subcommand: index' expect_fail_contains mkws index
+	EXPECT='unknown subcommand: setup' expect_fail_contains mkws setup
 	EXPECT='`mkws sync_tech_doc` moved to `meta-hub sync_tech_doc`' expect_fail_contains mkws sync_tech_doc
 
 	(
@@ -324,62 +320,6 @@ EOF
 	assert_contains "$TMP/mkws-pull.out" "external: pulled 1, skipped: 0, failed: 0"
 
 	pass "mkws"
-}
-
-test_mkwst() {
-	root="$TMP/mkwst-root"
-	mkdir -p "$root"
-	init_repo "$root/repo-a"
-	init_repo "$root/repo-b"
-
-	(
-		cd "$root"
-		mkwst index >/dev/null
-	)
-	assert_exists "$root/workstation.yml"
-	assert_contains "$root/workstation.yml" "name: \"repo-a\""
-	assert_contains "$root/workstation.yml" "name: \"repo-b\""
-
-	rm -rf "$root/repo-b"
-	(
-		cd "$root"
-		mkwst clean >/dev/null
-	)
-	assert_not_contains "$root/workstation.yml" "name: \"repo-b\""
-
-	source="$TMP/setup-source/source-repo"
-	remote="$TMP/setup-source/source-repo.git"
-	setup_root="$TMP/mkwst-setup-root"
-	init_repo "$source"
-	git clone -q --bare "$source" "$remote"
-	mkdir -p "$setup_root"
-	cat > "$setup_root/workstation.yml" <<EOF
-version: v1
-name: "setup-root"
-repos:
-  - name: "repo-a"
-    path: "repo-a"
-    remote: ""
-    remote_url: "$remote"
-    upstream: ""
-    branch: "main"
-EOF
-	(
-		cd "$setup_root"
-		mkwst setup >/dev/null
-	)
-	assert_exists "$setup_root/repo-a/.git"
-	assert_eq "main" "$(git -C "$setup_root/repo-a" branch --show-current)"
-
-	pass "mkwst"
-}
-
-test_mkwsts_removed() {
-	if PATH="$ROOT/bin:/usr/bin:/bin" command -v mkwsts >/dev/null 2>&1; then
-		printf 'expected mkwsts to be removed from repo bin\n' >&2
-		exit 1
-	fi
-	pass "mkwsts removed"
 }
 
 test_meta_hub() {
@@ -674,8 +614,6 @@ EOF
 }
 
 test_mkws
-test_mkwst
-test_mkwsts_removed
 test_meta_hub
 
 pass "all"
