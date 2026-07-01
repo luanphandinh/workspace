@@ -22,6 +22,11 @@ EXTERNAL_DIR = "_external"
 EXTRA_SYNC_PATHS = (
     (Path(".skills-hub") / "execute_plugins", Path(".skills-hub") / "execute_plugins"),
     (Path(".cmds-hub") / "cmd_history", Path(".cmds-hub") / "cmd_history"),
+    (
+        Path(".local") / "share" / "tmux" / "resurrect" / "last",
+        Path(".local") / "share" / "tmux" / "resurrect" / "last",
+    ),
+    (Path(".config") / "tmux" / "pinned-sessions", Path(".config") / "tmux" / "pinned-sessions"),
 )
 
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -883,6 +888,8 @@ def merge_metadata_text(rel_path: Path, source_text: str, existing_text: str) ->
         return merge_workspace(source_text, existing_text)
     if rel_path == Path(".cmds-hub") / "cmd_history":
         return merge_lines(source_text, existing_text)
+    if rel_path == Path(".config") / "tmux" / "pinned-sessions":
+        return merge_lines(source_text, existing_text)
     if rel_path == Path(".skills-hub") / "execute_plugins" or (
         len(rel_path.parts) > 2 and rel_path.parts[:2] == (".skills-hub", "execute_plugins")
     ):
@@ -1433,6 +1440,8 @@ def resolve_conflicted_file(clone: Path, path: str) -> bool:
     elif name == WORKSPACE_FILE:
         merged = merge_workspace(local, remote)
     elif path_obj == Path(".cmds-hub") / "cmd_history":
+        merged = merge_lines(local, remote)
+    elif path_obj == Path(".config") / "tmux" / "pinned-sessions":
         merged = merge_lines(local, remote)
     elif path_obj == Path(".skills-hub") / "execute_plugins" or (
         len(path_obj.parts) > 2 and path_obj.parts[:2] == (".skills-hub", "execute_plugins")

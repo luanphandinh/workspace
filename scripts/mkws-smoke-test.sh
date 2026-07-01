@@ -341,9 +341,12 @@ test_meta_hub() {
 		cd "$root/station-b"
 		mkws --name feature-b --branch feature/b --add repo-b >/dev/null
 	)
-	mkdir -p "$HOME/.skills-hub" "$HOME/.cmds-hub"
+	mkdir -p "$HOME/.skills-hub" "$HOME/.cmds-hub" "$HOME/.local/share/tmux/resurrect" "$HOME/.config/tmux"
 	printf 'plugin-base\n' > "$HOME/.skills-hub/execute_plugins"
 	printf 'cmd-base\n' > "$HOME/.cmds-hub/cmd_history"
+	printf 'pane\tbase-session\n' > "$HOME/.local/share/tmux/resurrect/tmux_resurrect_example.txt"
+	ln -sf tmux_resurrect_example.txt "$HOME/.local/share/tmux/resurrect/last"
+	printf 'session-base\n' > "$HOME/.config/tmux/pinned-sessions"
 
 	meta_seed="$TMP/meta-hub-seed"
 	meta_remote="$TMP/metadata.git"
@@ -391,11 +394,15 @@ test_meta_hub() {
 	assert_exists "$clone/station-b/local_workspaces/feature-b/workspace.yml"
 	assert_exists "$clone/.skills-hub/execute_plugins"
 	assert_exists "$clone/.cmds-hub/cmd_history"
+	assert_exists "$clone/.local/share/tmux/resurrect/last"
+	assert_exists "$clone/.config/tmux/pinned-sessions"
 	assert_not_exists "$clone/station-a/local_workspaces/feature-a/repo-a/README.md"
 	assert_contains "$clone/station-a/workstation.yml" "name: \"repo-a\""
 	assert_contains "$clone/station-b/workstation.yml" "name: \"repo-b2\""
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-base"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-base"
+	assert_contains "$clone/.local/share/tmux/resurrect/last" "base-session"
+	assert_contains "$clone/.config/tmux/pinned-sessions" "session-base"
 
 	cat > "$clone/workstations.yml" <<EOF
 version: v1
@@ -514,13 +521,15 @@ EOF
 	git -C "$other" pull -q --ff-only
 	printf 'plugin-remote\n' >> "$other/.skills-hub/execute_plugins"
 	printf 'cmd-remote\n' >> "$other/.cmds-hub/cmd_history"
-	git -C "$other" add .skills-hub/execute_plugins .cmds-hub/cmd_history
+	printf 'session-remote\n' >> "$other/.config/tmux/pinned-sessions"
+	git -C "$other" add .skills-hub/execute_plugins .cmds-hub/cmd_history .config/tmux/pinned-sessions
 	git -C "$other" commit -q -m "remote extra metadata"
 	git -C "$other" push -q origin main
 
 	printf 'plugin-local\n' >> "$clone/.skills-hub/execute_plugins"
 	printf 'cmd-local\n' >> "$clone/.cmds-hub/cmd_history"
-	git -C "$clone" add .skills-hub/execute_plugins .cmds-hub/cmd_history
+	printf 'session-local\n' >> "$clone/.config/tmux/pinned-sessions"
+	git -C "$clone" add .skills-hub/execute_plugins .cmds-hub/cmd_history .config/tmux/pinned-sessions
 	git -C "$clone" commit -q -m "local extra metadata"
 
 	meta_hub sync >/dev/null
@@ -528,8 +537,11 @@ EOF
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-remote"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-local"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-remote"
+	assert_contains "$clone/.config/tmux/pinned-sessions" "session-local"
+	assert_contains "$clone/.config/tmux/pinned-sessions" "session-remote"
 	assert_not_contains "$clone/.skills-hub/execute_plugins" "<<<<<<<"
 	assert_not_contains "$clone/.cmds-hub/cmd_history" "<<<<<<<"
+	assert_not_contains "$clone/.config/tmux/pinned-sessions" "<<<<<<<"
 
 	empty_root="$TMP/meta-hub-empty-root"
 	mkdir -p "$empty_root/station-b"
