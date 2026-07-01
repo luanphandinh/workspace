@@ -149,6 +149,14 @@ init_repo() {
 	git -C "$dir" commit -q -m "initial commit"
 }
 
+add_origin_remote() {
+	repo=$1
+	remote=$2
+	git clone -q --bare "$repo" "$remote"
+	git -C "$repo" remote add origin "$remote"
+	git -C "$repo" push -q -u origin main
+}
+
 test_mkws() {
 	root="$TMP/mkws-root"
 	mkdir -p "$root"
@@ -380,19 +388,11 @@ test_meta_hub() {
 	root=$(cd "$root" && pwd -P)
 	init_repo "$root/station-a/repo-a"
 	init_repo "$root/station-b/repo-b"
+	add_origin_remote "$root/station-a/repo-a" "$TMP/repo-a.git"
+	add_origin_remote "$root/station-b/repo-b" "$TMP/repo-b.git"
 	git config --global user.name "Example User"
 	git config --global user.email "user@example.com"
 
-	cat > "$root/station-a/workstation.yml" <<EOF
-version: v1
-name: "station-a"
-repos:
-EOF
-	cat > "$root/station-b/workstation.yml" <<EOF
-version: v1
-name: "station-b"
-repos:
-EOF
 	(
 		cd "$root/station-a"
 		mkws --name feature-a --branch feature/a --add repo-a >/dev/null
@@ -421,10 +421,25 @@ EOF
 	assert_contains "$info_yml" "clone: \"$clone\""
 	assert_not_contains "$info_yml" "remote:"
 
-	meta_hub sync >/dev/null
+	mkdir -p "$TMP/outside-station"
+	EXPECT='not under a registered root' expect_fail_contains meta_hub index -p "$TMP/outside-station"
+
+	meta_hub index -p "$root/station-a" > "$TMP/meta-index-a.out"
+	assert_contains "$TMP/meta-index-a.out" "=== workstation index ==="
+	assert_contains "$TMP/meta-index-a.out" "repo-a"
+	assert_contains "$TMP/meta-index-a.out" "=== summary ==="
+	meta_hub index -p "$root/station-b" > "$TMP/meta-index-b.out"
+	init_repo "$root/station-b/repo-b2"
+	add_origin_remote "$root/station-b/repo-b2" "$TMP/repo-b2.git"
+	meta_hub index > "$TMP/meta-index-all.out"
+	assert_contains "$TMP/meta-index-all.out" "repo-b: already indexed"
+	assert_contains "$TMP/meta-index-all.out" "repo-b2"
+	assert_contains "$TMP/meta-index-all.out" "=== summary ==="
 	assert_exists "$clone/registry.yml"
 	assert_not_exists "$clone/workstations.yml"
 	assert_not_exists "$root/workstations.yml"
+	assert_not_exists "$root/station-a/workstation.yml"
+	assert_not_exists "$root/station-b/workstation.yml"
 	assert_contains "$clone/registry.yml" "station-a/workstation.yml"
 	assert_contains "$clone/registry.yml" "station-b/workstation.yml"
 	assert_exists "$clone/station-a/workstation.yml"
@@ -435,6 +450,7 @@ EOF
 	assert_exists "$clone/.cmds-hub/cmd_history"
 	assert_not_exists "$clone/station-a/local_workspaces/feature-a/repo-a/README.md"
 	assert_contains "$clone/station-a/workstation.yml" "name: \"repo-a\""
+	assert_contains "$clone/station-b/workstation.yml" "name: \"repo-b2\""
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-base"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-base"
 
@@ -445,7 +461,7 @@ workstations: []
 EOF
 	git -C "$clone" add workstations.yml
 	git -C "$clone" commit -q -m "legacy workstations"
-	meta_hub sync >/dev/null
+	meta_hub index -p "$root/station-a" >/dev/null
 	assert_not_exists "$clone/workstations.yml"
 
 	project_path=$(FZF_SELECT="feature-b" meta_hub project)
@@ -457,18 +473,14 @@ EOF
 
 	mkdir -p "$root/station-c"
 	init_repo "$root/station-c/repo-c"
-	cat > "$root/station-c/workstation.yml" <<EOF
-version: v1
-name: "station-c"
-repos:
-EOF
+	add_origin_remote "$root/station-c/repo-c" "$TMP/repo-c.git"
 	(
 		cd "$root/station-c"
 		mkws --name feature-c --branch feature/c --add repo-c >/dev/null
 	)
 	FZF_SELECT="feature-b" meta_hub project >/dev/null
 	assert_not_contains "$FZF_INPUT" "$root/station-c/local_workspaces/feature-c"
-	meta_hub sync >/dev/null
+	meta_hub index -p "$root/station-c" >/dev/null
 	assert_contains "$clone/registry.yml" "station-c/workstation.yml"
 	project_path=$(FZF_SELECT="feature-c" meta_hub project)
 	assert_eq "$root/station-c/local_workspaces/feature-c" "$project_path"
@@ -510,6 +522,18 @@ EOF
 	esac
 
 	meta_hub push >/dev/null
+	restore_home="$TMP/meta-hub-restore-home"
+	restore_root="$TMP/meta-hub-restore-root"
+	mkdir -p "$restore_home" "$restore_root"
+	HOME="$restore_home" meta_hub -f "$restore_root" -r "$meta_remote" >/dev/null
+	HOME="$restore_home" meta_hub sync >/dev/null
+	assert_exists "$restore_root/station-a/repo-a/.git"
+	assert_exists "$restore_root/station-b/repo-b/.git"
+	assert_not_exists "$restore_root/station-a/workstation.yml"
+	assert_not_exists "$restore_root/station-b/workstation.yml"
+	assert_exists "$restore_root/station-a/local_workspaces/feature-a"
+	assert_not_exists "$restore_root/station-a/local_workspaces/feature-a/workspace.yml"
+
 	if meta_hub pull >"$TMP/meta-hub-pull.out" 2>&1; then
 		printf 'expected meta-hub pull to be removed\n' >&2
 		exit 1
@@ -567,16 +591,11 @@ EOF
 	mkdir -p "$empty_root/station-b"
 	empty_root=$(cd "$empty_root" && pwd -P)
 	init_repo "$empty_root/station-b/repo-b"
-	cat > "$empty_root/station-b/workstation.yml" <<EOF
-version: v1
-name: "station-b"
-repos:
-EOF
 	empty_remote="$TMP/empty-metadata.git"
 	git init -q --bare "$empty_remote"
 
 	meta_hub -f "$empty_root" -r "$empty_remote" >/dev/null
-	meta_hub sync >/dev/null
+	meta_hub index -p "$empty_root/station-b" >/dev/null
 	git -C "$HOME/.meta-hub/empty-metadata" config push.default matching
 	meta_hub push >/dev/null
 	if ! git -C "$empty_remote" show-ref --verify --quiet refs/heads/main &&
