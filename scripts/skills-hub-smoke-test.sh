@@ -177,6 +177,19 @@ assert_not_exists "$PROJECT/.agent"
 printf '# updated example\n' > "$HUB/.agents/skills/example-skill/SKILL.md"
 assert_contains "$PROJECT/.agents/skills/example-skill/SKILL.md" "updated example"
 
+mkdir -p "$TMP/multi-pick"
+git init -q "$TMP/multi-pick/repo-a"
+git init -q "$TMP/multi-pick/repo-b"
+(
+	cd "$TMP/multi-pick"
+	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+		SKILLS_HUB_FZF_OUTPUT=".agents/skills/example-skill" \
+		python3 "$ROOT/bin/skills-hub" pick >/dev/null
+)
+assert_symlink_target "$TMP/multi-pick/repo-a/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
+assert_symlink_target "$TMP/multi-pick/repo-b/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
+assert_not_exists "$TMP/multi-pick/.agents/skills/example-skill"
+
 (
 	cd "$PROJECT"
 	COLUMNS=80 SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" list > "$TMP/list.out"
@@ -301,6 +314,21 @@ assert_not_contains "$HUB/groups/useful" ".claude/skills/other-skill"
 
 assert_symlink_target "$TMP/group-project/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
 assert_symlink_target "$TMP/group-project/.agents/skills/third-skill" "$HUB/.agents/skills/third-skill"
+
+mkdir -p "$TMP/multi-group"
+git init -q "$TMP/multi-group/repo-a"
+git init -q "$TMP/multi-group/repo-b"
+(
+	cd "$TMP/multi-group"
+	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+		SKILLS_HUB_FZF_OUTPUT="useful" \
+		python3 "$ROOT/bin/skills-hub" group pick >/dev/null
+)
+assert_symlink_target "$TMP/multi-group/repo-a/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
+assert_symlink_target "$TMP/multi-group/repo-a/.agents/skills/third-skill" "$HUB/.agents/skills/third-skill"
+assert_symlink_target "$TMP/multi-group/repo-b/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
+assert_symlink_target "$TMP/multi-group/repo-b/.agents/skills/third-skill" "$HUB/.agents/skills/third-skill"
+assert_not_exists "$TMP/multi-group/.agents/skills/example-skill"
 
 : > "$FZF_INPUT"
 : > "$FZF_ARGS"
