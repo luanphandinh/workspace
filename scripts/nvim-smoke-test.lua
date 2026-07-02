@@ -419,12 +419,25 @@ local function test_git_conflict_decoration_guard()
     guard.is_out_of_range_error("Invalid 'line': out of range"),
     "git conflict guard should recognize stale decoration line errors"
   )
+  assert_true(
+    guard.is_out_of_range_error("Invalid 'end_row': out of range"),
+    "git conflict guard should recognize stale decoration end_row errors"
+  )
 
   local wrapped = guard.wrap(function()
     error("Invalid 'line': out of range", 0)
   end)
   local ok, result = pcall(wrapped, nil, nil, vim.api.nvim_get_current_buf())
   assert_true(ok and result == false, "git conflict guard should swallow stale decoration line errors")
+
+  local end_row_wrapped = guard.wrap(function()
+    error("Invalid 'end_row': out of range", 0)
+  end)
+  local end_row_ok, end_row_result = pcall(end_row_wrapped, nil, nil, vim.api.nvim_get_current_buf())
+  assert_true(
+    end_row_ok and end_row_result == false,
+    "git conflict guard should swallow stale decoration end_row errors"
+  )
 
   local rethrow = guard.wrap(function()
     error("different error", 0)
