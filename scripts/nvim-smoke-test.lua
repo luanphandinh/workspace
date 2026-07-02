@@ -326,6 +326,14 @@ local function test_markdown_browser_preview_keymap()
     type(vim.g.mkdp_preview_options) == "table" and vim.g.mkdp_preview_options.disable_sync_scroll == 1,
     "browser Markdown preview should not sync-scroll"
   )
+  require("lazy").load({ plugins = { "markdown-preview.nvim" } })
+  local refresh_events = {}
+  for _, autocmd in ipairs(vim.api.nvim_get_autocmds({ group = "LuanphanMarkdownPreviewRefresh" })) do
+    refresh_events[autocmd.event] = true
+  end
+  assert_true(refresh_events.TextChanged, "browser Markdown preview should refresh when markdown text changes")
+  assert_true(refresh_events.TextChangedI, "browser Markdown preview should refresh while editing markdown")
+  assert_true(refresh_events.BufWritePost, "browser Markdown preview should refresh after markdown writes")
 end
 
 local function test_csv_preview_keymap()
