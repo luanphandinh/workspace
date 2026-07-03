@@ -191,7 +191,25 @@ local function refire_current_file_runtime(buf)
   end)
 end
 
-local function open_original_file(path)
+local function same_real_path(lhs, rhs)
+  if not lhs or not rhs or lhs == "" or rhs == "" then
+    return false
+  end
+  local uv = vim.uv or vim.loop
+  lhs = uv.fs_realpath(lhs) or vim.fn.fnamemodify(lhs, ":p")
+  rhs = uv.fs_realpath(rhs) or vim.fn.fnamemodify(rhs, ":p")
+  return lhs == rhs
+end
+
+local function current_original_line(path)
+  local bufname = vim.api.nvim_buf_get_name(0)
+  if not same_real_path(bufname, path) then
+    return nil
+  end
+  return vim.api.nvim_win_get_cursor(0)[1]
+end
+
+local function open_original_file(path, line)
   if not path then
     vim.notify("No original file found for current diff", vim.log.levels.WARN)
     return
@@ -199,6 +217,10 @@ local function open_original_file(path)
 
   vim.cmd("DiffviewClose")
   vim.cmd("edit " .. vim.fn.fnameescape(path))
+  if line and line > 0 then
+    local last = vim.api.nvim_buf_line_count(0)
+    vim.api.nvim_win_set_cursor(0, { math.min(line, last), 0 })
+  end
   refire_current_file_runtime(vim.api.nvim_get_current_buf())
 end
 
@@ -207,7 +229,8 @@ local function jump_to_original_file(view)
     local ok, lib = pcall(require, "diffview.lib")
     view = ok and lib.get_current_view() or nil
   end
-  open_original_file(current_diffview_file_path(view) or normal_buffer_path())
+  local path = current_diffview_file_path(view) or normal_buffer_path()
+  open_original_file(path, current_original_line(path))
 end
 
 local function set_diffview_jump_keymap(view, buf)
@@ -225,6 +248,11 @@ local function set_diffview_tab_jump_keymaps(view)
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
     set_diffview_jump_keymap(view, vim.api.nvim_win_get_buf(win))
   end
+end
+
+local function current_tab_has_diffview()
+  local ok, active = pcall(vim.api.nvim_tabpage_get_var, vim.api.nvim_get_current_tabpage(), "diffview_active")
+  return ok and active == true
 end
 
 local function git_systemlist(args)
@@ -398,6 +426,9 @@ return {
           local bufname = vim.api.nvim_buf_get_name(0)
           if bufname:match("diffview://") then
             vim.keymap.set("n", "q", "<cmd>DiffviewClose<cr>", { buffer = true, silent = true })
+          end
+          if current_tab_has_diffview() then
+            set_diffview_jump_keymap(nil, 0)
           end
         end,
       })
