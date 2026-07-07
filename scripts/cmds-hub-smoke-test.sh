@@ -34,18 +34,20 @@ assert_line() {
 }
 
 PROJECT="$TMP/project"
+FAKEHOME="$TMP/home"
 FAKEBIN="$TMP/bin"
 FZF_INPUT="$TMP/fzf-input"
 RUN_LOG="$PROJECT/run.log"
-mkdir -p "$PROJECT" "$FAKEBIN"
+mkdir -p "$PROJECT" "$FAKEHOME" "$FAKEBIN"
 
 (
 	cd "$PROJECT"
-	python3 "$ROOT/bin/cmds-hub" exec 'printf "%s\n" first >> run.log' >/dev/null
-	python3 "$ROOT/bin/cmds-hub" exec 'printf "%s\n" second >> run.log' >/dev/null
+	HOME="$FAKEHOME" python3 "$ROOT/bin/cmds-hub" exec 'printf "%s\n" first >> run.log' >/dev/null
+	HOME="$FAKEHOME" python3 "$ROOT/bin/cmds-hub" exec 'printf "%s\n" second >> run.log' >/dev/null
 )
 
-HISTORY="$PROJECT/.cmds-hub/cmd_history"
+HISTORY="$FAKEHOME/.cmds-hub/cmd_history"
+test ! -e "$PROJECT/.cmds-hub/cmd_history"
 assert_exists "$HISTORY"
 assert_line_count "$HISTORY" 2
 assert_line "$HISTORY" 'printf "%s\n" first >> run.log'
@@ -54,7 +56,7 @@ assert_line_count "$RUN_LOG" 2
 
 (
 	cd "$PROJECT"
-	python3 "$ROOT/bin/cmds-hub" replay >/dev/null
+	HOME="$FAKEHOME" python3 "$ROOT/bin/cmds-hub" replay >/dev/null
 )
 assert_line_count "$RUN_LOG" 3
 test "$(tail -n 1 "$RUN_LOG")" = "second"
@@ -62,7 +64,7 @@ test "$(tail -n 1 "$RUN_LOG")" = "second"
 : > "$RUN_LOG"
 (
 	cd "$PROJECT"
-	python3 "$ROOT/bin/cmds-hub" replay --all >/dev/null
+	HOME="$FAKEHOME" python3 "$ROOT/bin/cmds-hub" replay --all >/dev/null
 )
 assert_line_count "$RUN_LOG" 2
 test "$(sed -n '1p' "$RUN_LOG")" = "first"
@@ -81,6 +83,7 @@ chmod +x "$FAKEBIN/fzf"
 (
 	cd "$PROJECT"
 	PATH="$FAKEBIN:$PATH" \
+		HOME="$FAKEHOME" \
 		CMDS_HUB_FZF_INPUT="$FZF_INPUT" \
 		CMDS_HUB_FZF_OUTPUT='printf "%s\n" first >> run.log' \
 		python3 "$ROOT/bin/cmds-hub" pick >/dev/null
