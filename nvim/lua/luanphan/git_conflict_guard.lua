@@ -3,7 +3,7 @@ local M = {}
 local unpack = table.unpack or unpack
 
 function M.is_out_of_range_error(err)
-  return tostring(err):find("Invalid 'line': out of range", 1, true) ~= nil
+  return tostring(err):find("Invalid '.+': out of range") ~= nil
 end
 
 local function refresh_conflicts(bufnr)

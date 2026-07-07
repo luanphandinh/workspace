@@ -20,5 +20,18 @@ return {
         disable_filename = 0,
       }
     end,
+    config = function()
+      local group = vim.api.nvim_create_augroup("LuanphanMarkdownPreviewRefresh", { clear = true })
+      vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP", "BufWritePost" }, {
+        group = group,
+        pattern = { "*.md", "*.markdown", "*.rmd" },
+        callback = function(args)
+          if vim.b[args.buf].MarkdownPreviewToggleBool ~= 1 then
+            return
+          end
+          pcall(vim.fn["mkdp#rpc#preview_refresh"])
+        end,
+      })
+    end,
   },
 }

@@ -2,11 +2,12 @@
 import shutil
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 
 def hub_dir() -> Path:
-    return Path(".cmds-hub")
+    return Path(os.environ.get("CMDS_HUB_HOME", "~/.cmds-hub")).expanduser()
 
 
 def history_file() -> Path:
@@ -26,9 +27,9 @@ def usage() -> None:
   cmds-hub pick
 
 Commands:
-  exec    Execute <command> and append it to .cmds-hub/cmd_history on success.
-  replay  Replay the last command in .cmds-hub/cmd_history.
-  pick    Pick a command from .cmds-hub/cmd_history with fzf and execute it.
+  exec    Execute <command> and append it to ~/.cmds-hub/cmd_history on success.
+  replay  Replay the last command in ~/.cmds-hub/cmd_history.
+  pick    Pick a command from ~/.cmds-hub/cmd_history with fzf and execute it.
 
 Options:
   replay --all  Replay every command from oldest to latest.

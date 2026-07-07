@@ -196,6 +196,26 @@ def link_skill_dir(src: Path, dst: Path) -> None:
     os.symlink(src, dst, target_is_directory=True)
 
 
+def has_local_skill_root(root: Path) -> bool:
+    if not root.is_dir():
+        return False
+    for child in root.iterdir():
+        if child.name.startswith(".") and child.is_dir() and not child.is_symlink() and (child / "skills").is_dir():
+            return True
+    return False
+
+
+def install_roots(root: Path) -> list[Path]:
+    repos = []
+    if (root / ".git").exists() or has_local_skill_root(root):
+        repos.append(root)
+    if root.is_dir():
+        for child in sorted(root.iterdir(), key=lambda item: item.name):
+            if child.is_dir() and not child.is_symlink() and (child / ".git").exists():
+                repos.append(child)
+    return repos or [root]
+
+
 def path_is_relative_to(path: Path, parent: Path) -> bool:
     try:
         path.resolve().relative_to(parent.resolve())
@@ -433,6 +453,7 @@ def install_skill_paths(home: Path, selected: list[str]) -> int:
     skills = discover_skill_dirs(home)
     linked = 0
     seen = set()
+    roots = install_roots(Path.cwd())
     for rel in selected:
         rel = rel.strip()
         if not rel or rel in seen:
@@ -441,10 +462,11 @@ def install_skill_paths(home: Path, selected: list[str]) -> int:
         src = skills.get(rel)
         if src is None:
             die(f"selected skill is not in hub: {rel}")
-        dst = Path.cwd() / rel
-        link_skill_dir(src, dst)
-        print(f"skills-hub: linked {rel}")
-        linked += 1
+        for root in roots:
+            dst = root / rel
+            link_skill_dir(src, dst)
+            print(f"skills-hub: linked {rel} -> {root}")
+            linked += 1
 
     print(f"skills-hub: linked {linked} skill(s)")
     return 0
