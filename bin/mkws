@@ -191,6 +191,33 @@ def run(cmd, cwd=None, capture=True):
     )
 
 
+def meta_hub_command():
+    sibling = Path(__file__).resolve().with_name("meta-hub")
+    if sibling.is_file():
+        return [sys.executable, str(sibling)]
+    if has_cmd("meta-hub"):
+        return ["meta-hub"]
+    return None
+
+
+def maybe_index_meta_hub(workstation_root: Path) -> None:
+    if os.environ.get("MKWS_META_HUB_INDEX", "1").lower() in ("0", "false", "no"):
+        return
+    cmd = meta_hub_command()
+    if cmd is None:
+        return
+    proc = subprocess.run(
+        [*cmd, "index", "-p", str(workstation_root)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if proc.returncode != 0 and os.environ.get("MKWS_META_HUB_INDEX_VERBOSE"):
+        detail = (proc.stderr or "").strip().splitlines()
+        suffix = f": {detail[-1]}" if detail else ""
+        warn(f"meta-hub index skipped{suffix}")
+
+
 # ---------------------------------------------------------------------------
 # workspace.yml I/O. Hand-parsed so we don't pull in PyYAML.
 # v1 format:
@@ -1455,6 +1482,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
     yml = workspace_dir / "workspace.yml"
     repo_specs = [parse_repo_spec(r) for r in repos_arg]
     specs_need_default_branch = any(not branch for _, branch in repo_specs)
+    manifest_changed = False
 
     if yml.is_file():
         data = read_manifest(yml)
@@ -1469,6 +1497,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             if branch_flag:
                 # User is filling in the branch now; persist it.
                 write_manifest(yml, name=name, branch=branch_flag, repos=data["repos"], links=data["links"])
+                manifest_changed = True
                 branch = branch_flag
                 branch_for_added_repos = branch_flag
             else:
@@ -1479,6 +1508,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             die("--branch required when adding repos without per-repo branches to a new workspace")
         workspace_dir.mkdir(parents=True, exist_ok=True)
         write_manifest(yml, name=name, branch=branch_flag or "", repos=[], links=[])
+        manifest_changed = True
         branch = branch_flag or ""
         branch_for_added_repos = branch
 
@@ -1532,6 +1562,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             else:
                 info("worktree path already exists, recording in yml")
                 append_repo(yml, leaf, branch_for_repo, base_for_repo)
+                manifest_changed = True
             skipped += 1
             continue
 
@@ -1559,6 +1590,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
                         warn(f"failed to set upstream to {remote_branch}")
                 if not already_recorded:
                     append_repo(yml, leaf, branch_for_repo, base_for_repo)
+                    manifest_changed = True
                 added += 1
                 continue
             fail("existing branch worktree add failed")
@@ -1578,6 +1610,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
                 ok(f"worktree added at {wt_path}")
                 if not already_recorded:
                     append_repo(yml, leaf, branch_for_repo, base_for_repo)
+                    manifest_changed = True
                 added += 1
                 continue
             fail("tracking worktree add failed")
@@ -1603,10 +1636,14 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             ok(f"worktree added at {wt_path}")
             if not already_recorded:
                 append_repo(yml, leaf, branch_for_repo, base_for_repo)
+                manifest_changed = True
             added += 1
         else:
             fail("worktree add failed")
             failed += 1
+
+    if manifest_changed:
+        maybe_index_meta_hub(repo_root)
 
     heading("summary")
     info(f"workspace: {BOLD}{workspace_dir}{RESET}")

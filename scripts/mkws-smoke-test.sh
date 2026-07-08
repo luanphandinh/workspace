@@ -429,8 +429,7 @@ EOF
 		mkws --name feature-c --branch feature/c --add repo-c >/dev/null
 	)
 	FZF_SELECT="feature-b" meta_hub project >/dev/null
-	assert_not_contains "$FZF_INPUT" "$root/station-c/local_workspaces/feature-c"
-	meta_hub index -p "$root/station-c" >/dev/null
+	assert_contains "$FZF_INPUT" "$root/station-c/local_workspaces/feature-c"
 	assert_contains "$clone/registry.yml" "station-c/workstation.yml"
 	project_path=$(FZF_SELECT="feature-c" meta_hub project)
 	assert_eq "$root/station-c/local_workspaces/feature-c" "$project_path"
@@ -439,6 +438,7 @@ EOF
 	assert_eq "$root/station-b/local_workspaces/feature-b/repo-b" "$repo_path"
 	assert_contains "$FZF_INPUT" "$root/station-a/repo-a"
 	assert_contains "$FZF_INPUT" "$root/station-b/local_workspaces/feature-b/repo-b"
+	assert_contains "$FZF_INPUT" "$root/station-c/local_workspaces/feature-c/repo-c"
 	repo_path=$(FZF_SELECT="$root/station-b/local_workspaces/feature-b/repo-b" meta_hub r)
 	assert_eq "$root/station-b/local_workspaces/feature-b/repo-b" "$repo_path"
 
