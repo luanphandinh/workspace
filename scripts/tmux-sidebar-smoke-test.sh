@@ -448,6 +448,17 @@ test_cycle_uses_canonical_ids() {
 	pass "cycle switches by canonical id"
 }
 
+test_jump_uses_pin_slot() {
+	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30'
+	write_pins 'alpha	$1' 'beta	$2' 'gamma	$3'
+	: > "$TMUX_SMOKE_SWITCH_FILE"
+
+	run_script jump 2
+
+	assert_file_contains "$TMUX_SMOKE_SWITCH_FILE" '$2'
+	pass "jump switches by pinned slot"
+}
+
 test_replace_last_active_updates_slot() {
 	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30'
 	write_pins 'alpha	$1' 'beta	$2'
@@ -591,6 +602,7 @@ test_sync_repairs_rename_by_id
 test_sync_repairs_resurrect_id_by_name
 test_toggle_pins_and_unpins
 test_cycle_uses_canonical_ids
+test_jump_uses_pin_slot
 test_replace_last_active_updates_slot
 test_prune_delegates_to_sync
 test_sidebar_renders_canonical_pin

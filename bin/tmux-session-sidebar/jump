@@ -1,0 +1,31 @@
+#!/bin/sh
+# Switch to pinned session slot N.
+PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
+TAB="$(printf '\t')"
+SLOT="${1:-}"
+
+case "$SLOT" in
+	''|*[!0-9]*)
+		tmux display-message "usage: jump <slot>"
+		exit 1
+		;;
+esac
+
+if [ ! -s "$PIN_FILE" ]; then
+	tmux display-message "no pinned sessions (prefix+a to pin)"
+	exit 0
+fi
+
+"$HOME/bin/tmux-session-sidebar/sync-pins" >/dev/null 2>&1 || :
+
+target="$(awk -F "$TAB" -v slot="$SLOT" '
+	NF >= 2 && $2 != "" { ids[++n] = $2; next }
+	/^\$[0-9]+$/ { ids[++n] = $0 }
+	END { if (slot >= 1 && slot <= n) print ids[slot] }
+' "$PIN_FILE")"
+
+if [ -n "$target" ]; then
+	tmux switch-client -t "$target"
+else
+	tmux display-message "no pinned session in slot $SLOT"
+fi
