@@ -80,7 +80,6 @@
             bashInteractive
             alacritty
             bat
-            curl
             csvlens
             fd
             fontconfig
@@ -100,11 +99,15 @@
           darwinPackages = with pkgs; [
             terminal-notifier
           ];
+          linuxPackages = with pkgs; [
+            curl
+          ];
           allPackages =
             systemPackages
             ++ codingPackages
             ++ terminalPackages
-            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin darwinPackages;
+            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin darwinPackages
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux linuxPackages;
         in
         allPackages;
     in
