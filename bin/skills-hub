@@ -196,24 +196,13 @@ def link_skill_dir(src: Path, dst: Path) -> None:
     os.symlink(src, dst, target_is_directory=True)
 
 
-def has_local_skill_root(root: Path) -> bool:
-    if not root.is_dir():
-        return False
-    for child in root.iterdir():
-        if child.name.startswith(".") and child.is_dir() and not child.is_symlink() and (child / "skills").is_dir():
-            return True
-    return False
-
-
 def install_roots(root: Path) -> list[Path]:
-    repos = []
-    if (root / ".git").exists() or has_local_skill_root(root):
-        repos.append(root)
+    repos = [root]
     if root.is_dir():
         for child in sorted(root.iterdir(), key=lambda item: item.name):
             if child.is_dir() and not child.is_symlink() and (child / ".git").exists():
                 repos.append(child)
-    return repos or [root]
+    return repos
 
 
 def path_is_relative_to(path: Path, parent: Path) -> bool:

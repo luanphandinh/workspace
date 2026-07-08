@@ -200,9 +200,9 @@ git init -q "$TMP/plain-multi-pick/repo-b"
 		SKILLS_HUB_FZF_OUTPUT=".agents/skills/example-skill" \
 		python3 "$ROOT/bin/skills-hub" pick >/dev/null
 )
+assert_symlink_target "$TMP/plain-multi-pick/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
 assert_symlink_target "$TMP/plain-multi-pick/repo-a/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
 assert_symlink_target "$TMP/plain-multi-pick/repo-b/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
-assert_not_exists "$TMP/plain-multi-pick/.agents/skills/example-skill"
 
 (
 	cd "$PROJECT"
@@ -345,6 +345,22 @@ assert_symlink_target "$TMP/multi-group/repo-a/.agents/skills/example-skill" "$H
 assert_symlink_target "$TMP/multi-group/repo-a/.agents/skills/third-skill" "$HUB/.agents/skills/third-skill"
 assert_symlink_target "$TMP/multi-group/repo-b/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
 assert_symlink_target "$TMP/multi-group/repo-b/.agents/skills/third-skill" "$HUB/.agents/skills/third-skill"
+
+mkdir -p "$TMP/plain-multi-group"
+git init -q "$TMP/plain-multi-group/repo-a"
+git init -q "$TMP/plain-multi-group/repo-b"
+(
+	cd "$TMP/plain-multi-group"
+	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+		SKILLS_HUB_FZF_OUTPUT="useful" \
+		python3 "$ROOT/bin/skills-hub" group pick >/dev/null
+)
+assert_symlink_target "$TMP/plain-multi-group/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
+assert_symlink_target "$TMP/plain-multi-group/.agents/skills/third-skill" "$HUB/.agents/skills/third-skill"
+assert_symlink_target "$TMP/plain-multi-group/repo-a/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
+assert_symlink_target "$TMP/plain-multi-group/repo-a/.agents/skills/third-skill" "$HUB/.agents/skills/third-skill"
+assert_symlink_target "$TMP/plain-multi-group/repo-b/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
+assert_symlink_target "$TMP/plain-multi-group/repo-b/.agents/skills/third-skill" "$HUB/.agents/skills/third-skill"
 
 : > "$FZF_INPUT"
 : > "$FZF_ARGS"
