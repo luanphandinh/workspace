@@ -90,6 +90,7 @@
             gnumake
             jq
             kitty
+            mosh
             ripgrep
             unzip
             xz
