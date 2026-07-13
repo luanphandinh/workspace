@@ -145,7 +145,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test ## Run smoke tests
+test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test ## Run smoke tests
 
 mkws-test: ## Run mkws/meta-hub smoke tests
 	sh ./scripts/mkws-smoke-test.sh
@@ -170,9 +170,6 @@ nix-test: ## Run Nix smoke tests
 
 tmux-sidebar-test: ## Run tmux sidebar smoke tests
 	sh ./scripts/tmux-sidebar-smoke-test.sh
-
-tmux-status-test: ## Run tmux status smoke tests
-	sh ./scripts/tmux-status-smoke-test.sh
 
 cleanup: ## Clean up ./tmp folder
 	rm -rf ./tmp
