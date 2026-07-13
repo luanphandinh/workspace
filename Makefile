@@ -107,7 +107,9 @@ tmux: ## Install tmux + configurations + plugins
 tmux: setup-deps tmux-config cleanup
 
 tmux-config: workspace-bin ## Install tmux-config
-	tmux new -d
+	@if ! tmux has-session 2>/dev/null; then \
+		env -u NO_COLOR tmux new-session -d -x 80 -y 24; \
+	fi
 	test -d ~/.tmux/plugins/tpm || git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
 	cp ./tmux/.tmux.conf ~/.tmux.conf
 	tmux source ~/.tmux.conf

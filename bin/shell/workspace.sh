@@ -8,6 +8,7 @@ export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:$HOME/.nix-profile/bin:/n
 export PATH="$PATH:/usr/local/go/bin:$GOPATH/bin"
 hash -r 2>/dev/null || true
 export COLORTERM=truecolor
+unset NO_COLOR
 export FORCE_COLOR=1
 export CODEX_NOTIFY_ACTIVATE_APP=kitty
 if [ -n "${ZSH_VERSION:-}" ]; then
