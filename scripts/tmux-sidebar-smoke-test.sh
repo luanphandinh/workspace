@@ -25,6 +25,7 @@ export TMUX_SMOKE_LAYOUT_FILE="$TMP/window-layout"
 export TMUX_SMOKE_RESTORE_LAYOUT_FILE="$TMP/restore-layout"
 export TMUX_SMOKE_SELECTED_LAYOUTS="$TMP/selected-layouts"
 export TMUX_SMOKE_FOCUS_FILE="$TMP/focus"
+export TMUX_SMOKE_COMMAND_LOG="$TMP/commands"
 export TMUX_SMOKE_CURRENT_ID='$1'
 export TMUX_SMOKE_CURRENT_WINDOW='@1'
 export TMUX_SMOKE_PANE_WINDOW='@1'
@@ -39,6 +40,7 @@ ln -s "$ROOT/bin/tmux-session-sidebar" "$HOME/bin/tmux-session-sidebar"
 cat > "$TMP/bin/tmux" <<'EOF'
 #!/bin/sh
 tab=$(printf '\t')
+printf '%s\n' "$*" >> "$TMUX_SMOKE_COMMAND_LOG"
 
 sessions() {
 	while IFS='|' read -r name id activity; do
@@ -235,6 +237,8 @@ case "${1:-}" in
 			exit 0
 		fi
 		case "${1:-}" in
+			'#{client_width}') printf '120\n' ;;
+			'#{client_height}') printf '40\n' ;;
 			'#{session_id}') printf '%s\n' "$TMUX_SMOKE_CURRENT_ID" ;;
 			'#{window_id}') printf '%s\n' "$TMUX_SMOKE_CURRENT_WINDOW" ;;
 			'#S') printf '%s\n' "$TMUX_SMOKE_CURRENT_NAME" ;;
@@ -548,6 +552,17 @@ test_precompute_focus_sets_each_window_focus() {
 	pass "precompute focus sets each window focus"
 }
 
+test_fit_windows_keeps_global_sizing_latest() {
+	: > "$TMUX_SMOKE_COMMAND_LOG"
+
+	run_script fit-windows
+
+	assert_file_contains "$TMUX_SMOKE_COMMAND_LOG" 'resize-window -t @1 -x 120 -y 40'
+	assert_file_contains "$TMUX_SMOKE_COMMAND_LOG" 'set-window-option -u -t @1 window-size'
+	assert_file_not_contains "$TMUX_SMOKE_COMMAND_LOG" 'set-option -g window-size manual'
+	pass "fit windows leaves global sizing unchanged"
+}
+
 test_reload_restarts_open_sidebars() {
 	set_sessions 'alpha|$1|10'
 	write_pins 'alpha	$1'
@@ -609,6 +624,7 @@ test_sidebar_renders_canonical_pin
 test_sidebar_batches_window_listing
 test_sidebar_uses_precomputed_window_focus
 test_precompute_focus_sets_each_window_focus
+test_fit_windows_keeps_global_sizing_latest
 test_reload_restarts_open_sidebars
 test_attach_saves_restore_layout
 test_toggle_close_preserves_current_content_layout
