@@ -168,7 +168,7 @@ chmod +x "$FAKEBIN/fzf"
 
 assert_contains "$FZF_INPUT" ".agents/skills/example-skill"
 assert_contains "$FZF_INPUT" ".claude/skills/other-skill"
-assert_contains "$FZF_ARGS" "--multi --bind ctrl-a:select-all,ctrl-d:deselect-all"
+assert_contains "$FZF_ARGS" "--height ~100% --prompt skills-hub>  --multi --bind ctrl-a:select-all,ctrl-d:deselect-all"
 assert_symlink_target "$PROJECT/.agents/skills/example-skill" "$HUB/.agents/skills/example-skill"
 assert_symlink_target "$PROJECT/.claude/skills/other-skill" "$HUB/.claude/skills/other-skill"
 assert_exists "$PROJECT/.agents/skills/example-skill/SKILL.md"

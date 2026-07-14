@@ -13,12 +13,14 @@ export HOME="$TMP/home"
 export PYTHONPYCACHEPREFIX="$TMP/pycache"
 FAKEBIN="$TMP/fakebin"
 FZF_INPUT="$TMP/fzf-input"
-export FZF_INPUT
+FZF_ARGS="$TMP/fzf-args"
+export FZF_INPUT FZF_ARGS
 mkdir -p "$HOME" "$FAKEBIN"
 export PATH="$FAKEBIN:$PATH"
 
 cat > "$FAKEBIN/fzf" <<'SH'
 #!/bin/sh
+printf '%s\n' "$*" >> "$FZF_ARGS"
 cat > "$FZF_INPUT"
 if [ -n "${FZF_SELECT:-}" ]; then
 	grep -F "$FZF_SELECT" "$FZF_INPUT" | head -n 1
@@ -80,7 +82,7 @@ assert_git_repo() {
 }
 
 assert_contains() {
-	grep -F "$2" "$1" >/dev/null || {
+	grep -F -- "$2" "$1" >/dev/null || {
 		printf 'expected %s to contain: %s\n' "$1" "$2" >&2
 		printf '%s contents:\n' "$1" >&2
 		cat "$1" >&2
@@ -89,7 +91,7 @@ assert_contains() {
 }
 
 assert_not_contains() {
-	if grep -F "$2" "$1" >/dev/null; then
+	if grep -F -- "$2" "$1" >/dev/null; then
 		printf 'expected %s not to contain: %s\n' "$1" "$2" >&2
 		printf '%s contents:\n' "$1" >&2
 		cat "$1" >&2
@@ -414,10 +416,12 @@ EOF
 	meta_hub index -p "$root/station-a" >/dev/null
 	assert_not_exists "$clone/workstations.yml"
 
+	: > "$FZF_ARGS"
 	project_path=$(FZF_SELECT="feature-b" meta_hub project)
 	assert_eq "$root/station-b/local_workspaces/feature-b" "$project_path"
 	assert_contains "$FZF_INPUT" "$root/station-a/local_workspaces/feature-a"
 	assert_contains "$FZF_INPUT" "$root/station-b/local_workspaces/feature-b"
+	assert_contains "$FZF_ARGS" "--height ~100% --prompt meta-project> "
 	project_path=$(FZF_SELECT="feature-b" meta_hub p)
 	assert_eq "$root/station-b/local_workspaces/feature-b" "$project_path"
 

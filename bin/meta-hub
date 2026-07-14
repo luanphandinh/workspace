@@ -337,7 +337,7 @@ def choose_entries(entries: list, pick: bool) -> list:
         die("`pick` requires fzf on PATH")
     labels = [f"{entry['root']} | {entry['repo']}" for entry in entries]
     proc = subprocess.run(
-        ["fzf"],
+        ["fzf", "--height", "~100%"],
         input="\n".join(labels) + "\n",
         capture_output=True,
         text=True,
@@ -455,7 +455,7 @@ def pick_path(candidates: list, prompt: str) -> str:
     labels = [item["label"] for item in candidates]
     paths = {item["label"]: item["path"] for item in candidates}
     proc = subprocess.run(
-        ["fzf", "--prompt", prompt],
+        ["fzf", "--height", "~100%", "--prompt", prompt],
         input="\n".join(labels) + "\n",
         stdout=subprocess.PIPE,
         text=True,

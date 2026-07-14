@@ -158,7 +158,7 @@ def require_fzf() -> None:
 
 def run_fzf(choices: list[str], prompt: str, multi: bool = True, print_query: bool = False) -> tuple[int, list[str]]:
     require_fzf()
-    args = ["fzf", "--prompt", prompt]
+    args = ["fzf", "--height", "~100%", "--prompt", prompt]
     if multi:
         args.append("--multi")
         args.extend(["--bind", "ctrl-a:select-all,ctrl-d:deselect-all"])

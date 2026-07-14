@@ -82,7 +82,7 @@ def require_fzf() -> None:
 def run_fzf(commands: list[str]) -> tuple[int, list[str]]:
     require_fzf()
     proc = subprocess.run(
-        ["fzf", "--prompt", "cmds-hub> "],
+        ["fzf", "--height", "~100%", "--prompt", "cmds-hub> "],
         input="\n".join(commands) + ("\n" if commands else ""),
         capture_output=True,
         text=True,
