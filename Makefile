@@ -94,7 +94,10 @@ nvim-test: verify-agent-clis ## Run headless Neovim smoke tests
 
 agent-clis: ## Install terminal agent CLIs used by Neovim
 	chmod +x ./scripts/install-agent-clis.sh
-	./scripts/install-agent-clis.sh install
+	@./scripts/install-agent-clis.sh install || { \
+		status=$$?; \
+		printf 'WARNING: agent CLI installation failed (exit %s); setup will continue\n' "$$status" >&2; \
+	}
 
 verify-agent-clis: ## Verify terminal agent CLIs used by Neovim
 	chmod +x ./scripts/install-agent-clis.sh
