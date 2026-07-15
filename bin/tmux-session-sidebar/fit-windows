@@ -6,11 +6,10 @@
 # `resize-pane` against that stale size produces a wrong layout. Calling
 # this before any layout op makes every window match the live viewport.
 #
-# Strategy: temporarily flip server option window-size to `manual` so
-# tmux honours our explicit `resize-window -x/-y`, then restore the
-# previous value at exit. `resize-window` also writes a per-window
-# `window-size manual` override, so each touched window has that local
-# override removed after it has been resized.
+# `resize-window` temporarily sets `window-size manual` on the target
+# window. Clear that local override after each resize and leave the global
+# policy untouched; tmux <= 3.6b can crash when creating a window while the
+# global policy is manual (tmux/tmux#4849).
 set -e
 
 # Capture viewport from the current client. If the script is run outside
@@ -45,13 +44,6 @@ esac
 
 window_h=$((client_h - status_lines))
 [ "$window_h" -gt 0 ] || window_h="$client_h"
-
-# Remember the previous window-size policy and restore on exit.
-prev_mode="$(tmux show-options -gqv window-size 2>/dev/null || :)"
-[ -z "$prev_mode" ] && prev_mode="latest"
-trap 'tmux set-option -g window-size "$prev_mode" >/dev/null 2>&1 || :' EXIT
-
-tmux set-option -g window-size manual >/dev/null 2>&1 || :
 
 tmux list-windows -aF '#{window_id}' 2>/dev/null | while IFS= read -r win; do
 	tmux resize-window -t "$win" -x "$client_w" -y "$window_h" >/dev/null 2>&1 || :

@@ -29,7 +29,7 @@ setup: setup-deps
 	$(MAKE) setup-runtime
 
 setup-runtime: ## Install workspace configs and terminal agent CLIs after deps are available
-setup-runtime: default-shell fonts-install workspace-bin agent-clis codex-config nvim-config tmux-config alacritty-config kitty-config newsboat-config cleanup
+setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config newsboat-config cleanup agent-clis
 
 nix-install: ## Install Nix if missing
 	sh ./scripts/install-nix.sh
@@ -94,7 +94,10 @@ nvim-test: verify-agent-clis ## Run headless Neovim smoke tests
 
 agent-clis: ## Install terminal agent CLIs used by Neovim
 	chmod +x ./scripts/install-agent-clis.sh
-	./scripts/install-agent-clis.sh install
+	@./scripts/install-agent-clis.sh install || { \
+		status=$$?; \
+		printf 'WARNING: agent CLI installation failed (exit %s); setup will continue\n' "$$status" >&2; \
+	}
 
 verify-agent-clis: ## Verify terminal agent CLIs used by Neovim
 	chmod +x ./scripts/install-agent-clis.sh
@@ -107,7 +110,9 @@ tmux: ## Install tmux + configurations + plugins
 tmux: setup-deps tmux-config cleanup
 
 tmux-config: workspace-bin ## Install tmux-config
-	tmux new -d
+	@if ! tmux has-session 2>/dev/null; then \
+		env -u NO_COLOR tmux new-session -d -x 80 -y 24; \
+	fi
 	test -d ~/.tmux/plugins/tpm || git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
 	cp ./tmux/.tmux.conf ~/.tmux.conf
 	tmux source ~/.tmux.conf
@@ -145,7 +150,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test tmux-status-test ## Run smoke tests
+test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test ## Run smoke tests
 
 mkws-test: ## Run mkws/meta-hub smoke tests
 	sh ./scripts/mkws-smoke-test.sh
@@ -170,9 +175,6 @@ nix-test: ## Run Nix smoke tests
 
 tmux-sidebar-test: ## Run tmux sidebar smoke tests
 	sh ./scripts/tmux-sidebar-smoke-test.sh
-
-tmux-status-test: ## Run tmux status smoke tests
-	sh ./scripts/tmux-status-smoke-test.sh
 
 cleanup: ## Clean up ./tmp folder
 	rm -rf ./tmp

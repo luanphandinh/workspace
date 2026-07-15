@@ -37,6 +37,7 @@ PROJECT="$TMP/project"
 FAKEHOME="$TMP/home"
 FAKEBIN="$TMP/bin"
 FZF_INPUT="$TMP/fzf-input"
+FZF_ARGS="$TMP/fzf-args"
 RUN_LOG="$PROJECT/run.log"
 mkdir -p "$PROJECT" "$FAKEHOME" "$FAKEBIN"
 
@@ -74,6 +75,9 @@ assert_line_count "$HISTORY" 2
 cat > "$FAKEBIN/fzf" <<'SH'
 #!/bin/sh
 set -eu
+if [ -n "${CMDS_HUB_FZF_ARGS:-}" ]; then
+	printf '%s\n' "$*" >> "$CMDS_HUB_FZF_ARGS"
+fi
 cat > "$CMDS_HUB_FZF_INPUT"
 printf '%s\n' "$CMDS_HUB_FZF_OUTPUT"
 SH
@@ -85,11 +89,13 @@ chmod +x "$FAKEBIN/fzf"
 	PATH="$FAKEBIN:$PATH" \
 		HOME="$FAKEHOME" \
 		CMDS_HUB_FZF_INPUT="$FZF_INPUT" \
+		CMDS_HUB_FZF_ARGS="$FZF_ARGS" \
 		CMDS_HUB_FZF_OUTPUT='printf "%s\n" first >> run.log' \
 		python3 "$ROOT/bin/cmds-hub" pick >/dev/null
 )
 assert_line "$FZF_INPUT" 'printf "%s\n" first >> run.log'
 assert_line "$FZF_INPUT" 'printf "%s\n" second >> run.log'
+assert_line "$FZF_ARGS" '--height ~100% --prompt cmds-hub> '
 assert_line_count "$RUN_LOG" 1
 test "$(cat "$RUN_LOG")" = "first"
 assert_line_count "$HISTORY" 2
