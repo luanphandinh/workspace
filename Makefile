@@ -29,7 +29,7 @@ setup: setup-deps
 	$(MAKE) setup-runtime
 
 setup-runtime: ## Install workspace configs and terminal agent CLIs after deps are available
-setup-runtime: default-shell fonts-install workspace-bin agent-clis codex-config nvim-config tmux-config alacritty-config kitty-config newsboat-config cleanup
+setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config newsboat-config cleanup agent-clis
 
 nix-install: ## Install Nix if missing
 	sh ./scripts/install-nix.sh
