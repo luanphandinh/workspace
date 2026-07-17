@@ -9,7 +9,6 @@
     let
       systems = [
         "aarch64-darwin"
-        "x86_64-darwin"
         "aarch64-linux"
         "x86_64-linux"
       ];
@@ -46,16 +45,8 @@
             ln -s ${parser.grammar}/queries "$out/queries/${parser.lang}"
           '') (treeSitterGrammars pkgs))}
         '';
-      packageList = system: pkgs:
+      packageList = pkgs:
         let
-          x86DarwinPkgs = import nixpkgs {
-            system = "x86_64-darwin";
-            config.allowUnfree = true;
-          };
-          goPackage =
-            if system == "aarch64-darwin"
-            then x86DarwinPkgs.go_1_25
-            else pkgs.go_1_25;
           treesitterParsersPackage = nvimTreesitterParsers pkgs;
           systemPackages = with pkgs; [
             btop
@@ -65,6 +56,7 @@
           ];
           codingPackages = with pkgs; [
             gcc
+            go_1_25
             gopls
             nerd-fonts.fira-code
             neovim
@@ -73,7 +65,6 @@
             rust-analyzer
             tree-sitter
           ] ++ [
-            goPackage
             treesitterParsersPackage
           ];
           terminalPackages = with pkgs; [
@@ -116,17 +107,17 @@
         nvim-treesitter-parsers = nvimTreesitterParsers pkgs;
         workspace-deps = pkgs.buildEnv {
           name = "workspace-deps";
-          paths = packageList pkgs.stdenv.hostPlatform.system pkgs;
+          paths = packageList pkgs;
         };
         default = pkgs.buildEnv {
           name = "workspace-deps";
-          paths = packageList pkgs.stdenv.hostPlatform.system pkgs;
+          paths = packageList pkgs;
         };
       });
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
-          packages = packageList pkgs.stdenv.hostPlatform.system pkgs;
+          packages = packageList pkgs;
         };
       });
     };
