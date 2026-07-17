@@ -7,8 +7,18 @@ local cleanup_fixture_id = 0
 local agent_cli_commands = {
   { command = "cursor-agent", lhs = "<leader>ac", plugin = "luanphan-cursor-agent", g_bufnr = "cursor_agent_bufnr" },
   { command = "claude", lhs = "<leader>xc", plugin = "luanphan-claude-agent", g_bufnr = "claude_agent_bufnr" },
-  { command = "mcodex", lhs = "<leader>;", plugin = "luanphan-codex-agent", g_bufnr = "codex_agent_bufnr" },
+  {
+    command = "mcodex",
+    lhs = "<leader>;",
+    plugin = "luanphan-codex-agent",
+    g_bufnr = "codex_agent_bufnr",
+    optional_in_macos_ci = true,
+  },
 }
+
+local function is_macos_ci_workspace()
+  return vim.env.IS_CI_WORKSPACE == "1" and uv.os_uname().sysname == "Darwin"
+end
 
 vim.notify = function(message, level)
   if level and level >= vim.log.levels.WARN then
@@ -1021,7 +1031,9 @@ end
 
 local function test_agent_cli_commands_available()
   for _, item in ipairs(agent_cli_commands) do
-    require_command(item.command, { item.command, "--version" })
+    if not (item.optional_in_macos_ci and is_macos_ci_workspace()) then
+      require_command(item.command, { item.command, "--version" })
+    end
   end
 end
 

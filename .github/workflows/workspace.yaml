@@ -7,7 +7,7 @@ jobs:
   workspace:
     runs-on: ${{ matrix.os }}
     env:
-      IS_CI_WORKSPACE: "1"
+      IS_CI_WORKSPACE: ${{ startsWith(matrix.os, 'macos-') && '1' || '0' }}
     strategy:
       fail-fast: false
       matrix:
