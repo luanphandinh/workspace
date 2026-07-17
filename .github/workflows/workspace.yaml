@@ -6,6 +6,8 @@ on:
 jobs:
   workspace:
     runs-on: ${{ matrix.os }}
+    env:
+      IS_CI_WORKSPACE: "1"
     strategy:
       fail-fast: false
       matrix:
