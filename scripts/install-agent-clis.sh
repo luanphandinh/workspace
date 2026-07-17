@@ -14,8 +14,8 @@ has_cmd() {
 ignore_codex_failure() {
   message="$1"
 
-  if [ "${IS_CI_WORKSPACE:-0}" = "1" ]; then
-    echo "WARNING: $message; continuing because IS_CI_WORKSPACE=1" >&2
+  if [ "${IS_CI_WORKSPACE:-0}" = "1" ] && [ "$(uname -s)" = "Darwin" ]; then
+    echo "WARNING: $message; continuing because IS_CI_WORKSPACE=1 on macOS" >&2
     return 0
   fi
 
