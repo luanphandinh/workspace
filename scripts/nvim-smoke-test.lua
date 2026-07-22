@@ -1445,6 +1445,19 @@ local function test_git_diff_original_file_jump_starts_go_runtime(worktree)
     "assert_true(vim.bo[buf].filetype == 'go', 'jumped buffer filetype is ' .. vim.bo[buf].filetype)",
     "wait_until('go treesitter after diff jump', function() return vim.treesitter.highlighter.active[buf] ~= nil end, 5000)",
     "wait_for_lsp(buf)",
+    "invoke_map('<leader>gD')",
+    "wait_until('committed diffview', has_visible_diffview, 10000)",
+    "wait_until('committed diffview files', function() return diffview_file_count() > 0 end, 10000)",
+    "focus_diffview_jump_buffer()",
+    "needle = 'func branchValue() string {'",
+    "focus_diff_line(needle)",
+    "expected_line = line_number_for_content(file, needle)",
+    "assert_true(expected_line ~= nil, 'committed changed line missing from original file')",
+    "invoke_map('<leader>gf')",
+    "wait_until('committed diffview closes after original jump', function() return not has_visible_diffview() end, 5000)",
+    "wait_until('committed original file buffer', function() return realpath(vim.api.nvim_buf_get_name(0)) == realpath(file) end, 5000)",
+    "local actual_line = vim.api.nvim_win_get_cursor(0)[1]",
+    "assert_true(actual_line == expected_line, 'committed jump cursor line ' .. actual_line .. ' should match focused diff line ' .. expected_line)",
   })
 
   local cmd = child_nvim_luafile_command(worktree, script)
