@@ -175,6 +175,11 @@ if [ -n "$zsh_bin" ]; then
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/bin/shell/workspace.sh'; test \"\$FZF_INIT_SHELL\" = zsh"
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/bin/shell/workspace.sh'; test \"\$PROMPT\" = '%1~ %# '"
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/bin/shell/workspace.sh'; test \"\$HISTSIZE\" = 2000; test \"\$SAVEHIST\" = 1000; test \"\$options[histexpiredupsfirst]\" = on; test \"\$options[histfindnodups]\" = on; test \"\$options[histignorealldups]\" = on; test \"\$options[histsavenodups]\" = on"
+  WORKSPACE_SHELL="$repo_root/bin/shell/workspace.sh" PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" \
+    "$zsh_bin" -fic '. "$WORKSPACE_SHELL"; bindkey "$(printf "\033[1;3D")"; bindkey "$(printf "\033[1;3C")"' \
+    > "$tmp/zsh-option-arrow-bindings"
+  grep -Fq 'backward-word' "$tmp/zsh-option-arrow-bindings"
+  grep -Fq 'forward-word' "$tmp/zsh-option-arrow-bindings"
   grep -qx 'init zsh --cmd z' "$log"
   grep -qx -- '--zsh' "$fzf_log"
 fi
@@ -186,6 +191,10 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/bin/shell/wo
 : > "$log"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = bash"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; test \"\$FZF_INIT_SHELL\" = bash"
+WORKSPACE_SHELL="$repo_root/bin/shell/workspace.sh" PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" \
+  bash --noprofile --norc -ic '. "$WORKSPACE_SHELL"; bind -P' > "$tmp/bash-option-arrow-bindings" 2>/dev/null
+grep -Fq '"\e[1;3D"' "$tmp/bash-option-arrow-bindings"
+grep -Fq '"\e[1;3C"' "$tmp/bash-option-arrow-bindings"
 grep -qx 'init bash --cmd z' "$log"
 grep -qx -- '--bash' "$fzf_log"
 
