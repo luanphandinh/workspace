@@ -233,13 +233,18 @@ local function current_original_line(path, view)
   return vim.api.nvim_win_get_cursor(main_win.id)[1]
 end
 
-local function open_original_file(path, line)
+local function open_original_file(path, line, lib)
   if not path then
     vim.notify("No original file found for current diff", vim.log.levels.WARN)
     return
   end
 
-  vim.cmd("DiffviewClose")
+  local target_tab = lib and lib.get_prev_non_view_tabpage() or nil
+  if target_tab then
+    vim.api.nvim_set_current_tabpage(target_tab)
+  else
+    vim.cmd("tabnew")
+  end
   vim.cmd("edit " .. vim.fn.fnameescape(path))
   if line and line > 0 then
     local last = vim.api.nvim_buf_line_count(0)
@@ -254,7 +259,7 @@ local function jump_to_original_file(view)
     view = lib.get_current_view() or view
   end
   local path = current_diffview_file_path(view) or normal_buffer_path()
-  open_original_file(path, current_original_line(path, view))
+  open_original_file(path, current_original_line(path, view), ok and lib or nil)
 end
 
 local function set_diffview_jump_keymap(view, buf)
