@@ -22,6 +22,17 @@ if [ -n "${ZSH_VERSION:-}" ]; then
   setopt HIST_SAVE_NO_DUPS
   PROMPT='%1~ %# '
 fi
+case $- in
+  *i*)
+    if [ -n "${ZSH_VERSION:-}" ]; then
+      bindkey "$(printf '\033[1;3D')" backward-word
+      bindkey "$(printf '\033[1;3C')" forward-word
+    elif [ -n "${BASH_VERSION:-}" ]; then
+      bind '"\e[1;3D": backward-word'
+      bind '"\e[1;3C": forward-word'
+    fi
+    ;;
+esac
 if command -v fzf >/dev/null 2>&1; then
   if [ -n "${ZSH_VERSION:-}" ]; then
     eval "$(fzf --zsh)"
