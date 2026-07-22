@@ -201,12 +201,36 @@ local function same_real_path(lhs, rhs)
   return lhs == rhs
 end
 
-local function current_original_line(path)
+local function current_original_line(path, view)
   local bufname = vim.api.nvim_buf_get_name(0)
-  if not same_real_path(bufname, path) then
+  if same_real_path(bufname, path) then
+    return vim.api.nvim_win_get_cursor(0)[1]
+  end
+
+  local layout = view and view.cur_layout
+  if not layout or type(layout.get_main_win) ~= "function" then
     return nil
   end
-  return vim.api.nvim_win_get_cursor(0)[1]
+
+  local current_win = vim.api.nvim_get_current_win()
+  local in_layout = false
+  for _, win in ipairs(layout.windows or {}) do
+    if win.id == current_win then
+      in_layout = true
+      break
+    end
+  end
+  if not in_layout then
+    return nil
+  end
+
+  local ok, main_win = pcall(function()
+    return layout:get_main_win()
+  end)
+  if not ok or not main_win or not main_win.id or not vim.api.nvim_win_is_valid(main_win.id) then
+    return nil
+  end
+  return vim.api.nvim_win_get_cursor(main_win.id)[1]
 end
 
 local function open_original_file(path, line)
@@ -225,12 +249,12 @@ local function open_original_file(path, line)
 end
 
 local function jump_to_original_file(view)
-  if not view then
-    local ok, lib = pcall(require, "diffview.lib")
-    view = ok and lib.get_current_view() or nil
+  local ok, lib = pcall(require, "diffview.lib")
+  if ok then
+    view = lib.get_current_view() or view
   end
   local path = current_diffview_file_path(view) or normal_buffer_path()
-  open_original_file(path, current_original_line(path))
+  open_original_file(path, current_original_line(path, view))
 end
 
 local function set_diffview_jump_keymap(view, buf)
