@@ -77,11 +77,34 @@ render_pins() {
 		-v sep="$sep" \
 		-v current="$current" \
 		-v current_window="$current_window" \
+		-v width="$WIDTH" \
 		-v rule="$RULE" \
 		-v green="$GREEN" \
 		-v dim="$DIM" \
 		-v reset="$RESET" \
 		-v eol="$EOL" '
+		function spaces(count, out, i) {
+			out = ""
+			for (i = 0; i < count; i++)
+				out = out " "
+			return out
+		}
+		function print_wrapped(prefix, text, style, indent, continuation, available, chunk) {
+			if (continuation == "")
+				continuation = spaces(indent)
+			do {
+				available = width - indent
+				if (available < 1)
+					available = 1
+				chunk = substr(text, 1, available)
+				if (style != "")
+					printf "%s%s%s%s%s\n", style, prefix, chunk, reset, eol
+				else
+					printf "%s%s%s\n", prefix, chunk, eol
+				text = substr(text, length(chunk) + 1)
+				prefix = continuation
+			} while (text != "")
+		}
 		$0 == sep {
 			section++
 			next
@@ -137,15 +160,15 @@ render_pins() {
 
 				if (id == "" || name == "") {
 					dead_name = (name != "") ? name : entry
-					printf "%s✗ %s (dead)%s%s\n", dim, dead_name, reset, eol
+					print_wrapped("✗ ", dead_name " (dead)", dim, 2)
 					prev_current = is_current
 					continue
 				}
 
 				if (is_current == 1)
-					printf "%s▸ %s%s%s\n", green, name, reset, eol
+					print_wrapped("▸ ", name, green, 2)
 				else
-					printf "  %s%s\n", name, eol
+					print_wrapped("  ", name, "", 2)
 
 				n = win_count[id]
 				for (j = 1; j <= n; j++) {
@@ -153,9 +176,9 @@ render_pins() {
 					wname = win_name[id, j]
 					tree = (j == n) ? "└" : "├"
 					if (active == 1 && is_current == 1)
-						printf "  %s▸ %s%s%s\n", green, wname, reset, eol
+						print_wrapped("  ▸ ", wname, green, 4, "  │ ")
 					else
-						printf "  %s %s%s\n", tree, wname, eol
+						print_wrapped("  " tree " ", wname, "", 4, "  │ ")
 				}
 
 				prev_current = is_current

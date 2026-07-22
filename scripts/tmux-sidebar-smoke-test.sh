@@ -522,6 +522,20 @@ test_sidebar_batches_window_listing() {
 	pass "sidebar batches window listing"
 }
 
+test_sidebar_wraps_long_labels_at_text_indent() {
+	set_sessions 'alpha|$1|10' 'beta|$2|20'
+	write_pins 'alpha	$1'
+	printf '$1|@1|1|example_project_name\n' > "$TMUX_SMOKE_WINDOWS"
+	export TMUX_SMOKE_CURRENT_ID='$2'
+	export TMUX_SMOKE_CURRENT_WINDOW='@2'
+
+	sh "$ROOT/bin/tmux-session-sidebar/sidebar" </dev/null > "$TMP/sidebar-wrap.out"
+
+	assert_file_contains "$TMP/sidebar-wrap.out" "  └ example_project_"
+	assert_file_contains "$TMP/sidebar-wrap.out" "  │ name"
+	pass "sidebar wraps long labels at text indent"
+}
+
 test_sidebar_uses_precomputed_window_focus() {
 	set_sessions 'alpha|$1|10'
 	write_pins 'alpha	$1'
@@ -622,6 +636,7 @@ test_replace_last_active_updates_slot
 test_prune_delegates_to_sync
 test_sidebar_renders_canonical_pin
 test_sidebar_batches_window_listing
+test_sidebar_wraps_long_labels_at_text_indent
 test_sidebar_uses_precomputed_window_focus
 test_precompute_focus_sets_each_window_focus
 test_fit_windows_keeps_global_sizing_latest
