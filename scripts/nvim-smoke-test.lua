@@ -1149,6 +1149,103 @@ local function test_lsp_definition_and_references(repo)
   assert_lsp_code_action_keymaps()
 end
 
+local function test_lsp_recursive_incoming_call_graph(repo)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  local shared_file = repo .. "/shared.go"
+  write(shared_file, {
+    "package main",
+    "",
+    "func secondaryRoot() string {",
+    "\treturn useTarget()",
+    "}",
+  })
+  local test_file = repo .. "/main_test.go"
+  write(test_file, {
+    "package main",
+    "",
+    'import "testing"',
+    "",
+    "func TestTargetValue(t *testing.T) {",
+    "\t_ = targetValue()",
+    "}",
+  })
+  open_go_file(shared_file)
+  open_go_file(test_file)
+  local buf = open_go_file(repo .. "/main.go")
+  local target = find_position(buf, "targetValue", "func targetValue")
+  vim.api.nvim_win_set_cursor(0, { target.line + 1, target.character })
+
+  local graph_map = vim.fn.maparg("gR", "n", false, true)
+  assert_true(
+    type(graph_map) == "table" and graph_map.desc == "Incoming call graph",
+    "gR should open the incoming call graph"
+  )
+  graph_map.callback()
+
+  wait_until("recursive incoming call graph", function()
+    local name = vim.api.nvim_buf_get_name(0)
+    if not name:match("^incoming%-call%-graph://") then
+      return false
+    end
+    local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+    return text:find("targetValue", 1, true)
+      and text:find("useTarget", 1, true)
+      and text:find("main  ", 1, true)
+      and not text:find("Loading incoming calls", 1, true)
+  end, 10000)
+
+  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local text = table.concat(lines, "\n")
+  assert_true(not text:find("TestTargetValue", 1, true), "call graph should exclude Go test functions")
+  assert_true(not text:find("main_test.go", 1, true), "call graph should exclude Go test files")
+  assert_true(not text:find("`--", 1, true), "call graph should use Unicode tree connectors")
+  local target_line
+  local direct_caller_line
+  local recursive_caller_line
+  local target_count = 0
+  local shared_count = 0
+  for index, line in ipairs(lines) do
+    target_line = target_line or (line:find("targetValue", 1, true) and index)
+    direct_caller_line = direct_caller_line or (line:find("useTarget", 1, true) and index)
+    recursive_caller_line = recursive_caller_line or (line:find("main  ", 1, true) and index)
+    target_count = target_count + (line:find("targetValue", 1, true) and 1 or 0)
+    shared_count = shared_count + (line:find("[shared]", 1, true) and 1 or 0)
+  end
+  assert_true(recursive_caller_line == 1, "call graph should start at the top-level caller")
+  assert_true(direct_caller_line == 2, "call graph should show each caller-to-callee step from top to bottom")
+  assert_true(target_line == 3, "call graph should show the selected function below its callers")
+  assert_true(lines[direct_caller_line]:match("^└ "), "call graph should use the sidebar branch connector")
+  assert_true(
+    #lines[target_line]:match("^%s*") > #lines[direct_caller_line]:match("^%s*"),
+    "selected function should be indented below its caller"
+  )
+  assert_true(target_count == 1, "shared call graph suffix should be expanded only once")
+  assert_true(shared_count == 1, "later paths should identify the shared call graph node")
+
+  vim.api.nvim_win_set_cursor(0, { direct_caller_line, 0 })
+  invoke_map("<CR>")
+  assert_true(
+    realpath(vim.api.nvim_buf_get_name(0)) == realpath(repo .. "/main.go"),
+    "call graph jump should open the source file"
+  )
+  local call_site = find_position(0, "targetValue", "return targetValue()")
+  assert_true(
+    vim.api.nvim_win_get_cursor(0)[1] == call_site.line + 1,
+    "caller jump should focus where the immediate child is called"
+  )
+
+  local test_buf = open_go_file(test_file)
+  local test_function = find_position(test_buf, "TestTargetValue", "func TestTargetValue")
+  vim.api.nvim_win_set_cursor(0, { test_function.line + 1, test_function.character })
+  invoke_map("gR")
+  wait_until("excluded Go test call graph", function()
+    local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+    return vim.api.nvim_buf_get_name(0):match("^incoming%-call%-graph://")
+      and text:find("Go test functions are excluded", 1, true)
+  end, 10000)
+  invoke_map("q")
+end
+
 local function test_lsp_restart_reattaches_all_buffers_for_current_server(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   write(repo .. "/extra.go", {
@@ -1634,6 +1731,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("lsp definition and references", function()
     test_lsp_definition_and_references(repo)
+  end)
+
+  test("lsp recursive incoming call graph", function()
+    test_lsp_recursive_incoming_call_graph(repo)
   end)
 
   test("json format keymap uses editor group", function()
