@@ -179,6 +179,11 @@ return {
           vim.keymap.set("n", "gd", with_lsp(telescope_lsp("lsp_definitions")), opts)
           vim.keymap.set("n", "gi", with_lsp(telescope_lsp("lsp_implementations")), opts)
           vim.keymap.set("n", "gr", with_lsp(telescope_lsp("lsp_references")), opts)
+          vim.keymap.set("n", "gR", with_lsp(require("luanphan.incoming_call_graph").open), vim.tbl_extend(
+            "force",
+            opts,
+            { desc = "Incoming call graph" }
+          ))
 
           vim.keymap.set("n", "gh", vim.lsp.buf.hover, opts)
           vim.keymap.set(

@@ -1149,6 +1149,165 @@ local function test_lsp_definition_and_references(repo)
   assert_lsp_code_action_keymaps()
 end
 
+local function test_lsp_recursive_incoming_call_graph(repo)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  local shared_file = repo .. "/shared.go"
+  write(shared_file, {
+    "package main",
+    "",
+    "func secondaryRoot() string {",
+    "\treturn useTarget()",
+    "}",
+  })
+  local test_file = repo .. "/main_test.go"
+  write(test_file, {
+    "package main",
+    "",
+    'import "testing"',
+    "",
+    "func TestTargetValue(t *testing.T) {",
+    "\t_ = targetValue()",
+    "}",
+  })
+  open_go_file(shared_file)
+  open_go_file(test_file)
+  local buf = open_go_file(repo .. "/main.go")
+  local target = find_position(buf, "targetValue", "func targetValue")
+  vim.api.nvim_win_set_cursor(0, { target.line + 1, target.character })
+
+  local graph_map = vim.fn.maparg("gR", "n", false, true)
+  assert_true(
+    type(graph_map) == "table" and graph_map.desc == "Incoming call graph",
+    "gR should open the incoming call graph"
+  )
+  graph_map.callback()
+
+  wait_until("recursive incoming call graph", function()
+    local name = vim.api.nvim_buf_get_name(0)
+    if not name:match("^incoming%-call%-graph://") then
+      return false
+    end
+    local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+    return text:find("targetValue", 1, true)
+      and text:find("useTarget", 1, true)
+      and text:find("main  ", 1, true)
+      and not text:find("Loading incoming calls", 1, true)
+  end, 10000)
+
+  local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  local text = table.concat(lines, "\n")
+  assert_true(not text:find("TestTargetValue", 1, true), "call graph should exclude Go test functions")
+  assert_true(not text:find("main_test.go", 1, true), "call graph should exclude Go test files")
+  assert_true(not text:find("`--", 1, true), "call graph should use Unicode tree connectors")
+  local target_line
+  local direct_caller_line
+  local recursive_caller_line
+  local target_count = 0
+  local shared_count = 0
+  for index, line in ipairs(lines) do
+    target_line = target_line or (line:find("targetValue", 1, true) and index)
+    direct_caller_line = direct_caller_line or (line:find("useTarget", 1, true) and index)
+    recursive_caller_line = recursive_caller_line or (line:find("main  ", 1, true) and index)
+    target_count = target_count + (line:find("targetValue", 1, true) and 1 or 0)
+    shared_count = shared_count + (line:find("[shared]", 1, true) and 1 or 0)
+  end
+  assert_true(recursive_caller_line == 1, "call graph should start at the top-level caller")
+  assert_true(direct_caller_line == 2, "call graph should show each caller-to-callee step from top to bottom")
+  assert_true(target_line == 3, "call graph should show the selected function below its callers")
+  assert_true(lines[direct_caller_line]:match("^└ "), "call graph should use the sidebar branch connector")
+  assert_true(
+    #lines[target_line]:match("^%s*") > #lines[direct_caller_line]:match("^%s*"),
+    "selected function should be indented below its caller"
+  )
+  assert_true(target_count == 1, "shared call graph suffix should be expanded only once")
+  assert_true(shared_count == 1, "later paths should identify the shared call graph node")
+
+  local function graph_preview_window()
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.w[win].luanphan_incoming_call_preview then
+        return win
+      end
+    end
+  end
+
+  local preview_win = graph_preview_window()
+  assert_true(preview_win ~= nil, "call graph should open a source preview")
+  local graph_config = vim.api.nvim_win_get_config(0)
+  local preview_config = vim.api.nvim_win_get_config(preview_win)
+  assert_true(preview_config.col > graph_config.col, "call graph source preview should be positioned on the right")
+  local editor_height = math.max(1, vim.o.lines - vim.o.cmdheight)
+  local available_height = math.max(1, editor_height - 4)
+  local expected_graph_height = math.min(math.max(3, #lines), available_height)
+  local expected_preview_height = math.min(math.max(3, math.floor(editor_height * 0.8) - 2), available_height)
+  assert_true(graph_config.height == expected_graph_height, "call graph height should fit its rendered content")
+  assert_true(preview_config.height == expected_preview_height, "source preview should occupy 80 percent of the editor height")
+  assert_true(vim.wo[0].cursorline, "call graph should highlight its focused row")
+  assert_true(
+    vim.wo[0].winhighlight:find("CursorLine:IncomingCallGraphFocus", 1, true) ~= nil,
+    "call graph focused row should use the call graph highlight"
+  )
+
+  local function preview_highlight_line()
+    return vim.api.nvim_win_call(preview_win, function()
+      for _, match in ipairs(vim.fn.getmatches()) do
+        if match.group == "IncomingCallGraphFocus" and match.pos1 then
+          return match.pos1[1]
+        end
+      end
+    end)
+  end
+
+  wait_until("recursive caller source file preview", function()
+    return vim.api.nvim_win_is_valid(preview_win)
+      and realpath(vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(preview_win))) == realpath(repo .. "/main.go")
+  end)
+  local preview_buf = vim.api.nvim_win_get_buf(preview_win)
+  local recursive_call_site = find_position(preview_buf, "useTarget", "_ = useTarget()")
+  assert_true(
+    vim.api.nvim_win_get_cursor(preview_win)[1] == recursive_call_site.line + 1,
+    "top-level caller preview should focus the immediate child invocation"
+  )
+  assert_true(
+    preview_highlight_line() == recursive_call_site.line + 1,
+    "source preview should highlight the top-level caller invocation"
+  )
+
+  local graph_buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_win_set_cursor(0, { direct_caller_line, 0 })
+  vim.api.nvim_exec_autocmds("CursorMoved", { buffer = graph_buf })
+  local call_site = find_position(preview_buf, "targetValue", "return targetValue()")
+  wait_until("direct caller source preview", function()
+    return vim.api.nvim_win_is_valid(preview_win)
+      and realpath(vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(preview_win))) == realpath(repo .. "/main.go")
+      and vim.api.nvim_win_get_cursor(preview_win)[1] == call_site.line + 1
+  end)
+  assert_true(
+    preview_highlight_line() == call_site.line + 1,
+    "source preview highlight should follow call graph navigation"
+  )
+  invoke_map("<CR>")
+  assert_true(not vim.api.nvim_win_is_valid(preview_win), "call graph jump should close the source preview")
+  assert_true(
+    realpath(vim.api.nvim_buf_get_name(0)) == realpath(repo .. "/main.go"),
+    "call graph jump should open the source file"
+  )
+  assert_true(
+    vim.api.nvim_win_get_cursor(0)[1] == call_site.line + 1,
+    "caller jump should focus where the immediate child is called"
+  )
+
+  local test_buf = open_go_file(test_file)
+  local test_function = find_position(test_buf, "TestTargetValue", "func TestTargetValue")
+  vim.api.nvim_win_set_cursor(0, { test_function.line + 1, test_function.character })
+  invoke_map("gR")
+  wait_until("excluded Go test call graph", function()
+    local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+    return vim.api.nvim_buf_get_name(0):match("^incoming%-call%-graph://")
+      and text:find("Go test functions are excluded", 1, true)
+  end, 10000)
+  invoke_map("q")
+end
+
 local function test_lsp_restart_reattaches_all_buffers_for_current_server(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   write(repo .. "/extra.go", {
@@ -1338,6 +1497,65 @@ local function test_git_diff_previews(worktree)
 
   invoke_map("<leader>gD")
   wait_for_diffview()
+  close_diffview()
+end
+
+local function test_git_diff_refresh_preserves_directory_folds(worktree)
+  local first_path = "nested/first.txt"
+  local later_path = "nested/later.txt"
+  write(worktree .. "/" .. first_path, { "first" })
+  run({ "git", "add", first_path }, worktree)
+  vim.cmd("cd " .. vim.fn.fnameescape(worktree))
+
+  invoke_map("<leader>gd")
+  wait_for_diffview()
+
+  local lib = require("diffview.lib")
+  local view = lib.get_current_view()
+  local function has_file(path)
+    for _, entry in view.files:iter() do
+      if entry.path == path then
+        return true
+      end
+    end
+    return false
+  end
+  local function nested_directory()
+    for _, section in ipairs({ "conflicting", "working", "staged" }) do
+      local files = view.panel.components[section].files
+      local found = nil
+      files.comp:deep_some(function(comp)
+        if comp.name == "directory" and comp.context.path == "nested" then
+          found = comp.context
+          return true
+        end
+        return false
+      end)
+      if found then
+        return found
+      end
+    end
+    return nil
+  end
+
+  wait_until("initial nested diff directory", function()
+    return has_file(first_path) and nested_directory() ~= nil
+  end, 10000)
+  nested_directory().collapsed = true
+  view.panel:render()
+  view.panel:redraw()
+
+  local normal_tab = lib.get_prev_non_view_tabpage()
+  assert_true(normal_tab ~= nil, "normal tab not found beside Diffview")
+  vim.api.nvim_set_current_tabpage(normal_tab)
+  write(worktree .. "/" .. later_path, { "later" })
+  run({ "git", "add", later_path }, worktree)
+  vim.api.nvim_set_current_tabpage(view.tabpage)
+
+  wait_until("Diffview refresh with new file", function()
+    return has_file(later_path)
+  end, 10000)
+  assert_true(nested_directory().collapsed, "Diffview directory fold was lost after refresh")
   close_diffview()
 end
 
@@ -1577,6 +1795,10 @@ local setup_ok, setup_err = xpcall(function()
     test_lsp_definition_and_references(repo)
   end)
 
+  test("lsp recursive incoming call graph", function()
+    test_lsp_recursive_incoming_call_graph(repo)
+  end)
+
   test("json format keymap uses editor group", function()
     test_json_format_keymap()
   end)
@@ -1607,6 +1829,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("worktree switch restores agent terminal", function()
     test_worktree_switch_restores_agent_terminal(repo, worktree)
+  end)
+
+  test("git diff refresh preserves directory folds", function()
+    test_git_diff_refresh_preserves_directory_folds(worktree)
   end)
 
 end, debug.traceback)
