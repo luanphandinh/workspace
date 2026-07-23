@@ -3,6 +3,7 @@ local M = {}
 local prepare_method = "textDocument/prepareCallHierarchy"
 local incoming_method = "callHierarchy/incomingCalls"
 local go_test_prefixes = { "Test", "Benchmark", "Fuzz", "Example" }
+local graph_highlight_ns = vim.api.nvim_create_namespace("incoming_call_graph")
 
 local function is_go_test_item(item)
   local path = item.uri and vim.uri_to_fname(item.uri) or ""
@@ -201,13 +202,26 @@ local function create_view(source_win, encoding)
     end)
   end
 
-  function view:set_lines(lines, line_targets, fold_levels)
+  function view:set_lines(lines, line_targets, fold_levels, line_highlights)
     if not vim.api.nvim_buf_is_valid(self.buf) then
       return
     end
     vim.bo[self.buf].modifiable = true
     vim.api.nvim_buf_set_lines(self.buf, 0, -1, false, lines)
     vim.bo[self.buf].modifiable = false
+    vim.api.nvim_buf_clear_namespace(self.buf, graph_highlight_ns, 0, -1)
+    for line, highlights in pairs(line_highlights or {}) do
+      for _, highlight in ipairs(highlights) do
+        vim.api.nvim_buf_add_highlight(
+          self.buf,
+          graph_highlight_ns,
+          highlight.group,
+          line - 1,
+          highlight.start_col,
+          highlight.end_col
+        )
+      end
+    end
     self.line_targets = line_targets or {}
     vim.b[self.buf].incoming_call_graph_fold_levels = fold_levels or {}
     resize(self, lines)
@@ -285,6 +299,7 @@ local function render(view, root_key, nodes, failed_requests)
   local lines = {}
   local line_targets = {}
   local fold_levels = {}
+  local line_highlights = {}
   local callees = {}
   local roots = {}
 
@@ -371,7 +386,10 @@ local function render(view, root_key, nodes, failed_requests)
   local function append_path(key, prefix, marker, path, ancestor_folds)
     local children = callees[key]
     sort_edges(children)
-    local label = item_label(nodes[key].item)
+    local item = nodes[key].item
+    local name = item.name or "<anonymous>"
+    local base_label = item_label(item)
+    local label = base_label
     local is_cycle = path[key] ~= nil
     if key == root_key then
       label = label .. "  [focused]"
@@ -379,8 +397,49 @@ local function render(view, root_key, nodes, failed_requests)
     if is_cycle then
       label = label .. "  [cycle]"
     end
-    lines[#lines + 1] = prefix .. marker .. label
+    local rendered_prefix = prefix .. marker
+    lines[#lines + 1] = rendered_prefix .. label
     line_targets[#lines] = targets_for(key, children)
+    local highlights = {}
+    if rendered_prefix ~= "" then
+      highlights[#highlights + 1] = { group = "NonText", start_col = 0, end_col = #rendered_prefix }
+    end
+    highlights[#highlights + 1] = {
+      group = "Function",
+      start_col = #rendered_prefix,
+      end_col = #rendered_prefix + #name,
+    }
+    local location_colon = base_label:find(":%d+$")
+    if location_colon then
+      highlights[#highlights + 1] = {
+        group = "Directory",
+        start_col = #rendered_prefix + #name + 2,
+        end_col = #rendered_prefix + location_colon - 1,
+      }
+      highlights[#highlights + 1] = {
+        group = "Number",
+        start_col = #rendered_prefix + location_colon,
+        end_col = #rendered_prefix + #base_label,
+      }
+    end
+    local rendered_line = lines[#lines]
+    local focused_start, focused_end = rendered_line:find("%[focused%]")
+    if focused_start then
+      highlights[#highlights + 1] = {
+        group = "Special",
+        start_col = focused_start - 1,
+        end_col = focused_end,
+      }
+    end
+    local cycle_start, cycle_end = rendered_line:find("%[cycle%]")
+    if cycle_start then
+      highlights[#highlights + 1] = {
+        group = "DiagnosticWarn",
+        start_col = cycle_start - 1,
+        end_col = cycle_end,
+      }
+    end
+    line_highlights[#lines] = highlights
     local has_children = not is_cycle and #children > 0
     local fold_level = ancestor_folds
     if has_children then
@@ -420,8 +479,11 @@ local function render(view, root_key, nodes, failed_requests)
     fold_levels[#lines] = 0
     lines[#lines + 1] = string.format("[%d incoming-call request(s) failed]", failed_requests)
     fold_levels[#lines] = 0
+    line_highlights[#lines] = {
+      { group = "DiagnosticWarn", start_col = 0, end_col = -1 },
+    }
   end
-  view:set_lines(lines, line_targets, fold_levels)
+  view:set_lines(lines, line_targets, fold_levels, line_highlights)
 end
 
 local function load_graph(client, bufnr, root, view)

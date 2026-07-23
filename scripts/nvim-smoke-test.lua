@@ -1214,6 +1214,22 @@ local function test_lsp_recursive_incoming_call_graph(repo)
 
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
   local text = table.concat(lines, "\n")
+  local function graph_highlight_groups(bufnr)
+    local groups = {}
+    for _, extmark in ipairs(vim.api.nvim_buf_get_extmarks(bufnr, -1, 0, -1, { details = true })) do
+      local group = extmark[4].hl_group
+      if group then
+        groups[group] = true
+      end
+    end
+    return groups
+  end
+
+  local initial_highlights = graph_highlight_groups(0)
+  assert_true(initial_highlights.Function, "call graph should highlight function names")
+  assert_true(initial_highlights.Directory, "call graph should highlight source paths")
+  assert_true(initial_highlights.Number, "call graph should highlight source line numbers")
+  assert_true(initial_highlights.Special, "call graph should highlight the focused marker")
   assert_true(not text:find("TestTargetValue", 1, true), "call graph should exclude Go test functions")
   assert_true(not text:find("main_test.go", 1, true), "call graph should exclude Go test files")
   assert_true(not text:find("`--", 1, true), "call graph should use Unicode tree connectors")
@@ -1349,6 +1365,24 @@ local function test_lsp_recursive_incoming_call_graph(repo)
     vim.api.nvim_win_get_cursor(0)[1] == call_site.line + 1,
     "caller jump should focus where the immediate child is called"
   )
+
+  local target_definition = find_position(0, "targetValue", "func targetValue")
+  vim.api.nvim_win_set_cursor(0, { target_definition.line + 1, target_definition.character })
+  invoke_map("gR")
+  wait_until("second recursive incoming call graph", function()
+    local name = vim.api.nvim_buf_get_name(0)
+    if not name:match("^incoming%-call%-graph://") then
+      return false
+    end
+    local graph_text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+    return graph_text:find("orderedRoot", 1, true) and not graph_text:find("Loading incoming calls", 1, true)
+  end, 10000)
+  local second_highlights = graph_highlight_groups(0)
+  assert_true(second_highlights.Function, "second call graph should retain function highlighting")
+  assert_true(second_highlights.Directory, "second call graph should retain path highlighting")
+  assert_true(second_highlights.Number, "second call graph should retain line-number highlighting")
+  assert_true(second_highlights.Special, "second call graph should retain focused-marker highlighting")
+  invoke_map("q")
 
   local test_buf = open_go_file(test_file)
   local test_function = find_position(test_buf, "TestTargetValue", "func TestTargetValue")
