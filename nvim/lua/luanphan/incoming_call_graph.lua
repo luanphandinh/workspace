@@ -87,6 +87,27 @@ local function resize(view, lines)
   vim.api.nvim_win_set_config(view.preview_win, preview_config)
 end
 
+local function ensure_source_highlighting(buf, uri)
+  local filetype = vim.bo[buf].filetype
+  if filetype == "" then
+    filetype = vim.filetype.match({ buf = buf, filename = vim.uri_to_fname(uri) }) or ""
+    if filetype ~= "" then
+      vim.bo[buf].filetype = filetype
+    end
+  end
+  if filetype == "" then
+    return
+  end
+
+  local lang = vim.treesitter.language.get_lang(filetype) or filetype
+  if vim.treesitter.highlighter.active[buf] ~= nil or pcall(vim.treesitter.start, buf, lang) then
+    return
+  end
+  if vim.bo[buf].syntax == "" then
+    vim.bo[buf].syntax = filetype
+  end
+end
+
 local function create_view(source_win, encoding)
   vim.api.nvim_set_hl(0, "IncomingCallGraphFocus", { default = true, link = "Visual" })
 
@@ -152,6 +173,7 @@ local function create_view(source_win, encoding)
     local preview_source = vim.uri_to_bufnr(location.uri)
     vim.fn.bufload(preview_source)
     vim.api.nvim_win_set_buf(self.preview_win, preview_source)
+    ensure_source_highlighting(preview_source, location.uri)
 
     local start = location.range and location.range.start or { line = 0, character = 0 }
     local preview_line = math.max(1, math.min(start.line + 1, vim.api.nvim_buf_line_count(preview_source)))

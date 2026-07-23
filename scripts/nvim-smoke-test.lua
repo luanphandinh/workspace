@@ -1174,6 +1174,8 @@ local function test_lsp_recursive_incoming_call_graph(repo)
   local buf = open_go_file(repo .. "/main.go")
   local target = find_position(buf, "targetValue", "func targetValue")
   vim.api.nvim_win_set_cursor(0, { target.line + 1, target.character })
+  pcall(vim.treesitter.stop, buf)
+  assert_true(vim.treesitter.highlighter.active[buf] == nil, "call graph fixture should start without highlighting")
 
   local graph_map = vim.fn.maparg("gR", "n", false, true)
   assert_true(
@@ -1262,6 +1264,10 @@ local function test_lsp_recursive_incoming_call_graph(repo)
       and realpath(vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(preview_win))) == realpath(repo .. "/main.go")
   end)
   local preview_buf = vim.api.nvim_win_get_buf(preview_win)
+  assert_true(
+    vim.treesitter.highlighter.active[preview_buf] ~= nil,
+    "source preview should restore Treesitter highlighting"
+  )
   local recursive_call_site = find_position(preview_buf, "useTarget", "_ = useTarget()")
   assert_true(
     vim.api.nvim_win_get_cursor(preview_win)[1] == recursive_call_site.line + 1,
