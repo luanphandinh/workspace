@@ -284,6 +284,70 @@ local function current_tab_has_diffview()
   return ok and active == true
 end
 
+local function each_diffview_directory(view, callback)
+  local components = view.panel and view.panel.components
+  if not components then
+    return
+  end
+
+  for _, section in ipairs({ "conflicting", "working", "staged" }) do
+    local files = components[section] and components[section].files
+    if files and files.comp then
+      files.comp:deep_some(function(comp)
+        if comp.name == "directory" and comp.context and comp.context.path then
+          callback(section .. "\0" .. comp.context.path, comp.context)
+        end
+        return false
+      end)
+    end
+  end
+end
+
+local function preserve_diffview_folds(view)
+  if not view.files or not vim.is_callable(view.update_files) then
+    return
+  end
+
+  local function snapshot()
+    local state = {}
+    each_diffview_directory(view, function(key, directory)
+      state[key] = directory.collapsed
+    end)
+    view._luanphan_fold_state = state
+  end
+
+  local function restore()
+    local state = view._luanphan_fold_state or {}
+    local changed = false
+    each_diffview_directory(view, function(key, directory)
+      if state[key] ~= nil and directory.collapsed ~= state[key] then
+        directory.collapsed = state[key]
+        changed = true
+      end
+    end)
+    view._luanphan_fold_pending = false
+    if changed then
+      view.panel:render()
+      view.panel:redraw()
+    end
+  end
+
+  local update_files = view.update_files
+  view.update_files = function(self, ...)
+    if not self._luanphan_fold_pending then
+      snapshot()
+    end
+    self._luanphan_fold_pending = true
+    return update_files(self, ...)
+  end
+
+  view.emitter:on("tab_leave", function()
+    snapshot()
+    view._luanphan_fold_pending = true
+  end)
+  view.emitter:on("files_updated", restore)
+end
+
 local function git_systemlist(args)
   local output = vim.fn.systemlist(args)
   if vim.v.shell_error ~= 0 then
@@ -441,6 +505,7 @@ return {
 
             set_diffview_tab_jump_keymaps(view)
             set_diffview_jump_keymap(view, 0)
+            preserve_diffview_folds(view)
             vim.schedule(function()
               set_diffview_tab_jump_keymaps(view)
             end)

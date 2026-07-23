@@ -1341,6 +1341,65 @@ local function test_git_diff_previews(worktree)
   close_diffview()
 end
 
+local function test_git_diff_refresh_preserves_directory_folds(worktree)
+  local first_path = "nested/first.txt"
+  local later_path = "nested/later.txt"
+  write(worktree .. "/" .. first_path, { "first" })
+  run({ "git", "add", first_path }, worktree)
+  vim.cmd("cd " .. vim.fn.fnameescape(worktree))
+
+  invoke_map("<leader>gd")
+  wait_for_diffview()
+
+  local lib = require("diffview.lib")
+  local view = lib.get_current_view()
+  local function has_file(path)
+    for _, entry in view.files:iter() do
+      if entry.path == path then
+        return true
+      end
+    end
+    return false
+  end
+  local function nested_directory()
+    for _, section in ipairs({ "conflicting", "working", "staged" }) do
+      local files = view.panel.components[section].files
+      local found = nil
+      files.comp:deep_some(function(comp)
+        if comp.name == "directory" and comp.context.path == "nested" then
+          found = comp.context
+          return true
+        end
+        return false
+      end)
+      if found then
+        return found
+      end
+    end
+    return nil
+  end
+
+  wait_until("initial nested diff directory", function()
+    return has_file(first_path) and nested_directory() ~= nil
+  end, 10000)
+  nested_directory().collapsed = true
+  view.panel:render()
+  view.panel:redraw()
+
+  local normal_tab = lib.get_prev_non_view_tabpage()
+  assert_true(normal_tab ~= nil, "normal tab not found beside Diffview")
+  vim.api.nvim_set_current_tabpage(normal_tab)
+  write(worktree .. "/" .. later_path, { "later" })
+  run({ "git", "add", later_path }, worktree)
+  vim.api.nvim_set_current_tabpage(view.tabpage)
+
+  wait_until("Diffview refresh with new file", function()
+    return has_file(later_path)
+  end, 10000)
+  assert_true(nested_directory().collapsed, "Diffview directory fold was lost after refresh")
+  close_diffview()
+end
+
 local function test_git_diff_original_file_jump_starts_go_runtime(worktree)
   local script = temp_root .. "/diffview-original-runtime.lua"
   write(script, {
@@ -1607,6 +1666,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("worktree switch restores agent terminal", function()
     test_worktree_switch_restores_agent_terminal(repo, worktree)
+  end)
+
+  test("git diff refresh preserves directory folds", function()
+    test_git_diff_refresh_preserves_directory_folds(worktree)
   end)
 
 end, debug.traceback)
