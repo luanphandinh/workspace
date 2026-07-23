@@ -1222,13 +1222,75 @@ local function test_lsp_recursive_incoming_call_graph(repo)
   assert_true(target_count == 1, "shared call graph suffix should be expanded only once")
   assert_true(shared_count == 1, "later paths should identify the shared call graph node")
 
+  local function graph_preview_window()
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.w[win].luanphan_incoming_call_preview then
+        return win
+      end
+    end
+  end
+
+  local preview_win = graph_preview_window()
+  assert_true(preview_win ~= nil, "call graph should open a source preview")
+  local graph_config = vim.api.nvim_win_get_config(0)
+  local preview_config = vim.api.nvim_win_get_config(preview_win)
+  assert_true(preview_config.col > graph_config.col, "call graph source preview should be positioned on the right")
+  local editor_height = math.max(1, vim.o.lines - vim.o.cmdheight)
+  local available_height = math.max(1, editor_height - 4)
+  local expected_graph_height = math.min(math.max(3, #lines), available_height)
+  local expected_preview_height = math.min(math.max(3, math.floor(editor_height * 0.8) - 2), available_height)
+  assert_true(graph_config.height == expected_graph_height, "call graph height should fit its rendered content")
+  assert_true(preview_config.height == expected_preview_height, "source preview should occupy 80 percent of the editor height")
+  assert_true(vim.wo[0].cursorline, "call graph should highlight its focused row")
+  assert_true(
+    vim.wo[0].winhighlight:find("CursorLine:IncomingCallGraphFocus", 1, true) ~= nil,
+    "call graph focused row should use the call graph highlight"
+  )
+
+  local function preview_highlight_line()
+    return vim.api.nvim_win_call(preview_win, function()
+      for _, match in ipairs(vim.fn.getmatches()) do
+        if match.group == "IncomingCallGraphFocus" and match.pos1 then
+          return match.pos1[1]
+        end
+      end
+    end)
+  end
+
+  wait_until("recursive caller source file preview", function()
+    return vim.api.nvim_win_is_valid(preview_win)
+      and realpath(vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(preview_win))) == realpath(repo .. "/main.go")
+  end)
+  local preview_buf = vim.api.nvim_win_get_buf(preview_win)
+  local recursive_call_site = find_position(preview_buf, "useTarget", "_ = useTarget()")
+  assert_true(
+    vim.api.nvim_win_get_cursor(preview_win)[1] == recursive_call_site.line + 1,
+    "top-level caller preview should focus the immediate child invocation"
+  )
+  assert_true(
+    preview_highlight_line() == recursive_call_site.line + 1,
+    "source preview should highlight the top-level caller invocation"
+  )
+
+  local graph_buf = vim.api.nvim_get_current_buf()
   vim.api.nvim_win_set_cursor(0, { direct_caller_line, 0 })
+  vim.api.nvim_exec_autocmds("CursorMoved", { buffer = graph_buf })
+  local call_site = find_position(preview_buf, "targetValue", "return targetValue()")
+  wait_until("direct caller source preview", function()
+    return vim.api.nvim_win_is_valid(preview_win)
+      and realpath(vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(preview_win))) == realpath(repo .. "/main.go")
+      and vim.api.nvim_win_get_cursor(preview_win)[1] == call_site.line + 1
+  end)
+  assert_true(
+    preview_highlight_line() == call_site.line + 1,
+    "source preview highlight should follow call graph navigation"
+  )
   invoke_map("<CR>")
+  assert_true(not vim.api.nvim_win_is_valid(preview_win), "call graph jump should close the source preview")
   assert_true(
     realpath(vim.api.nvim_buf_get_name(0)) == realpath(repo .. "/main.go"),
     "call graph jump should open the source file"
   )
-  local call_site = find_position(0, "targetValue", "return targetValue()")
   assert_true(
     vim.api.nvim_win_get_cursor(0)[1] == call_site.line + 1,
     "caller jump should focus where the immediate child is called"

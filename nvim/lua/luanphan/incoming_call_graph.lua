@@ -42,30 +42,54 @@ local function item_label(item)
   return string.format("%s  %s", item.name or "<anonymous>", location)
 end
 
-local function resize(win, lines)
-  if not vim.api.nvim_win_is_valid(win) then
-    return
-  end
-
+local function window_configs(lines)
   local max_width = 0
   for _, line in ipairs(lines) do
     max_width = math.max(max_width, vim.fn.strdisplaywidth(line))
   end
 
-  local available_width = math.max(1, vim.o.columns - 4)
+  local available_width = math.max(2, vim.o.columns - 7)
   local available_height = math.max(1, vim.o.lines - vim.o.cmdheight - 4)
-  local width = math.min(math.max(48, max_width + 2), available_width)
-  local height = math.min(math.max(3, #lines), available_height)
-  vim.api.nvim_win_set_config(win, {
+  local max_graph_width = math.max(1, math.floor(available_width * 0.48))
+  local graph_width = math.min(math.max(32, max_width + 2), max_graph_width)
+  graph_width = math.max(1, math.min(graph_width, available_width - 1))
+  local preview_width = math.max(1, available_width - graph_width)
+  local editor_height = math.max(1, vim.o.lines - vim.o.cmdheight)
+  local graph_height = math.min(math.max(3, #lines), available_height)
+  local preview_height = math.min(math.max(3, math.floor(editor_height * 0.8) - 2), available_height)
+  local total_width = graph_width + preview_width + 5
+  local col = math.max(0, math.floor((vim.o.columns - total_width) / 2))
+  local graph_row = math.max(0, math.floor((editor_height - graph_height - 2) / 2))
+  local preview_row = math.max(0, math.floor((editor_height - preview_height - 2) / 2))
+
+  return {
     relative = "editor",
-    width = width,
-    height = height,
-    row = math.floor((vim.o.lines - vim.o.cmdheight - height) / 2),
-    col = math.floor((vim.o.columns - width) / 2),
-  })
+    width = graph_width,
+    height = graph_height,
+    row = graph_row,
+    col = col,
+  }, {
+    relative = "editor",
+    width = preview_width,
+    height = preview_height,
+    row = preview_row,
+    col = col + graph_width + 3,
+  }
+end
+
+local function resize(view, lines)
+  if not vim.api.nvim_win_is_valid(view.win) or not vim.api.nvim_win_is_valid(view.preview_win) then
+    return
+  end
+
+  local graph_config, preview_config = window_configs(lines)
+  vim.api.nvim_win_set_config(view.win, graph_config)
+  vim.api.nvim_win_set_config(view.preview_win, preview_config)
 end
 
 local function create_view(source_win, encoding)
+  vim.api.nvim_set_hl(0, "IncomingCallGraphFocus", { default = true, link = "Visual" })
+
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(buf, "incoming-call-graph://" .. buf)
   vim.bo[buf].buftype = "nofile"
@@ -73,29 +97,77 @@ local function create_view(source_win, encoding)
   vim.bo[buf].swapfile = false
   vim.bo[buf].filetype = "callgraph"
 
-  local width = math.min(48, math.max(1, vim.o.columns - 4))
-  local height = math.min(3, math.max(1, vim.o.lines - vim.o.cmdheight - 4))
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = "editor",
-    width = width,
-    height = height,
-    row = math.floor((vim.o.lines - vim.o.cmdheight - height) / 2),
-    col = math.floor((vim.o.columns - width) / 2),
+  local preview_buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(preview_buf, "incoming-call-preview://" .. preview_buf)
+  vim.bo[preview_buf].buftype = "nofile"
+  vim.bo[preview_buf].bufhidden = "wipe"
+  vim.bo[preview_buf].swapfile = false
+  vim.api.nvim_buf_set_lines(preview_buf, 0, -1, false, { "Select a call graph entry to preview its source." })
+
+  local graph_config, preview_config = window_configs({ "Loading incoming calls..." })
+  local win = vim.api.nvim_open_win(buf, true, vim.tbl_extend("force", graph_config, {
     style = "minimal",
     border = "rounded",
     title = " Incoming Call Graph ",
     title_pos = "center",
-  })
+  }))
+  local preview_win = vim.api.nvim_open_win(preview_buf, false, vim.tbl_extend("force", preview_config, {
+    style = "minimal",
+    border = "rounded",
+    title = " Source Preview ",
+    title_pos = "center",
+    focusable = false,
+  }))
   vim.wo[win].cursorline = true
+  vim.wo[win].winhighlight = "CursorLine:IncomingCallGraphFocus"
   vim.wo[win].wrap = false
+  vim.wo[preview_win].number = true
+  vim.wo[preview_win].relativenumber = false
+  vim.wo[preview_win].signcolumn = "no"
+  vim.wo[preview_win].wrap = false
+  vim.w[preview_win].luanphan_incoming_call_preview = true
 
   local view = {
     buf = buf,
     win = win,
+    preview_win = preview_win,
     source_win = source_win,
     encoding = encoding,
     line_targets = {},
   }
+
+  function view:update_preview()
+    if not vim.api.nvim_win_is_valid(self.win) or not vim.api.nvim_win_is_valid(self.preview_win) then
+      return
+    end
+
+    local line = vim.api.nvim_win_get_cursor(self.win)[1]
+    local targets = self.line_targets[line]
+    local target = targets and targets[1]
+    local location = target and target.location
+    if not location or not location.uri then
+      return
+    end
+
+    local preview_source = vim.uri_to_bufnr(location.uri)
+    vim.fn.bufload(preview_source)
+    vim.api.nvim_win_set_buf(self.preview_win, preview_source)
+
+    local start = location.range and location.range.start or { line = 0, character = 0 }
+    local preview_line = math.max(1, math.min(start.line + 1, vim.api.nvim_buf_line_count(preview_source)))
+    local ok, preview_col = pcall(vim.lsp.util._get_line_byte_from_position, preview_source, start, self.encoding)
+    if not ok then
+      preview_col = 0
+    end
+    vim.api.nvim_win_set_cursor(self.preview_win, { preview_line, preview_col })
+    vim.api.nvim_win_call(self.preview_win, function()
+      if self.preview_match then
+        pcall(vim.fn.matchdelete, self.preview_match)
+      end
+      self.preview_match = vim.fn.matchaddpos("IncomingCallGraphFocus", { { preview_line } }, 20)
+      vim.cmd("normal! zz")
+    end)
+  end
 
   function view:set_lines(lines, line_targets)
     if not vim.api.nvim_buf_is_valid(self.buf) then
@@ -105,10 +177,14 @@ local function create_view(source_win, encoding)
     vim.api.nvim_buf_set_lines(self.buf, 0, -1, false, lines)
     vim.bo[self.buf].modifiable = false
     self.line_targets = line_targets or {}
-    resize(self.win, lines)
+    resize(self, lines)
+    self:update_preview()
   end
 
   function view:close()
+    if vim.api.nvim_win_is_valid(self.preview_win) then
+      vim.api.nvim_win_close(self.preview_win, true)
+    end
     if vim.api.nvim_win_is_valid(self.win) then
       vim.api.nvim_win_close(self.win, true)
     end
@@ -120,6 +196,21 @@ local function create_view(source_win, encoding)
 
   vim.keymap.set("n", "q", close, { buffer = buf, silent = true, desc = "Close incoming call graph" })
   vim.keymap.set("n", "<Esc>", close, { buffer = buf, silent = true, desc = "Close incoming call graph" })
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    buffer = buf,
+    callback = function()
+      view:update_preview()
+    end,
+  })
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    buffer = buf,
+    once = true,
+    callback = function()
+      if vim.api.nvim_win_is_valid(view.preview_win) then
+        vim.api.nvim_win_close(view.preview_win, true)
+      end
+    end,
+  })
   vim.keymap.set("n", "<CR>", function()
     local targets = view.line_targets[vim.api.nvim_win_get_cursor(0)[1]]
     if not targets or #targets == 0 then
