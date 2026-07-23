@@ -108,6 +108,11 @@ local function ensure_source_highlighting(buf, uri)
   end
 end
 
+function M.foldexpr()
+  local fold_levels = vim.b.incoming_call_graph_fold_levels
+  return fold_levels and fold_levels[vim.v.lnum] or 0
+end
+
 local function create_view(source_win, encoding)
   vim.api.nvim_set_hl(0, "IncomingCallGraphFocus", { default = true, link = "Visual" })
 
@@ -140,6 +145,11 @@ local function create_view(source_win, encoding)
     focusable = false,
   }))
   vim.wo[win].cursorline = true
+  vim.wo[win].foldcolumn = "1"
+  vim.wo[win].foldenable = true
+  vim.wo[win].foldexpr = "v:lua.require('luanphan.incoming_call_graph').foldexpr()"
+  vim.wo[win].foldlevel = 99
+  vim.wo[win].foldmethod = "expr"
   vim.wo[win].winhighlight = "CursorLine:IncomingCallGraphFocus"
   vim.wo[win].wrap = false
   vim.wo[preview_win].number = true
@@ -191,7 +201,7 @@ local function create_view(source_win, encoding)
     end)
   end
 
-  function view:set_lines(lines, line_targets)
+  function view:set_lines(lines, line_targets, fold_levels)
     if not vim.api.nvim_buf_is_valid(self.buf) then
       return
     end
@@ -199,7 +209,11 @@ local function create_view(source_win, encoding)
     vim.api.nvim_buf_set_lines(self.buf, 0, -1, false, lines)
     vim.bo[self.buf].modifiable = false
     self.line_targets = line_targets or {}
+    vim.b[self.buf].incoming_call_graph_fold_levels = fold_levels or {}
     resize(self, lines)
+    vim.api.nvim_win_call(self.win, function()
+      vim.cmd("normal! zx")
+    end)
     self:update_preview()
   end
 
@@ -270,6 +284,7 @@ end
 local function render(view, root_key, nodes, failed_requests)
   local lines = {}
   local line_targets = {}
+  local fold_levels = {}
   local callees = {}
   local roots = {}
 
@@ -298,8 +313,31 @@ local function render(view, root_key, nodes, failed_requests)
   end
   sort_keys(roots)
 
+  local function first_call_position(edge)
+    local first_line = math.huge
+    local first_character = math.huge
+    for _, range in ipairs(edge.ranges) do
+      local start = range.start or {}
+      local line = start.line or math.huge
+      local character = start.character or math.huge
+      if line < first_line or (line == first_line and character < first_character) then
+        first_line = line
+        first_character = character
+      end
+    end
+    return first_line, first_character
+  end
+
   local function sort_edges(edges)
     table.sort(edges, function(left, right)
+      local left_line, left_character = first_call_position(left)
+      local right_line, right_character = first_call_position(right)
+      if left_line ~= right_line then
+        return left_line < right_line
+      end
+      if left_character ~= right_character then
+        return left_character < right_character
+      end
       return item_label(nodes[left.key].item) < item_label(nodes[right.key].item)
     end)
   end
@@ -330,28 +368,31 @@ local function render(view, root_key, nodes, failed_requests)
     return targets
   end
 
-  local expanded = {}
-  local function append_path(key, prefix, marker, path)
+  local function append_path(key, prefix, marker, path, ancestor_folds)
     local children = callees[key]
     sort_edges(children)
     local label = item_label(nodes[key].item)
+    local is_cycle = path[key] ~= nil
     if key == root_key then
       label = label .. "  [focused]"
     end
-    if path[key] then
+    if is_cycle then
       label = label .. "  [cycle]"
     end
     lines[#lines + 1] = prefix .. marker .. label
     line_targets[#lines] = targets_for(key, children)
-    if path[key] then
-      return
+    local has_children = not is_cycle and #children > 0
+    local fold_level = ancestor_folds
+    if has_children then
+      fold_level = ancestor_folds + 1
+      fold_levels[#lines] = ">" .. fold_level
+    else
+      fold_levels[#lines] = fold_level
     end
-    if expanded[key] then
-      lines[#lines] = lines[#lines] .. "  [shared]"
+    if is_cycle then
       return
     end
 
-    expanded[key] = true
     path[key] = true
     local child_prefix = prefix
     if marker == "└ " then
@@ -362,7 +403,7 @@ local function render(view, root_key, nodes, failed_requests)
     for index, child in ipairs(children) do
       local is_last = index == #children
       local marker = is_last and "└ " or "├ "
-      append_path(child.key, child_prefix, marker, path)
+      append_path(child.key, child_prefix, marker, path, fold_level)
     end
     path[key] = nil
   end
@@ -370,14 +411,17 @@ local function render(view, root_key, nodes, failed_requests)
   for index, key in ipairs(roots) do
     if index > 1 then
       lines[#lines + 1] = ""
+      fold_levels[#lines] = 0
     end
-    append_path(key, "", "", {})
+    append_path(key, "", "", {}, 0)
   end
   if failed_requests > 0 then
     lines[#lines + 1] = ""
+    fold_levels[#lines] = 0
     lines[#lines + 1] = string.format("[%d incoming-call request(s) failed]", failed_requests)
+    fold_levels[#lines] = 0
   end
-  view:set_lines(lines, line_targets)
+  view:set_lines(lines, line_targets, fold_levels)
 end
 
 local function load_graph(client, bufnr, root, view)

@@ -1158,6 +1158,19 @@ local function test_lsp_recursive_incoming_call_graph(repo)
     "func secondaryRoot() string {",
     "\treturn useTarget()",
     "}",
+    "",
+    "func laterBranch() string {",
+    "\treturn targetValue()",
+    "}",
+    "",
+    "func earlierBranch() string {",
+    "\treturn targetValue()",
+    "}",
+    "",
+    "func orderedRoot() {",
+    "\t_ = laterBranch()",
+    "\t_ = earlierBranch()",
+    "}",
   })
   local test_file = repo .. "/main_test.go"
   write(test_file, {
@@ -1193,6 +1206,9 @@ local function test_lsp_recursive_incoming_call_graph(repo)
     return text:find("targetValue", 1, true)
       and text:find("useTarget", 1, true)
       and text:find("main  ", 1, true)
+      and text:find("orderedRoot", 1, true)
+      and text:find("laterBranch", 1, true)
+      and text:find("earlierBranch", 1, true)
       and not text:find("Loading incoming calls", 1, true)
   end, 10000)
 
@@ -1204,14 +1220,20 @@ local function test_lsp_recursive_incoming_call_graph(repo)
   local target_line
   local direct_caller_line
   local recursive_caller_line
+  local secondary_root_line
+  local ordered_root_line
+  local later_branch_line
+  local earlier_branch_line
   local target_count = 0
-  local shared_count = 0
   for index, line in ipairs(lines) do
     target_line = target_line or (line:find("targetValue", 1, true) and index)
     direct_caller_line = direct_caller_line or (line:find("useTarget", 1, true) and index)
     recursive_caller_line = recursive_caller_line or (line:find("main  ", 1, true) and index)
+    secondary_root_line = secondary_root_line or (line:find("secondaryRoot", 1, true) and index)
+    ordered_root_line = ordered_root_line or (line:find("orderedRoot", 1, true) and index)
+    later_branch_line = later_branch_line or (line:find("laterBranch", 1, true) and index)
+    earlier_branch_line = earlier_branch_line or (line:find("earlierBranch", 1, true) and index)
     target_count = target_count + (line:find("targetValue", 1, true) and 1 or 0)
-    shared_count = shared_count + (line:find("[shared]", 1, true) and 1 or 0)
   end
   assert_true(recursive_caller_line == 1, "call graph should start at the top-level caller")
   assert_true(direct_caller_line == 2, "call graph should show each caller-to-callee step from top to bottom")
@@ -1221,8 +1243,34 @@ local function test_lsp_recursive_incoming_call_graph(repo)
     #lines[target_line]:match("^%s*") > #lines[direct_caller_line]:match("^%s*"),
     "selected function should be indented below its caller"
   )
-  assert_true(target_count == 1, "shared call graph suffix should be expanded only once")
-  assert_true(shared_count == 1, "later paths should identify the shared call graph node")
+  assert_true(target_count == 4, "each call graph root should render its complete path to the selected function")
+  assert_true(secondary_root_line ~= nil, "call graph should include the second top-level caller")
+  assert_true(
+    ordered_root_line < later_branch_line and later_branch_line < earlier_branch_line,
+    "immediate child callers should follow their source call order"
+  )
+  assert_true(not text:find("[shared]", 1, true), "call graph should not truncate repeated paths")
+  assert_true(vim.wo[0].foldmethod == "expr", "call graph should use hierarchy folds")
+  vim.api.nvim_win_set_cursor(0, { recursive_caller_line, 0 })
+  vim.cmd("normal! zM")
+  assert_true(vim.fn.foldclosed(recursive_caller_line) == recursive_caller_line, "zM should close root folds")
+  vim.cmd("normal! zo")
+  assert_true(vim.fn.foldclosed(recursive_caller_line) == -1, "zo should open the current parent fold")
+  assert_true(
+    vim.fn.foldclosed(direct_caller_line) == direct_caller_line,
+    "zo should leave the next parent level folded"
+  )
+  vim.cmd("normal! zM")
+  vim.cmd("normal! zO")
+  assert_true(vim.fn.foldclosed(direct_caller_line) == -1, "zO should open all descendant folds")
+  vim.cmd("normal! zR")
+  vim.cmd("normal! zm")
+  assert_true(vim.fn.foldclosed(direct_caller_line) == direct_caller_line, "zm should close one fold level")
+  vim.cmd("normal! zr")
+  assert_true(vim.fn.foldclosed(direct_caller_line) == -1, "zr should open one fold level")
+  vim.cmd("normal! zM")
+  vim.cmd("normal! zR")
+  assert_true(vim.fn.foldclosed(recursive_caller_line) == -1, "zR should open every call graph fold")
 
   local function graph_preview_window()
     for _, win in ipairs(vim.api.nvim_list_wins()) do
