@@ -116,6 +116,8 @@ end
 
 local function create_view(source_win, encoding)
   vim.api.nvim_set_hl(0, "IncomingCallGraphFocus", { default = true, link = "Visual" })
+  vim.api.nvim_set_hl(0, "IncomingCallGraphConnector", { default = true, link = "Normal" })
+  vim.api.nvim_set_hl(0, "IncomingCallGraphPath", { default = true, link = "Comment" })
 
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(buf, "incoming-call-graph://" .. buf)
@@ -391,9 +393,6 @@ local function render(view, root_key, nodes, failed_requests)
     local base_label = item_label(item)
     local label = base_label
     local is_cycle = path[key] ~= nil
-    if key == root_key then
-      label = label .. "  [focused]"
-    end
     if is_cycle then
       label = label .. "  [cycle]"
     end
@@ -402,17 +401,21 @@ local function render(view, root_key, nodes, failed_requests)
     line_targets[#lines] = targets_for(key, children)
     local highlights = {}
     if rendered_prefix ~= "" then
-      highlights[#highlights + 1] = { group = "NonText", start_col = 0, end_col = #rendered_prefix }
+      highlights[#highlights + 1] = {
+        group = "IncomingCallGraphConnector",
+        start_col = 0,
+        end_col = #rendered_prefix,
+      }
     end
     highlights[#highlights + 1] = {
-      group = "Function",
+      group = marker == "" and "Special" or "Function",
       start_col = #rendered_prefix,
       end_col = #rendered_prefix + #name,
     }
     local location_colon = base_label:find(":%d+$")
     if location_colon then
       highlights[#highlights + 1] = {
-        group = "Directory",
+        group = "IncomingCallGraphPath",
         start_col = #rendered_prefix + #name + 2,
         end_col = #rendered_prefix + location_colon - 1,
       }
@@ -423,14 +426,6 @@ local function render(view, root_key, nodes, failed_requests)
       }
     end
     local rendered_line = lines[#lines]
-    local focused_start, focused_end = rendered_line:find("%[focused%]")
-    if focused_start then
-      highlights[#highlights + 1] = {
-        group = "Special",
-        start_col = focused_start - 1,
-        end_col = focused_end,
-      }
-    end
     local cycle_start, cycle_end = rendered_line:find("%[cycle%]")
     if cycle_start then
       highlights[#highlights + 1] = {
