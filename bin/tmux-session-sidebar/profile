@@ -1,0 +1,166 @@
+#!/bin/sh
+set -e
+
+PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
+TAB="$(printf '\t')"
+action="${1:-pick}"
+
+valid_profile() {
+	case "$1" in
+		''|unpin|*[!A-Za-z0-9._-]*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+ensure_profile() {
+	if ! awk -F "$TAB" -v profile="$1" '
+		$1 == "@profile" && $2 == profile { found = 1 }
+		END { exit found ? 0 : 1 }
+	' "$PIN_FILE"; then
+		printf '@profile\t%s\n' "$1" >> "$PIN_FILE"
+	fi
+}
+
+select_profile() {
+	profile="$1"
+	current="$("$HOME/bin/tmux-session-sidebar/resolve-session" "${2:-}")"
+	if ! valid_profile "$profile"; then
+		tmux display-message "profile names may use letters, numbers, dot, underscore, and dash; unpin is reserved"
+		return 1
+	fi
+	mkdir -p "$(dirname "$PIN_FILE")"
+	[ -f "$PIN_FILE" ] || : > "$PIN_FILE"
+	ensure_profile "$profile"
+	"$HOME/bin/tmux-session-sidebar/sync-pins" >/dev/null 2>&1 || :
+	target="$(awk -F "$TAB" -v profile="$profile" -v current="$current" '
+		$1 == profile && NF >= 3 && $3 != "" {
+			if ($3 == current) {
+				print current
+				found_current = 1
+				exit
+			}
+			if (first == "") first = $3
+		}
+		END {
+			if (!found_current && first != "") print first
+		}
+	' "$PIN_FILE")"
+	if [ -z "$target" ]; then
+		tmux display-message "profile $profile has no pinned sessions; use prefix+a to assign one"
+		"$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :
+		return 0
+	fi
+	[ "$target" = "$current" ] || tmux switch-client -t "$target"
+	tmux display-message "selected pinned profile: $profile"
+}
+
+delete_profile() {
+	profile="$1"
+	if [ "$profile" = "default" ]; then
+		tmux display-message "default profile cannot be deleted"
+		return 1
+	fi
+	if ! valid_profile "$profile"; then
+		tmux display-message "profile names may use letters, numbers, dot, underscore, and dash; unpin is reserved"
+		return 1
+	fi
+	if ! awk -F "$TAB" -v profile="$profile" '
+		($1 == "@profile" && $2 == profile) || (NF >= 3 && $1 == profile) { found = 1 }
+		END { exit found ? 0 : 1 }
+	' "$PIN_FILE" 2>/dev/null; then
+		tmux display-message "pinned profile not found: $profile"
+		return 1
+	fi
+	count="$(awk -F "$TAB" -v profile="$profile" 'NF >= 3 && $1 == profile { count++ } END { print count + 0 }' "$PIN_FILE")"
+	tmp="$(mktemp)"
+	awk -F "$TAB" -v profile="$profile" '
+		$1 == "@profile" && $2 == profile { next }
+		NF >= 3 && $1 == profile { next }
+		{ print }
+	' "$PIN_FILE" > "$tmp"
+	mv "$tmp" "$PIN_FILE"
+	tmux display-message "deleted pinned profile: $profile ($count sessions unpinned)"
+	"$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :
+}
+
+profile_list() {
+	current="$1"
+	{
+		printf '%s\n' "$current"
+		awk -F "$TAB" '
+			$1 == "@profile" && NF >= 2 { print $2; next }
+			NF >= 3 { print $1; next }
+			NF > 0 { print "default" }
+		' "$PIN_FILE" 2>/dev/null || :
+	} | awk 'NF && !seen[$0]++'
+}
+
+picker_list() {
+	profiles="$(profile_list "$1")"
+	printf '%s\n' "$profiles"
+	printf '%s\n' "$profiles" | awk '$0 != "default" { print "del " $0 }'
+}
+
+case "$action" in
+	select)
+		select_profile "${2:-}" "${3:-}"
+		;;
+	delete)
+		delete_profile "${2:-}"
+		;;
+	pick)
+		target="$("$HOME/bin/tmux-session-sidebar/resolve-session" "${2:-}")"
+		current="$("$HOME/bin/tmux-session-sidebar/current-profile" "$target")"
+		if ! command -v fzf >/dev/null 2>&1; then
+			tmux command-prompt -p "Pinned profile:" \
+				"run-shell '$HOME/bin/tmux-session-sidebar/profile select %% $target'"
+			exit 0
+		fi
+		result="$(picker_list "$current" | fzf \
+			--height '~100%' \
+			--prompt 'pinned profile> ' \
+			--exact \
+			--print-query \
+			--bind 'enter:accept')" || exit 0
+		query="$(printf '%s\n' "$result" | awk 'NR == 1 { print; exit }')"
+		selected="$(printf '%s\n' "$result" | awk 'NR > 1 { selected = $0 } END { print selected }')"
+		case "$query" in
+			"del "*)
+				case "$selected" in
+					"del "*) choice="$selected" ;;
+					*) choice="$query" ;;
+				esac
+				;;
+			*)
+				[ -n "$query" ] && [ "$query" != "$selected" ] && choice="$query" || choice="$selected"
+				;;
+		esac
+		case "$choice" in
+			"del "*) delete_profile "${choice#del }" ;;
+			?*) select_profile "$choice" "$target" ;;
+		esac
+		;;
+	next|prev)
+		target="$("$HOME/bin/tmux-session-sidebar/resolve-session" "${2:-}")"
+		current="$("$HOME/bin/tmux-session-sidebar/current-profile" "$target")"
+		selected="$(profile_list "$current" | awk -v current="$current" -v direction="$action" '
+			{ profiles[++count] = $0; if ($0 == current) active = count }
+			END {
+				if (count == 0) exit
+				if (!active) active = 1
+				if (direction == "prev") {
+					active--
+					if (active < 1) active = count
+				} else {
+					active = (active % count) + 1
+				}
+				print profiles[active]
+			}
+		')"
+		[ -n "$selected" ] && select_profile "$selected" "$target"
+		;;
+	*)
+		tmux display-message "usage: profile [pick|select <name>|delete <name>|next|prev]"
+		exit 1
+		;;
+esac
