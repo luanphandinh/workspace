@@ -25,6 +25,8 @@ export TMUX_SMOKE_LAYOUT_FILE="$TMP/window-layout"
 export TMUX_SMOKE_RESTORE_LAYOUT_FILE="$TMP/restore-layout"
 export TMUX_SMOKE_SELECTED_LAYOUTS="$TMP/selected-layouts"
 export TMUX_SMOKE_FOCUS_FILE="$TMP/focus"
+export TMUX_SMOKE_PROFILE_FILE="$TMP/profiles"
+export TMUX_SMOKE_FZF_INPUT="$TMP/fzf-input"
 export TMUX_SMOKE_COMMAND_LOG="$TMP/commands"
 export TMUX_SMOKE_CURRENT_ID='$1'
 export TMUX_SMOKE_CURRENT_WINDOW='@1'
@@ -63,6 +65,31 @@ session_activity() {
 			return 0
 		}
 	done < "$TMUX_SMOKE_SESSIONS"
+}
+
+session_name() {
+	target="$1"
+	while IFS='|' read -r name id activity; do
+		[ "$id" = "$target" ] && {
+			printf '%s\n' "$name"
+			return 0
+		}
+	done < "$TMUX_SMOKE_SESSIONS"
+}
+
+profile_value() {
+	target="$1"
+	[ -n "$target" ] || target="$TMUX_SMOKE_CURRENT_ID"
+	awk -v target="$target" '$1 == target { print $2; exit }' "$TMUX_SMOKE_PROFILE_FILE" 2>/dev/null || :
+}
+
+set_profile_value() {
+	target="$1"
+	value="$2"
+	awk -v target="$target" '$1 != target { print }' "$TMUX_SMOKE_PROFILE_FILE" 2>/dev/null \
+		> "$TMUX_SMOKE_PROFILE_FILE.tmp" || :
+	printf '%s %s\n' "$target" "$value" >> "$TMUX_SMOKE_PROFILE_FILE.tmp"
+	mv "$TMUX_SMOKE_PROFILE_FILE.tmp" "$TMUX_SMOKE_PROFILE_FILE"
 }
 
 windows() {
@@ -239,9 +266,20 @@ case "${1:-}" in
 		case "${1:-}" in
 			'#{client_width}') printf '120\n' ;;
 			'#{client_height}') printf '40\n' ;;
-			'#{session_id}') printf '%s\n' "$TMUX_SMOKE_CURRENT_ID" ;;
+			'#{session_id}')
+				case "$target" in
+					'$'*) printf '%s\n' "$target" ;;
+					*) printf '%s\n' "$TMUX_SMOKE_CURRENT_ID" ;;
+				esac
+				;;
 			'#{window_id}') printf '%s\n' "$TMUX_SMOKE_CURRENT_WINDOW" ;;
-			'#S') printf '%s\n' "$TMUX_SMOKE_CURRENT_NAME" ;;
+			'#S')
+				if [ -n "$target" ]; then
+					session_name "$target"
+				else
+					printf '%s\n' "$TMUX_SMOKE_CURRENT_NAME"
+				fi
+				;;
 			'#{client_last_session}') printf '%s\n' "$TMUX_SMOKE_LAST_NAME" ;;
 			'#{session_activity}') session_activity "$target" ;;
 			'#{window_layout}') cat "$TMUX_SMOKE_LAYOUT_FILE" 2>/dev/null || : ;;
@@ -270,6 +308,7 @@ case "${1:-}" in
 			*"@pin_sidebar_width"*) printf '20\n' ;;
 			*"@pin_sidebar_focus_session"*) focus_value "$(target_arg "$@")" session ;;
 			*"@pin_sidebar_focus_window"*) focus_value "$(target_arg "$@")" window ;;
+			*"@pin_sidebar_profile"*) profile_value "$(target_arg "$@")" ;;
 			*"@pin_sidebar_pane"*) window_pane "$(target_arg "$@")" ;;
 			*"@pin_sidebar_restore_layout"*) cat "$TMUX_SMOKE_RESTORE_LAYOUT_FILE" 2>/dev/null || : ;;
 			*"window-size"*) printf 'latest\n' ;;
@@ -297,6 +336,8 @@ case "${1:-}" in
 			set_focus_value "${3:-}" session "${5:-}"
 		elif [ "${2:-}" = "-wt" ] && [ "${4:-}" = "@pin_sidebar_focus_window" ]; then
 			set_focus_value "${3:-}" window "${5:-}"
+		elif [ "${2:-}" = "-q" ] && [ "${3:-}" = "-t" ] && [ "${5:-}" = "@pin_sidebar_profile" ]; then
+			set_profile_value "${4:-}" "${6:-}"
 		fi
 		;;
 	kill-pane)
@@ -341,6 +382,7 @@ pass() {
 
 set_sessions() {
 	: > "$TMUX_SMOKE_SESSIONS"
+	: > "$TMUX_SMOKE_PROFILE_FILE"
 	for line in "$@"; do
 		printf '%s\n' "$line" >> "$TMUX_SMOKE_SESSIONS"
 	done
@@ -393,7 +435,9 @@ assert_line_count() {
 }
 
 run_script() {
-	sh "$ROOT/bin/tmux-session-sidebar/$1" "${2:-}"
+	script="$1"
+	shift
+	sh "$ROOT/bin/tmux-session-sidebar/$script" "$@"
 }
 
 test_sync_migrates_and_dedupes() {
@@ -402,28 +446,48 @@ test_sync_migrates_and_dedupes() {
 
 	run_script sync-pins
 
-	assert_pins "$(printf 'beta\t$2\nalpha\t$1')"
+	assert_pins "$(printf 'default\tbeta\t$2\ndefault\talpha\t$1')"
 	pass "sync migrates legacy pins and dedupes"
 }
 
 test_sync_repairs_rename_by_id() {
 	set_sessions 'new-name|$1|10'
-	write_pins 'old-name	$1'
+	write_pins 'coding	old-name	$1'
 
 	run_script sync-pins
 
-	assert_pins "$(printf 'new-name\t$1')"
+	assert_pins "$(printf 'coding\tnew-name\t$1')"
 	pass "sync repairs rename by id"
 }
 
 test_sync_repairs_resurrect_id_by_name() {
 	set_sessions 'alpha|$7|10'
-	write_pins 'alpha	$1'
+	write_pins 'coding	alpha	$1'
 
 	run_script sync-pins
 
-	assert_pins "$(printf 'alpha\t$7')"
+	assert_pins "$(printf 'coding\talpha\t$7')"
 	pass "sync repairs resurrect id by name"
+}
+
+test_sync_keeps_one_profile_per_session() {
+	set_sessions 'alpha|$1|10' 'beta|$2|20'
+	write_pins 'coding	alpha	$1' 'operations	alpha	$1' 'operations	beta	$2'
+
+	run_script sync-pins
+
+	assert_pins "$(printf 'coding\talpha\t$1\noperations\tbeta\t$2')"
+	pass "sync keeps one profile per session"
+}
+
+test_sync_preserves_empty_profiles() {
+	set_sessions 'alpha|$1|10'
+	write_pins '@profile	code' 'default	alpha	$1' '@profile	code'
+
+	run_script sync-pins
+
+	assert_pins "$(printf '@profile\tcode\ndefault\talpha\t$1')"
+	pass "sync preserves empty profiles"
 }
 
 test_toggle_pins_and_unpins() {
@@ -433,16 +497,110 @@ test_toggle_pins_and_unpins() {
 	export TMUX_SMOKE_CURRENT_NAME="alpha"
 
 	run_script toggle
-	assert_pins "$(printf 'alpha\t$1')"
+	assert_pins "$(printf '@profile\tdefault\ndefault\talpha\t$1')"
 
 	run_script toggle
-	assert_pins ""
+	assert_pins "$(printf '@profile\tdefault')"
 	pass "toggle pins and unpins canonical entry"
+}
+
+test_toggle_moves_session_between_profiles() {
+	set_sessions 'alpha|$1|10' 'beta|$2|20'
+	write_pins 'coding	alpha	$1' 'operations	beta	$2'
+	export TMUX_SMOKE_CURRENT_ID='$1'
+	export TMUX_SMOKE_CURRENT_NAME="alpha"
+
+	run_script profile select operations '$1'
+	run_script toggle
+
+	assert_pins "$(printf 'operations\tbeta\t$2\n@profile\toperations\noperations\talpha\t$1')"
+	assert_file_not_contains "$PIN_FILE" "coding"
+	assert_file_contains "$TMUX_SMOKE_PROFILE_FILE" '$1 operations'
+
+	run_script toggle
+	assert_pins "$(printf 'operations\tbeta\t$2\n@profile\toperations')"
+	pass "toggle moves session between profiles"
+}
+
+test_profile_views_are_per_session() {
+	set_sessions 'alpha|$1|10' 'beta|$2|20'
+	: > "$PIN_FILE"
+
+	run_script profile select coding '$1'
+	run_script profile select operations '$2'
+
+	[ "$(run_script current-profile '$1')" = "coding" ]
+	[ "$(run_script current-profile '$2')" = "operations" ]
+	pass "profile views are per session"
+}
+
+test_profile_picker_accepts_new_name() {
+	set_sessions 'alpha|$1|10'
+	: > "$PIN_FILE"
+	cat > "$TMP/bin/fzf" <<'EOF'
+#!/bin/sh
+cat > "$TMUX_SMOKE_FZF_INPUT"
+printf 'review\ndefault\n'
+EOF
+	chmod +x "$TMP/bin/fzf"
+
+	export TMUX_SMOKE_CURRENT_ID='$1'
+	run_script profile pick
+
+	assert_file_contains "$TMUX_SMOKE_PROFILE_FILE" '$1 review'
+	assert_file_contains "$PIN_FILE" "$(printf '@profile\treview')"
+
+	run_script profile select default '$1'
+	cat > "$TMP/bin/fzf" <<'EOF'
+#!/bin/sh
+cat > "$TMUX_SMOKE_FZF_INPUT"
+printf '\nreview\n'
+EOF
+	chmod +x "$TMP/bin/fzf"
+	run_script profile pick
+
+	assert_file_contains "$TMUX_SMOKE_FZF_INPUT" "review"
+	assert_file_contains "$TMUX_SMOKE_PROFILE_FILE" '$1 review'
+	rm -f "$TMP/bin/fzf"
+	pass "profile picker preserves and reopens empty profile"
+}
+
+test_pin_picker_assigns_and_unpins() {
+	set_sessions 'alpha|$1|10'
+	write_pins '@profile	default' '@profile	code'
+	export TMUX_SMOKE_CURRENT_ID='$1'
+	export TMUX_SMOKE_CURRENT_NAME="alpha"
+	cat > "$TMP/bin/fzf" <<'EOF'
+#!/bin/sh
+cat > "$TMUX_SMOKE_FZF_INPUT"
+printf 'code\n'
+EOF
+	chmod +x "$TMP/bin/fzf"
+
+	run_script pin pick
+
+	assert_file_contains "$TMUX_SMOKE_FZF_INPUT" "default"
+	assert_file_contains "$TMUX_SMOKE_FZF_INPUT" "code"
+	assert_file_contains "$TMUX_SMOKE_FZF_INPUT" "unpin"
+	assert_pins "$(printf '@profile\tdefault\n@profile\tcode\ncode\talpha\t$1')"
+	assert_file_contains "$TMUX_SMOKE_PROFILE_FILE" '$1 code'
+
+	cat > "$TMP/bin/fzf" <<'EOF'
+#!/bin/sh
+cat >/dev/null
+printf 'unpin\n'
+EOF
+	chmod +x "$TMP/bin/fzf"
+	run_script pin pick
+
+	assert_pins "$(printf '@profile\tdefault\n@profile\tcode')"
+	rm -f "$TMP/bin/fzf"
+	pass "pin picker assigns and unpins explicitly"
 }
 
 test_cycle_uses_canonical_ids() {
 	set_sessions 'alpha|$1|10' 'beta|$2|20'
-	write_pins 'alpha	$1' 'beta	$2'
+	write_pins 'default	alpha	$1' 'default	beta	$2'
 	export TMUX_SMOKE_CURRENT_ID='$1'
 	: > "$TMUX_SMOKE_SWITCH_FILE"
 
@@ -452,9 +610,22 @@ test_cycle_uses_canonical_ids() {
 	pass "cycle switches by canonical id"
 }
 
+test_cycle_uses_selected_profile() {
+	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30'
+	write_pins 'coding	alpha	$1' 'coding	beta	$2' 'operations	gamma	$3'
+	export TMUX_SMOKE_CURRENT_ID='$1'
+	: > "$TMUX_SMOKE_SWITCH_FILE"
+
+	run_script profile select operations '$1'
+	run_script cycle next
+
+	assert_file_contains "$TMUX_SMOKE_SWITCH_FILE" '$3'
+	pass "cycle uses selected profile"
+}
+
 test_jump_uses_pin_slot() {
 	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30'
-	write_pins 'alpha	$1' 'beta	$2' 'gamma	$3'
+	write_pins 'default	alpha	$1' 'default	beta	$2' 'default	gamma	$3'
 	: > "$TMUX_SMOKE_SWITCH_FILE"
 
 	run_script jump 2
@@ -463,37 +634,65 @@ test_jump_uses_pin_slot() {
 	pass "jump switches by pinned slot"
 }
 
+test_jump_uses_selected_profile() {
+	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30'
+	write_pins 'coding	alpha	$1' 'coding	beta	$2' 'operations	gamma	$3'
+	export TMUX_SMOKE_CURRENT_ID='$1'
+	: > "$TMUX_SMOKE_SWITCH_FILE"
+
+	run_script profile select operations '$1'
+	run_script jump 1
+
+	assert_file_contains "$TMUX_SMOKE_SWITCH_FILE" '$3'
+	assert_file_contains "$TMUX_SMOKE_PROFILE_FILE" '$3 operations'
+	pass "jump uses selected profile"
+}
+
+test_clear_only_selected_profile() {
+	set_sessions 'alpha|$1|10' 'beta|$2|20'
+	write_pins 'coding	alpha	$1' 'operations	beta	$2'
+	export TMUX_SMOKE_CURRENT_ID='$1'
+
+	run_script profile select coding '$1'
+	run_script clear
+
+	assert_pins "$(printf 'operations\tbeta\t$2\n@profile\tcoding')"
+	pass "clear only selected profile"
+}
+
 test_replace_last_active_updates_slot() {
 	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30'
-	write_pins 'alpha	$1' 'beta	$2'
+	write_pins 'default	alpha	$1' 'default	beta	$2'
 	export TMUX_SMOKE_CURRENT_ID='$3'
 	export TMUX_SMOKE_CURRENT_NAME="gamma"
 	export TMUX_SMOKE_LAST_NAME="beta"
 
 	run_script replace-last-active
 
-	assert_pins "$(printf 'alpha\t$1\ngamma\t$3')"
+	assert_pins "$(printf 'default\talpha\t$1\ndefault\tgamma\t$3')"
 	pass "replace-last-active writes name and id"
 }
 
 test_prune_delegates_to_sync() {
 	set_sessions 'alpha|$1|10'
-	write_pins 'alpha	$1' 'dead	$9'
+	write_pins 'default	alpha	$1' 'default	dead	$9'
 
 	run_script prune
 
-	assert_pins "$(printf 'alpha\t$1')"
+	assert_pins "$(printf 'default\talpha\t$1')"
 	pass "prune drops dead canonical pins"
 }
 
 test_sidebar_renders_canonical_pin() {
-	set_sessions 'alpha|$1|10'
-	write_pins 'alpha	$1'
+	set_sessions 'alpha|$1|10' 'beta|$2|20'
+	write_pins 'coding	alpha	$1' 'operations	beta	$2'
 	export TMUX_SMOKE_CURRENT_ID='$1'
 
 	sh "$ROOT/bin/tmux-session-sidebar/sidebar" </dev/null > "$TMP/sidebar.out"
 
 	assert_file_contains "$TMP/sidebar.out" "alpha"
+	assert_file_not_contains "$TMP/sidebar.out" "beta"
+	assert_file_contains "$TMP/sidebar.out" "pinned:coding"
 	assert_file_contains "$TMP/sidebar.out" "↑/↓ | j/k session"
 	assert_file_contains "$TMP/sidebar.out" "←/→ | h/l window"
 	assert_file_contains "$TMP/sidebar.out" "Cmd/Alt +"
@@ -503,7 +702,7 @@ test_sidebar_renders_canonical_pin() {
 
 test_sidebar_batches_window_listing() {
 	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30'
-	write_pins 'alpha	$1' 'beta	$2' 'gamma	$3'
+	write_pins 'default	alpha	$1' 'default	beta	$2' 'default	gamma	$3'
 	printf '$1|@1|1|main\n$1|@2|0|edit\n$2|@3|1|work\n$3|@4|1|ops\n' > "$TMUX_SMOKE_WINDOWS"
 	: > "$TMUX_SMOKE_LIST_WINDOWS_LOG"
 	export TMUX_SMOKE_CURRENT_ID='$2'
@@ -524,7 +723,7 @@ test_sidebar_batches_window_listing() {
 
 test_sidebar_wraps_long_labels_at_text_indent() {
 	set_sessions 'alpha|$1|10' 'beta|$2|20'
-	write_pins 'alpha	$1'
+	write_pins 'default	alpha	$1'
 	printf '$1|@1|1|example_project_name\n' > "$TMUX_SMOKE_WINDOWS"
 	export TMUX_SMOKE_CURRENT_ID='$2'
 	export TMUX_SMOKE_CURRENT_WINDOW='@2'
@@ -538,7 +737,7 @@ test_sidebar_wraps_long_labels_at_text_indent() {
 
 test_sidebar_uses_precomputed_window_focus() {
 	set_sessions 'alpha|$1|10'
-	write_pins 'alpha	$1'
+	write_pins 'default	alpha	$1'
 	printf '$1|@1|0|main\n$1|@2|1|edit\n' > "$TMUX_SMOKE_WINDOWS"
 	printf '@1 $1 @1\n' > "$TMUX_SMOKE_FOCUS_FILE"
 	export TMUX_PANE='%side'
@@ -579,7 +778,7 @@ test_fit_windows_keeps_global_sizing_latest() {
 
 test_reload_restarts_open_sidebars() {
 	set_sessions 'alpha|$1|10'
-	write_pins 'alpha	$1'
+	write_pins 'default	alpha	$1'
 	printf '1\n' > "$TMUX_SMOKE_OPEN_FILE"
 	printf '@1 %%old1\n@2 %%old2\n' > "$TMUX_SMOKE_WINDOW_PANES"
 	printf '@1|1|main\n@2|1|main\n' > "$TMUX_SMOKE_WINDOWS"
@@ -629,9 +828,18 @@ test_toggle_close_preserves_current_content_layout() {
 test_sync_migrates_and_dedupes
 test_sync_repairs_rename_by_id
 test_sync_repairs_resurrect_id_by_name
+test_sync_keeps_one_profile_per_session
+test_sync_preserves_empty_profiles
 test_toggle_pins_and_unpins
+test_toggle_moves_session_between_profiles
+test_profile_views_are_per_session
+test_profile_picker_accepts_new_name
+test_pin_picker_assigns_and_unpins
 test_cycle_uses_canonical_ids
+test_cycle_uses_selected_profile
 test_jump_uses_pin_slot
+test_jump_uses_selected_profile
+test_clear_only_selected_profile
 test_replace_last_active_updates_slot
 test_prune_delegates_to_sync
 test_sidebar_renders_canonical_pin

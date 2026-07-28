@@ -1,5 +1,5 @@
 #!/bin/sh
-# Normalize pinned sessions to name<TAB>id, preserving pin order.
+# Normalize pinned sessions to profile<TAB>name<TAB>id, preserving pin order.
 set -eu
 
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
@@ -20,19 +20,33 @@ awk -F '	' -v OFS='	' '
 		next
 	}
 	$0 == "" { next }
+	$1 == "@profile" {
+		profile = $2
+		if (profile ~ /^[A-Za-z0-9._-]+$/ && !seen_profile[profile]++)
+			print "@profile", profile
+		next
+	}
 	{
+		profile = "default"
 		stored_name = ""
 		stored_id = ""
 
 		if (index($0, "\t") > 0) {
 			split($0, parts, "\t")
-			stored_name = parts[1]
-			stored_id = parts[2]
+			if (length(parts) >= 3) {
+				profile = parts[1]
+				stored_name = parts[2]
+				stored_id = parts[3]
+			} else {
+				stored_name = parts[1]
+				stored_id = parts[2]
+			}
 		} else if ($0 ~ /^\$[0-9]+$/) {
 			stored_id = $0
 		} else {
 			stored_name = $0
 		}
+		if (profile !~ /^[A-Za-z0-9._-]+$/) profile = "default"
 
 		live_name = ""
 		live_id = ""
@@ -46,7 +60,7 @@ awk -F '	' -v OFS='	' '
 		}
 
 		if (live_id == "" || seen[live_id]++) next
-		print live_name, live_id
+		print profile, live_name, live_id
 	}
 ' "$mapfile" "$PIN_FILE" > "$tmpout"
 

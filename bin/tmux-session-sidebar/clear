@@ -2,15 +2,27 @@
 # Wipe every pinned session entry. The sidebar (if open) re-renders to
 # (none — prefix+a to pin) immediately.
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
+TAB="$(printf '\t')"
 
 if [ ! -s "$PIN_FILE" ]; then
 	tmux display-message "no pinned sessions to clear"
 	exit 0
 fi
 
-count="$(awk 'NF' "$PIN_FILE" | wc -l | tr -d ' ')"
-: > "$PIN_FILE"
-tmux display-message "cleared ${count} pinned session(s)"
+"$HOME/bin/tmux-session-sidebar/sync-pins" >/dev/null 2>&1 || :
+profile="$("$HOME/bin/tmux-session-sidebar/current-profile")"
+count="$(awk -F "$TAB" -v profile="$profile" '
+	NF >= 3 && $1 == profile { count++ }
+	END { print count + 0 }
+' "$PIN_FILE")"
+if [ "$count" -eq 0 ]; then
+	tmux display-message "no pinned sessions in $profile"
+	exit 0
+fi
+tmp="$(mktemp)"
+awk -F "$TAB" -v profile="$profile" 'NF < 3 || $1 != profile { print }' "$PIN_FILE" > "$tmp"
+mv "$tmp" "$PIN_FILE"
+tmux display-message "cleared ${count} pinned session(s) from $profile"
 
 # Trigger an in-place redraw of every open sidebar (no respawn = no flicker).
 "$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :

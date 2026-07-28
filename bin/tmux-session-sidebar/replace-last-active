@@ -1,9 +1,6 @@
 #!/bin/sh
-# Replace the LAST-ACTIVE pinned session entry in the pin file with the
-# current session. No-op when:
-#   - the current session is itself already pinned
-#   - the pin file is empty
-#   - no pinned session has any activity timestamp we can sort on
+# Replace the last-active pinned session in the selected profile with the
+# current session.
 #
 # "Last-active" = the pinned session with the most recent
 # session_activity timestamp (when it was last interacted with).
@@ -18,14 +15,14 @@ TAB="$(printf '\t')"
 
 current_id="$(tmux display-message -p '#{session_id}')"
 current_name="$(tmux display-message -p '#S')"
+profile="$("$HOME/bin/tmux-session-sidebar/current-profile" "$current_id")"
 
-# Already pinned → ignore per spec.
-if awk -F "$TAB" -v id="$current_id" -v name="$current_name" '
-	NF >= 2 && ($1 == name || $2 == id) { found = 1 }
-	$0 == name || $0 == id { found = 1 }
+# Already pinned in this profile means there is nothing to replace.
+if awk -F "$TAB" -v profile="$profile" -v id="$current_id" -v name="$current_name" '
+	$1 == profile && NF >= 3 && ($3 == id || $2 == name) { found = 1 }
 	END { exit found ? 0 : 1 }
 ' "$PIN_FILE" 2>/dev/null; then
-	tmux display-message "$current_name is already pinned"
+	tmux display-message "$current_name is already pinned in $profile"
 	exit 0
 fi
 
@@ -35,9 +32,8 @@ last_id=""
 if [ -n "$last_name" ]; then
 	last_id="$(tmux list-sessions -F '#{session_name}	#{session_id}' 2>/dev/null \
 		| awk -F "$TAB" -v n="$last_name" '$1==n{print $2; exit}')"
-	if [ -n "$last_id" ] && ! awk -F "$TAB" -v id="$last_id" '
-		NF >= 2 && $2 == id { found = 1 }
-		$0 == id { found = 1 }
+	if [ -n "$last_id" ] && ! awk -F "$TAB" -v profile="$profile" -v id="$last_id" '
+		$1 == profile && NF >= 3 && $3 == id { found = 1 }
 		END { exit found ? 0 : 1 }
 	' "$PIN_FILE" 2>/dev/null; then
 		last_id=""   # previous session isn't pinned — fall through
@@ -46,9 +42,8 @@ fi
 
 # Slow path: walk every pinned session id, pick the one with greatest activity.
 if [ -z "$last_id" ]; then
-	last_id="$(awk -F "$TAB" '
-		NF >= 2 && $2 != "" { print $2; next }
-		/^\$[0-9]+$/ { print }
+	last_id="$(awk -F "$TAB" -v profile="$profile" '
+		$1 == profile && NF >= 3 && $3 != "" { print $3 }
 	' "$PIN_FILE" | while IFS= read -r pid; do
 		ts="$(tmux display-message -p -t "$pid" '#{session_activity}' 2>/dev/null || :)"
 		[ -n "$ts" ] && printf '%s %s\n' "$ts" "$pid"
@@ -56,7 +51,7 @@ if [ -z "$last_id" ]; then
 fi
 
 if [ -z "$last_id" ]; then
-	tmux display-message "no pinned session is alive — nothing to replace"
+	tmux display-message "no pinned session is alive in $profile"
 	exit 0
 fi
 
@@ -66,12 +61,20 @@ last_name="$(tmux list-sessions -F '#{session_id}	#{session_name}' 2>/dev/null \
 
 # In-place replace, preserving line order.
 tmp="$(mktemp)"
-awk -F "$TAB" -v OFS="$TAB" -v old="$last_id" -v new_name="$current_name" -v new_id="$current_id" '
-	NF >= 2 && $2 == old { print new_name, new_id; next }
-	$0 == old { print new_name, new_id; next }
+awk -F "$TAB" -v OFS="$TAB" \
+	-v profile="$profile" \
+	-v old="$last_id" \
+	-v new_name="$current_name" \
+	-v new_id="$current_id" '
+	NF >= 3 && ($3 == new_id || $2 == new_name) { next }
+	$1 == profile && NF >= 3 && $3 == old {
+		print profile, new_name, new_id
+		next
+	}
 	{ print }
 ' "$PIN_FILE" > "$tmp"
 mv "$tmp" "$PIN_FILE"
 
-tmux display-message "pin slot ${last_name:-$last_id} → $current_name"
+tmux set-option -q -t "$current_id" '@pin_sidebar_profile' "$profile"
+tmux display-message "$profile: ${last_name:-$last_id} -> $current_name"
 "$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :

@@ -1,34 +1,84 @@
 #!/bin/sh
-# Toggle pin status of the current tmux session.
+# Pin, unpin, or toggle the target tmux session.
 set -e
 
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
 TAB="$(printf '\t')"
+action="${1:-toggle}"
 mkdir -p "$(dirname "$PIN_FILE")"
 [ -f "$PIN_FILE" ] || : > "$PIN_FILE"
 
+ensure_profile() {
+	if ! awk -F "$TAB" -v profile="$1" '
+		$1 == "@profile" && $2 == profile { found = 1 }
+		END { exit found ? 0 : 1 }
+	' "$PIN_FILE"; then
+		printf '@profile\t%s\n' "$1" >> "$PIN_FILE"
+	fi
+}
+
 "$HOME/bin/tmux-session-sidebar/sync-pins" >/dev/null 2>&1 || :
 
-id="$(tmux display-message -p '#{session_id}')"
-name="$(tmux display-message -p '#S')"
+case "$action" in
+	pin)
+		profile="${2:-}"
+		target="${3:-}"
+		case "$profile" in
+			''|unpin|*[!A-Za-z0-9._-]*)
+				tmux display-message "invalid pinned profile: $profile"
+				exit 1
+				;;
+		esac
+		;;
+	unpin)
+		target="${2:-}"
+		profile=""
+		;;
+	toggle)
+		target="${2:-}"
+		profile=""
+		;;
+	*)
+		tmux display-message "usage: toggle [pin <profile>|unpin|toggle]"
+		exit 1
+		;;
+esac
 
-if awk -F "$TAB" -v id="$id" -v name="$name" '
-	NF >= 2 && ($1 == name || $2 == id) { found = 1 }
-	$0 == name || $0 == id { found = 1 }
-	END { exit found ? 0 : 1 }
-' "$PIN_FILE" 2>/dev/null; then
+id="$("$HOME/bin/tmux-session-sidebar/resolve-session" "$target")"
+name="$(tmux display-message -p -t "$id" '#S')"
+[ "$action" = "toggle" ] && profile="$("$HOME/bin/tmux-session-sidebar/current-profile" "$id")"
+existing_profile="$(awk -F "$TAB" -v id="$id" -v name="$name" '
+	NF >= 3 && ($3 == id || $2 == name) { print $1; exit }
+' "$PIN_FILE" 2>/dev/null || :)"
+
+if [ "$action" = "pin" ] && [ "$existing_profile" = "$profile" ]; then
+	ensure_profile "$profile"
+	tmux set-option -q -t "$id" '@pin_sidebar_profile' "$profile"
+	tmux display-message "already pinned to $profile: $name"
+elif [ "$action" = "unpin" ] && [ -z "$existing_profile" ]; then
+	tmux display-message "not pinned: $name"
+else
 	tmp="$(mktemp)"
 	awk -F "$TAB" -v id="$id" -v name="$name" '
-		NF >= 2 && ($1 == name || $2 == id) { next }
-		$0 == name || $0 == id { next }
+		NF >= 3 && ($3 == id || $2 == name) { next }
 		{ print }
 	' "$PIN_FILE" > "$tmp"
 	mv "$tmp" "$PIN_FILE"
-	tmux display-message "unpinned: $name"
-else
-	printf '%s\t%s\n' "$name" "$id" >> "$PIN_FILE"
-	tmux display-message "pinned: $name"
+
+	if [ "$action" = "unpin" ] || { [ "$action" = "toggle" ] && [ "$existing_profile" = "$profile" ]; }; then
+		tmux display-message "unpinned from $existing_profile: $name"
+		"$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :
+		exit 0
+	fi
+
+	ensure_profile "$profile"
+	printf '%s\t%s\t%s\n' "$profile" "$name" "$id" >> "$PIN_FILE"
+	tmux set-option -q -t "$id" '@pin_sidebar_profile' "$profile"
+	if [ -n "$existing_profile" ]; then
+		tmux display-message "moved $name: $existing_profile -> $profile"
+	else
+		tmux display-message "pinned to $profile: $name"
+	fi
 fi
 
-# Trigger an in-place redraw of every open sidebar (no respawn = no flicker).
 "$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Switch the attached client to the next/previous pinned session (wraps).
 # Usage: cycle [next|prev]   (default: next)
-# Pin file holds name<TAB>id entries; legacy id-only entries are tolerated.
+# Pin file holds profile<TAB>name<TAB>id entries.
 PIN_FILE="${HOME}/.config/tmux/pinned-sessions"
 TAB="$(printf '\t')"
 DIR="${1:-next}"
@@ -12,15 +12,15 @@ if [ ! -s "$PIN_FILE" ]; then
 fi
 
 "$HOME/bin/tmux-session-sidebar/sync-pins" >/dev/null 2>&1 || :
+profile="$("$HOME/bin/tmux-session-sidebar/current-profile")"
 
 # Build an ordered list of pinned session ids.
-ordered="$(awk -F "$TAB" '
-	NF >= 2 && $2 != "" { print $2; next }
-	/^\$[0-9]+$/ { print }
+ordered="$(awk -F "$TAB" -v profile="$profile" '
+	$1 == profile && NF >= 3 && $3 != "" { print $3 }
 ' "$PIN_FILE")"
 
 if [ -z "$ordered" ]; then
-	tmux display-message "no pinned sessions are alive"
+	tmux display-message "no pinned sessions in $profile"
 	exit 0
 fi
 
@@ -39,6 +39,7 @@ target="$(printf '%s\n' "$ordered" | awk -v cur="$cur" -v dir="$DIR" '
 ')"
 
 if [ -n "$target" ] && [ "$target" != "$cur" ]; then
+	tmux set-option -q -t "$target" '@pin_sidebar_profile' "$profile"
 	tmux switch-client -t "$target"
 elif [ -n "$target" ]; then
 	tmux display-message "only one pinned session alive"

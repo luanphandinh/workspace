@@ -40,10 +40,11 @@ repeat_char() {
 
 header_rule() {
 	width="$1"
-	label=" pinned "
-	label_len=8
+	profile="$2"
+	label=" pinned:${profile} "
+	label_len="${#label}"
 	if [ "$width" -le "$label_len" ]; then
-		printf '%s\n' "$label"
+		printf '%.*s\n' "$width" "$label"
 		return
 	fi
 	side=$(((width - label_len) / 2))
@@ -64,6 +65,7 @@ render_pins() {
 	current_window="$2"
 	sessions="$3"
 	windows="$4"
+	profile="$5"
 	sep="$(printf '\034')"
 
 	{
@@ -77,6 +79,7 @@ render_pins() {
 		-v sep="$sep" \
 		-v current="$current" \
 		-v current_window="$current_window" \
+		-v profile="$profile" \
 		-v width="$WIDTH" \
 		-v rule="$RULE" \
 		-v green="$GREEN" \
@@ -122,9 +125,20 @@ render_pins() {
 			next
 		}
 		section == 2 && $0 != "" {
-			pins[++pin_count] = $0
+			if ($1 == "@profile") {
+				next
+			} else if (NF >= 3) {
+				if ($1 == profile)
+					pins[++pin_count] = $2 tab $3
+			} else if (profile == "default") {
+				pins[++pin_count] = $0
+			}
 		}
 		END {
+			if (pin_count == 0) {
+				printf "(none: prefix + a)%s\n", eol
+				exit
+			}
 			prev_current = 0
 			for (i = 1; i <= pin_count; i++) {
 				entry = pins[i]
@@ -195,7 +209,20 @@ render_pins() {
 render() {
 	WIDTH="$(sidebar_width)"
 	RULE="$(repeat_char "$WIDTH" "─")"
-	HEADER="$(header_rule "$WIDTH")"
+	target="${TMUX_PANE:-}"
+	if [ -n "$target" ]; then
+		current="$(tmux show-options -wqv -t "$target" '@pin_sidebar_focus_session' 2>/dev/null || :)"
+		current_window="$(tmux show-options -wqv -t "$target" '@pin_sidebar_focus_window' 2>/dev/null || :)"
+		[ -n "$current" ] || current="$(tmux display-message -p -t "$target" '#{session_id}' 2>/dev/null || :)"
+		[ -n "$current_window" ] || current_window="$(tmux display-message -p -t "$target" '#{window_id}' 2>/dev/null || :)"
+	else
+		current="$(tmux show-options -wqv '@pin_sidebar_focus_session' 2>/dev/null || :)"
+		current_window="$(tmux show-options -wqv '@pin_sidebar_focus_window' 2>/dev/null || :)"
+		[ -n "$current" ] || current="$(tmux display-message -p '#{session_id}' 2>/dev/null || :)"
+		[ -n "$current_window" ] || current_window="$(tmux display-message -p '#{window_id}' 2>/dev/null || :)"
+	fi
+	profile="$("$HOME/bin/tmux-session-sidebar/current-profile" "$current")"
+	HEADER="$(header_rule "$WIDTH" "$profile")"
 
 	{
 		# Hide cursor + go home. NO full-screen clear — that's the source
@@ -207,34 +234,19 @@ render() {
 		# Centered header rule + blank spacer.
 		printf '%s%s\n%s\n' "$HEADER" "$EOL" "$EOL"
 
-		if [ ! -s "$PIN_FILE" ]; then
-			printf '(none: prefix + a)%s\n' "$EOL"
-		else
-			target="${TMUX_PANE:-}"
-			if [ -n "$target" ]; then
-				current="$(tmux show-options -wqv -t "$target" '@pin_sidebar_focus_session' 2>/dev/null || :)"
-				current_window="$(tmux show-options -wqv -t "$target" '@pin_sidebar_focus_window' 2>/dev/null || :)"
-				[ -n "$current" ] || current="$(tmux display-message -p -t "$target" '#{session_id}' 2>/dev/null || :)"
-				[ -n "$current_window" ] || current_window="$(tmux display-message -p -t "$target" '#{window_id}' 2>/dev/null || :)"
-			else
-				current="$(tmux show-options -wqv '@pin_sidebar_focus_session' 2>/dev/null || :)"
-				current_window="$(tmux show-options -wqv '@pin_sidebar_focus_window' 2>/dev/null || :)"
-				[ -n "$current" ] || current="$(tmux display-message -p '#{session_id}' 2>/dev/null || :)"
-				[ -n "$current_window" ] || current_window="$(tmux display-message -p '#{window_id}' 2>/dev/null || :)"
-			fi
-			sessions="$(tmux list-sessions -F '#{session_id}	#{session_name}' 2>/dev/null || :)"
-			windows="$(tmux list-windows -aF '#{session_id}	#{window_id}	#{window_name}' 2>/dev/null || :)"
-			render_pins "$current" "$current_window" "$sessions" "$windows"
-		fi
+		sessions="$(tmux list-sessions -F '#{session_id}	#{session_name}' 2>/dev/null || :)"
+		windows="$(tmux list-windows -aF '#{session_id}	#{window_id}	#{window_name}' 2>/dev/null || :)"
+		render_pins "$current" "$current_window" "$sessions" "$windows" "$profile"
 
 		# Compact help for macOS and cross-platform terminal bindings.
 		# Blank spacer line above must be EOL-cleared (not just `\n`-skipped)
 		# so a previous longer render's content doesn't linger here.
 		printf '%s\n%s%s\n' "$EOL" "$RULE" "$EOL"
 		printf 'prefix +%s\n' "$EOL"
-		printf '  a pin/unpin%s\n' "$EOL"
+		printf '  a pin menu%s\n' "$EOL"
 		printf '  A sidebar%s\n' "$EOL"
 		printf '  e clear%s\n' "$EOL"
+		printf '  P profile%s\n' "$EOL"
 		printf 'O-C/C-S +%s\n' "$EOL"
 		printf '  ↑/↓ | j/k session%s\n' "$EOL"
 		printf '  ←/→ | h/l window%s\n' "$EOL"
