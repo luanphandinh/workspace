@@ -41,7 +41,7 @@ repeat_char() {
 header_rule() {
 	width="$1"
 	profile="$2"
-	label=" pinned:${profile} "
+	label=" profile:${profile} "
 	label_len="${#label}"
 	if [ "$width" -le "$label_len" ]; then
 		printf '%.*s\n' "$width" "$label"

@@ -699,7 +699,7 @@ test_manual_session_switch_updates_profile_and_cycle_scope() {
 
 	sh "$ROOT/bin/tmux-session-sidebar/sidebar" </dev/null > "$TMP/sidebar-profile-switch.out"
 
-	assert_file_contains "$TMP/sidebar-profile-switch.out" "pinned:code"
+	assert_file_contains "$TMP/sidebar-profile-switch.out" "profile:code"
 	assert_file_contains "$TMP/sidebar-profile-switch.out" "gamma"
 	assert_file_contains "$TMP/sidebar-profile-switch.out" "delta"
 	assert_file_not_contains "$TMP/sidebar-profile-switch.out" "alpha"
@@ -751,7 +751,7 @@ test_sidebar_renders_canonical_pin() {
 
 	assert_file_contains "$TMP/sidebar.out" "alpha"
 	assert_file_not_contains "$TMP/sidebar.out" "beta"
-	assert_file_contains "$TMP/sidebar.out" "pinned:coding"
+	assert_file_contains "$TMP/sidebar.out" "profile:coding"
 	assert_file_contains "$TMP/sidebar.out" "↑/↓ | j/k session"
 	assert_file_contains "$TMP/sidebar.out" "←/→ | h/l window"
 	assert_file_contains "$TMP/sidebar.out" "Cmd/Alt +"
