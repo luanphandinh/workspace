@@ -510,33 +510,46 @@ test_toggle_moves_session_between_profiles() {
 	export TMUX_SMOKE_CURRENT_ID='$1'
 	export TMUX_SMOKE_CURRENT_NAME="alpha"
 
-	run_script profile select operations '$1'
-	run_script toggle
+	run_script toggle pin operations '$1'
 
 	assert_pins "$(printf 'operations\tbeta\t$2\n@profile\toperations\noperations\talpha\t$1')"
 	assert_file_not_contains "$PIN_FILE" "coding"
-	assert_file_contains "$TMUX_SMOKE_PROFILE_FILE" '$1 operations'
+	[ "$(run_script current-profile '$1')" = "operations" ]
 
-	run_script toggle
+	run_script toggle unpin '$1'
 	assert_pins "$(printf 'operations\tbeta\t$2\n@profile\toperations')"
 	pass "toggle moves session between profiles"
 }
 
 test_profile_views_are_per_session() {
 	set_sessions 'alpha|$1|10' 'beta|$2|20'
-	: > "$PIN_FILE"
-
-	run_script profile select coding '$1'
-	run_script profile select operations '$2'
+	write_pins 'coding	alpha	$1' 'operations	beta	$2'
 
 	[ "$(run_script current-profile '$1')" = "coding" ]
 	[ "$(run_script current-profile '$2')" = "operations" ]
-	pass "profile views are per session"
+	pass "profile views follow pin membership"
+}
+
+test_profile_selection_switches_to_member() {
+	set_sessions 'alpha|$1|10' 'beta|$2|20'
+	write_pins '@profile	default' 'default	alpha	$1' '@profile	code' 'code	beta	$2'
+	export TMUX_SMOKE_CURRENT_ID='$1'
+	export TMUX_SMOKE_CURRENT_NAME="alpha"
+	: > "$TMUX_SMOKE_SWITCH_FILE"
+
+	run_script profile select code '$1'
+
+	assert_file_contains "$TMUX_SMOKE_SWITCH_FILE" '$2'
+	[ "$(run_script current-profile '$1')" = "default" ]
+	[ "$(run_script current-profile '$2')" = "code" ]
+	assert_pins "$(printf '@profile\tdefault\ndefault\talpha\t$1\n@profile\tcode\ncode\tbeta\t$2')"
+	pass "profile selection switches instead of relabeling current session"
 }
 
 test_profile_picker_accepts_new_name() {
 	set_sessions 'alpha|$1|10'
-	: > "$PIN_FILE"
+	write_pins 'default	alpha	$1'
+	: > "$TMUX_SMOKE_SWITCH_FILE"
 	cat > "$TMP/bin/fzf" <<'EOF'
 #!/bin/sh
 cat > "$TMUX_SMOKE_FZF_INPUT"
@@ -547,10 +560,10 @@ EOF
 	export TMUX_SMOKE_CURRENT_ID='$1'
 	run_script profile pick
 
-	assert_file_contains "$TMUX_SMOKE_PROFILE_FILE" '$1 review'
 	assert_file_contains "$PIN_FILE" "$(printf '@profile\treview')"
+	[ ! -s "$TMUX_SMOKE_SWITCH_FILE" ]
+	[ "$(run_script current-profile '$1')" = "default" ]
 
-	run_script profile select default '$1'
 	cat > "$TMP/bin/fzf" <<'EOF'
 #!/bin/sh
 cat > "$TMUX_SMOKE_FZF_INPUT"
@@ -560,9 +573,29 @@ EOF
 	run_script profile pick
 
 	assert_file_contains "$TMUX_SMOKE_FZF_INPUT" "review"
-	assert_file_contains "$TMUX_SMOKE_PROFILE_FILE" '$1 review'
+	assert_file_contains "$TMUX_SMOKE_FZF_INPUT" "del review"
+	[ ! -s "$TMUX_SMOKE_SWITCH_FILE" ]
 	rm -f "$TMP/bin/fzf"
 	pass "profile picker preserves and reopens empty profile"
+}
+
+test_profile_picker_deletes_profile() {
+	set_sessions 'alpha|$1|10' 'beta|$2|20'
+	write_pins '@profile	default' 'default	alpha	$1' '@profile	code' 'code	beta	$2'
+	cat > "$TMP/bin/fzf" <<'EOF'
+#!/bin/sh
+cat > "$TMUX_SMOKE_FZF_INPUT"
+printf 'del \ndel code\n'
+EOF
+	chmod +x "$TMP/bin/fzf"
+
+	run_script profile pick
+
+	assert_file_contains "$TMUX_SMOKE_FZF_INPUT" "del code"
+	assert_pins "$(printf '@profile\tdefault\ndefault\talpha\t$1')"
+	[ "$(run_script current-profile '$2')" = "default" ]
+	rm -f "$TMP/bin/fzf"
+	pass "profile picker keeps delete suggestions and deletes selected profile"
 }
 
 test_pin_picker_assigns_and_unpins() {
@@ -583,7 +616,7 @@ EOF
 	assert_file_contains "$TMUX_SMOKE_FZF_INPUT" "code"
 	assert_file_contains "$TMUX_SMOKE_FZF_INPUT" "unpin"
 	assert_pins "$(printf '@profile\tdefault\n@profile\tcode\ncode\talpha\t$1')"
-	assert_file_contains "$TMUX_SMOKE_PROFILE_FILE" '$1 code'
+	[ "$(run_script current-profile '$1')" = "code" ]
 
 	cat > "$TMP/bin/fzf" <<'EOF'
 #!/bin/sh
@@ -611,15 +644,20 @@ test_cycle_uses_canonical_ids() {
 }
 
 test_cycle_uses_selected_profile() {
-	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30'
-	write_pins 'coding	alpha	$1' 'coding	beta	$2' 'operations	gamma	$3'
+	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30' 'delta|$4|40'
+	write_pins 'coding	alpha	$1' 'coding	beta	$2' 'operations	gamma	$3' 'operations	delta	$4'
 	export TMUX_SMOKE_CURRENT_ID='$1'
+	export TMUX_SMOKE_CURRENT_NAME="alpha"
 	: > "$TMUX_SMOKE_SWITCH_FILE"
 
 	run_script profile select operations '$1'
+	assert_file_contains "$TMUX_SMOKE_SWITCH_FILE" '$3'
+	export TMUX_SMOKE_CURRENT_ID='$3'
+	export TMUX_SMOKE_CURRENT_NAME="gamma"
+	: > "$TMUX_SMOKE_SWITCH_FILE"
 	run_script cycle next
 
-	assert_file_contains "$TMUX_SMOKE_SWITCH_FILE" '$3'
+	assert_file_contains "$TMUX_SMOKE_SWITCH_FILE" '$4'
 	pass "cycle uses selected profile"
 }
 
@@ -635,25 +673,46 @@ test_jump_uses_pin_slot() {
 }
 
 test_jump_uses_selected_profile() {
-	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30'
-	write_pins 'coding	alpha	$1' 'coding	beta	$2' 'operations	gamma	$3'
+	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30' 'delta|$4|40'
+	write_pins 'coding	alpha	$1' 'coding	beta	$2' 'operations	gamma	$3' 'operations	delta	$4'
 	export TMUX_SMOKE_CURRENT_ID='$1'
+	export TMUX_SMOKE_CURRENT_NAME="alpha"
 	: > "$TMUX_SMOKE_SWITCH_FILE"
 
 	run_script profile select operations '$1'
-	run_script jump 1
-
 	assert_file_contains "$TMUX_SMOKE_SWITCH_FILE" '$3'
-	assert_file_contains "$TMUX_SMOKE_PROFILE_FILE" '$3 operations'
+	export TMUX_SMOKE_CURRENT_ID='$3'
+	export TMUX_SMOKE_CURRENT_NAME="gamma"
+	: > "$TMUX_SMOKE_SWITCH_FILE"
+	run_script jump 2
+
+	assert_file_contains "$TMUX_SMOKE_SWITCH_FILE" '$4'
 	pass "jump uses selected profile"
+}
+
+test_manual_session_switch_updates_profile_and_cycle_scope() {
+	set_sessions 'alpha|$1|10' 'beta|$2|20' 'gamma|$3|30' 'delta|$4|40'
+	write_pins 'default	alpha	$1' 'default	beta	$2' 'code	gamma	$3' 'code	delta	$4'
+	export TMUX_SMOKE_CURRENT_ID='$3'
+	export TMUX_SMOKE_CURRENT_NAME="gamma"
+	: > "$TMUX_SMOKE_SWITCH_FILE"
+
+	sh "$ROOT/bin/tmux-session-sidebar/sidebar" </dev/null > "$TMP/sidebar-profile-switch.out"
+
+	assert_file_contains "$TMP/sidebar-profile-switch.out" "pinned:code"
+	assert_file_contains "$TMP/sidebar-profile-switch.out" "gamma"
+	assert_file_contains "$TMP/sidebar-profile-switch.out" "delta"
+	assert_file_not_contains "$TMP/sidebar-profile-switch.out" "alpha"
+	run_script cycle next
+	assert_file_contains "$TMUX_SMOKE_SWITCH_FILE" '$4'
+	pass "manual session switch updates sidebar and movement profile"
 }
 
 test_clear_only_selected_profile() {
 	set_sessions 'alpha|$1|10' 'beta|$2|20'
-	write_pins 'coding	alpha	$1' 'operations	beta	$2'
+	write_pins 'operations	beta	$2' '@profile	coding' 'coding	alpha	$1'
 	export TMUX_SMOKE_CURRENT_ID='$1'
 
-	run_script profile select coding '$1'
 	run_script clear
 
 	assert_pins "$(printf 'operations\tbeta\t$2\n@profile\tcoding')"
@@ -833,12 +892,15 @@ test_sync_preserves_empty_profiles
 test_toggle_pins_and_unpins
 test_toggle_moves_session_between_profiles
 test_profile_views_are_per_session
+test_profile_selection_switches_to_member
 test_profile_picker_accepts_new_name
+test_profile_picker_deletes_profile
 test_pin_picker_assigns_and_unpins
 test_cycle_uses_canonical_ids
 test_cycle_uses_selected_profile
 test_jump_uses_pin_slot
 test_jump_uses_selected_profile
+test_manual_session_switch_updates_profile_and_cycle_scope
 test_clear_only_selected_profile
 test_replace_last_active_updates_slot
 test_prune_delegates_to_sync

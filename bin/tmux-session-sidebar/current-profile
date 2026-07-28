@@ -4,22 +4,11 @@ TAB="$(printf '\t')"
 target="${1:-}"
 
 if [ -n "$target" ]; then
-	profile="$(tmux show-options -qv -t "$target" '@pin_sidebar_profile' 2>/dev/null || :)"
 	id="$(tmux display-message -p -t "$target" '#{session_id}' 2>/dev/null || :)"
 	name="$(tmux display-message -p -t "$target" '#S' 2>/dev/null || :)"
 else
-	profile="$(tmux show-options -qv '@pin_sidebar_profile' 2>/dev/null || :)"
 	id="$(tmux display-message -p '#{session_id}' 2>/dev/null || :)"
 	name="$(tmux display-message -p '#S' 2>/dev/null || :)"
-fi
-
-case "$profile" in
-	''|*[!A-Za-z0-9._-]*) profile="" ;;
-esac
-
-if [ -n "$profile" ]; then
-	printf '%s\n' "$profile"
-	exit 0
 fi
 
 if [ -s "$PIN_FILE" ]; then

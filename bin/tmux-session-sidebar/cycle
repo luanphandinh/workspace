@@ -39,7 +39,6 @@ target="$(printf '%s\n' "$ordered" | awk -v cur="$cur" -v dir="$DIR" '
 ')"
 
 if [ -n "$target" ] && [ "$target" != "$cur" ]; then
-	tmux set-option -q -t "$target" '@pin_sidebar_profile' "$profile"
 	tmux switch-client -t "$target"
 elif [ -n "$target" ]; then
 	tmux display-message "only one pinned session alive"

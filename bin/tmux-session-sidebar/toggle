@@ -53,7 +53,6 @@ existing_profile="$(awk -F "$TAB" -v id="$id" -v name="$name" '
 
 if [ "$action" = "pin" ] && [ "$existing_profile" = "$profile" ]; then
 	ensure_profile "$profile"
-	tmux set-option -q -t "$id" '@pin_sidebar_profile' "$profile"
 	tmux display-message "already pinned to $profile: $name"
 elif [ "$action" = "unpin" ] && [ -z "$existing_profile" ]; then
 	tmux display-message "not pinned: $name"
@@ -73,7 +72,6 @@ else
 
 	ensure_profile "$profile"
 	printf '%s\t%s\t%s\n' "$profile" "$name" "$id" >> "$PIN_FILE"
-	tmux set-option -q -t "$id" '@pin_sidebar_profile' "$profile"
 	if [ -n "$existing_profile" ]; then
 		tmux display-message "moved $name: $existing_profile -> $profile"
 	else

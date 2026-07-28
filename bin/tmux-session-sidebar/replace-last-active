@@ -75,6 +75,5 @@ awk -F "$TAB" -v OFS="$TAB" \
 ' "$PIN_FILE" > "$tmp"
 mv "$tmp" "$PIN_FILE"
 
-tmux set-option -q -t "$current_id" '@pin_sidebar_profile' "$profile"
 tmux display-message "$profile: ${last_name:-$last_id} -> $current_name"
 "$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :
