@@ -1225,11 +1225,23 @@ local function test_lsp_recursive_incoming_call_graph(repo)
     return groups
   end
 
+  local function graph_line_highlight_groups(bufnr, line)
+    local groups = {}
+    for _, extmark in ipairs(vim.api.nvim_buf_get_extmarks(bufnr, -1, 0, -1, { details = true })) do
+      local group = extmark[4].hl_group
+      if extmark[2] == line - 1 and group then
+        groups[group] = true
+      end
+    end
+    return groups
+  end
+
   local initial_highlights = graph_highlight_groups(0)
+  assert_true(initial_highlights.IncomingCallGraphConnector, "call graph should highlight tree connectors")
   assert_true(initial_highlights.Function, "call graph should highlight function names")
-  assert_true(initial_highlights.Directory, "call graph should highlight source paths")
+  assert_true(initial_highlights.IncomingCallGraphPath, "call graph should highlight source paths")
   assert_true(initial_highlights.Number, "call graph should highlight source line numbers")
-  assert_true(initial_highlights.Special, "call graph should highlight the focused marker")
+  assert_true(initial_highlights.Special, "call graph should highlight top-level callers")
   assert_true(not text:find("TestTargetValue", 1, true), "call graph should exclude Go test functions")
   assert_true(not text:find("main_test.go", 1, true), "call graph should exclude Go test files")
   assert_true(not text:find("`--", 1, true), "call graph should use Unicode tree connectors")
@@ -1262,9 +1274,22 @@ local function test_lsp_recursive_incoming_call_graph(repo)
   assert_true(target_count == 4, "each call graph root should render its complete path to the selected function")
   assert_true(secondary_root_line ~= nil, "call graph should include the second top-level caller")
   assert_true(
+    graph_line_highlight_groups(0, recursive_caller_line).Special,
+    "first top-level caller should use the root highlight"
+  )
+  assert_true(
+    graph_line_highlight_groups(0, secondary_root_line).Special,
+    "second top-level caller should use the root highlight"
+  )
+  assert_true(
+    graph_line_highlight_groups(0, direct_caller_line).Function,
+    "nested callers should retain function highlighting"
+  )
+  assert_true(
     ordered_root_line < later_branch_line and later_branch_line < earlier_branch_line,
     "immediate child callers should follow their source call order"
   )
+  assert_true(not text:find("[focused]", 1, true), "call graph should not render focused suffixes")
   assert_true(not text:find("[shared]", 1, true), "call graph should not truncate repeated paths")
   assert_true(vim.wo[0].foldmethod == "expr", "call graph should use hierarchy folds")
   vim.api.nvim_win_set_cursor(0, { recursive_caller_line, 0 })
@@ -1378,10 +1403,14 @@ local function test_lsp_recursive_incoming_call_graph(repo)
     return graph_text:find("orderedRoot", 1, true) and not graph_text:find("Loading incoming calls", 1, true)
   end, 10000)
   local second_highlights = graph_highlight_groups(0)
+  assert_true(
+    second_highlights.IncomingCallGraphConnector,
+    "second call graph should retain tree-connector highlighting"
+  )
   assert_true(second_highlights.Function, "second call graph should retain function highlighting")
-  assert_true(second_highlights.Directory, "second call graph should retain path highlighting")
+  assert_true(second_highlights.IncomingCallGraphPath, "second call graph should retain path highlighting")
   assert_true(second_highlights.Number, "second call graph should retain line-number highlighting")
-  assert_true(second_highlights.Special, "second call graph should retain focused-marker highlighting")
+  assert_true(second_highlights.Special, "second call graph should retain top-level caller highlighting")
   invoke_map("q")
 
   local test_buf = open_go_file(test_file)
