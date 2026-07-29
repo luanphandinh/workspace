@@ -25,6 +25,59 @@ tmux_format() {
 	fi
 }
 
+client_for_pane() {
+	tmux_cmd="$1"
+	pane="$2"
+	target_session="$(tmux_format "$tmux_cmd" "$pane" '#{session_id}')"
+	[ -n "$target_session" ] || return 1
+
+	tab="$(printf '\t')"
+	pin_file="${HOME}/.config/tmux/pinned-sessions"
+	[ -f "$pin_file" ] || pin_file="/dev/null"
+	"$tmux_cmd" list-clients -F '#{client_activity}	#{client_name}	#{client_pid}	#{session_id}' 2>/dev/null |
+		awk -F "$tab" -v target="$target_session" '
+			FILENAME != "-" {
+				if ($1 != "@profile" && NF >= 3) profile_by_session[$3] = $1
+				next
+			}
+			NF >= 4 {
+				priority = 0
+				if ($4 == target) {
+					priority = 2
+				} else if (profile_by_session[target] != "" && profile_by_session[$4] == profile_by_session[target]) {
+					priority = 1
+				}
+				if (priority > best_priority || (priority == best_priority && priority > 0 && $1 >= latest)) {
+					best_priority = priority
+					latest = $1
+					client = $2
+					pid = $3
+				}
+			}
+			END {
+				if (best_priority > 0) print client "\t" pid
+			}
+		' "$pin_file" -
+}
+
+process_env_value() {
+	pid="$1"
+	name="$2"
+	if [ -r "/proc/$pid/environ" ]; then
+		tr '\0' '\n' <"/proc/$pid/environ"
+	elif command -v ps >/dev/null 2>&1; then
+		ps eww -p "$pid" -o command= 2>/dev/null | tr ' ' '\n'
+	else
+		return 1
+	fi |
+		awk -v prefix="$name=" '
+			index($0, prefix) == 1 { value = substr($0, length(prefix) + 1) }
+			END {
+				if (value != "") print value
+			}
+		'
+}
+
 pane_for_cwd() {
 	tmux_cmd="$1"
 	cwd="$2"
@@ -91,8 +144,29 @@ resolve_tmux_pane() {
 	esac
 }
 
+focus_kitty_window() {
+	window_id="$1"
+	listen_on="$2"
+	[ -n "$window_id" ] && [ -n "$listen_on" ] || return 1
+	case "$activate_app" in
+		kitty | Kitty | kitty.app | Kitty.app | */kitty | */kitty.app) ;;
+		*) return 1 ;;
+	esac
+
+	if command -v kitten >/dev/null 2>&1; then
+		kitten @ --to "$listen_on" focus-window --match "id:$window_id" >/dev/null 2>&1
+	elif command -v kitty >/dev/null 2>&1; then
+		kitty @ --to "$listen_on" focus-window --match "id:$window_id" >/dev/null 2>&1
+	else
+		return 1
+	fi
+}
+
 jump_to_tmux_pane() {
 	pane="${1:-}"
+	requested_client="${2:-}"
+	kitty_window_id="${3:-}"
+	kitty_listen_on="${4:-}"
 	[ -n "$pane" ] || exit 0
 	tmux_cmd="$(get_tmux_cmd || :)"
 	[ -n "$tmux_cmd" ] || exit 0
@@ -109,13 +183,25 @@ jump_to_tmux_pane() {
 	"$tmux_cmd" display-message -t "$target_pane" "$notify_title notification focused #{session_name}:#{window_index}.#{pane_index}" >/dev/null 2>&1 || :
 
 	tab="$(printf '\t')"
-	target_client="$("$tmux_cmd" list-clients -F '#{client_activity}	#{client_name}' 2>/dev/null |
-		awk -F "$tab" 'NF >= 2 && $1 >= max { max = $1; client = $2 } END { print client }')"
+	target_client=""
+	if [ -n "$requested_client" ]; then
+		target_client="$("$tmux_cmd" list-clients -F '#{client_name}' 2>/dev/null |
+			awk -v requested="$requested_client" '$0 == requested { print; exit }')"
+	fi
+	if [ -z "$target_client" ]; then
+		target_client="$(client_for_pane "$tmux_cmd" "$target_pane" | awk -F "$tab" 'NR == 1 { print $1 }')"
+	fi
+	if [ -z "$target_client" ]; then
+		target_client="$("$tmux_cmd" list-clients -F '#{client_activity}	#{client_name}' 2>/dev/null |
+			awk -F "$tab" 'NF >= 2 && (!found || $1 >= latest) { latest = $1; client = $2; found = 1 } END { print client }')"
+	fi
 	if [ -n "$target_client" ]; then
 		"$tmux_cmd" switch-client -c "$target_client" -t "$target_pane" >/dev/null 2>&1 || :
 	fi
 
-	if [ -n "$activate_app" ] && command -v open >/dev/null 2>&1; then
+	if focus_kitty_window "$kitty_window_id" "$kitty_listen_on"; then
+		:
+	elif [ -n "$activate_app" ] && command -v open >/dev/null 2>&1; then
 		open -a "$activate_app" >/dev/null 2>&1 || :
 	elif [ -n "$activate_app" ] && command -v osascript >/dev/null 2>&1; then
 		osascript \
@@ -141,7 +227,31 @@ notification_group() {
 }
 
 if [ "${1:-}" = "--jump-tmux" ]; then
-	jump_to_tmux_pane "${2:-}"
+	jump_pane="${2:-}"
+	jump_client=""
+	jump_kitty_window=""
+	jump_kitty_listen_on=""
+	shift 2
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+			--tmux-client)
+				jump_client="${2:-}"
+				shift 2
+				;;
+			--kitty-window)
+				jump_kitty_window="${2:-}"
+				shift 2
+				;;
+			--kitty-listen-on)
+				jump_kitty_listen_on="${2:-}"
+				shift 2
+				;;
+			*)
+				shift
+				;;
+		esac
+	done
+	jump_to_tmux_pane "$jump_pane" "$jump_client" "$jump_kitty_window" "$jump_kitty_listen_on"
 	exit 0
 fi
 
@@ -171,6 +281,23 @@ if command -v terminal-notifier >/dev/null 2>&1; then
 	if [ -n "$notify_pane" ]; then
 		tmux_target="$(tmux_format "$tmux_cmd" "$notify_pane" '#{session_name}:#{window_index}.#{pane_index}')"
 		click_cmd="$(shell_quote "$script_path") --jump-tmux $(shell_quote "$notify_pane")"
+		tab="$(printf '\t')"
+		notify_client_info="$(client_for_pane "$tmux_cmd" "$notify_pane" || :)"
+		notify_client="$(printf '%s\n' "$notify_client_info" | awk -F "$tab" 'NR == 1 { print $1 }')"
+		notify_client_pid="$(printf '%s\n' "$notify_client_info" | awk -F "$tab" 'NR == 1 { print $2 }')"
+		if [ -n "$notify_client" ]; then
+			click_cmd="$click_cmd --tmux-client $(shell_quote "$notify_client")"
+		fi
+		if [ -n "$notify_client_pid" ]; then
+			kitty_window_id="$(process_env_value "$notify_client_pid" KITTY_WINDOW_ID || :)"
+			kitty_listen_on="$(process_env_value "$notify_client_pid" KITTY_LISTEN_ON || :)"
+			if [ -n "$kitty_window_id" ]; then
+				click_cmd="$click_cmd --kitty-window $(shell_quote "$kitty_window_id")"
+			fi
+			if [ -n "$kitty_listen_on" ]; then
+				click_cmd="$click_cmd --kitty-listen-on $(shell_quote "$kitty_listen_on")"
+			fi
+		fi
 		if [ -n "$tmux_cmd" ]; then
 			click_cmd="TMUX_BIN=$(shell_quote "$tmux_cmd") $click_cmd"
 		fi

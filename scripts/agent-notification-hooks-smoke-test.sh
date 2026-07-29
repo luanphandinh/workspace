@@ -76,6 +76,7 @@ if [ "$1" = "display-message" ] && [ "${2:-}" = "-p" ]; then
 				'#{session_name}:#{window_index}.#{pane_index}') printf '%s\n' ':.' ;;
 				'#{session_name}:#{window_index}') printf '%s\n' ':' ;;
 				'#{session_name}') printf '%s\n' '' ;;
+				'#{session_id}') printf '%s\n' '' ;;
 				'#{pane_id}') printf '%s\n' '' ;;
 				'#{pane_tty}') printf '%s\n' '' ;;
 				*) printf '%s\n' '' ;;
@@ -86,6 +87,7 @@ if [ "$1" = "display-message" ] && [ "${2:-}" = "-p" ]; then
 				'#{session_name}:#{window_index}.#{pane_index}') printf '%s\n' 'project:4.2' ;;
 				'#{session_name}:#{window_index}') printf '%s\n' 'project:4' ;;
 				'#{session_name}') printf '%s\n' 'project' ;;
+				'#{session_id}') printf '%s\n' '$2' ;;
 				'#{pane_id}') printf '%s\n' '%cwd' ;;
 				'#{pane_tty}') printf '%s\n' '' ;;
 				*) printf '%s\n' '' ;;
@@ -96,6 +98,7 @@ if [ "$1" = "display-message" ] && [ "${2:-}" = "-p" ]; then
 				'#{session_name}:#{window_index}.#{pane_index}') printf '%s\n' 'workspace:3.2' ;;
 				'#{session_name}:#{window_index}') printf '%s\n' 'workspace:3' ;;
 				'#{session_name}') printf '%s\n' 'workspace' ;;
+				'#{session_id}') printf '%s\n' '$1' ;;
 				'#{pane_id}') printf '%s\n' '%current' ;;
 				'#{pane_tty}') printf '%s\n' '' ;;
 				*) printf '%s\n' '' ;;
@@ -112,24 +115,59 @@ if [ "$1" = "list-panes" ]; then
 fi
 
 if [ "$1" = "list-clients" ]; then
-	printf '100\tclient-old\n'
-	printf '200\tclient-new\n'
+	case "${3:-}" in
+		'#{client_name}')
+			printf 'client-target\n'
+			printf 'client-cwd\n'
+			printf 'client-newest\n'
+			;;
+		*)
+			printf '100\tclient-target\t111\t$3\n'
+			printf '150\tclient-cwd\t333\t$2\n'
+			printf '200\tclient-newest\t222\t$9\n'
+			;;
+	esac
 	exit 0
 fi
 
 exit 0
 SH
 chmod +x "$TMP/fakebin/tmux"
+
+cat >"$TMP/fakebin/ps" <<'SH'
+#!/bin/sh
+case "$*" in
+	*" 111 "*) printf 'tmux KITTY_WINDOW_ID=41 KITTY_LISTEN_ON=unix:/tmp/kitty-test\n' ;;
+	*" 333 "*) printf 'tmux KITTY_WINDOW_ID=43 KITTY_LISTEN_ON=unix:/tmp/kitty-test\n' ;;
+	*) printf 'tmux\n' ;;
+esac
+SH
+chmod +x "$TMP/fakebin/ps"
+
+cat >"$TMP/fakebin/kitten" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >> "$KITTEN_FAKE_LOG"
+SH
+chmod +x "$TMP/fakebin/kitten"
+
+mkdir -p "$TMP/home/.config/tmux"
+printf 'code\ttarget\t$1\ncode\tsibling\t$3\ndefault\tother\t$9\n' >"$TMP/home/.config/tmux/pinned-sessions"
+
 : > "$TMP/terminal-notifier.log"
 : > "$TMP/tmux.log"
+: > "$TMP/kitten.log"
 TERMINAL_NOTIFIER_LOG="$TMP/terminal-notifier.log" \
 	TMUX_FAKE_LOG="$TMP/tmux.log" \
+	KITTEN_FAKE_LOG="$TMP/kitten.log" \
 	PATH="$TMP/fakebin:$PATH" \
 	HOME="$TMP/home" \
 	TMUX="/tmp/tmux-test/default,1,0" \
 	TMUX_PANE="%stale" \
 	sh "$ROOT/bin/codex-turn-ended-notify" '{"type":"agent-turn-complete"}'
 grep -q -- "--jump-tmux '%current'" "$TMP/terminal-notifier.log"
+grep -q -- "--tmux-client 'client-target'" "$TMP/terminal-notifier.log"
+grep -q -- "--kitty-window '41'" "$TMP/terminal-notifier.log"
+grep -q -- "--kitty-listen-on 'unix:/tmp/kitty-test'" "$TMP/terminal-notifier.log"
 grep -q -- '-subtitle tmux workspace:3.2' "$TMP/terminal-notifier.log"
 grep -q -- '-group agent-notify-Codex-_current' "$TMP/terminal-notifier.log"
 if grep -q -- "--jump-tmux '%stale'" "$TMP/terminal-notifier.log"; then
@@ -144,6 +182,7 @@ project_cwd="$(CDPATH= cd "$TMP/project" && pwd -P)"
 cd "$TMP/project"
 TERMINAL_NOTIFIER_LOG="$TMP/terminal-notifier.log" \
 	TMUX_FAKE_LOG="$TMP/tmux.log" \
+	KITTEN_FAKE_LOG="$TMP/kitten.log" \
 	TMUX_FAKE_CWD="$project_cwd" \
 	PATH="$TMP/fakebin:$PATH" \
 	HOME="$TMP/home" \
@@ -152,6 +191,8 @@ TERMINAL_NOTIFIER_LOG="$TMP/terminal-notifier.log" \
 	sh "$ROOT/bin/codex-turn-ended-notify" '{"type":"agent-turn-complete"}'
 cd "$ROOT"
 grep -q -- "--jump-tmux '%cwd'" "$TMP/terminal-notifier.log"
+grep -q -- "--tmux-client 'client-cwd'" "$TMP/terminal-notifier.log"
+grep -q -- "--kitty-window '43'" "$TMP/terminal-notifier.log"
 grep -q -- '-subtitle tmux project:4.2' "$TMP/terminal-notifier.log"
 if grep -q -- "--jump-tmux '%current'" "$TMP/terminal-notifier.log"; then
 	printf 'expected cwd-matched pane to override inherited TMUX_PANE\n' >&2
@@ -160,11 +201,20 @@ fi
 
 : > "$TMP/tmux.log"
 TMUX_FAKE_LOG="$TMP/tmux.log" \
+	KITTEN_FAKE_LOG="$TMP/kitten.log" \
 	PATH="$TMP/fakebin:$PATH" \
 	HOME="$TMP/home" \
-	AGENT_NOTIFY_ACTIVATE_APP="" \
-	sh "$ROOT/bin/codex-turn-ended-notify" --jump-tmux "%current"
-grep -q -- 'switch-client -c client-new -t %current' "$TMP/tmux.log"
+	AGENT_NOTIFY_ACTIVATE_APP="kitty" \
+	sh "$ROOT/bin/codex-turn-ended-notify" --jump-tmux "%current" \
+		--tmux-client "client-target" \
+		--kitty-window "41" \
+		--kitty-listen-on "unix:/tmp/kitty-test"
+grep -q -- 'switch-client -c client-target -t %current' "$TMP/tmux.log"
+if grep -q -- 'switch-client -c client-newest -t %current' "$TMP/tmux.log"; then
+	printf 'notification click switched the globally newest tmux client\n' >&2
+	exit 1
+fi
+grep -q -- '@ --to unix:/tmp/kitty-test focus-window --match id:41' "$TMP/kitten.log"
 
 cat >"$TMP/home/.codex/config.toml" <<TOML
 model = "example-model"
