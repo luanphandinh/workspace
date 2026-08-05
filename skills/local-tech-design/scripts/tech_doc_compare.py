@@ -2,8 +2,8 @@
 """Compare a local tech doc with remote markdown content.
 
 This helper is intentionally read-only. It builds a heading-aware section index
-for local and remote markdown, then reports the deepest changed sections so an
-agent can prepare targeted exact-text updates instead of whole-document writes.
+for local and remote markdown, then separates normal changes, remote-owned
+sections, and confirmation-required sections for targeted remote updates.
 """
 
 from __future__ import annotations
@@ -48,6 +48,8 @@ BLOCK_TAGS = (
 )
 MERMAID_BLOCK_TOKEN = "MERMAID_BLOCK"
 OPAQUE_REMOTE_BLOCK_TOKEN = "OPAQUE_REMOTE_BLOCK"
+IGNORED_REMOTE_SECTIONS = {"links"}
+CONFIRMATION_REMOTE_SECTIONS = {"releasechecklist"}
 
 
 @dataclass(frozen=True)
@@ -376,6 +378,21 @@ def deepest(keys: Iterable[str]) -> list[str]:
     return result
 
 
+def root_section_name(key: str) -> str:
+    title = key.split(" > ", 1)[0]
+    title = re.sub(r"^\d+(?:\.\d+)*\.?\s*", "", title)
+    return re.sub(r"[^a-z0-9]+", "", title.casefold())
+
+
+def section_sync_policy(key: str) -> str:
+    root = root_section_name(key)
+    if root in IGNORED_REMOTE_SECTIONS:
+        return "remote_source_of_truth"
+    if root in CONFIRMATION_REMOTE_SECTIONS:
+        return "requires_confirmation"
+    return "sync"
+
+
 def build_plan(local_text: str, remote_text: str) -> dict[str, Any]:
     local = parse_sections(local_text)
     remote = parse_sections(remote_text)
@@ -398,6 +415,8 @@ def build_plan(local_text: str, remote_text: str) -> dict[str, Any]:
                 "remote_sections": len(remote),
                 "changed_sections": 0,
                 "diagram_sections": 0,
+                "confirmation_sections": 0,
+                "ignored_sections": 0,
                 "new_sections": 0,
                 "remote_only_sections": len(remote),
                 "unsafe": True,
@@ -409,15 +428,33 @@ def build_plan(local_text: str, remote_text: str) -> dict[str, Any]:
                 ),
             },
             "changed_sections": [],
+            "diagram_sections": [],
+            "confirmation_sections": [],
+            "ignored_sections": [],
             "new_sections": [],
             "remote_only_sections": [
                 section_record(key, None, remote[key]) for key in sorted(remote_keys)
             ],
         }
 
-    changed = [
+    differing = {
         key
         for key in common
+        if local[key].content_hash != remote[key].content_hash
+    } | (local_keys ^ remote_keys)
+    ignored = deepest(
+        key for key in differing if section_sync_policy(key) == "remote_source_of_truth"
+    )
+    confirmation_required = deepest(
+        key for key in differing if section_sync_policy(key) == "requires_confirmation"
+    )
+    sync_local_keys = {key for key in local_keys if section_sync_policy(key) == "sync"}
+    sync_remote_keys = {key for key in remote_keys if section_sync_policy(key) == "sync"}
+    sync_common = sync_local_keys & sync_remote_keys
+
+    changed = [
+        key
+        for key in sync_common
         if local[key].content_hash != remote[key].content_hash
     ]
     diagram_changed = [
@@ -426,8 +463,8 @@ def build_plan(local_text: str, remote_text: str) -> dict[str, Any]:
         if section_has_diagram(local[key]) or section_has_diagram(remote[key])
     ]
     text_changed = [key for key in changed if key not in set(diagram_changed)]
-    new_sections = sorted(local_keys - remote_keys)
-    remote_only = sorted(remote_keys - local_keys)
+    new_sections = sorted(sync_local_keys - sync_remote_keys)
+    remote_only = sorted(sync_remote_keys - sync_local_keys)
     changed_deepest = deepest(text_changed)
     diagram_changed_deepest = deepest(diagram_changed)
 
@@ -437,6 +474,8 @@ def build_plan(local_text: str, remote_text: str) -> dict[str, Any]:
             "remote_sections": len(remote),
             "changed_sections": len(changed_deepest),
             "diagram_sections": len(diagram_changed_deepest),
+            "confirmation_sections": len(confirmation_required),
+            "ignored_sections": len(ignored),
             "new_sections": len(new_sections),
             "remote_only_sections": len(remote_only),
             "unsafe": False,
@@ -449,6 +488,24 @@ def build_plan(local_text: str, remote_text: str) -> dict[str, Any]:
         "diagram_sections": [
             section_record(key, local[key], remote[key], diagram=True)
             for key in diagram_changed_deepest
+        ],
+        "confirmation_sections": [
+            section_record(
+                key,
+                local.get(key),
+                remote.get(key),
+                requires_confirmation=True,
+            )
+            for key in confirmation_required
+        ],
+        "ignored_sections": [
+            section_record(
+                key,
+                local.get(key),
+                remote.get(key),
+                ignored=True,
+            )
+            for key in ignored
         ],
         "new_sections": [section_record(key, local[key], None) for key in new_sections],
         "remote_only_sections": [
@@ -471,7 +528,12 @@ def section_has_diagram(section: Section) -> bool:
 
 
 def section_record(
-    key: str, local: Section | None, remote: Section | None, diagram: bool = False
+    key: str,
+    local: Section | None,
+    remote: Section | None,
+    diagram: bool = False,
+    requires_confirmation: bool = False,
+    ignored: bool = False,
 ) -> dict[str, Any]:
     record: dict[str, Any] = {"key": key}
     if local:
@@ -490,13 +552,20 @@ def section_record(
             "end_line": remote.end_line,
             "hash": remote.content_hash,
         }
-    if local and remote and not diagram:
+    if local and remote and not diagram and not requires_confirmation and not ignored:
         record["exact_text_replace_candidate"] = True
         record["replacement_strategy"] = "exact_text"
     if diagram:
         record["diagram_replace_candidate"] = True
         record["replacement_strategy"] = "replace_remote_diagram"
         record["requires_confirmation"] = True
+    if requires_confirmation:
+        record["replacement_strategy"] = "confirmation_required"
+        record["requires_confirmation"] = True
+    if ignored:
+        record["replacement_strategy"] = "preserve_remote"
+        record["ignored"] = True
+        record["source_of_truth"] = "remote"
     return record
 
 
@@ -532,6 +601,8 @@ def print_plan(plan: dict[str, Any], as_json: bool) -> None:
         f"remote={summary['remote_sections']} "
         f"changed={summary['changed_sections']} "
         f"diagrams={summary.get('diagram_sections', 0)} "
+        f"confirmation={summary.get('confirmation_sections', 0)} "
+        f"ignored={summary.get('ignored_sections', 0)} "
         f"new={summary['new_sections']} "
         f"remote_only={summary['remote_only_sections']}"
     )
@@ -541,6 +612,8 @@ def print_plan(plan: dict[str, Any], as_json: bool) -> None:
     for label in (
         "changed_sections",
         "diagram_sections",
+        "confirmation_sections",
+        "ignored_sections",
         "new_sections",
         "remote_only_sections",
     ):
