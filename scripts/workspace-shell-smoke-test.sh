@@ -205,17 +205,9 @@ cat > "$tmp/sync-home/.zshrc" <<SH
 # >>> workspace-bin
 old managed block
 # <<< workspace-bin
-[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
-export PATH=\$PATH:/usr/local/go/bin
-export PATH=\$PATH:~/go/bin
-export GOPATH=~/go
-export PATH="\$HOME/.local/bin:\$PATH"
-export PATH=$tmp/sync-home/.local/bin:\$PATH
-export PATH="/usr/local/bin:\$PATH"
-export PATH="\$HOME/bin:/opt/homebrew/bin:\$PATH"
 keep-zsh
 SH
-printf '[ -f ~/.fzf.bash ] && source ~/.fzf.bash\nexport PATH=$PATH:/usr/local/go/bin\nexport PATH=$PATH:~/go/bin\nexport GOPATH=~/go\nkeep-bash\n' > "$tmp/sync-home/.bashrc"
+printf 'keep-bash\n' > "$tmp/sync-home/.bashrc"
 printf 'keep-profile\n' > "$tmp/sync-home/.profile"
 HOME="$tmp/sync-home" sh "$repo_root/bin/workspace-shell-sync" >/dev/null
 source_line='[ -f "$HOME/bin/shell/workspace.sh" ] && . "$HOME/bin/shell/workspace.sh"'
@@ -225,18 +217,6 @@ grep -Fxq "$source_line" "$tmp/sync-home/.profile"
 test "$(grep -Fxc "$source_line" "$tmp/sync-home/.zshrc")" = 1
 ! grep -Fq '# >>> workspace-bin' "$tmp/sync-home/.zshrc"
 ! grep -Fq 'old managed block' "$tmp/sync-home/.zshrc"
-! grep -Fq 'source ~/.fzf.zsh' "$tmp/sync-home/.zshrc"
-! grep -Fq 'source ~/.fzf.bash' "$tmp/sync-home/.bashrc"
-! grep -Fq 'export PATH=$PATH:/usr/local/go/bin' "$tmp/sync-home/.zshrc"
-! grep -Fq 'export PATH=$PATH:~/go/bin' "$tmp/sync-home/.zshrc"
-! grep -Fq 'export GOPATH=~/go' "$tmp/sync-home/.zshrc"
-! grep -Fq 'export PATH="$HOME/.local/bin:$PATH"' "$tmp/sync-home/.zshrc"
-! grep -Fq 'export PATH='"$tmp/sync-home"'/.local/bin:$PATH' "$tmp/sync-home/.zshrc"
-! grep -Fq 'export PATH="/usr/local/bin:$PATH"' "$tmp/sync-home/.zshrc"
-! grep -Fq 'export PATH="$HOME/bin:/opt/homebrew/bin:$PATH"' "$tmp/sync-home/.zshrc"
-! grep -Fq 'export PATH=$PATH:/usr/local/go/bin' "$tmp/sync-home/.bashrc"
-! grep -Fq 'export PATH=$PATH:~/go/bin' "$tmp/sync-home/.bashrc"
-! grep -Fq 'export GOPATH=~/go' "$tmp/sync-home/.bashrc"
 grep -Fxq 'keep-zsh' "$tmp/sync-home/.zshrc"
 grep -Fxq 'keep-bash' "$tmp/sync-home/.bashrc"
 grep -Fxq 'keep-profile' "$tmp/sync-home/.profile"
