@@ -23,12 +23,12 @@ Every tech design lives inside a **multi-repo git-worktree workspace** built by 
 - The microservice mapping file (`<tech_doc_name>_mapping.md`) and any implementation plans (e.g. plan files produced by `superpowers:writing-plans`) ALSO live under `<root>/local_workspaces/<workspace-name>/tech_doc/`. Keeping the doc, the mapping, and the plans co-located means future sessions can pick up the full context by looking inside the workspace folder.
 ## Format of the tech design
 - Do NOT PUT ANY empty line in between lines, just new line is enough, no empty line
-- **Exception — Markdown tables MUST be followed by one blank line.** After every Markdown table in the tech design, insert exactly one empty line before the next heading, bullet list, paragraph, code block, diagram, or another table. This applies to ALL tables in the tech design (§3 Decisions, §5/§6 field tables, §7 Effort, §8 Release Checklist, mapping-style tables if ever included, and any ad-hoc comparison table). This rule overrides the "no empty line" rule because without the blank line, the next line can be parsed as part of the table.
+- **Exception — Markdown tables MUST be followed by one blank line.** After every Markdown table in the tech design, insert exactly one empty line before the next heading, bullet list, paragraph, code block, diagram, or another table. This applies to ALL tables in the tech design (§4 Decisions, §5/§6 field tables, §7 Effort, §8 Release Checklist, mapping-style tables if ever included, and any ad-hoc comparison table). This rule overrides the "no empty line" rule because without the blank line, the next line can be parsed as part of the table.
 - **Exception — HTML block boundaries MUST have one blank line.**
   - Insert exactly one blank line after every `</details>` before the next Markdown block.
   - Insert exactly one blank line before `<details>` when it follows a heading, list, paragraph, or another `</details>`.
   - This overrides the "no empty lines" rule; without it, renderers may treat following headings as raw text.
-- **Tables — header styling.** Every Markdown table in the doc (§3 Decisions table, §5/§6 field tables, §7 Effort, §8 Release Checklist, etc.) MUST render its header row as **bold + gray-background**. Implementation:
+- **Tables — header styling.** Every Markdown table in the doc (§4 Decisions table, §5/§6 field tables, §7 Effort, §8 Release Checklist, etc.) MUST render its header row as **bold + gray-background**. Implementation:
   - Wrap each header cell in `**…**` so the text is bold even in renderers that don't auto-bold the header row.
   - Auto-applies a gray fill to the header row of Markdown tables — combining auto-fill with the explicit `**…**` gives bold + gray-bg with no extra markup.
   - Example header row: `| **Field** | **Type** | **Notes** | **Details** |` — applies to *every* table in the doc, not just field tables.
@@ -62,9 +62,10 @@ Use a fenced ```diff``` block. Identifier names appear naturally in the diff; no
 
 </details>
 ````
-This makes the block render as a collapsed disclosure widget on GitHub / GitLab natively, and on Lark / Confluence the converter maps the wrapper to the platform's native collapsible code primitive (collapsed by default + named title) — see Sync-to-remote rule #10 for the per-platform conversion. Never emit a bare ```diff``` block without the wrapper.
-**Exception — fully NEW parent block**: when the parent function/struct/service/table itself is new (no prior version exists), show the **entire definition** with `+` on every line, no `...` elisions — reviewers need the full thing because there is no "around it" to scan. This applies to a brand-new RPC method (full IDL method + request + response structs), a new struct, a new SQL table, a new endpoint, etc.
-**New-code gate for proposed diffs:** §5/§6 Code change diffs MUST reuse the local-coding "New code gate — no speculative abstractions" rule. Do not propose new files, types, wrappers, helpers, option structs, adapters, aliases, or exported APIs unless the diff itself proves one of the allowed conditions: directly required by the request, 2+ real call sites need shared logic now, import-cycle break without duplicated logic, or public-API compatibility for existing callers. Otherwise show the direct change to the existing function/signature/body. Type aliases are justified only for compatibility with existing callers; otherwise use the real concrete type directly.
+This makes the block render as a collapsed disclosure widget on GitHub / GitLab natively, and on Lark / Confluence the converter maps the wrapper to the platform's native collapsible code primitive (collapsed by default + named title) — see Sync-to-remote rule #12 for the per-platform conversion. Never emit a bare ```diff``` block without the wrapper.
+**Exception — substantial NEW function**: when a cohesive new behaviour is large enough that embedding it in an existing function would make the diff hard to review, prefer extracting it into a focused function. Show the complete new function in a normal language code block, without diff markers or `...`; do not render that new function as a diff. Then show a separate small `diff` block for the existing caller that invokes it, preserving the parent-context pattern above. This extraction is allowed by the new-code gate when it isolates a substantial responsibility rather than creating a speculative wrapper.
+**Exception — other fully NEW parent blocks**: when a new struct/service/table or similar non-function definition has no prior version, show the **entire definition** with `+` on every line and no `...` elisions. Reviewers need the full definition because there is no existing context to compare.
+**New-code gate for proposed diffs:** §5/§6 Code changes MUST reuse the local-coding "New code gate — no speculative abstractions" rule. Do not propose new files, types, wrappers, helpers, option structs, adapters, aliases, or exported APIs unless the design proves one of the allowed conditions: directly required by the request, a substantial cohesive responsibility qualifying for the standalone-new-function rule above, 2+ real call sites needing shared logic now, an import-cycle break without duplicated logic, or public-API compatibility for existing callers. Otherwise show the direct change to the existing function/signature/body. Type aliases are justified only for compatibility with existing callers; otherwise use the real concrete type directly.
 Code-change example (existing function, placeholders only):
 ````
 ```diff
@@ -123,7 +124,7 @@ IDL-diff example (NEW method — show everything, no elision):
 ```
 ````
 ## Nested-list table cell format (universal — applies to any table cell that holds a 2-level nested list)
-**Define the cell shape ONCE here; rules elsewhere (§3 Detail, §3 Decisions, anything else that needs nested content in a table cell) reference this format and add only their own content constraints.** Do NOT redefine the encoding inline.
+**Define the cell shape ONCE here; rules elsewhere (§4 Detail, §4 Decisions, anything else that needs nested content in a table cell) reference this format and add only their own content constraints.** Do NOT redefine the encoding inline.
 **Source encoding** — kept compact so the cell stays a valid Markdown table cell while still being parsable into a nested list:
 - **Level 1 (item header)** — a bold line: `**<header text>**`. **No leading bullet character.** Header text is short.
 - **Level 2 (sub-bullet)** — a line starting with `• ` (bullet + space) followed by the bullet text.
@@ -161,8 +162,8 @@ Heading hierarchy is **strict and contiguous: H1 > H2 > H3 > H4 > H5**. Never ju
 | Section            | H1                                | H2                                | H3                                | H4                                | H5                                |
 | ------------------ | --------------------------------- | --------------------------------- | --------------------------------- | --------------------------------- | --------------------------------- |
 | §1, §2, §7, §8     | `# N. <name>`                     | —                                 | —                                 | —                                 | —                                 |
-| §3 Design Decisions| `# 3. Design Decisions`           | none by default — entire section is ONE table; H2 sub-sections (`## 3.X <name>`) added ONLY when user explicitly asks for a deeper writeup | —                                 | —                                 | —                                 |
-| §4 Solution Overview | `# 4. Preferred Solution Overview` | `## 4.1 Architecture flowchart`, `## 4.2 Cross-service sequence diagrams` | `### <diagram name>` (under §4.2 — required when there are 2+ sequence diagrams; omit the H3 when there's exactly 1) | —                                 | —                                 |
+| §3 Solution Overview | `# 3. Solution Overview`          | `## 3.1 Architecture flowchart`, `## 3.2 Cross-service sequence diagrams` | `### <diagram name>` (under §3.2 — required when there are 2+ sequence diagrams; omit the H3 when there's exactly 1) | —                                 | —                                 |
+| §4 Design Decisions| `# 4. Design Decisions`           | none by default — entire section is ONE table; H2 sub-sections (`## 4.X <name>`) added ONLY when user explicitly asks for a deeper writeup | —                                 | —                                 | —                                 |
 | §5 External        | `# 5. External Technical Design`  | `## <method/api_name>`            | `### Request`, `### Response`, `### Logic change`, `### Code change` | — | — |
 | §6 Internal        | `# 6. Internal Technical Design`  | `## 6.X Service: <Name>`          | `### API changes`, `### Infra changes`, `### Impact + mitigation` (omitted by default — keep ONLY if there's a genuinely critical cross-cutting risk; cap 3 points) | `#### <method/api_name>` (under API changes) or `#### Redis library change` etc. (under Infra changes) | `##### Request`, `##### Response`, `##### Logic change`, `##### Code change` |
 
@@ -174,7 +175,7 @@ The examples below use `### N.` for §1..§8 purely because they're embedded in 
   2. Why now (the trigger — deadline, incident, dependency).
   3. Success criterion (the single observable thing that means we're done).
 - Skip any bullet that genuinely doesn't apply rather than padding it. Two bullets is fine; one is fine if the work is small.
-- **No background dumps** — existing-system context belongs in §4's diagram labels or in the relevant §6 microservice section, not here. If a reader needs the architecture to grasp the problem, the problem statement is too abstract; rewrite the bullet.
+- **No background dumps** — existing-system context belongs in §3's diagram labels or in the relevant §6 microservice section, not here. If a reader needs the architecture to grasp the problem, the problem statement is too abstract; rewrite the bullet.
 
 ### 2. Links
 Placeholder block — the user fills in URLs later. Pre-populate with empty bullets:
@@ -186,50 +187,21 @@ Placeholder block — the user fills in URLs later. Pre-populate with empty bull
 - Other:
 ```
 
-### 3. Design Decisions
-**ONE single table for the entire §3 — by default, no sub-headings, no per-decision prose, no separate comparison tables.** Every meaningful design choice lives as a row in the same table so reviewers see the whole set at a glance.
-**High-impact only — cap at 3–4 rows total.** Each row answers ONE concrete question that came up while designing AND would meaningfully change the architecture if picked differently (caching strategy, data-sync model, schema shape that crosses services, rollout strategy with risk, error semantics that propagate, etc.). Drop trivial / obvious / upstream-fixed choices entirely; their resolution shows up naturally in the §6 Code change diff.
-**What to OMIT** as a row:
-- **Already specified upstream** (PRD, requirements doc, parent tech doc) — cite the upstream doc once in §2 Links and skip.
-- Dictated by an existing convention or framework default ("we use Hertz, so handler shape is fixed").
-- Easily reversible local-to-one-file picks (rename a field, swap a struct).
-- A typical reviewer wouldn't push back on either alternative.
-**Bias hard toward fewer rows.** Zero rows is fine if upstream specs pin every meaningful choice; in that case write `N/A — all design choices fixed by <link in §2>`. If you have more than 4 rows, drop the weakest until only heavyweights remain.
-**The table — exactly 4 columns, in this exact order:**
-| **#**   | **Name**             | **Detail**                                                                                                                                                              | **Decisions**                                                                                                                                                                          |
-| ------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 3.1     | <short topic>        | **Summary**<br>• <constraint / trigger 1><br>• <constraint / trigger 2><br><br>**Target**<br>• <goal 1><br>• <goal 2>                                                   | **Option 1 — <preferred short name> (Preferred)**<br>• <logic step 1><br>• <logic step 2><br><br>**Option 2 — <short name>**<br>• <logic step 1><br>• <logic step 2>                    |
-| 3.2     | <short topic>        | **Summary**<br>• <constraint 1><br><br>**Target**<br>• <goal 1><br>• <goal 2>                                                                                          | **Option 1 — <preferred short name> (Preferred)**<br>• <logic step 1><br>• <logic step 2><br><br>**Option 2 — <short name>**<br>• <logic step 1><br>• <logic step 2><br><br>**Option 3 — <short name>**<br>• <logic step 1><br>• <logic step 2> |
-| 3.3     | <short topic>        | **Summary**<br>• <upstream constraint that left only one viable path><br><br>**Target**<br>• <goal>                                                                    | **Option 1 — <preferred short name> (Preferred)**<br>• <logic step 1><br>• <logic step 2>                                                                                              |
-- **#** — `3.<N>`, contiguous starting at `3.1`.
-- **Name** — short noun-phrase topic. **NOT a question** (no `?`, no "How should we…", no "Should we…"). Scannable.
-- **Detail** — uses the **Nested-list table cell format**. Constraints specific to this column:
-  - Exactly **TWO Level-1 items**, in this fixed order: `**Summary**`, then `**Target**`.
-  - **1–3 Level-2 sub-bullets** per Level-1 item.
-  - All sub-bullets are **statements, never questions** (no `?`, no "Should we…"). `Summary` bullets state the constraint / trigger that forces this decision; `Target` bullets state the concrete goal we're aiming for.
-- **Decisions** — uses the **Nested-list table cell format**. Constraints specific to this column:
-  - **Up to 3 Level-1 items** (options) for complex decisions; **just 1** for trivial / forced picks (e.g. an upstream constraint left only one viable path — record it for transparency).
-  - **The Preferred option is ALWAYS Option 1** — pick the chosen option first and number it `Option 1`. Alternatives become `Option 2`, `Option 3` in any order. The `**(Preferred)**` suffix still appears on Option 1 for explicit visual confirmation, but its position alone signals the pick. Reviewers should never have to scan past Option 1 to find what was chosen.
-  - Level-1 header shape: `**Option <N> — <short name>**`, numbered contiguously from 1.
-  - **2–4 Level-2 sub-bullets** per option, describing the option's simple logic (what it does, where, when, fallback).
-**No per-decision sub-sections by default.** No prose context, no per-decision criterion-comparison table, no individual H2 headings. The table above is the entire §3.
-**Promote to an H2 sub-section ONLY when the user explicitly asks** (e.g. "expand 3.2 with a comparison table" or "add a deeper writeup for 3.1"). When promoted, the sub-section may include: a context paragraph, per-option logic bullets at full depth, and a `Criterion × Option` comparison table. Add a `(see §3.2 below)` pointer in the table's row when this happens.
+### 3. Solution Overview
+The "wide-angle lens" section: every reader should be able to grok the new architecture and its cross-service flows from §3 alone, without scrolling into the decisions or per-service deep-dive. §3 has TWO subsections, in this exact order:
 
-### 4. Preferred Solution Overview
-The "wide-angle lens" section: every reader should be able to grok the new architecture and its cross-service flows from §4 alone, without scrolling into the per-service deep-dive in §6. §4 has TWO subsections, in this exact order:
-
-#### 4.1 Architecture flowchart
-- A coherent picture that **stitches together every "Decision" picked in §3** into one architecture.
+#### 3.1 Architecture flowchart
+- A coherent picture of the proposed architecture. Keep it consistent with the decisions documented immediately afterward in §4.
 - Required: a mermaid `flowchart` showing services + primary data flow.
 - **Mark NEW parts in green** — every new node (service, store, queue, table) and every new edge introduced by this design must be styled green so reviewers see the delta against today's architecture at a glance. See the "Highlight what's NEW" rule under "Diagrams" for the exact mermaid `classDef`/`linkStyle` snippet.
 - **Diagram only — no prose, no captions, no overview text.** The diagram IS the contract. Labels on nodes/edges carry the meaning. If you feel a paragraph or even a one-liner is needed to explain it, the diagram is wrong: rename nodes, add edge labels, or split into multiple diagrams.
 
-#### 4.2 Cross-service sequence diagrams
+#### 3.2 Cross-service sequence diagrams
 - One mermaid `sequenceDiagram` block per non-trivial cross-service interaction (≥2 hops, async edges, retries). Trivial single-RPC calls don't need one.
 - This subsection lives **here** (under overview), **not** scattered inside the per-service sections in §6 — readers see the full end-to-end interactions before they drill into individual services.
-- **Per-diagram heading** — when there are **2 or more** sequence diagrams, each diagram MUST be preceded by a heading **one level smaller than the §4.2 heading** (i.e. H3 in the output tech doc, since §4.2 is H2): `### <short diagram name>`. The name is a short noun phrase describing what the flow is (e.g. `### Order placement`, `### Refund cancellation`, `### Cache miss read path`) — keep it scannable, not a sentence. When there is **exactly one** sequence diagram, omit the H3 entirely (the §4.2 heading covers it).
+- **Per-diagram heading** — when there are **2 or more** sequence diagrams, each diagram MUST be preceded by a heading **one level smaller than the §3.2 heading** (i.e. H3 in the output tech doc, since §3.2 is H2): `### <short diagram name>`. The name is a short noun phrase describing what the flow is (e.g. `### Request processing`, `### State reconciliation`, `### Cache miss read path`) — keep it scannable, not a sentence. When there is **exactly one** sequence diagram, omit the H3 entirely (the §3.2 heading covers it).
 - **Diagrams only — no scenario descriptions, no preceding/trailing prose.** The H3 name is the only label. If a diagram needs an in-flow label, put it inside the `sequenceDiagram` (e.g. as a `Note over Participant: ...` block or in the participant names themselves).
-- Mark NEW arrows / participants in green using the same `(NEW)` marker + green styling rule as the §4.1 flowchart — keeps the visual signal consistent across diagrams.
+- Mark NEW arrows / participants in green using the same `(NEW)` marker + green styling rule as the §3.1 flowchart — keeps the visual signal consistent across diagrams.
 - **Every arrow MUST name the exact operation, never a generic verb.** The label answers "what call is this?" precisely enough that a reviewer could grep for it. Use the form below per protocol:
   - **HTTP** — `METHOD /path/with/{params}` (e.g. `POST /v1/<resource>`, `GET /v1/<resource>/{id}`).
   - **RPC** — `<Service>.<Method>` exactly as registered in the IDL (e.g. `<ServiceA>.<MethodX>`).
@@ -238,6 +210,35 @@ The "wide-angle lens" section: every reader should be able to grok the new archi
   - **Kafka / message broker** — `PRODUCE <topic>` / `CONSUME <topic>` (e.g. `PRODUCE <cluster>.<topic>`).
   - **Other** — pick the operation name from the actual API surface (`<S3-style> PutObject bucket=…`, `gRPC stream <StreamName>`, etc.).
 - Generic labels are **forbidden**: never write `call`, `request`, `read`, `write`, `query`, `update`, `notify`, `event`, `process` on their own. If you can't name the operation, the arrow is ambiguous — fix the diagram before keeping it.
+
+### 4. Design Decisions
+**ONE single table for the entire §4 — by default, no sub-headings, no per-decision prose, no separate comparison tables.** Every meaningful design choice lives as a row in the same table so reviewers see the rationale after first understanding the solution.
+**High-impact only — cap at 3–4 rows total.** Each row answers ONE concrete question that came up while designing AND would meaningfully change the architecture if picked differently (caching strategy, data-sync model, schema shape that crosses services, rollout strategy with risk, error semantics that propagate, etc.). Drop trivial / obvious / upstream-fixed choices entirely; their resolution shows up naturally in the §6 Code change content.
+**What to OMIT** as a row:
+- **Already specified upstream** (PRD, requirements doc, parent tech doc) — cite the upstream doc once in §2 Links and skip.
+- Dictated by an existing convention or framework default.
+- Easily reversible local-to-one-file picks (rename a field, swap a struct).
+- A typical reviewer wouldn't push back on either alternative.
+**Bias hard toward fewer rows.** Zero rows is fine if upstream specs pin every meaningful choice; in that case write `N/A — all design choices fixed by <link in §2>`. If you have more than 4 rows, drop the weakest until only heavyweights remain.
+**The table — exactly 4 columns, in this exact order:**
+| **#**   | **Name**             | **Detail**                                                                                                                                                              | **Decisions**                                                                                                                                                                          |
+| ------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 4.1     | <short topic>        | **Summary**<br>• <constraint / trigger 1><br>• <constraint / trigger 2><br><br>**Target**<br>• <goal 1><br>• <goal 2>                                                   | **Option 1 — <preferred short name> (Preferred)**<br>• <logic step 1><br>• <logic step 2><br><br>**Option 2 — <short name>**<br>• <logic step 1><br>• <logic step 2>                    |
+| 4.2     | <short topic>        | **Summary**<br>• <constraint 1><br><br>**Target**<br>• <goal 1><br>• <goal 2>                                                                                          | **Option 1 — <preferred short name> (Preferred)**<br>• <logic step 1><br>• <logic step 2><br><br>**Option 2 — <short name>**<br>• <logic step 1><br>• <logic step 2><br><br>**Option 3 — <short name>**<br>• <logic step 1><br>• <logic step 2> |
+| 4.3     | <short topic>        | **Summary**<br>• <upstream constraint that left only one viable path><br><br>**Target**<br>• <goal>                                                                    | **Option 1 — <preferred short name> (Preferred)**<br>• <logic step 1><br>• <logic step 2>                                                                                              |
+- **#** — `4.<N>`, contiguous starting at `4.1`.
+- **Name** — short noun-phrase topic. **NOT a question** (no `?`, no "How should we…", no "Should we…"). Scannable.
+- **Detail** — uses the **Nested-list table cell format**. Constraints specific to this column:
+  - Exactly **TWO Level-1 items**, in this fixed order: `**Summary**`, then `**Target**`.
+  - **1–3 Level-2 sub-bullets** per Level-1 item.
+  - All sub-bullets are **statements, never questions**. `Summary` bullets state the constraint or trigger; `Target` bullets state the concrete goal.
+- **Decisions** — uses the **Nested-list table cell format**. Constraints specific to this column:
+  - **Up to 3 Level-1 items** for complex decisions; **just 1** for forced picks.
+  - **The Preferred option is ALWAYS Option 1**. Alternatives become Option 2 and Option 3. Keep the `**(Preferred)**` suffix for explicit confirmation.
+  - Level-1 header shape: `**Option <N> — <short name>**`, numbered contiguously from 1.
+  - **2–4 Level-2 sub-bullets** per option, describing what it does, where, when, and fallback.
+**No per-decision sub-sections by default.** The table above is the entire §4.
+**Promote to an H2 sub-section ONLY when the user explicitly asks** (e.g. "expand 4.2 with a comparison table"). Add a `(see §4.2 below)` pointer in the table row when this happens.
 
 ### 5. External Technical Design
 - Changes affecting external clients (mobile apps, web frontends, partner integrations, public APIs).
@@ -295,7 +296,7 @@ The content under each heading:
   1. The `Field | Type | Notes | Details` 4-column table (only rows worth listing).
   2. An **IDL diff code block** for the request struct (under Request) and the response struct (under Response), following the **universal Diff format** rule. NEW method → entire struct with `+` on every line, no elisions; existing method → diff with parent-context pattern.
 - Under **Logic change** — 2–5 bullets describing the **high-level behaviour change** at the API level: what the method now does differently end-to-end. This is the "what" only. Drilling into specific helper functions, private method names, internal struct fields, or anything wrapped in backticks belongs in the Code change diff, not here.
-- Under **Code change** — diff per the **universal Diff format** rule. Do not redefine the pattern here.
+- Under **Code change** — follow the **universal Diff format** rule. For a substantial new function, show the complete function in a normal language code block and use a separate diff only for the existing caller that invokes it.
 
 ##### Infra changes (omit the heading entirely if the service has no infra work)
 Only use this section when the change touches infrastructure (Redis client, Kafka consumer, DB driver, message broker, cache layer, etc.). Each block is named by **the infra action**, never by source file or function:
@@ -309,7 +310,7 @@ Examples of infra-action block names (H4 in the tech doc):
 Each infra-action block has these fixed-label sub-headings at H5:
 
 - `##### Logic change` — high-level only, same rule as API changes.
-- `##### Code change` — diff per the **universal Diff format** rule (covers code AND schema/DDL/config diffs).
+- `##### Code change` — follow the **universal Diff format** rule (covers code AND schema/DDL/config changes, including the standalone-new-function rule).
 
 ##### Impact + mitigation
 **Omit this heading entirely by default.** Only include it when the service introduces a **genuinely critical, cross-cutting risk** that reviewers must be warned about up front (e.g. breaking change to an upstream contract, data migration with rollback constraints, latency budget eaten by a new sync RPC). If nothing meets that bar — no heading, no empty placeholder, no "N/A". Keep the noise floor low.
@@ -324,7 +325,7 @@ Example shape (placeholders):
 - <Problem 2 in one line>
   - Mitigation: <one-line concrete handling>
 ```
-— Do NOT put sequence diagrams here; those live in §4.2 so they're surfaced before the deep-dive.
+— Do NOT put sequence diagrams here; those live in §3.2 so they're surfaced before the deep-dive.
 
 ### 7. Effort & Estimation
 A small Markdown table — exactly 4 columns in this order:
@@ -336,7 +337,7 @@ A small Markdown table — exactly 4 columns in this order:
 - **Microservice / task** — service name (e.g. `service-a`) or short task verb-phrase (e.g. `migrate redis client`, `backfill region column`). NO description of what the work does. If the reader needs to know what's in the change, they read §6.
 - **Owner** — single name, or `TBD` if unassigned.
 - **Effort (d)** — person-days, rounded to halves (`0.5`, `1`, `1.5`, …).
-- **Notes** — keep **empty by default**. Only fill it when there's a genuinely useful planning signal (a blocker, a dependency on another team, a non-obvious risk). Even then, prefer a single short phrase (`blocked on <X>`, `needs DBA review`, `depends on §3.2 pick`). Use the **Nested-list table cell format** ONLY when there are 2+ structured categories worth listing (e.g. multiple dependencies + multiple risks); cap 3 Level-1 items, 1–3 sub-bullets each. If you can't justify the structure, leave it as a single phrase.
+- **Notes** — keep **empty by default**. Only fill it when there's a genuinely useful planning signal (a blocker, an external dependency, a non-obvious risk). Even then, prefer a single short phrase (`blocked on <dependency>`, `needs data review`, `depends on §4.2 pick`). Use the **Nested-list table cell format** ONLY when there are 2+ structured categories worth listing (e.g. multiple dependencies + multiple risks); cap 3 Level-1 items, 1–3 sub-bullets each. If you can't justify the structure, leave it as a single phrase.
 
 ### 8. Release Checklist
 **Production-deploy only.** What physically goes to prod — nothing else. NO dev-flow items (no MR-merge gates, no test-green gates, no review-approval gates, no testing-env deploys, no rollback-doc reminders); those belong in the team's normal CI/CD.
@@ -361,10 +362,10 @@ Multi-step example:
 If a service or config is already in §6 as a code change but doesn't need a separate prod action, it does NOT belong here. This is the deploy artefact, not a re-listing of the diff.
 
 ## Diagrams — reuse local-code-explore ASCII, mermaid in tech doc
-- Every non-trivial design needs a diagram. Required at two points, BOTH in §4:
-  1. **§4.1 Architecture flowchart** — a top-level service map + primary data flow that reflects EVERY decision picked in §3. This is the single most important diagram in the doc.
-  2. **§4.2 Cross-service sequence diagrams** — a sequence diagram for each non-trivial cross-service interaction (≥2 hops, async edges, retries). Trivial single-RPC calls don't need one. These live with the overview, NOT inside per-service sections in §6 — readers see end-to-end flows before drilling in.
-- **Code exploration source of truth**: before drafting §4 diagrams for a code-backed design, invoke/use `local-code-explore` to explore the existing entrypoints, call chains, branches, storage, queue edges, and service relationships. Treat its evidence map and merged service graph as the source for the design diagram.
+- Every non-trivial design needs a diagram. Required at two points, BOTH in §3:
+  1. **§3.1 Architecture flowchart** — a top-level service map + primary data flow consistent with every decision documented in §4. This is the single most important diagram in the doc.
+  2. **§3.2 Cross-service sequence diagrams** — a sequence diagram for each non-trivial cross-service interaction (≥2 hops, async edges, retries). Trivial single-RPC calls don't need one. These live with the overview, NOT inside per-service sections in §6 — readers see end-to-end flows before drilling in.
+- **Code exploration source of truth**: before drafting §3 diagrams for a code-backed design, invoke/use `local-code-explore` to explore the existing entrypoints, call chains, branches, storage, queue edges, and service relationships. Treat its evidence map and merged service graph as the source for the design diagram.
 - **In the terminal chat**: reuse the `local-code-explore` terminal diagram format and rules. Do not invent a separate ASCII layout in this skill. The terminal diagram must stay as one merged graph with shared service boxes, RPC/API/function level nodes, centered connectors, and protocol/method/topic labels on arrows.
 - **In the tech doc**: convert the same `local-code-explore` graph into a fenced ```mermaid``` block (`flowchart` / `sequenceDiagram` / `classDiagram` as appropriate). Mermaid-aware viewers render it inline.
 - **Mermaid flowchart parser safety**: `flowchart` node IDs must be simple identifiers only (e.g. `service_a`, `service_b`, `store_a`, `step_a`). Do NOT put spaces, punctuation, paths, key patterns, operation names, or `(NEW)` markers in node IDs.
@@ -372,14 +373,14 @@ If a service or config is already in §6 as a code change but doesn't need a sep
   - Database / cylinder nodes MUST quote the label too: `store_a[("Store A")]`.
   - Edge labels containing key patterns, RPC names, HTTP paths, `/`, `{}`, `+`, `*`, `:`, `.`, or `(NEW)` MUST use quoted edge-label syntax: `-->|"RPC: <Service>.<Method> (NEW)"|`.
   - Keep one Mermaid statement per line. Do not split a node or edge statement across multiple lines.
-- **Mermaid flowchart layout width control**: §4.1 is architecture shape, not full operation detail. Prefer `flowchart LR` only while the diagram stays readable. When the architecture flowchart becomes too wide or turns into a long single-row chain, switch to `flowchart TB` and split it into stacked `subgraph` blocks by concern or phase.
+- **Mermaid flowchart layout width control**: §3.1 is architecture shape, not full operation detail. Prefer `flowchart LR` only while the diagram stays readable. When the architecture flowchart becomes too wide or turns into a long single-row chain, switch to `flowchart TB` and split it into stacked `subgraph` blocks by concern or phase.
   - In top-down mode, each subgraph should use `direction TB` so local steps stack vertically.
   - Keep cross-subgraph edges short and high-level.
-  - Put detailed operation names in §4.2 sequence diagrams or §6 code diffs, not in §4.1 edge labels.
-  - Shorten §4.1 edge labels to operation intent, e.g. `Write derived state (NEW)` instead of a full key pattern.
+  - Put detailed operation names in §3.2 sequence diagrams or §6 code changes, not in §3.1 edge labels.
+  - Shorten §3.1 edge labels to operation intent, e.g. `Write derived state (NEW)` instead of a full key pattern.
   - Target 5–10 visible nodes and choose top-down layout instead of shrinking labels or keeping an unreadable horizontal chain.
 - **Keep both representations in sync**: ASCII and mermaid encode the same nodes/edges/labels from the `local-code-explore` graph. If you change one, change the other.
-- **Keep diagrams concise**: target 5–10 primary nodes in the shared overview. For doc-only deep dives, add smaller §4.2 sequence diagrams by concern; do not split the terminal ASCII overview into per-service or per-repo charts.
+- **Keep diagrams concise**: target 5–10 primary nodes in the shared overview. For doc-only deep dives, add smaller §3.2 sequence diagrams by concern; do not split the terminal ASCII overview into per-service or per-repo charts.
 - **Update on revisions**: when the design changes, update the mermaid in the tech doc AND re-emit the updated ASCII in chat. Stale diagrams are worse than no diagram.
 - **Highlight what's NEW**: every diagram MUST visually distinguish new pieces (new services, new tables, new edges, new fields) from existing ones. Mermaid: green fill + green text via a `new` class (`classDef new fill:#bbf7d0,stroke:#16a34a,color:#16a34a,font-weight:bold`) applied to new nodes — this also colors any `(NEW)` marker inside the node label green; new edges styled with `linkStyle <idx> stroke:#16a34a,stroke-width:2px,color:#16a34a` (the trailing `color:` greens the edge-label text including its `(NEW)` tag). Tag new nodes/edges with a trailing `(NEW)` marker in BOTH ASCII and mermaid (use parentheses, never `[NEW]` — `[...]` is mermaid node syntax and breaks the parser inside edge labels). The `(NEW)` text must render green wherever it appears. Existing pieces stay default-styled — the contrast is the point.
 Mermaid equivalent derived from the shared graph:
@@ -411,15 +412,15 @@ flowchart TB
 ```
 ## Design loop (workflow — how to fill the 8 sections)
 - The doc is **never final** until the feature is in production. Keep asking for feedback after every revision.
-- **First round**: produce a draft of all 8 sections in order. §3 (Design Decisions) typically has the most back-and-forth — surface every non-trivial decision you can think of, with options and a recommendation, and let the user steer.
-- **MANDATORY brainstorming pass after the first draft.** Once microservices are discovered (per the mapping file rule) AND the first draft is on disk under `<workspace>/tech_doc/`, **invoke `superpowers:brainstorming`** to systematically walk through every design decision with the user — including the trivial / forced / upstream-fixed ones that will NOT make it into the §3 table. The point: don't silently drop those low-impact picks; surface them so the user can confirm or override. Any artefacts produced by brainstorming or by `superpowers:writing-plans` are saved under `<root>/local_workspaces/<workspace-name>/tech_doc/` so they live alongside the doc and the mapping file.
+- **First round**: produce a draft of all 8 sections in order. §4 (Design Decisions) typically has the most back-and-forth — surface every non-trivial decision you can think of, with options and a recommendation, and let the user steer.
+- **MANDATORY brainstorming pass after the first draft.** Once microservices are discovered (per the mapping file rule) AND the first draft is on disk under `<workspace>/tech_doc/`, **invoke `superpowers:brainstorming`** to systematically walk through every design decision with the user — including the trivial / forced / upstream-fixed ones that will NOT make it into the §4 table. The point: don't silently drop those low-impact picks; surface them so the user can confirm or override. Any artefacts produced by brainstorming or by `superpowers:writing-plans` are saved under `<root>/local_workspaces/<workspace-name>/tech_doc/` so they live alongside the doc and the mapping file.
   - Brainstorming output is a list of decisions split into two buckets:
-    1. **Tabled decisions** — the high-impact ones that satisfy the §3 inclusion criteria. These become rows in the §3 Decisions table.
+    1. **Tabled decisions** — the high-impact ones that satisfy the §4 inclusion criteria. These become rows in the §4 Decisions table.
     2. **Omitted decisions** — the trivial / reversible / upstream-fixed / convention-forced picks. These get **recorded but not tabled**.
   - **The user must confirm both buckets** before you continue. If the user wants something moved (table → omitted, or omitted → table), update accordingly and re-confirm.
-  - **Omitted decisions MUST still be stated in the doc** — never leave them invisible. Add a one-line bullet for each omitted pick at the end of §3 under a small italic note: `*Omitted from the table (low-impact / forced / upstream-fixed):*` followed by a flat bullet list. Each line is `<short topic> — <picked option> (<one-phrase reason for omitting>)`. Example: `*Omitted from the table:*` `- Logger field name — picked snake_case (matches existing convention)` `- Retry backoff base — picked 100ms (framework default)`. This keeps the audit trail without bloating the table.
-- **Subsequent rounds**: only revise the sections that actually changed. Don't rewrite §1/§2/§7/§8 unless the requirement itself shifted. New questions that arise during §6 deep-dive get added back into the brainstorming bucket and re-classified (table vs omitted) — promote into §3 only if genuinely high-impact.
-- **For mapping, cross-service exploration, and diagrams**: invoke/use `local-code-explore` first so the confirmed mapping, §4, and §6 share one verified call graph instead of separately reconstructed flows.
+  - **Omitted decisions MUST still be stated in the doc** — never leave them invisible. Add a one-line bullet for each omitted pick at the end of §4 under a small italic note: `*Omitted from the table (low-impact / forced / upstream-fixed):*` followed by a flat bullet list. Each line is `<short topic> — <picked option> (<one-phrase reason for omitting>)`.
+- **Subsequent rounds**: only revise the sections that actually changed. Don't rewrite §1/§2/§7/§8 unless the requirement itself shifted. New questions that arise during §6 deep-dive get added back into the brainstorming bucket and re-classified (table vs omitted) — promote into §4 only if genuinely high-impact.
+- **For mapping, cross-service exploration, and diagrams**: invoke/use `local-code-explore` first so the confirmed mapping, §3, and §6 share one verified call graph instead of separately reconstructed flows.
 - **For §6 (Internal Technical Design)**: dispatch one FOCUSED AGENT TASK per microservice IN PARALLEL — each agent explores its repo, computes the IDL/logic/code diff, applies the local-coding new-code gate to every proposed added file/type/function/helper/wrapper/alias/API, and reports back. The main agent stitches the results into §6 and reconciles it with the `local-code-explore` graph.
 - **Permission:** invoking `local-tech-design` is explicit permission to use sub-agents when the §6 agent-task rule or `local-code-explore` fan-out rule matches. Do not avoid sub-agents or ask again for permission unless sub-agent tooling is unavailable.
 - Use the codebase mapping from `<tech_doc_name>_mapping.md` as the canonical microservice list — never guess service boundaries.
@@ -434,9 +435,11 @@ flowchart TB
 | `github.com/.../blob/.../*.md`, `gitlab.*/.../blob/.../*.md`, any git-hosted markdown file   | Remote markdown in git repo | `codebase` skill or `gh` CLI for GitHub                                                                  |
 If the URL doesn't match any pattern above, ask the user which platform it is rather than guessing.
 **Upload algorithm**:
-1. **Fetch the remote first.** If it's empty / placeholder / brand-new → push the entire local tech doc once and stop. Done.
-2. **Use the reusable compare helper before writing.** First locate the installed copy of this skill, then inspect and run the helper from that installed skill directory: `<installed-skill-dir>/scripts/tech_doc_compare.py`. Do not assume the current working tree is the active skill installation. Run `<installed-skill-dir>/scripts/tech_doc_compare.py plan --local <tech_doc.md> --remote <remote-url>` for Lark docx, or `<installed-skill-dir>/scripts/tech_doc_compare.py plan --local <tech_doc.md> --remote-file <remote-export.md>` when the remote content has already been exported. Use `--json` when the changed-section list will be consumed by another script. This helper is read-only: it canonicalizes remote/local exports into comparable content blocks, builds heading indexes from Markdown or HTML/XML headings, strips wrapper markup before hashing (blank lines, table/list/container tags, table separator style, `<br>` variants, Markdown link round-tripping, emphasis markers, bullet/number markers, and whitespace), reports deepest changed sections, and identifies existing sections that are safe candidates for exact text replacement. Diagram changes are reported separately as `diagram_sections`; do NOT mix them into normal text section updates. Mermaid source is compared by its normalized source text only when both sides expose source; opaque rendered blocks such as `<readonly-block ...>` are treated as replaceable remote diagram blocks, not exact-text matches. If the helper reports `unsafe` because the remote has no parseable headings, do NOT treat local sections as new; fall back to a targeted keyword/section fetch and exact text replacement for the requested change. Do not recreate one-off comparison scripts in the CLI session unless this helper cannot represent the current document format.
-3. If the remote has existing content → compute a **section-level diff** using the §1..§8 numbered headings (and their sub-headings: §3.X, §5.`<method>`, §6.X Service, §6.X.`<method>`, etc.) as the diff boundaries. Prefer the compare helper output as the diff plan. For each heading whose body actually changed, replace **only that section** remotely. **Never overwrite the entire doc.**
+1. **Fetch the remote first.** If it's empty / placeholder / brand-new, build the initial payload from the local tech doc but omit §2 Links. Also omit §8 Release Checklist until the user separately confirms its exact content. Never use a whole-document overwrite that would bypass these exclusions.
+2. **Use the reusable compare helper before writing.** First locate the installed copy of this skill, then inspect and run the helper from that installed skill directory: `<installed-skill-dir>/scripts/tech_doc_compare.py`. Do not assume the current working tree is the active skill installation. Run `<installed-skill-dir>/scripts/tech_doc_compare.py plan --local <tech_doc.md> --remote <remote-url>` for Lark docx, or `<installed-skill-dir>/scripts/tech_doc_compare.py plan --local <tech_doc.md> --remote-file <remote-export.md>` when the remote content has already been exported. Use `--json` when the changed-section list will be consumed by another script. This helper is read-only: it canonicalizes remote/local exports into comparable content blocks, reports normal text changes, reports diagrams as `diagram_sections`, reports §8 as `confirmation_sections`, and reports §2 as `ignored_sections`. Never mix these protected groups into normal text updates. If the helper reports `unsafe` because the remote has no parseable headings, do NOT treat local sections as new; fall back to a targeted keyword/section fetch and exact text replacement for the requested change. Do not recreate one-off comparison scripts unless this helper cannot represent the current document format.
+3. If the remote has existing content → compute a **section-level diff** using the §1..§8 numbered headings (and their sub-headings: §4.X, §5.`<method>`, §6.X Service, §6.X.`<method>`, etc.) as the diff boundaries. Prefer the compare helper output as the diff plan. For each heading whose body actually changed, replace **only that section** remotely. **Never overwrite the entire doc.** Apply these section policies before writing:
+   - **§2 Links — remote source of truth.** Never create, replace, delete, reorder, or synchronize this section from the local doc. Ignore every local/remote difference in Links and preserve the remote section exactly.
+   - **§8 Release Checklist — separate confirmation required.** Do not create or modify it under a normal sync instruction. Show the exact proposed §8 change and ask the user to confirm that Release Checklist update explicitly, just like diagram replacement confirmation.
 4. Walk both local and remote as a heading tree (`H1 > H2 > H3 > ...`). The **deepest** heading whose body differs is the replacement unit — don't replace a parent if only one child changed. Identical sections are skipped.
 5. **Write strategy — exact text replacement is highest priority.**
    - For any existing remote section/block, first fetch the exact current remote text and update it with the platform's exact text replacement operation only.
@@ -447,16 +450,16 @@ If the URL doesn't match any pattern above, ask the user which platform it is ra
    - **Lark docx** — first use `docs +fetch --scope outline --max-depth <n>` to locate the target heading block id, then read the current section with `docs +fetch --scope section --start-block-id <heading-block-id> --detail with-ids`. Update with `docs +update --command str_replace` targeted at the exact section text. Use `block_insert_after` only for NEW sections/blocks. Use `block_replace` only after `str_replace` fails and the user explicitly confirms that block replacement is acceptable. **Never use `overwrite`** on the whole doc.
    - **Confluence** — pages store body as a single XHTML blob. Read the body, splice in the changed sections by heading, write back via `PUT /rest/api/content/{id}`. Section-level intent, single-write API.
    - **Google Docs / Sheets** — `documents.batchUpdate` with `replaceAllText` / `insertText` requests scoped to the changed section's range; for Sheets, target the cell range that holds that section.
-   - **Git markdown** — pull, edit only the changed sections in place using the universal Diff format pattern, commit with a message naming the sections (e.g. `tech-doc: update §3.2, §6.1.<method-name>`), push or open a PR per repo convention.
+   - **Git markdown** — pull, edit only the changed sections in place using the universal Diff format pattern, commit with a message naming the sections (e.g. `tech-doc: update §4.2, §6.1.<method-name>`), push or open a PR per repo convention.
 7. **Diagram write strategy — separate confirmation required.** If the compare helper reports `diagram_sections`, list them in a separate "Diagram updates" section before any remote write. A normal sync instruction does NOT authorize diagram replacement. Ask the user to explicitly confirm replacing/overwriting those remote diagram blocks. After confirmation, replace the whole remote diagram block for each changed local diagram instead of trying exact text replacement inside the rendered block.
    - **Lark / Feishu whiteboards must stay native.** Never render or upload SVG/PNG when the diagram can be represented natively. Use the local Mermaid logic as the source and update the existing board directly with `lark-cli whiteboard +update`, piping diagram content through stdin without temporary image files.
    - Preserve the document title, whiteboard block, and whiteboard token. Replace only the existing board contents after the user explicitly authorizes that diagram replacement.
    - Represent each node as one native shape containing its own label. Do not split a node into separate box, text, or icon objects. Bind every connector endpoint to its source and target node IDs; do not use coordinate-only arrows.
    - After updating, query the board with both `--output_as code` and `--output_as raw`. Verify that each shape contains its own `text`, every connector has `start_object` and `end_object` attachment IDs, the returned syntax is Mermaid, and unrelated diagrams and document content remain unchanged.
    - If OpenAPI conversion is required, pipe `whiteboard-cli` output directly into `lark-cli`; never persist SVG/PNG intermediates.
-8. **Confirmation gate**: before the FIRST remote write, list to the user the exact set of sections about to change. The user's current-turn sync instruction authorizes exact text replacement updates and new section/block creation. It does NOT authorize block replacement for existing content or diagram replacement. If exact text replacement cannot match, ask for explicit confirmation before any block replacement.
-9. **Local file is the source of truth.** Sync is one-way (local → remote). Never pull remote changes back into the local tech doc without the user's explicit instruction.
-10. **Table cells using the Nested-list table cell format MUST be uploaded as platform-native nested lists, NOT as `<br>•` run-on text.** This applies to the §3 Detail and Decisions columns and any other cell that opts into the format. The remote cell must visually show indented sub-items (Level-1 header > Level-2 sub-bullets), not a single paragraph with `•` characters and line breaks left as literal text.
+8. **Confirmation gate**: before the FIRST remote write, list to the user the exact set of sections about to change. The user's current-turn sync instruction authorizes normal exact-text updates and new unprotected sections. It does NOT authorize block replacement, diagram replacement, or any §8 Release Checklist update. Each protected update requires separate explicit confirmation.
+9. **Local file is the source of truth except §2 Links.** Sync is one-way (local → remote) for normal sections. Links is remote-owned and must remain untouched; never pull it into local or push local Links remotely unless the user explicitly requests a separate non-sync editing task.
+10. **Table cells using the Nested-list table cell format MUST be uploaded as platform-native nested lists, NOT as `<br>•` run-on text.** This applies to the §4 Detail and Decisions columns and any other cell that opts into the format. The remote cell must visually show indented sub-items (Level-1 header > Level-2 sub-bullets), not a single paragraph with `•` characters and line breaks left as literal text.
    - **Parse the source cell** per the encoding defined in the Nested-list cell format section (bold non-indented line = Level 1; `• ` line = Level 2; `<br>` within an item; `<br><br>` between items). Preserve the bold marker on Level-1 lines as bold formatting on the rendered list item.
    - **CRITICAL — `<br>` and `•` are PARSER MARKERS, not content.** Both characters must be **consumed entirely** during parsing and **never appear** in the text content of any rendered list item:
      - `<br>` is a structural separator (line boundary inside the cell). It must NOT survive into a rendered list item's body and become a hard line break inside that item. A Level-2 sub-bullet renders as **ONE continuous line of text**, full stop — no internal `<br>`-induced line breaks splitting one bullet's text into two visual lines.
@@ -469,9 +472,9 @@ If the URL doesn't match any pattern above, ask the user which platform it is ra
      - **Confluence**: emit `<ul><li>...</li></ul>` for Level 1 with a nested `<ul><li>...</li></ul>` inside each `<li>` for Level 2. Strip the source `•` and `<br>` markers entirely.
      - **Google Docs / Sheets**: `documents.batchUpdate` with `createParagraphBullets` requests scoped to the cell range; Level-2 sub-bullets get `nestingLevel: 1`.
      - **Git markdown**: GFM table cells don't support multi-line markdown lists, so emit explicit `<ul><li>...</li></ul>` HTML inside the cell — GitHub / GitLab honor the HTML and render proper nested lists.
-11. **Table column widths on remote — applies to EVERY table in the doc** (§3 Decisions table, §5/§6 field tables, §7 Effort table, §8 Release Checklist, and any future tables). When writing to a rich-text platform that supports explicit column widths (Lark / Confluence / Google Docs), set widths to **maximize horizontal use of the row** instead of leaving the platform's default even-distribution — the goal is to stop wide-content cells from wrapping mid-sentence onto extra lines.
-   - **Narrow columns (set as small as possible while keeping the widest value on one line)**: numbering / index / short-tag columns — `#` in §3, `**Field**` and `**Type**` in §5/§6 field tables, `**Owner**` and `**Effort (d)**` in §7, status checkboxes in §8. Pick the smallest width the platform supports that still keeps the longest cell value on one line.
-   - **Wide content columns (give them the rest of the row width)**: `Detail` and `Decisions` in §3, `Notes` / `Details` in §5/§6 field tables, `Notes` in §7, the description text in §8 — distribute the remaining row width proportionally to content density. A single Level-2 sub-bullet should fit on ONE rendered line; Level-1 items shouldn't get fragmented.
+11. **Table column widths on remote — applies to EVERY table in the doc** (§4 Decisions table, §5/§6 field tables, §7 Effort table, §8 Release Checklist when separately authorized, and any future tables). When writing to a rich-text platform that supports explicit column widths (Lark / Confluence / Google Docs), set widths to **maximize horizontal use of the row** instead of leaving the platform's default even-distribution — the goal is to stop wide-content cells from wrapping mid-sentence onto extra lines.
+   - **Narrow columns (set as small as possible while keeping the widest value on one line)**: numbering / index / short-tag columns — `#` in §4, `**Field**` and `**Type**` in §5/§6 field tables, `**Owner**` and `**Effort (d)**` in §7, status checkboxes in §8. Pick the smallest width the platform supports that still keeps the longest cell value on one line.
+   - **Wide content columns (give them the rest of the row width)**: `Detail` and `Decisions` in §4, `Notes` / `Details` in §5/§6 field tables, `Notes` in §7, the description text in §8 — distribute the remaining row width proportionally to content density. A single Level-2 sub-bullet should fit on ONE rendered line; Level-1 items shouldn't get fragmented.
    - **Per-platform mechanism**: Lark docx — set `column_width` on each table column block during `docs +update`; Confluence — emit `<colgroup><col style="width: …%"></col>…</colgroup>` inside the `<table>`; Google Docs — `updateTableColumnProperties` with explicit `columnWidthPx` per column.
    - **Markdown remote (git)**: GFM tables don't support explicit widths — skip width control entirely; renderers auto-fit. Don't pad the source with extra dashes trying to fake widths.
    - **Verify after write**: re-fetch the page and confirm narrow columns haven't been auto-widened, wide content cells use the full available row width, and no wide cell wraps a single sub-bullet onto a second line just because the column was too narrow.
