@@ -1,0 +1,118 @@
+#!/bin/sh
+set -eu
+
+die() {
+	printf 'error: %s\n' "$1" >&2
+	exit 1
+}
+
+usage() {
+	case "$mode" in
+		from)
+			cat <<'EOF'
+Usage: fromjson [--] [value]
+
+Decode a JSON-encoded string. Existing JSON values pass through unchanged.
+With no value, input is read from the system clipboard.
+EOF
+			;;
+		to)
+			cat <<'EOF'
+Usage: tojson [--] [value]
+
+Encode a JSON value as a JSON string. Existing JSON strings pass through unchanged.
+With no value, input is read from the system clipboard.
+EOF
+			;;
+	esac
+}
+
+read_clipboard() {
+	if command -v pbpaste >/dev/null 2>&1; then
+		pbpaste
+		return
+	fi
+	if command -v wl-paste >/dev/null 2>&1; then
+		wl-paste --no-newline
+		return
+	fi
+	if command -v xclip >/dev/null 2>&1; then
+		xclip -selection clipboard -o
+		return
+	fi
+	if command -v xsel >/dev/null 2>&1; then
+		xsel --clipboard --output
+		return
+	fi
+	if command -v powershell.exe >/dev/null 2>&1; then
+		powershell.exe -NoProfile -Command 'Get-Clipboard -Raw'
+		return
+	fi
+	die "no supported clipboard command found"
+}
+
+[ "$#" -ge 1 ] || die "missing transform mode"
+mode="$1"
+shift
+
+case "$mode" in
+	from|to) ;;
+	*) die "unknown transform mode: $mode" ;;
+esac
+
+case "${1:-}" in
+	-h|--help)
+		usage
+		exit 0
+		;;
+	--)
+		shift
+		;;
+esac
+
+[ "$#" -le 1 ] || die "expected one quoted value"
+command -v jq >/dev/null 2>&1 || die "jq is required"
+
+tmp=$(mktemp "${TMPDIR:-/tmp}/json-transform.XXXXXX")
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+if [ "$#" -eq 1 ]; then
+	printf '%s' "$1" > "$tmp"
+else
+	read_clipboard > "$tmp"
+fi
+
+case "$mode" in
+	from)
+		jq -Rs '
+def parse_json($text):
+  try {ok: true, value: ($text | fromjson)} catch {ok: false};
+. as $raw
+| parse_json($raw) as $outer
+| if ($outer.ok | not) then
+    error("input is not valid JSON")
+  elif ($outer.value | type) == "string" then
+    parse_json($outer.value) as $inner
+    | if $inner.ok then $inner.value else $outer.value end
+  else
+    $outer.value
+  end
+' < "$tmp"
+		;;
+	to)
+		jq -Rs '
+def parse_json($text):
+  try {ok: true, value: ($text | fromjson)} catch {ok: false};
+. as $raw
+| parse_json($raw) as $parsed
+| if $parsed.ok then
+    if ($parsed.value | type) == "string" then
+      $parsed.value
+    else
+      ($parsed.value | tojson)
+    end
+  else
+    $raw
+  end
+' < "$tmp"
+		;;
+esac
