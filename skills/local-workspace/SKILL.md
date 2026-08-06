@@ -16,6 +16,7 @@ Drives `mkws` and `meta-hub` (installed on `$PATH`). `mkws` manages multi-repo g
 ```
 mkws [--name <name>] [--branch <branch>] [--add <repo>... [--base <branch>]]...
 mkws [--name <workspace>] --link <name> <link> [<name> <link>...]
+mkws checkout [--base|<branch>]
 mkws pull [<folder>...]
 mkws push [<folder>...]
 mkws merge <target> [<folder>...]
@@ -42,6 +43,7 @@ meta-hub r
 - `--base <branch>` — base branch for every repo in the immediately preceding `--add` group. Omit it to use default `main`/`master` detection. Repeat `--add` to assign different bases, for example `--add repo-a --base feature/base-a --add repo-b --base feature/base-b`. An orphaned `--base`, or another flag between `--add` and `--base`, is rejected.
 - `--link <name> <link> [<name> <link>...]` — add or update one or more quick-access workspace links in `workspace.yml`. Values are name/link pairs. Repeating `--link` also works. Run from inside a workspace dir/worktree, or pass `--name <workspace>` from the root. If an existing link URL is found, the latest provided name replaces the old name; if an existing name is found, its link is updated.
 - `mkws clean` — removes code worktrees listed in `workspace.yml`, prunes source repos, keeps workspace-level files such as `tech_doc/`, preserves links, and resets `workspace.yml` to an empty branch/repo list. No confirmation prompt.
+- `checkout` — subcommand. From a workspace directory or any repo inside it, switches every repo recorded in `workspace.yml`. With no argument, restores each repo's recorded workspace `branch_name`; with `--base`, switches each repo to its configured `base_branch` or detected `main`/`master`; with `<branch>`, switches every repo to that branch. Existing local branches are used, and remote-only branches become local tracking branches. Repositories are processed in parallel and failures are reported after all attempts. Normal Git worktree locks remain active, so a branch already checked out in another worktree fails for that repository without blocking the others.
 - `meta-hub -f <folder> -r <git-repository>` — registers a metadata source root and metadata git repository. `-f` defaults to the current folder. The command clones the repository under `~/.meta-hub/<git-repo>` and stores the local root/clone mapping in `~/.meta-hub/info.yml`. The remote is read from the clone's Git config.
 - `meta-hub index` — pulls each metadata repository first, reads its `registry.yml`, resolves each listed workstation path under the registered local root, and refreshes metadata for every listed workstation folder that exists locally. It prints per-workstation repo status (`added`, `updated`, `already indexed`, missing upstream warnings), indexed metadata paths (`workstation.yml` plus every copied `local_workspaces/*/workspace.yml`), and resolved metadata conflict paths. It does not write `workstation.yml` into local workstation folders.
 - `meta-hub index -p <workstation-folder>` — targeted form. Pulls the metadata repository first, rejects the workstation folder unless it is under a registered root from `~/.meta-hub/info.yml`, scans immediate source repos in that workstation folder, prints per-repo status and indexed metadata paths, writes `<metadata-repo>/<relative-workstation-path>/workstation.yml`, updates `<metadata-repo>/registry.yml`, copies existing workspace manifests for jump metadata, syncs optional home-scoped metadata, and commits changed metadata with `sync from <machineusername>@<machinename>`.
@@ -298,6 +300,16 @@ mkws pull
 mkws pull /abs/path/to/folder
 ```
 Detached-HEAD repos are skipped with a warning. `--ff-only` means a diverged branch fails rather than silently merging.
+
+## Switch workspace branches
+User intent: "temporarily check out the base branches", "restore the workspace branches", "switch every workspace repo to the same branch".
+```
+cd <root>/local_workspaces/<workspace-name>
+mkws checkout --base       # configured per-repo base, otherwise main/master
+mkws checkout              # restore recorded per-repo workspace branches
+mkws checkout feature/view # use one existing local or remote branch everywhere
+```
+This is best effort: one checkout failure does not stop other repositories. A base branch already checked out in the corresponding source worktree remains protected by Git and is reported as failed. The command does not force duplicate branch checkouts and does not stash or discard local changes.
 
 ## Land feature → base locally (per-repo, no push)
 User intent: "merge my workspace branch back to base locally so I can review before pushing", "I don't want to push the feature branch to remote and merge there — just merge locally and push base myself".

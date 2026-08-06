@@ -233,6 +233,40 @@ test_mkws() {
 	assert_exists "$base_workspace/repo-base-b/main-update.txt"
 	assert_not_exists "$base_workspace/repo-base-c/base-a-update.txt"
 
+	if (
+		cd "$base_workspace"
+		mkws checkout --base > "$TMP/mkws-checkout-base.out" 2>&1
+	); then
+		printf 'expected partial base checkout failure\n' >&2
+		exit 1
+	fi
+	assert_eq "feature/work" "$(git -C "$base_workspace/repo-base-a" branch --show-current)"
+	assert_eq "feature/work" "$(git -C "$base_workspace/repo-base-b" branch --show-current)"
+	assert_eq "feature/base-a" "$(git -C "$base_workspace/repo-base-c" branch --show-current)"
+	assert_eq "feature/base-d" "$(git -C "$base_workspace/repo-base-d" branch --show-current)"
+	assert_contains "$TMP/mkws-checkout-base.out" "repo-base-a"
+	assert_contains "$TMP/mkws-checkout-base.out" "repo-base-b"
+
+	(
+		cd "$base_workspace/repo-base-c"
+		mkws checkout >/dev/null
+	)
+	for repo in repo-base-a repo-base-b repo-base-c repo-base-d; do
+		assert_eq "feature/work" "$(git -C "$base_workspace/$repo" branch --show-current)"
+		git -C "$root/$repo" branch feature/shared-view main
+	done
+	(
+		cd "$base_workspace"
+		mkws checkout feature/shared-view >/dev/null
+	)
+	for repo in repo-base-a repo-base-b repo-base-c repo-base-d; do
+		assert_eq "feature/shared-view" "$(git -C "$base_workspace/$repo" branch --show-current)"
+	done
+	(
+		cd "$base_workspace"
+		mkws checkout >/dev/null
+	)
+
 	git -C "$root/repo-base-b" checkout -q -b feature/base-b
 	printf 'updated explicit base\n' > "$root/repo-base-b/base-b-update.txt"
 	git -C "$root/repo-base-b" add base-b-update.txt

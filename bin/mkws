@@ -664,6 +664,82 @@ def cmd_pull(folders: list) -> int:
     return 0 if failed == 0 else 1
 
 
+def cmd_checkout(target_branch: str = "", use_base: bool = False) -> int:
+    workspace_dir = resolve_existing_workspace_context(Path.cwd(), "")
+    data = read_manifest(workspace_dir / "workspace.yml")
+    repos = normalize_repos(data["repos"], data["branch_name"])
+
+    if not repos:
+        heading("summary")
+        info("no workspace repos found")
+        return 0
+
+    if use_base:
+        target_label_text = "configured base branches"
+    elif target_branch:
+        target_label_text = target_branch
+    else:
+        target_label_text = "workspace branches"
+    info(f"checking out {target_label_text} across {len(repos)} repo(s) in parallel...")
+
+    def worker(repo: dict, log: RepoLog) -> str:
+        name = repo["name"]
+        path = workspace_dir / name
+        log.heading(name)
+        if not path.is_dir() or not is_git_worktree(path):
+            log.fail(f"workspace repo not found: {path}")
+            return "failed"
+
+        branch = target_branch or repo["branch_name"]
+        if use_base:
+            branch = resolve_base(path, repo["base_branch"])
+        if not branch:
+            label = "base branch" if use_base else "workspace branch"
+            log.fail(f"could not resolve {label}")
+            return "failed"
+
+        current = git_output(path, ["branch", "--show-current"])
+        if current == branch:
+            log.info(f"already on {BOLD}{branch}{RESET}")
+            return "already"
+
+        if has_local_branch(path, branch):
+            cmd = ["git", "-C", str(path), "switch", branch]
+        else:
+            if "origin" in remote_names(path):
+                run(["git", "-C", str(path), "fetch", "--quiet", "origin", branch])
+            if not has_remote_branch(path, branch):
+                log.fail(f"branch not found: {branch}")
+                return "failed"
+            cmd = [
+                "git", "-C", str(path), "switch", "--track", "-c", branch,
+                f"origin/{branch}",
+            ]
+
+        log.info(f"git switch {BOLD}{branch}{RESET}")
+        proc = run(cmd)
+        log.raw((proc.stdout or "").rstrip())
+        log.raw((proc.stderr or "").rstrip())
+        if proc.returncode != 0:
+            log.fail(f"checkout failed for {name}")
+            return "failed"
+        log.ok(f"checked out {branch}")
+        return "checked_out"
+
+    results = run_in_parallel(repos, worker)
+    checked_out = sum(1 for result in results if result == "checked_out")
+    already = sum(1 for result in results if result == "already")
+    failed_repos = [repos[i]["name"] for i, result in enumerate(results) if result == "failed"]
+    failed = len(failed_repos)
+
+    heading("summary")
+    color = GREEN if failed == 0 else YELLOW
+    info(f"checked out: {color}{checked_out}{RESET}, already: {already}, failed: {color}{failed}{RESET}")
+    if failed_repos:
+        info(f"failed: {RED}{', '.join(failed_repos)}{RESET}")
+    return 0 if failed == 0 else 1
+
+
 # Shared base-merge helper used by `mkws sync`.
 #
 # Flow:
@@ -1687,6 +1763,7 @@ USAGE = """\
 Usage:
   mkws [--name <name>] [--branch <branch>] [--add <repo>... [--base <branch>]]...
   mkws [--name <workspace>] --link <name> <link> [<name> <link>...]
+  mkws checkout [--base|<branch>]
   mkws pull [<folder>...]
   mkws push [<folder>...]
   mkws merge <target> [<folder>...]
@@ -1699,6 +1776,11 @@ Usage:
 Modes:
   (default)  Create or extend a workspace. Run from the root folder that
              contains the source repos, or from inside a workspace dir.
+  checkout   Switch every repo recorded in the current workspace manifest.
+             No argument restores each repo's workspace branch. `--base`
+             selects each configured base_branch or detected main/master. A
+             branch argument applies the same branch to every repo. Best effort
+             and parallel; normal Git worktree branch locks are preserved.
   pull       `git pull --ff-only` on the currently checked-out branch of every
              matching repo. Takes any number of folder args (absolute, relative,
              or a bare name under $PWD). Each arg is either a git repo (pulled
@@ -1832,6 +1914,7 @@ def parse_args(argv):
     target_path = ""
     target_paths: list = []
     sync_push = False
+    checkout_base = False
     pending_add_indexes: list = []
 
     argv = list(argv)
@@ -1848,6 +1931,16 @@ def parse_args(argv):
             argv.pop(0)
             while argv and not argv[0].startswith("-"):
                 target_paths.append(argv.pop(0))
+        elif sub == "checkout":
+            mode = "checkout"
+            argv.pop(0)
+            if argv and argv[0] == "--base":
+                checkout_base = True
+                argv.pop(0)
+            elif argv and not argv[0].startswith("-"):
+                target_path = argv.pop(0)
+            if argv:
+                die("'checkout' accepts no argument, --base, or one branch name")
         elif sub == "sync":
             mode = "sync"
             argv.pop(0)
@@ -1944,14 +2037,14 @@ def parse_args(argv):
         else:
             die(f"unknown flag: {a}\n\n{USAGE}")
 
-    return mode, name, branch, repos, link_pairs, target_path, target_paths, sync_push
+    return mode, name, branch, repos, link_pairs, target_path, target_paths, sync_push, checkout_base
 
 
 def main() -> None:
     if not has_cmd("git"):
         die("git not installed")
 
-    mode, name, branch, repos, link_pairs, target_path, target_paths, sync_push = parse_args(sys.argv[1:])
+    mode, name, branch, repos, link_pairs, target_path, target_paths, sync_push, checkout_base = parse_args(sys.argv[1:])
 
     if mode == "pull":
         if repos or branch or name or link_pairs:
@@ -1961,6 +2054,10 @@ def main() -> None:
         if repos or branch or name or link_pairs:
             die("'push' takes folder path(s) only; --add/--branch/--name/--link are not accepted")
         sys.exit(cmd_push(target_paths))
+    if mode == "checkout":
+        if repos or branch or name or link_pairs or target_paths or sync_push:
+            die("'checkout' accepts no argument, --base, or one branch name")
+        sys.exit(cmd_checkout(target_path, use_base=checkout_base))
     if mode == "sync":
         if repos or branch or name or link_pairs:
             die("'sync' takes [--push] and folder path(s) only; --add/--branch/--name/--link are not accepted")
