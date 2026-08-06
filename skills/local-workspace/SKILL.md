@@ -14,7 +14,7 @@ Drives `mkws` and `meta-hub` (installed on `$PATH`). `mkws` manages multi-repo g
 
 # Command interface
 ```
-mkws [--name <name>] [--branch <branch>] [--add <repo>...]
+mkws [--name <name>] [--branch <branch>] [--add <repo>... [--base <branch>]]...
 mkws [--name <workspace>] --link <name> <link> [<name> <link>...]
 mkws pull [<folder>...]
 mkws push [<folder>...]
@@ -39,6 +39,7 @@ meta-hub r
 - `--name` — workspace folder name, or a path to an existing workspace directory that contains `workspace.yml`. Required when creating a new workspace or when invoked from the workspace root. **Optional when invoked from inside a workspace dir** (read from `workspace.yml`). Plain names create/use `<root>/local_workspaces/<name>`; path values target that workspace directly.
 - `--branch` — default branch for repos that do not specify their own branch. **Required only when an added repo has no per-repo branch** (`--add repo-a`). **Optional** when every added repo uses `repo@branch`, when creating an empty workspace (no `--add`), or when extending an empty workspace with no repos. If the workspace already has a `branch_name` set and `--add` is present, a different `--branch` applies only to the newly added repo(s) and does not change the workspace default branch. If the workspace already has a `branch_name` set and `--add` is absent, a different `--branch` is rejected. If the workspace was created empty (`branch_name:` in yml is empty) and you later pass `--branch`, the value is persisted into the yml.
 - `--add` — zero or more repos. Each entry can be a **bare name** (looked up under the root), a **relative path** (resolved against `$PWD`, e.g. `../repo-a`), or an **absolute path**. Add `@<branch>` to any repo spec to override the default branch for that repo, e.g. `repo-a@feature/a`. The basename is used for the in-workspace folder name and the yml entry. Variadic: `--add a b c` and `--add a --add b` both work.
+- `--base <branch>` — base branch for every repo in the immediately preceding `--add` group. Omit it to use default `main`/`master` detection. Repeat `--add` to assign different bases, for example `--add repo-a --base feature/base-a --add repo-b --base feature/base-b`. An orphaned `--base`, or another flag between `--add` and `--base`, is rejected.
 - `--link <name> <link> [<name> <link>...]` — add or update one or more quick-access workspace links in `workspace.yml`. Values are name/link pairs. Repeating `--link` also works. Run from inside a workspace dir/worktree, or pass `--name <workspace>` from the root. If an existing link URL is found, the latest provided name replaces the old name; if an existing name is found, its link is updated.
 - `mkws clean` — removes code worktrees listed in `workspace.yml`, prunes source repos, keeps workspace-level files such as `tech_doc/`, preserves links, and resets `workspace.yml` to an empty branch/repo list. No confirmation prompt.
 - `meta-hub -f <folder> -r <git-repository>` — registers a metadata source root and metadata git repository. `-f` defaults to the current folder. The command clones the repository under `~/.meta-hub/<git-repo>` and stores the local root/clone mapping in `~/.meta-hub/info.yml`. The remote is read from the clone's Git config.
@@ -240,20 +241,16 @@ Either way, omit `--branch` to use the workspace default branch. To add repo(s) 
 
 ## Use a non-default base branch
 User intent: "this repo's workspace branch should be based on another local or remote branch instead of main/master".
-Create or edit the workspace manifest:
-```yaml
-repos:
-  - name: repo-a
-    branch_name: feature/a
-    base_branch: release/a
 ```
-Then run from the workspace:
-```
-mkws --add repo-a   # if missing, creates feature/a from release/a
-mkws sync repo-a    # later, merges release/a into feature/a locally
+mkws --name X --branch feature/work \
+  --add repo-a --base feature/base-a \
+  --add repo-b \
+  --add repo-c --base feature/base-c
+
+mkws sync repo-a    # later, merges feature/base-a into feature/work locally
 mkws sync --push repo-a
 ```
-Do not add `base_branch` for normal repos; default `main`/`master` behavior is implied.
+Here `repo-a` starts from and tracks `feature/base-a`, `repo-b` uses default `main`/`master` behavior, and `repo-c` starts from and tracks `feature/base-c`. A single `--base` applies to every repo in its preceding variadic group, so `--add repo-a repo-b --base feature/base-a` gives both repos the same base. The resulting per-repo `base_branch` values are stored in `workspace.yml`.
 
 ## Migrate a workspace manifest to v2
 User intent: "migrate this workspace.yml to the new format".

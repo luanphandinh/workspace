@@ -1480,8 +1480,8 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
     pwd = Path.cwd()
     workspace_dir, repo_root, name = resolve_default_context(pwd, name_flag)
     yml = workspace_dir / "workspace.yml"
-    repo_specs = [parse_repo_spec(r) for r in repos_arg]
-    specs_need_default_branch = any(not branch for _, branch in repo_specs)
+    repo_specs = [(*parse_repo_spec(r["spec"]), r["base_branch"]) for r in repos_arg]
+    specs_need_default_branch = any(not branch for _, branch, _ in repo_specs)
     manifest_changed = False
 
     if yml.is_file():
@@ -1516,7 +1516,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
 
     added = skipped = failed = 0
 
-    for repo, repo_branch_override in repo_specs:
+    for repo, repo_branch_override, repo_base_override in repo_specs:
         heading(repo)
         repo_path = resolve_source(repo, repo_root)
         if repo_path is None:
@@ -1543,12 +1543,38 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             failed += 1
             continue
 
+        if repo_base_override is not None:
+            if resolve_base(repo_path, repo_base_override) is None:
+                fail(f"base branch '{repo_base_override}' not found")
+                failed += 1
+                continue
+            if existing_repo and existing_repo["base_branch"] != repo_base_override:
+                repos_for_manifest = normalize_repos(
+                    manifest_data["repos"], manifest_data["branch_name"]
+                )
+                for manifest_repo in repos_for_manifest:
+                    if manifest_repo["name"] == leaf:
+                        manifest_repo["base_branch"] = repo_base_override
+                        break
+                write_manifest(
+                    yml,
+                    manifest_data["name"],
+                    manifest_data["branch_name"],
+                    repos_for_manifest,
+                    manifest_data["links"],
+                )
+                manifest_changed = True
+
         branch_for_repo = (
             (existing_repo or {}).get("branch_name")
             or repo_branch_override
             or branch_for_added_repos
         )
-        base_for_repo = (existing_repo or {}).get("base_branch", "")
+        base_for_repo = (
+            repo_base_override
+            if repo_base_override is not None
+            else (existing_repo or {}).get("base_branch", "")
+        )
         already_recorded = existing_repo is not None
         if not branch_for_repo:
             fail(f"no branch for {repo}; pass --branch <branch> or use {repo}@<branch>")
@@ -1659,7 +1685,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
 # ---------------------------------------------------------------------------
 USAGE = """\
 Usage:
-  mkws [--name <name>] [--branch <branch>] [--add <repo>...]
+  mkws [--name <name>] [--branch <branch>] [--add <repo>... [--base <branch>]]...
   mkws [--name <workspace>] --link <name> <link> [<name> <link>...]
   mkws pull [<folder>...]
   mkws push [<folder>...]
@@ -1776,6 +1802,9 @@ Flags:
                         - an absolute path
                         - any of the above with @<branch> for a per-repo branch
                       Variadic: --add a b c  or  --add a --add b
+  --base <branch>     base branch for the immediately preceding --add group.
+                      Omit it to detect main/master. Repeat --add to assign
+                      different bases: --add a --base base/a --add b --base base/b
   --link <name> <link>
                       add or update one or more quick-access workspace links.
                       Values are name/link pairs. Repeating --link is also
@@ -1803,6 +1832,7 @@ def parse_args(argv):
     target_path = ""
     target_paths: list = []
     sync_push = False
+    pending_add_indexes: list = []
 
     argv = list(argv)
 
@@ -1872,17 +1902,33 @@ def parse_args(argv):
                 die("--name requires a value")
             name = argv[i + 1]
             i += 2
+            pending_add_indexes = []
         elif a == "--branch":
             if i + 1 >= len(argv):
                 die("--branch requires a value")
             branch = argv[i + 1]
             i += 2
+            pending_add_indexes = []
         elif a == "--add":
             i += 1
+            pending_add_indexes = []
             while i < len(argv) and not argv[i].startswith("--"):
-                repos.append(argv[i])
+                repos.append({"spec": argv[i], "base_branch": None})
+                pending_add_indexes.append(len(repos) - 1)
                 i += 1
+            if not pending_add_indexes:
+                die("--add requires at least one repo")
+        elif a == "--base":
+            if not pending_add_indexes:
+                die("--base must immediately follow an --add group")
+            if i + 1 >= len(argv) or not argv[i + 1] or argv[i + 1].startswith("--"):
+                die("--base requires a branch")
+            for repo_index in pending_add_indexes:
+                repos[repo_index]["base_branch"] = argv[i + 1]
+            pending_add_indexes = []
+            i += 2
         elif a == "--link":
+            pending_add_indexes = []
             i += 1
             values = []
             while i < len(argv) and not argv[i].startswith("--"):

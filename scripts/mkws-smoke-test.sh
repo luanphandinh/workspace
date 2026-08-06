@@ -161,6 +161,10 @@ test_mkws() {
 	init_repo "$root/repo-a"
 	init_repo "$root/repo-b"
 	init_repo "$root/repo-c"
+	init_repo "$root/repo-base-a"
+	init_repo "$root/repo-base-b"
+	init_repo "$root/repo-base-c"
+	init_repo "$root/repo-base-d"
 
 	mkws --help >/dev/null
 	EXPECT='unknown subcommand: index' expect_fail_contains mkws index
@@ -186,6 +190,66 @@ test_mkws() {
 	assert_git_repo "$workspace/tech_doc"
 	assert_contains "$workspace/workspace.yml" "branch_name: feature/a"
 	assert_eq "feature/a" "$(git -C "$workspace/repo-a" branch --show-current)"
+
+	for spec in \
+		"repo-base-a feature/base-a base-a.txt" \
+		"repo-base-c feature/base-a base-c.txt" \
+		"repo-base-d feature/base-d base-d.txt"
+	do
+		set -- $spec
+		git -C "$root/$1" checkout -q -b "$2"
+		printf 'base\n' > "$root/$1/$3"
+		git -C "$root/$1" add "$3"
+		git -C "$root/$1" commit -q -m "add base marker"
+		git -C "$root/$1" checkout -q main
+	done
+
+	(
+		cd "$root"
+		mkws --name based-feature --branch feature/work \
+			--add repo-base-a --base feature/base-a \
+			--add repo-base-b \
+			--add repo-base-c --base feature/base-a \
+			--add repo-base-d --base feature/base-d >/dev/null
+	)
+	base_workspace="$root/local_workspaces/based-feature"
+	assert_exists "$base_workspace/repo-base-a/base-a.txt"
+	assert_not_exists "$base_workspace/repo-base-b/main-update.txt"
+	assert_exists "$base_workspace/repo-base-c/base-c.txt"
+	assert_exists "$base_workspace/repo-base-d/base-d.txt"
+
+	printf 'updated base\n' > "$root/repo-base-a/base-a-update.txt"
+	git -C "$root/repo-base-a" checkout -q feature/base-a
+	git -C "$root/repo-base-a" add base-a-update.txt
+	git -C "$root/repo-base-a" commit -q -m "update base a"
+	printf 'updated main\n' > "$root/repo-base-b/main-update.txt"
+	git -C "$root/repo-base-b" add main-update.txt
+	git -C "$root/repo-base-b" commit -q -m "update main"
+	(
+		cd "$base_workspace"
+		mkws sync >/dev/null
+	)
+	assert_exists "$base_workspace/repo-base-a/base-a-update.txt"
+	assert_exists "$base_workspace/repo-base-b/main-update.txt"
+	assert_not_exists "$base_workspace/repo-base-c/base-a-update.txt"
+
+	git -C "$root/repo-base-b" checkout -q -b feature/base-b
+	printf 'updated explicit base\n' > "$root/repo-base-b/base-b-update.txt"
+	git -C "$root/repo-base-b" add base-b-update.txt
+	git -C "$root/repo-base-b" commit -q -m "update explicit base"
+	git -C "$root/repo-base-b" checkout -q main
+	(
+		cd "$base_workspace"
+		mkws --add ../../repo-base-b --base feature/base-b >/dev/null
+		mkws sync repo-base-b >/dev/null
+	)
+	assert_exists "$base_workspace/repo-base-b/base-b-update.txt"
+
+	(
+		cd "$root"
+		EXPECT='must immediately follow an --add group' expect_fail_contains \
+			mkws --name invalid-base --base feature/base-a
+	)
 
 	(
 		cd "$workspace"
