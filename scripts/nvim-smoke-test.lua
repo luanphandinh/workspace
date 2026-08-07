@@ -1036,6 +1036,32 @@ local function test_worktree_plugin_starts_lazy()
   local plugin = worktree_plugin()
   assert_true(plugin and plugin.lazy == true, "worktree plugin is not lazy")
   assert_true(not worktree_plugin_loaded(), "worktree plugin loaded during startup")
+  local project_map = vim.fn.maparg("<leader>gp", "n", false, true)
+  assert_true(
+    type(project_map) == "table" and type(project_map.callback) == "function",
+    "<leader>gp is not a lazy callback mapping"
+  )
+end
+
+local function test_adjacent_project_discovery(repo, worktree)
+  local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
+  local nested = repo .. "/nested"
+  vim.fn.mkdir(nested, "p")
+  vim.cmd("cd " .. vim.fn.fnameescape(nested))
+
+  local projects, current_root = api.list_sibling_repos()
+  local found = {}
+  for _, project in ipairs(projects) do
+    found[realpath(project.path)] = true
+  end
+
+  assert_true(realpath(current_root) == realpath(repo), "project discovery did not resolve the current git root")
+  assert_true(found[realpath(repo)] == true, "project discovery omitted the current repository")
+  assert_true(found[realpath(worktree)] == true, "project discovery omitted an adjacent git worktree")
+  assert_true(vim.fn.exists(":ProjectSwitch") == 2, "ProjectSwitch command is missing")
+
+  vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
 end
 
 local function test_agent_cli_commands_available()
@@ -1906,6 +1932,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("deleted workspace lazy key falls back to master worktree", function()
     test_deleted_workspace_falls_back_to_master_worktree_from_lazy_key()
+  end)
+
+  test("adjacent project picker discovers sibling git repositories", function()
+    test_adjacent_project_discovery(repo, worktree)
   end)
 
   test("lsp definition and references", function()

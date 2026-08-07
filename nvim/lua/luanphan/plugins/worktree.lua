@@ -264,6 +264,14 @@ local function setup()
     return vim.fn.isdirectory(path .. "/.git") == 1 or vim.fn.filereadable(path .. "/.git") == 1
   end
 
+  local function git_root(path)
+    local lines = vim.fn.systemlist({ "git", "-C", path, "rev-parse", "--show-toplevel" })
+    if vim.v.shell_error ~= 0 or not lines or not lines[1] or lines[1] == "" then
+      return nil
+    end
+    return lines[1]:gsub("/$", "")
+  end
+
   local function infer_master_worktree_from_workspace_path(path)
     local pattern = "^(.-)/" .. WS_CONTAINER .. "/([^/]+)/([^/]+)(/.*)$"
     local root, _, repo = path:match(pattern)
@@ -516,7 +524,33 @@ local function setup()
     return trees
   end
 
-  switch_to = function(path)
+  local function list_sibling_repos()
+    local root = git_root(safe_getcwd())
+    if not root then
+      return {}, nil
+    end
+
+    local parent = vim.fn.fnamemodify(root, ":h")
+    local uv = vim.uv or vim.loop
+    local handle = uv.fs_scandir(parent)
+    if not handle then
+      return {}, root
+    end
+
+    local repos = {}
+    while true do
+      local name = uv.fs_scandir_next(handle)
+      if not name then break end
+      local path = parent .. "/" .. name
+      if git_repo_exists(path) then
+        repos[#repos + 1] = { name = name, path = path }
+      end
+    end
+    table.sort(repos, function(a, b) return a.name < b.name end)
+    return repos, root
+  end
+
+  switch_to = function(path, kind)
     if vim.fn.isdirectory(path) == 0 then
       vim.notify("worktree path not found: " .. path, vim.log.levels.ERROR)
       return
@@ -627,7 +661,7 @@ local function setup()
     --     the switch settles so <C-o>/<C-i> cannot reopen old worktree files.
     clear_all_jumplists()
 
-    local msg = "Switched to worktree: " .. path
+    local msg = "Switched to " .. (kind or "worktree") .. ": " .. path
     if restored > 0 then
       msg = msg .. string.format(" (restored %d buffer%s)", restored, restored == 1 and "" or "s")
     end
@@ -637,11 +671,7 @@ local function setup()
     vim.notify(msg, vim.log.levels.INFO)
   end
 
-  local function pick_worktree()
-    if rescue_deleted_cwd() then
-      return
-    end
-
+  local function telescope_modules()
     local ok_p, pickers = pcall(require, "telescope.pickers")
     local ok_f, finders = pcall(require, "telescope.finders")
     local ok_c, conf = pcall(require, "telescope.config")
@@ -649,8 +679,18 @@ local function setup()
     local ok_s, action_state = pcall(require, "telescope.actions.state")
     if not (ok_p and ok_f and ok_c and ok_a and ok_s) then
       vim.notify("telescope not available", vim.log.levels.ERROR)
+      return nil
+    end
+    return pickers, finders, conf.values, actions, action_state
+  end
+
+  local function pick_worktree()
+    if rescue_deleted_cwd() then
       return
     end
+
+    local pickers, finders, conf, actions, action_state = telescope_modules()
+    if not pickers then return end
 
     local trees = list_worktrees()
     if #trees == 0 then
@@ -663,11 +703,7 @@ local function setup()
       return
     end
 
-    local cur_root_lines = vim.fn.systemlist({ "git", "-C", cur, "rev-parse", "--show-toplevel" })
-    local cur_root = cur
-    if vim.v.shell_error == 0 and cur_root_lines and cur_root_lines[1] then
-      cur_root = cur_root_lines[1]
-    end
+    local cur_root = git_root(cur) or cur
     local rel = ""
     if cur ~= cur_root and vim.startswith(cur, cur_root .. "/") then
       rel = cur:sub(#cur_root + 2)
@@ -688,7 +724,7 @@ local function setup()
           }
         end,
       }),
-      sorter = conf.values.generic_sorter({}),
+      sorter = conf.generic_sorter({}),
       attach_mappings = function(prompt_bufnr, _map)
         actions.select_default:replace(function()
           local sel = action_state.get_selected_entry()
@@ -722,12 +758,66 @@ local function setup()
     }):find()
   end
 
+  local function pick_project()
+    if rescue_deleted_cwd() then
+      return
+    end
+
+    local pickers, finders, conf, actions, action_state = telescope_modules()
+    if not pickers then return end
+
+    local repos, current_root = list_sibling_repos()
+    if #repos == 0 then
+      vim.notify("no adjacent git repositories found", vim.log.levels.WARN)
+      return
+    end
+
+    pickers.new({}, {
+      prompt_title = "Git Projects",
+      finder = finders.new_table({
+        results = repos,
+        entry_maker = function(repo)
+          local marker = repo.path == current_root and "* " or "  "
+          return {
+            value = repo,
+            display = marker .. repo.name,
+            ordinal = repo.name .. " " .. repo.path,
+          }
+        end,
+      }),
+      sorter = conf.generic_sorter({}),
+      attach_mappings = function(prompt_bufnr, _map)
+        actions.select_default:replace(function()
+          local selection = action_state.get_selected_entry()
+          actions.close(prompt_bufnr)
+          if not selection or not selection.value or not selection.value.path then
+            vim.notify("project picker: no selection", vim.log.levels.WARN)
+            return
+          end
+          if selection.value.path == current_root then
+            vim.notify("already in this project", vim.log.levels.INFO)
+            return
+          end
+          vim.schedule(function()
+            switch_to(selection.value.path, "project")
+          end)
+        end)
+        return true
+      end,
+    }):find()
+  end
+
   local function register_keymap()
     pcall(vim.api.nvim_del_user_command, "WorktreeSwitch")
+    pcall(vim.api.nvim_del_user_command, "ProjectSwitch")
     vim.api.nvim_create_user_command("WorktreeSwitch", pick_worktree, {
       desc = "Switch nvim instance to another git worktree",
     })
+    vim.api.nvim_create_user_command("ProjectSwitch", pick_project, {
+      desc = "Switch nvim instance to an adjacent git repository",
+    })
     vim.keymap.set("n", "<leader>gw", pick_worktree, { desc = "Switch worktree" })
+    vim.keymap.set("n", "<leader>gp", pick_project, { desc = "Switch adjacent project" })
   end
 
   register_keymap()
@@ -735,6 +825,8 @@ local function setup()
   local test_api = {
     switch_to = switch_to,
     pick_worktree = pick_worktree,
+    pick_project = pick_project,
+    list_sibling_repos = list_sibling_repos,
     snapshot = snapshot_buffers,
     restore = restore_buffers,
     rescue_deleted_cwd = rescue_deleted_cwd,
@@ -755,14 +847,19 @@ local function pick_worktree()
   ensure_setup().pick_worktree()
 end
 
+local function pick_project()
+  ensure_setup().pick_project()
+end
+
 return {
   {
     "luanphan-worktree",
     virtual = true,
     init = init,
-    cmd = "WorktreeSwitch",
+    cmd = { "WorktreeSwitch", "ProjectSwitch" },
     keys = {
       { "<leader>gw", pick_worktree, desc = "Switch worktree" },
+      { "<leader>gp", pick_project, desc = "Switch adjacent project" },
     },
     config = ensure_setup,
   },
