@@ -524,17 +524,11 @@ local function setup()
     return trees
   end
 
-  local function list_sibling_repos()
-    local root = git_root(safe_getcwd())
-    if not root then
-      return {}, nil
-    end
-
-    local parent = vim.fn.fnamemodify(root, ":h")
+  local function list_repos_in_dir(parent)
     local uv = vim.uv or vim.loop
     local handle = uv.fs_scandir(parent)
     if not handle then
-      return {}, root
+      return {}
     end
 
     local repos = {}
@@ -547,7 +541,129 @@ local function setup()
       end
     end
     table.sort(repos, function(a, b) return a.name < b.name end)
+    return repos
+  end
+
+  local function list_sibling_repos()
+    local root = git_root(safe_getcwd())
+    if not root then
+      return {}, nil
+    end
+
+    local parent = vim.fn.fnamemodify(root, ":h")
+    local repos = list_repos_in_dir(parent)
     return repos, root
+  end
+
+  local function project_branch(path)
+    local lines = vim.fn.systemlist({ "git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD" })
+    if vim.v.shell_error ~= 0 or not lines or not lines[1] or lines[1] == "" then
+      return "HEAD"
+    end
+    return lines[1]
+  end
+
+  local function list_all_project_repos()
+    local siblings, current_root = list_sibling_repos()
+    if not current_root then
+      return {}, nil
+    end
+
+    local marker = "/" .. WS_CONTAINER .. "/"
+    local marker_start = current_root:find(marker, 1, true)
+    local repos = {}
+    local seen = {}
+
+    local function append(candidates, scope)
+      for _, repo in ipairs(candidates) do
+        if not seen[repo.path] then
+          seen[repo.path] = true
+          repos[#repos + 1] = {
+            name = repo.name,
+            path = repo.path,
+            branch = project_branch(repo.path),
+            scope = scope,
+          }
+        end
+      end
+    end
+
+    append(siblings, marker_start and "workspace" or "root")
+    if marker_start then
+      append(list_repos_in_dir(current_root:sub(1, marker_start - 1)), "root")
+    end
+
+    return repos, current_root
+  end
+
+  local function group_project_entries(repos, current_root)
+    local name_width = 0
+    for _, repo in ipairs(repos) do
+      name_width = math.max(name_width, #repo.name)
+    end
+
+    local entries = {}
+    for _, scope in ipairs({ "workspace", "root" }) do
+      local scoped = {}
+      for _, repo in ipairs(repos) do
+        if repo.scope == scope then
+          scoped[#scoped + 1] = repo
+        end
+      end
+      if #scoped > 0 then
+        entries[#entries + 1] = {
+          header = true,
+          scope = scope,
+          display = "[" .. scope .. "]",
+          ordinal = scope,
+          order = #entries + 1,
+        }
+        for _, repo in ipairs(scoped) do
+          local marker = repo.path == current_root and "* " or "  "
+          entries[#entries + 1] = vim.tbl_extend("force", repo, {
+            display = string.format("%s%-" .. name_width .. "s [%s]", marker, repo.name, repo.branch),
+            ordinal = repo.name,
+            order = #entries + 1,
+          })
+        end
+      end
+    end
+    return entries
+  end
+
+  local function make_project_sorter(base_sorter, sorters)
+    return sorters.Sorter:new({
+      scoring_function = function(_, prompt, line, entry)
+        local value = entry.value
+        local group_offset = value.scope == "root" and 10 or 0
+        if value.header then
+          return group_offset
+        end
+
+        local score = base_sorter:scoring_function(prompt, line, entry)
+        if not score or score < 0 then
+          return -1
+        end
+        if prompt == "" then
+          return group_offset + 1 + value.order / 10000
+        end
+        return group_offset + 1 + score + value.order / 10000
+      end,
+      highlighter = function(_, prompt, display)
+        return base_sorter:highlighter(prompt, display)
+      end,
+    })
+  end
+
+  local function move_project_selection(picker, delta)
+    local count = picker.manager and picker.manager:num_results() or 0
+    for _ = 1, count do
+      picker:move_selection(delta)
+      local selection = picker:get_selection()
+      if not selection or not selection.value or not selection.value.header then
+        return
+      end
+    end
   end
 
   switch_to = function(path, kind)
@@ -763,37 +879,47 @@ local function setup()
       return
     end
 
-    local pickers, finders, conf, actions, action_state = telescope_modules()
-    if not pickers then return end
-
-    local repos, current_root = list_sibling_repos()
+    local repos, current_root = list_all_project_repos()
     if #repos == 0 then
-      vim.notify("no adjacent git repositories found", vim.log.levels.WARN)
+      vim.notify("no workspace or root git repositories found", vim.log.levels.WARN)
       return
     end
 
+    local pickers, finders, conf, actions, action_state = telescope_modules()
+    if not pickers then return end
+    local entries = group_project_entries(repos, current_root)
+    local sorter = make_project_sorter(conf.generic_sorter({}), require("telescope.sorters"))
     pickers.new({}, {
       prompt_title = "Git Projects",
+      default_selection_index = #entries > 1 and 2 or 1,
       finder = finders.new_table({
-        results = repos,
-        entry_maker = function(repo)
-          local marker = repo.path == current_root and "* " or "  "
+        results = entries,
+        entry_maker = function(entry)
           return {
-            value = repo,
-            display = marker .. repo.name,
-            ordinal = repo.name .. " " .. repo.path,
+            value = entry,
+            display = entry.display,
+            ordinal = entry.ordinal,
           }
         end,
       }),
-      sorter = conf.generic_sorter({}),
+      sorter = sorter,
       attach_mappings = function(prompt_bufnr, _map)
+        actions.move_selection_next:replace(function(bufnr)
+          move_project_selection(action_state.get_current_picker(bufnr), 1)
+        end)
+        actions.move_selection_previous:replace(function(bufnr)
+          move_project_selection(action_state.get_current_picker(bufnr), -1)
+        end)
         actions.select_default:replace(function()
           local selection = action_state.get_selected_entry()
-          actions.close(prompt_bufnr)
-          if not selection or not selection.value or not selection.value.path then
+          if not selection or not selection.value then
             vim.notify("project picker: no selection", vim.log.levels.WARN)
             return
           end
+          if selection.value.header then
+            return
+          end
+          actions.close(prompt_bufnr)
           if selection.value.path == current_root then
             vim.notify("already in this project", vim.log.levels.INFO)
             return
@@ -804,6 +930,14 @@ local function setup()
         end)
         return true
       end,
+      on_complete = {
+        function(picker)
+          local selection = picker:get_selection()
+          if selection and selection.value and selection.value.header then
+            move_project_selection(picker, 1)
+          end
+        end,
+      },
     }):find()
   end
 
@@ -814,10 +948,10 @@ local function setup()
       desc = "Switch nvim instance to another git worktree",
     })
     vim.api.nvim_create_user_command("ProjectSwitch", pick_project, {
-      desc = "Switch nvim instance to an adjacent git repository",
+      desc = "Switch nvim instance to a workspace or root git repository",
     })
     vim.keymap.set("n", "<leader>gw", pick_worktree, { desc = "Switch worktree" })
-    vim.keymap.set("n", "<leader>gp", pick_project, { desc = "Switch adjacent project" })
+    vim.keymap.set("n", "<leader>gp", pick_project, { desc = "Switch workspace or root project" })
   end
 
   register_keymap()
@@ -827,6 +961,10 @@ local function setup()
     pick_worktree = pick_worktree,
     pick_project = pick_project,
     list_sibling_repos = list_sibling_repos,
+    list_all_project_repos = list_all_project_repos,
+    group_project_entries = group_project_entries,
+    make_project_sorter = make_project_sorter,
+    move_project_selection = move_project_selection,
     snapshot = snapshot_buffers,
     restore = restore_buffers,
     rescue_deleted_cwd = rescue_deleted_cwd,
@@ -859,7 +997,7 @@ return {
     cmd = { "WorktreeSwitch", "ProjectSwitch" },
     keys = {
       { "<leader>gw", pick_worktree, desc = "Switch worktree" },
-      { "<leader>gp", pick_project, desc = "Switch adjacent project" },
+      { "<leader>gp", pick_project, desc = "Switch workspace or root project" },
     },
     config = ensure_setup,
   },
