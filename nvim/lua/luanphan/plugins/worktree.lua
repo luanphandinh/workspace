@@ -31,6 +31,11 @@ local function setup()
   --     } }
   local BUFSTORE_KEY = "luanphan_workspace_buffers"
   local WS_CONTAINER = "local_workspaces"
+  local AGENT_BUFFER_KEYS = {
+    { name = "codex", key = "codex_agent_bufnr" },
+    { name = "claude", key = "claude_agent_bufnr" },
+    { name = "cursor", key = "cursor_agent_bufnr" },
+  }
 
   -- Transient map of "apply this cursor when the file is first BufReadPost'd
   -- in the current nvim session". Populated by `restore_buffers`, consumed
@@ -666,6 +671,81 @@ local function setup()
     end
   end
 
+  local function terminal_job_running(bufnr)
+    if type(bufnr) ~= "number" or not vim.api.nvim_buf_is_valid(bufnr) then
+      return false
+    end
+    if vim.bo[bufnr].buftype ~= "terminal" then
+      return false
+    end
+    local job = vim.b[bufnr].terminal_job_id
+    if type(job) ~= "number" or job <= 0 then
+      return false
+    end
+    local ok, status = pcall(vim.fn.jobwait, { job }, 0)
+    return ok and status[1] == -1
+  end
+
+  local function list_active_agents()
+    local instances = {}
+    for _, agent in ipairs(AGENT_BUFFER_KEYS) do
+      local buffers = vim.g[agent.key]
+      if type(buffers) == "table" then
+        for cwd, bufnr in pairs(buffers) do
+          if type(cwd) == "string" and dir_exists(cwd) and terminal_job_running(bufnr) then
+            local root = git_root(cwd) or cwd
+            local context = vim.fn.fnamemodify(root, ":t")
+            local marker = "/" .. WS_CONTAINER .. "/"
+            local marker_start = root:find(marker, 1, true)
+            if marker_start then
+              local workspace = root:sub(marker_start + #marker):match("^([^/]+)")
+              if workspace then
+                context = workspace .. "/" .. context
+              end
+            end
+            if cwd ~= root and path_is_in_dir(cwd, root) then
+              context = context .. "/" .. cwd:sub(#root + 2)
+            end
+            instances[#instances + 1] = {
+              agent = agent.name,
+              branch = project_branch(root),
+              bufnr = bufnr,
+              context = context,
+              path = cwd,
+            }
+          end
+        end
+      end
+    end
+
+    table.sort(instances, function(a, b)
+      if a.context == b.context then
+        return a.agent < b.agent
+      end
+      return a.context < b.context
+    end)
+
+    local agent_width = 0
+    local context_width = 0
+    local current = safe_getcwd()
+    for _, instance in ipairs(instances) do
+      agent_width = math.max(agent_width, #instance.agent)
+      context_width = math.max(context_width, #instance.context)
+    end
+    for _, instance in ipairs(instances) do
+      local marker = instance.path == current and "* " or "  "
+      instance.display = string.format(
+        "%s%-" .. agent_width .. "s  %-" .. context_width .. "s  [%s]",
+        marker,
+        instance.agent,
+        instance.context,
+        instance.branch
+      )
+      instance.ordinal = instance.agent .. " " .. instance.context
+    end
+    return instances
+  end
+
   switch_to = function(path, kind)
     if vim.fn.isdirectory(path) == 0 then
       vim.notify("worktree path not found: " .. path, vim.log.levels.ERROR)
@@ -941,17 +1021,76 @@ local function setup()
     }):find()
   end
 
+  local function activate_agent(instance)
+    if instance.path ~= safe_getcwd() then
+      switch_to(instance.path, "agent project")
+    end
+    local ok, agents = pcall(require, "luanphan.plugins.agents")
+    if not ok or type(agents.focus) ~= "function" or not agents.focus(instance.agent) then
+      vim.notify("could not focus " .. instance.agent .. " agent", vim.log.levels.ERROR)
+    end
+  end
+
+  local function pick_agent()
+    if rescue_deleted_cwd() then
+      return
+    end
+
+    local instances = list_active_agents()
+    if #instances == 0 then
+      vim.notify("no active agent terminals found", vim.log.levels.WARN)
+      return
+    end
+
+    local pickers, finders, conf, actions, action_state = telescope_modules()
+    if not pickers then return end
+    pickers.new({}, {
+      prompt_title = "Active Agents",
+      finder = finders.new_table({
+        results = instances,
+        entry_maker = function(instance)
+          return {
+            value = instance,
+            display = instance.display,
+            ordinal = instance.ordinal,
+          }
+        end,
+      }),
+      sorter = conf.generic_sorter({}),
+      attach_mappings = function(prompt_bufnr, _map)
+        actions.select_default:replace(function()
+          local selection = action_state.get_selected_entry()
+          actions.close(prompt_bufnr)
+          if not selection or not selection.value or not selection.value.path then
+            vim.notify("agent picker: no selection", vim.log.levels.WARN)
+            return
+          end
+          local instance = selection.value
+          vim.schedule(function()
+            activate_agent(instance)
+          end)
+        end)
+        return true
+      end,
+    }):find()
+  end
+
   local function register_keymap()
     pcall(vim.api.nvim_del_user_command, "WorktreeSwitch")
     pcall(vim.api.nvim_del_user_command, "ProjectSwitch")
+    pcall(vim.api.nvim_del_user_command, "AgentSwitch")
     vim.api.nvim_create_user_command("WorktreeSwitch", pick_worktree, {
       desc = "Switch nvim instance to another git worktree",
     })
     vim.api.nvim_create_user_command("ProjectSwitch", pick_project, {
       desc = "Switch nvim instance to a workspace or root git repository",
     })
+    vim.api.nvim_create_user_command("AgentSwitch", pick_agent, {
+      desc = "Switch nvim instance to a project with an active agent",
+    })
     vim.keymap.set("n", "<leader>gw", pick_worktree, { desc = "Switch worktree" })
     vim.keymap.set("n", "<leader>gp", pick_project, { desc = "Switch workspace or root project" })
+    vim.keymap.set("n", "<leader>g;", pick_agent, { desc = "Switch to active agent project" })
   end
 
   register_keymap()
@@ -960,11 +1099,14 @@ local function setup()
     switch_to = switch_to,
     pick_worktree = pick_worktree,
     pick_project = pick_project,
+    pick_agent = pick_agent,
+    activate_agent = activate_agent,
     list_sibling_repos = list_sibling_repos,
     list_all_project_repos = list_all_project_repos,
     group_project_entries = group_project_entries,
     make_project_sorter = make_project_sorter,
     move_project_selection = move_project_selection,
+    list_active_agents = list_active_agents,
     snapshot = snapshot_buffers,
     restore = restore_buffers,
     rescue_deleted_cwd = rescue_deleted_cwd,
@@ -989,15 +1131,20 @@ local function pick_project()
   ensure_setup().pick_project()
 end
 
+local function pick_agent()
+  ensure_setup().pick_agent()
+end
+
 return {
   {
     "luanphan-worktree",
     virtual = true,
     init = init,
-    cmd = { "WorktreeSwitch", "ProjectSwitch" },
+    cmd = { "WorktreeSwitch", "ProjectSwitch", "AgentSwitch" },
     keys = {
       { "<leader>gw", pick_worktree, desc = "Switch worktree" },
       { "<leader>gp", pick_project, desc = "Switch workspace or root project" },
+      { "<leader>g;", pick_agent, desc = "Switch to active agent project" },
     },
     config = ensure_setup,
   },
