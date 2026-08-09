@@ -1071,6 +1071,11 @@ local function test_worktree_plugin_starts_lazy()
     "<leader>gp is not a lazy callback mapping"
   )
   assert_true(vim.fn.maparg("<leader>gP", "n") == "", "<leader>gP should not have a duplicate project picker")
+  local agent_map = vim.fn.maparg("<leader>g;", "n", false, true)
+  assert_true(
+    type(agent_map) == "table" and type(agent_map.callback) == "function",
+    "<leader>g; is not a lazy callback mapping"
+  )
 end
 
 local function test_adjacent_project_discovery(repo, worktree)
@@ -1177,6 +1182,82 @@ local function test_workspace_and_master_project_discovery()
   assert_true(vim.fn.exists(":ProjectSwitch") == 2, "ProjectSwitch command is missing")
 
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+end
+
+local function test_active_agent_discovery(repo, worktree)
+  local api = worktree_test_api()
+  local original_buf = vim.api.nvim_get_current_buf()
+  local original_cwd = vim.fn.getcwd()
+  local agent_keys = { "codex_agent_bufnr", "claude_agent_bufnr", "cursor_agent_bufnr" }
+  local saved = {}
+  for _, key in ipairs(agent_keys) do
+    saved[#saved + 1] = { key = key, value = vim.g[key] }
+  end
+
+  local jobs = {}
+  local buffers = {}
+  local agents_module = nil
+  local original_focus = nil
+  local function start_terminal(cwd)
+    vim.cmd("enew")
+    local buf = vim.api.nvim_get_current_buf()
+    local job = vim.fn.termopen({ "sh", "-c", "sleep 30" }, { cwd = cwd })
+    assert_true(type(job) == "number" and job > 0, "failed to start active agent fixture")
+    jobs[#jobs + 1] = job
+    buffers[#buffers + 1] = buf
+    return buf
+  end
+
+  local ok, err = xpcall(function()
+    local codex_buf = start_terminal(repo)
+    local cursor_buf = start_terminal(worktree)
+    vim.g.codex_agent_bufnr = { [repo] = codex_buf }
+    vim.g.cursor_agent_bufnr = { [worktree] = cursor_buf }
+    vim.g.claude_agent_bufnr = { [repo] = 999999 }
+
+    local instances = api.list_active_agents()
+    assert_true(#instances == 2, "active agent discovery returned an unexpected instance count")
+    local by_agent = {}
+    for _, instance in ipairs(instances) do
+      by_agent[instance.agent] = instance
+    end
+    assert_true(realpath(by_agent.codex.path) == realpath(repo), "Codex agent path was not discovered")
+    assert_true(realpath(by_agent.cursor.path) == realpath(worktree), "Cursor agent path was not discovered")
+    assert_true(by_agent.claude == nil, "stale agent terminal survived discovery")
+    assert_true(by_agent.codex.display:find("example%-repo") ~= nil, "agent display omitted repository context")
+    assert_true(by_agent.cursor.display:find("%[feature%]") ~= nil, "agent display omitted branch context")
+    assert_true(vim.fn.exists(":AgentSwitch") == 2, "AgentSwitch command is missing")
+
+    agents_module = require("luanphan.plugins.agents")
+    original_focus = agents_module.focus
+    local focused = nil
+    agents_module.focus = function(name)
+      focused = name
+      return true
+    end
+    api.activate_agent({ agent = "codex", path = original_cwd })
+    assert_true(focused == "codex", "agent selection did not focus its terminal")
+  end, debug.traceback)
+
+  if agents_module and original_focus then
+    agents_module.focus = original_focus
+  end
+  for _, job in ipairs(jobs) do
+    pcall(vim.fn.jobstop, job)
+  end
+  for _, buf in ipairs(buffers) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+  for _, item in ipairs(saved) do
+    vim.g[item.key] = item.value
+  end
+  if vim.api.nvim_buf_is_valid(original_buf) then
+    pcall(vim.api.nvim_set_current_buf, original_buf)
+  end
+  vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  assert_true(ok, tostring(err))
 end
 
 local function test_agent_cli_commands_available()
@@ -2055,6 +2136,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("project picker discovers grouped workspace and root repositories", function()
     test_workspace_and_master_project_discovery()
+  end)
+
+  test("active agent picker discovers running project terminals", function()
+    test_active_agent_discovery(repo, worktree)
   end)
 
   test("lsp definition and references", function()

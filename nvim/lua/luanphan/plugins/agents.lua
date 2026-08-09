@@ -87,6 +87,14 @@ function M.set_float_position(pos)
   end
 end
 
+function M.focus(name)
+  if not agent_defs[name] then
+    return false
+  end
+  setup_agent(name).focus()
+  return true
+end
+
 local function key_spec(name, action)
   local key = agent_defs[name].keys[action]
   local method = action == "send" and "send_selection" or action
