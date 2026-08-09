@@ -218,6 +218,35 @@ local function make_workspace_cleanup_fixture()
   return repo, workspace
 end
 
+local function make_project_scope_fixture()
+  local station = temp_root .. "/example-station"
+  local workspace_root = station .. "/local_workspaces/example-workspace"
+  local sources = {}
+  local workspaces = {}
+
+  for _, project in ipairs({
+    { name = "example-project-a", branch = "feature/a" },
+    { name = "example-project-b-long", branch = "feature/b" },
+  }) do
+    local source = station .. "/" .. project.name
+    local workspace = workspace_root .. "/" .. project.name
+    vim.fn.mkdir(source, "p")
+    run({ "git", "init", "-b", "main" }, source)
+    run({ "git", "config", "user.name", "Example User" }, source)
+    run({ "git", "config", "user.email", "example@example.invalid" }, source)
+    write(source .. "/README.md", { project.name })
+    run({ "git", "add", "." }, source)
+    run({ "git", "commit", "-m", "initial fixture" }, source)
+    run({ "git", "branch", project.branch }, source)
+    vim.fn.mkdir(workspace_root, "p")
+    run({ "git", "worktree", "add", workspace, project.branch }, source)
+    sources[project.name] = source
+    workspaces[project.name] = workspace
+  end
+
+  return sources, workspaces
+end
+
 local function find_position(buf, needle, line_match)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   for i, line in ipairs(lines) do
@@ -1041,6 +1070,7 @@ local function test_worktree_plugin_starts_lazy()
     type(project_map) == "table" and type(project_map.callback) == "function",
     "<leader>gp is not a lazy callback mapping"
   )
+  assert_true(vim.fn.maparg("<leader>gP", "n") == "", "<leader>gP should not have a duplicate project picker")
 end
 
 local function test_adjacent_project_discovery(repo, worktree)
@@ -1059,6 +1089,91 @@ local function test_adjacent_project_discovery(repo, worktree)
   assert_true(realpath(current_root) == realpath(repo), "project discovery did not resolve the current git root")
   assert_true(found[realpath(repo)] == true, "project discovery omitted the current repository")
   assert_true(found[realpath(worktree)] == true, "project discovery omitted an adjacent git worktree")
+  assert_true(vim.fn.exists(":ProjectSwitch") == 2, "ProjectSwitch command is missing")
+
+  vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+end
+
+local function test_workspace_and_master_project_discovery()
+  local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
+  local sources, workspaces = make_project_scope_fixture()
+  local nested = workspaces["example-project-a"] .. "/nested"
+  vim.fn.mkdir(nested, "p")
+  vim.cmd("cd " .. vim.fn.fnameescape(nested))
+
+  local adjacent = api.list_sibling_repos()
+  assert_true(#adjacent == 2, "adjacent project discovery escaped the current workspace")
+
+  local projects, current_root = api.list_all_project_repos()
+  local by_path = {}
+  for _, project in ipairs(projects) do
+    by_path[realpath(project.path)] = project
+  end
+
+  local expected = {
+    [realpath(workspaces["example-project-a"])] = "feature/a",
+    [realpath(workspaces["example-project-b-long"])] = "feature/b",
+    [realpath(sources["example-project-a"])] = "main",
+    [realpath(sources["example-project-b-long"])] = "main",
+  }
+  assert_true(#projects == 4, "combined project discovery returned an unexpected project count")
+  assert_true(
+    realpath(current_root) == realpath(workspaces["example-project-a"]),
+    "combined project discovery did not resolve the current workspace project"
+  )
+  for project_path, branch in pairs(expected) do
+    local project = by_path[project_path]
+    assert_true(project ~= nil, "combined project discovery omitted " .. project_path)
+    assert_true(project.branch == branch, "combined project discovery reported the wrong branch for " .. project_path)
+  end
+  local entries = api.group_project_entries(projects, current_root)
+  assert_true(#entries == 6, "grouped project entries returned an unexpected row count")
+  assert_true(entries[1].header and entries[1].display == "[workspace]", "workspace group header is missing")
+  assert_true(entries[4].header and entries[4].display == "[root]", "root group header is missing")
+  local branch_column = nil
+  for _, entry in ipairs(entries) do
+    if not entry.header then
+      local column = entry.display:find("[", 1, true)
+      assert_true(column ~= nil, "project entry branch label is missing")
+      branch_column = branch_column or column
+      assert_true(column == branch_column, "project entry branch labels are not aligned")
+    end
+  end
+
+  local base_sorter = require("telescope.config").values.generic_sorter({})
+  local sorter = api.make_project_sorter(base_sorter, require("telescope.sorters"))
+  local function score(prompt, entry)
+    return sorter:scoring_function(prompt, entry.ordinal, { value = entry })
+  end
+  assert_true(score("no-project-matches-this", entries[1]) >= 0, "workspace header was filtered by search")
+  assert_true(score("no-project-matches-this", entries[4]) >= 0, "root header was filtered by search")
+  assert_true(score("no-project-matches-this", entries[2]) < 0, "non-matching project survived search")
+  assert_true(score("feature", entries[2]) < 0, "project search matched a branch name")
+  assert_true(score("station", entries[2]) < 0, "project search matched a repository path")
+  assert_true(score("project", entries[1]) < score("project", entries[2]), "workspace header is not first")
+  assert_true(score("project", entries[3]) < score("project", entries[4]), "root header split the workspace group")
+  assert_true(score("project", entries[4]) < score("project", entries[5]), "root header is not first in its group")
+
+  local picker = {
+    position = 1,
+    rows = vim.tbl_map(function(entry) return { value = entry } end, entries),
+  }
+  picker.manager = { num_results = function() return #picker.rows end }
+  function picker:move_selection(delta)
+    self.position = ((self.position - 1 + delta) % #self.rows) + 1
+  end
+  function picker:get_selection()
+    return self.rows[self.position]
+  end
+  api.move_project_selection(picker, 1)
+  assert_true(picker.position == 2, "selection did not skip the workspace header")
+  picker.position = 3
+  api.move_project_selection(picker, 1)
+  assert_true(picker.position == 5, "selection did not skip the root header")
+  picker.position = 5
+  api.move_project_selection(picker, -1)
+  assert_true(picker.position == 3, "reverse selection did not skip the root header")
   assert_true(vim.fn.exists(":ProjectSwitch") == 2, "ProjectSwitch command is missing")
 
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
@@ -1936,6 +2051,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("adjacent project picker discovers sibling git repositories", function()
     test_adjacent_project_discovery(repo, worktree)
+  end)
+
+  test("project picker discovers grouped workspace and root repositories", function()
+    test_workspace_and_master_project_discovery()
   end)
 
   test("lsp definition and references", function()
