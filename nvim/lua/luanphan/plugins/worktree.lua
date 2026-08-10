@@ -689,6 +689,7 @@ local function setup()
   end
 
   local function list_active_agents()
+    local agent_status = require("luanphan.agent_status")
     local instances = {}
     for _, agent in ipairs(AGENT_BUFFER_KEYS) do
       local buffers = vim.g[agent.key]
@@ -714,6 +715,7 @@ local function setup()
               bufnr = bufnr,
               context = context,
               path = cwd,
+              status = agent_status.read(agent.name, cwd),
             }
           end
         end
@@ -728,18 +730,21 @@ local function setup()
     end)
 
     local agent_width = 0
+    local status_width = 0
     local context_width = 0
     local current = safe_getcwd()
     for _, instance in ipairs(instances) do
       agent_width = math.max(agent_width, #instance.agent)
+      status_width = math.max(status_width, #instance.status)
       context_width = math.max(context_width, #instance.context)
     end
     for _, instance in ipairs(instances) do
       local marker = instance.path == current and "* " or "  "
       instance.display = string.format(
-        "%s%-" .. agent_width .. "s  %-" .. context_width .. "s  [%s]",
+        "%s%-" .. agent_width .. "s  [%-" .. status_width .. "s]  %-" .. context_width .. "s  [%s]",
         marker,
         instance.agent,
+        instance.status,
         instance.context,
         instance.branch
       )

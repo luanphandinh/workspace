@@ -1186,8 +1186,12 @@ end
 
 local function test_active_agent_discovery(repo, worktree)
   local api = worktree_test_api()
+  local agent_status = require("luanphan.agent_status")
   local original_buf = vim.api.nvim_get_current_buf()
   local original_cwd = vim.fn.getcwd()
+  local original_status_dir = vim.g.luanphan_agent_status_dir
+  local status_dir = vim.fn.tempname()
+  vim.g.luanphan_agent_status_dir = status_dir
   local agent_keys = { "codex_agent_bufnr", "claude_agent_bufnr", "cursor_agent_bufnr" }
   local saved = {}
   for _, key in ipairs(agent_keys) do
@@ -1214,6 +1218,8 @@ local function test_active_agent_discovery(repo, worktree)
     vim.g.codex_agent_bufnr = { [repo] = codex_buf }
     vim.g.cursor_agent_bufnr = { [worktree] = cursor_buf }
     vim.g.claude_agent_bufnr = { [repo] = 999999 }
+    assert_true(agent_status.write("codex", repo, "running"), "failed to record first agent state")
+    assert_true(agent_status.write("cursor", worktree, "idle"), "failed to record second agent state")
 
     local instances = api.list_active_agents()
     assert_true(#instances == 2, "active agent discovery returned an unexpected instance count")
@@ -1224,6 +1230,10 @@ local function test_active_agent_discovery(repo, worktree)
     assert_true(realpath(by_agent.codex.path) == realpath(repo), "Codex agent path was not discovered")
     assert_true(realpath(by_agent.cursor.path) == realpath(worktree), "Cursor agent path was not discovered")
     assert_true(by_agent.claude == nil, "stale agent terminal survived discovery")
+    assert_true(by_agent.codex.status == "running", "running agent state was not discovered")
+    assert_true(by_agent.cursor.status == "idle", "idle agent state was not discovered")
+    assert_true(by_agent.codex.display:find("%[running%]") ~= nil, "agent display omitted running state")
+    assert_true(by_agent.cursor.display:find("%[idle%s+%]") ~= nil, "agent display omitted idle state")
     assert_true(by_agent.codex.display:find("example%-repo") ~= nil, "agent display omitted repository context")
     assert_true(by_agent.cursor.display:find("%[feature%]") ~= nil, "agent display omitted branch context")
     assert_true(vim.fn.exists(":AgentSwitch") == 2, "AgentSwitch command is missing")
@@ -1253,6 +1263,8 @@ local function test_active_agent_discovery(repo, worktree)
   for _, item in ipairs(saved) do
     vim.g[item.key] = item.value
   end
+  vim.g.luanphan_agent_status_dir = original_status_dir
+  vim.fn.delete(status_dir, "rf")
   if vim.api.nvim_buf_is_valid(original_buf) then
     pcall(vim.api.nvim_set_current_buf, original_buf)
   end
@@ -1755,8 +1767,13 @@ end
 
 local function test_toggleterm_hides_agent_terminal(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  local agent_status = require("luanphan.agent_status")
+  local original_status_dir = vim.g.luanphan_agent_status_dir
+  local status_dir = vim.fn.tempname()
+  vim.g.luanphan_agent_status_dir = status_dir
 
   local agent = require("luanphan.terminal_agent").create({
+    status_name = "example-agent",
     g_bufnr = "toggleterm_hide_agent_bufnr",
     notify_prefix = "toggleterm_hide_agent",
     augroup_prefix = "ToggletermHideAgent",
@@ -1769,6 +1786,11 @@ local function test_toggleterm_hides_agent_terminal(repo)
   wait_until("agent terminal open before toggleterm", function()
     return visible_agent_float_count() == 1
   end, 1000)
+  assert_true(agent_status.read("example-agent", repo) == "idle", "new agent terminal did not start idle")
+  local submit_map = vim.fn.maparg("<CR>", "t", false, true)
+  assert_true(type(submit_map) == "table" and type(submit_map.callback) == "function", "agent submit tracking is missing")
+  submit_map.callback()
+  assert_true(agent_status.read("example-agent", repo) == "running", "agent submit did not record running state")
 
   invoke_lazy_map("<leader>tt", "toggleterm.nvim")
   wait_until("toggleterm open after agent terminal", function()
@@ -1776,6 +1798,8 @@ local function test_toggleterm_hides_agent_terminal(repo)
   end, 3000)
   assert_true(visible_agent_float_count() == 0, "agent terminal remained visible after <leader>tt")
   close_agent_terminals()
+  vim.g.luanphan_agent_status_dir = original_status_dir
+  vim.fn.delete(status_dir, "rf")
 end
 
 local function test_worktree_switch_restores_agent_terminal(repo, worktree)

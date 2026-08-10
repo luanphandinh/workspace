@@ -22,6 +22,9 @@ TERMINAL_NOTIFIER_LOG="$TMP/terminal-notifier.log" \
 grep -q -- '-title Example Agent' "$TMP/terminal-notifier.log"
 grep -q -- '-ignoreDnD' "$TMP/terminal-notifier.log"
 grep -q -- '-group agent-notify-Example Agent' "$TMP/terminal-notifier.log"
+status_file="$(find "$TMP/home/.local/state/nvim/workspace-agent-status" -type f | head -1)"
+[ -n "$status_file" ]
+[ "$(cat "$status_file")" = "idle" ]
 
 cat >"$TMP/fakebin/chained-notify" <<'SH'
 #!/bin/sh

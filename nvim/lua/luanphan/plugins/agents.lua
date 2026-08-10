@@ -59,6 +59,7 @@ local function get_agent(name)
 
   local def = agent_defs[name]
   apis[name] = require("luanphan.terminal_agent").create({
+    status_name = name,
     g_bufnr = def.g_bufnr,
     notify_prefix = def.notify_prefix,
     augroup_prefix = def.augroup_prefix,
