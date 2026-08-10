@@ -496,7 +496,9 @@ local function setup()
   local function refire_filetype_all()
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].buftype == "" then
-        pcall(vim.api.nvim_exec_autocmds, "FileType", { buffer = buf })
+        pcall(vim.api.nvim_buf_call, buf, function()
+          vim.api.nvim_exec_autocmds("FileType", { buffer = buf })
+        end)
       end
     end
   end
@@ -1107,6 +1109,7 @@ local function setup()
     make_project_sorter = make_project_sorter,
     move_project_selection = move_project_selection,
     list_active_agents = list_active_agents,
+    refire_filetype_all = refire_filetype_all,
     snapshot = snapshot_buffers,
     restore = restore_buffers,
     rescue_deleted_cwd = rescue_deleted_cwd,

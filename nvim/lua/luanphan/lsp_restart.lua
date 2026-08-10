@@ -30,6 +30,12 @@ local function is_normal_loaded_buffer(bufnr)
   return vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].buftype == ""
 end
 
+local function refire_buffer(bufnr)
+  vim.api.nvim_buf_call(bufnr, function()
+    vim.api.nvim_exec_autocmds("FileType", { buffer = bufnr })
+  end)
+end
+
 local function client_attached_buffers(client)
   local out = {}
   if type(client.attached_buffers) == "table" then
@@ -81,12 +87,12 @@ end
 ---@param bufnr integer|nil if set, only this buffer; otherwise all loaded normal buffers
 local function refire_filetype(bufnr)
   if bufnr then
-    vim.api.nvim_exec_autocmds("FileType", { buffer = bufnr })
+    refire_buffer(bufnr)
     return
   end
   for _, b in ipairs(vim.api.nvim_list_bufs()) do
     if is_normal_loaded_buffer(b) then
-      vim.api.nvim_exec_autocmds("FileType", { buffer = b })
+      refire_buffer(b)
     end
   end
 end
@@ -99,7 +105,7 @@ local function refire_buffers(bufnrs)
 
   for _, bufnr in ipairs(bufnrs) do
     if is_normal_loaded_buffer(bufnr) then
-      refire_filetype(bufnr)
+      refire_buffer(bufnr)
     end
   end
 end

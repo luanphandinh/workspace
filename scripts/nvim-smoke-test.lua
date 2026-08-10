@@ -1260,6 +1260,44 @@ local function test_active_agent_discovery(repo, worktree)
   assert_true(ok, tostring(err))
 end
 
+local function test_filetype_refire_uses_target_buffer()
+  local api = worktree_test_api()
+  local original_buf = vim.api.nvim_get_current_buf()
+  local markdown_buf = vim.api.nvim_create_buf(false, false)
+  local other_buf = vim.api.nvim_create_buf(false, false)
+  local group = vim.api.nvim_create_augroup("SmokeFileTypeBufferContext", { clear = true })
+  local callback_buf = nil
+
+  local ok, err = xpcall(function()
+    vim.api.nvim_set_current_buf(markdown_buf)
+    vim.bo[markdown_buf].filetype = "markdown"
+    vim.api.nvim_set_current_buf(other_buf)
+    vim.api.nvim_create_autocmd("FileType", {
+      group = group,
+      pattern = "markdown",
+      callback = function(args)
+        if args.buf == markdown_buf then
+          callback_buf = vim.api.nvim_get_current_buf()
+        end
+      end,
+    })
+
+    api.refire_filetype_all()
+    assert_true(callback_buf == markdown_buf, "FileType ran outside its target buffer context")
+  end, debug.traceback)
+
+  pcall(vim.api.nvim_del_augroup_by_id, group)
+  if vim.api.nvim_buf_is_valid(original_buf) then
+    pcall(vim.api.nvim_set_current_buf, original_buf)
+  end
+  for _, buf in ipairs({ markdown_buf, other_buf }) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+  assert_true(ok, err)
+end
+
 local function test_agent_cli_commands_available()
   for _, item in ipairs(agent_cli_commands) do
     if not (item.optional_in_macos_ci and is_macos_ci_workspace()) then
@@ -2140,6 +2178,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("active agent picker discovers running project terminals", function()
     test_active_agent_discovery(repo, worktree)
+  end)
+
+  test("filetype refresh uses each target buffer context", function()
+    test_filetype_refire_uses_target_buffer()
   end)
 
   test("lsp definition and references", function()
