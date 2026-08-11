@@ -1217,12 +1217,22 @@ local function test_workspace_project_discovery()
   assert_true(by_name[empty_workspace_name].empty == true, "empty workspace was not marked empty")
 
   local repos = api.list_workspace_repos(by_name[workspace_name])
+  assert_true(#repos == 3, "workspace picker targets omitted the workspace root")
+  assert_true(repos[1].workspace_root == true, "workspace root is not the first picker target")
+  assert_true(realpath(repos[1].path) == realpath(by_name[workspace_name].path), "workspace root path is incorrect")
+  assert_true(repos[1].branch == "workspace root", "workspace root label is incorrect")
   local branches = {}
   for _, repo in ipairs(repos) do
-    branches[repo.name] = repo.branch
+    if not repo.workspace_root then
+      branches[repo.name] = repo.branch
+    end
   end
   assert_true(branches["example-project-a"] == "feature/a", "workspace project branch is incorrect")
   assert_true(branches["example-project-b-long"] == "feature/b", "workspace project branch is incorrect")
+
+  local empty_targets = api.list_workspace_repos(by_name[empty_workspace_name])
+  assert_true(#empty_targets == 1, "empty workspace should expose only its workspace root")
+  assert_true(empty_targets[1].workspace_root == true, "empty workspace root is not selectable")
 
   vim.cmd("cd " .. vim.fn.fnameescape(sources["example-project-a"]))
   local from_master, master_root = api.list_workspace_directories()

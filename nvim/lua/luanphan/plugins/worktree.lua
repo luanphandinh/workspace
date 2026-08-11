@@ -678,7 +678,14 @@ local function setup()
   end
 
   local function list_workspace_repos(workspace)
-    local repos = {}
+    local repos = {
+      {
+        name = workspace.name,
+        path = workspace.path,
+        branch = "workspace root",
+        workspace_root = true,
+      },
+    }
     for _, repo in ipairs(workspace.repos or list_repos_in_dir(workspace.path)) do
       repos[#repos + 1] = {
         name = repo.name,
@@ -1116,14 +1123,10 @@ local function setup()
 
   local function pick_workspace_repositories(workspace)
     local repos = list_workspace_repos(workspace)
-    if #repos == 0 then
-      vim.notify(workspace.name .. " has no code repo yet", vim.log.levels.INFO)
-      return
-    end
-
     local pickers, finders, conf, actions, action_state = telescope_modules()
     if not pickers then return end
-    local current_root = git_root(safe_getcwd())
+    local current = safe_getcwd()
+    local current_root = git_root(current) or current
     local name_width = 0
     for _, repo in ipairs(repos) do
       name_width = math.max(name_width, #repo.name)
@@ -1131,6 +1134,7 @@ local function setup()
 
     pickers.new({}, {
       prompt_title = "Workspace Projects: " .. workspace.name,
+      default_selection_index = 1,
       finder = finders.new_table({
         results = repos,
         entry_maker = function(repo)
@@ -1156,7 +1160,8 @@ local function setup()
             return
           end
           vim.schedule(function()
-            switch_to(selection.value.path, "workspace project")
+            local kind = selection.value.workspace_root and "workspace root" or "workspace project"
+            switch_to(selection.value.path, kind)
           end)
         end)
         return true
