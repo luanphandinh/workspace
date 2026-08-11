@@ -6,6 +6,24 @@ notify_group_override="${AGENT_NOTIFY_GROUP:-${CODEX_NOTIFY_GROUP:-}}"
 notify_group="${notify_group_override:-agent-notify-$notify_title}"
 activate_app="${AGENT_NOTIFY_ACTIVATE_APP:-${CODEX_NOTIFY_ACTIVATE_APP:-}}"
 
+record_agent_idle() {
+	status_agent="$(printf '%s' "$notify_title" | tr '[:upper:]' '[:lower:]')"
+	status_key="$(
+		if command -v sha256sum >/dev/null 2>&1; then
+			printf '%s\n%s' "$status_agent" "$cwd" | sha256sum | awk '{ print $1 }'
+		elif command -v shasum >/dev/null 2>&1; then
+			printf '%s\n%s' "$status_agent" "$cwd" | shasum -a 256 | awk '{ print $1 }'
+		fi
+	)"
+	[ -n "$status_key" ] || return 0
+	status_dir="${XDG_STATE_HOME:-$HOME/.local/state}/nvim/workspace-agent-status"
+	mkdir -p "$status_dir" 2>/dev/null || return 0
+	status_file="$status_dir/$status_key"
+	status_tmp="$status_file.$$"
+	printf '%s\n' idle >"$status_tmp" 2>/dev/null || return 0
+	mv -f "$status_tmp" "$status_file" 2>/dev/null || rm -f "$status_tmp"
+}
+
 get_tmux_cmd() {
 	if [ -n "${TMUX_BIN:-}" ]; then
 		printf '%s\n' "$TMUX_BIN"
@@ -261,6 +279,7 @@ if [ -z "$payload" ] && [ ! -t 0 ]; then
 fi
 
 cwd="$(pwd -P 2>/dev/null || pwd)"
+record_agent_idle
 case "$cwd" in
 	"$HOME") display_path="~" ;;
 	"$HOME"/*) display_path="~/${cwd#"$HOME"/}" ;;

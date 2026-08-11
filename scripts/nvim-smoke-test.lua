@@ -3,6 +3,7 @@ local uv = vim.uv or vim.loop
 local tests = {}
 local temp_root
 local cleanup_fixture_id = 0
+local project_scope_fixture_id = 0
 
 local agent_cli_commands = {
   { command = "cursor-agent", lhs = "<leader>ac", plugin = "luanphan-cursor-agent", g_bufnr = "cursor_agent_bufnr" },
@@ -219,8 +220,12 @@ local function make_workspace_cleanup_fixture()
 end
 
 local function make_project_scope_fixture()
-  local station = temp_root .. "/example-station"
-  local workspace_root = station .. "/local_workspaces/example-workspace"
+  project_scope_fixture_id = project_scope_fixture_id + 1
+  local suffix = tostring(project_scope_fixture_id)
+  local station = temp_root .. "/example-station-" .. suffix
+  local workspace_name = "example-workspace-" .. suffix
+  local empty_workspace_name = "example-empty-" .. suffix
+  local workspace_root = station .. "/local_workspaces/" .. workspace_name
   local sources = {}
   local workspaces = {}
 
@@ -244,7 +249,8 @@ local function make_project_scope_fixture()
     workspaces[project.name] = workspace
   end
 
-  return sources, workspaces
+  vim.fn.mkdir(station .. "/local_workspaces/" .. empty_workspace_name, "p")
+  return sources, workspaces, station, workspace_name, empty_workspace_name
 end
 
 local function find_position(buf, needle, line_match)
@@ -1070,6 +1076,11 @@ local function test_worktree_plugin_starts_lazy()
     type(project_map) == "table" and type(project_map.callback) == "function",
     "<leader>gp is not a lazy callback mapping"
   )
+  local repository_map = vim.fn.maparg("<leader>gr", "n", false, true)
+  assert_true(
+    type(repository_map) == "table" and type(repository_map.callback) == "function",
+    "<leader>gr is not a lazy callback mapping"
+  )
   assert_true(vim.fn.maparg("<leader>gP", "n") == "", "<leader>gP should not have a duplicate project picker")
   local agent_map = vim.fn.maparg("<leader>g;", "n", false, true)
   assert_true(
@@ -1184,10 +1195,53 @@ local function test_workspace_and_master_project_discovery()
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
 end
 
+local function test_workspace_project_discovery()
+  local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
+  local sources, workspaces, station, workspace_name, empty_workspace_name = make_project_scope_fixture()
+  local nested = workspaces["example-project-a"] .. "/nested"
+  vim.fn.mkdir(nested, "p")
+  vim.cmd("cd " .. vim.fn.fnameescape(nested))
+
+  local workspace_entries, root = api.list_workspace_directories()
+  assert_true(realpath(root) == realpath(station), "workspace discovery did not resolve the workstation root")
+  local by_name = {}
+  for _, workspace in ipairs(workspace_entries) do
+    by_name[workspace.name] = workspace
+  end
+  assert_true(#workspace_entries == 2, "workspace discovery returned an unexpected workspace count")
+  assert_true(by_name[workspace_name] ~= nil, "workspace discovery omitted a workspace with repositories")
+  assert_true(by_name[workspace_name].empty == false, "workspace with repositories was marked empty")
+  assert_true(#by_name[workspace_name].repos == 2, "workspace repository count is incorrect")
+  assert_true(by_name[empty_workspace_name] ~= nil, "workspace discovery omitted an empty workspace")
+  assert_true(by_name[empty_workspace_name].empty == true, "empty workspace was not marked empty")
+
+  local repos = api.list_workspace_repos(by_name[workspace_name])
+  local branches = {}
+  for _, repo in ipairs(repos) do
+    branches[repo.name] = repo.branch
+  end
+  assert_true(branches["example-project-a"] == "feature/a", "workspace project branch is incorrect")
+  assert_true(branches["example-project-b-long"] == "feature/b", "workspace project branch is incorrect")
+
+  vim.cmd("cd " .. vim.fn.fnameescape(sources["example-project-a"]))
+  local from_master, master_root = api.list_workspace_directories()
+  assert_true(realpath(master_root) == realpath(station), "master repository did not resolve the workstation root")
+  assert_true(#from_master == 2, "master repository discovered different workspaces")
+  assert_true(vim.fn.exists(":ProjectSwitch") == 2, "ProjectSwitch command is missing")
+  assert_true(vim.fn.exists(":RepositorySwitch") == 2, "RepositorySwitch command is missing")
+
+  vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+end
+
 local function test_active_agent_discovery(repo, worktree)
   local api = worktree_test_api()
+  local agent_status = require("luanphan.agent_status")
   local original_buf = vim.api.nvim_get_current_buf()
   local original_cwd = vim.fn.getcwd()
+  local original_status_dir = vim.g.luanphan_agent_status_dir
+  local status_dir = vim.fn.tempname()
+  vim.g.luanphan_agent_status_dir = status_dir
   local agent_keys = { "codex_agent_bufnr", "claude_agent_bufnr", "cursor_agent_bufnr" }
   local saved = {}
   for _, key in ipairs(agent_keys) do
@@ -1214,6 +1268,8 @@ local function test_active_agent_discovery(repo, worktree)
     vim.g.codex_agent_bufnr = { [repo] = codex_buf }
     vim.g.cursor_agent_bufnr = { [worktree] = cursor_buf }
     vim.g.claude_agent_bufnr = { [repo] = 999999 }
+    assert_true(agent_status.write("codex", repo, "running"), "failed to record first agent state")
+    assert_true(agent_status.write("cursor", worktree, "idle"), "failed to record second agent state")
 
     local instances = api.list_active_agents()
     assert_true(#instances == 2, "active agent discovery returned an unexpected instance count")
@@ -1224,6 +1280,10 @@ local function test_active_agent_discovery(repo, worktree)
     assert_true(realpath(by_agent.codex.path) == realpath(repo), "Codex agent path was not discovered")
     assert_true(realpath(by_agent.cursor.path) == realpath(worktree), "Cursor agent path was not discovered")
     assert_true(by_agent.claude == nil, "stale agent terminal survived discovery")
+    assert_true(by_agent.codex.status == "running", "running agent state was not discovered")
+    assert_true(by_agent.cursor.status == "idle", "idle agent state was not discovered")
+    assert_true(by_agent.codex.display:find("%[running%]") ~= nil, "agent display omitted running state")
+    assert_true(by_agent.cursor.display:find("%[idle%s+%]") ~= nil, "agent display omitted idle state")
     assert_true(by_agent.codex.display:find("example%-repo") ~= nil, "agent display omitted repository context")
     assert_true(by_agent.cursor.display:find("%[feature%]") ~= nil, "agent display omitted branch context")
     assert_true(vim.fn.exists(":AgentSwitch") == 2, "AgentSwitch command is missing")
@@ -1253,11 +1313,145 @@ local function test_active_agent_discovery(repo, worktree)
   for _, item in ipairs(saved) do
     vim.g[item.key] = item.value
   end
+  vim.g.luanphan_agent_status_dir = original_status_dir
+  vim.fn.delete(status_dir, "rf")
   if vim.api.nvim_buf_is_valid(original_buf) then
     pcall(vim.api.nvim_set_current_buf, original_buf)
   end
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
   assert_true(ok, tostring(err))
+end
+
+local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
+  local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
+  local original_buf = vim.api.nvim_get_current_buf()
+  local original_codex = vim.g.codex_agent_bufnr
+  local original_cursor = vim.g.cursor_agent_bufnr
+  local agents = require("luanphan.plugins.agents")
+  local original_focus = agents.focus
+  local jobs = {}
+  local buffers = {}
+
+  local function start_terminal(cwd)
+    local buf = vim.api.nvim_create_buf(false, true)
+    local job
+    vim.api.nvim_buf_call(buf, function()
+      job = vim.fn.termopen({ "sh", "-c", "sleep 30" }, { cwd = cwd })
+    end)
+    assert_true(type(job) == "number" and job > 0, "failed to start agent switch fixture")
+    vim.b[buf].luanphan_persist_term = true
+    jobs[#jobs + 1] = job
+    buffers[#buffers + 1] = buf
+    return buf
+  end
+
+  local function window_for_buffer(bufnr)
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_buf(win) == bufnr then
+        return win
+      end
+    end
+    return nil
+  end
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(repo))
+    local old_buf = start_terminal(repo)
+    local target_buf = start_terminal(worktree)
+    vim.g.codex_agent_bufnr = { [repo] = old_buf }
+    vim.g.cursor_agent_bufnr = { [worktree] = target_buf }
+
+    vim.api.nvim_open_win(old_buf, true, {
+      relative = "editor",
+      row = 1,
+      col = 1,
+      width = 40,
+      height = 10,
+      style = "minimal",
+      border = "single",
+    })
+    assert_true(window_for_buffer(old_buf) ~= nil, "old repository agent fixture is not visible")
+
+    agents.focus = function(name)
+      assert_true(name == "cursor", "agent switch focused the wrong agent type")
+      if not window_for_buffer(target_buf) then
+        vim.api.nvim_open_win(target_buf, true, {
+          relative = "editor",
+          row = 1,
+          col = 1,
+          width = 40,
+          height = 10,
+          style = "minimal",
+          border = "single",
+        })
+      end
+      return true
+    end
+
+    api.activate_agent({ agent = "cursor", path = worktree, bufnr = target_buf })
+    assert_true(realpath(vim.fn.getcwd()) == realpath(worktree), "agent switch did not change repositories")
+    assert_true(window_for_buffer(old_buf) == nil, "old repository agent window remained visible")
+    assert_true(window_for_buffer(target_buf) ~= nil, "selected repository agent window was not focused")
+    assert_true(visible_agent_float_count() == 1, "agent switch left multiple agent windows visible")
+  end, debug.traceback)
+
+  agents.focus = original_focus
+  vim.g.codex_agent_bufnr = original_codex
+  vim.g.cursor_agent_bufnr = original_cursor
+  for _, job in ipairs(jobs) do
+    pcall(vim.fn.jobstop, job)
+  end
+  for _, buf in ipairs(buffers) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+  if vim.api.nvim_buf_is_valid(original_buf) then
+    pcall(vim.api.nvim_set_current_buf, original_buf)
+  end
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  end
+  assert_true(ok, tostring(err))
+end
+
+local function test_filetype_refire_uses_target_buffer()
+  local api = worktree_test_api()
+  local original_buf = vim.api.nvim_get_current_buf()
+  local markdown_buf = vim.api.nvim_create_buf(false, false)
+  local other_buf = vim.api.nvim_create_buf(false, false)
+  local group = vim.api.nvim_create_augroup("SmokeFileTypeBufferContext", { clear = true })
+  local callback_buf = nil
+
+  local ok, err = xpcall(function()
+    vim.api.nvim_set_current_buf(markdown_buf)
+    vim.bo[markdown_buf].filetype = "markdown"
+    vim.api.nvim_set_current_buf(other_buf)
+    vim.api.nvim_create_autocmd("FileType", {
+      group = group,
+      pattern = "markdown",
+      callback = function(args)
+        if args.buf == markdown_buf then
+          callback_buf = vim.api.nvim_get_current_buf()
+        end
+      end,
+    })
+
+    api.refire_filetype_all()
+    assert_true(callback_buf == markdown_buf, "FileType ran outside its target buffer context")
+  end, debug.traceback)
+
+  pcall(vim.api.nvim_del_augroup_by_id, group)
+  if vim.api.nvim_buf_is_valid(original_buf) then
+    pcall(vim.api.nvim_set_current_buf, original_buf)
+  end
+  for _, buf in ipairs({ markdown_buf, other_buf }) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+  assert_true(ok, err)
 end
 
 local function test_agent_cli_commands_available()
@@ -1717,8 +1911,13 @@ end
 
 local function test_toggleterm_hides_agent_terminal(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  local agent_status = require("luanphan.agent_status")
+  local original_status_dir = vim.g.luanphan_agent_status_dir
+  local status_dir = vim.fn.tempname()
+  vim.g.luanphan_agent_status_dir = status_dir
 
   local agent = require("luanphan.terminal_agent").create({
+    status_name = "example-agent",
     g_bufnr = "toggleterm_hide_agent_bufnr",
     notify_prefix = "toggleterm_hide_agent",
     augroup_prefix = "ToggletermHideAgent",
@@ -1731,6 +1930,11 @@ local function test_toggleterm_hides_agent_terminal(repo)
   wait_until("agent terminal open before toggleterm", function()
     return visible_agent_float_count() == 1
   end, 1000)
+  assert_true(agent_status.read("example-agent", repo) == "idle", "new agent terminal did not start idle")
+  local submit_map = vim.fn.maparg("<CR>", "t", false, true)
+  assert_true(type(submit_map) == "table" and type(submit_map.callback) == "function", "agent submit tracking is missing")
+  submit_map.callback()
+  assert_true(agent_status.read("example-agent", repo) == "running", "agent submit did not record running state")
 
   invoke_lazy_map("<leader>tt", "toggleterm.nvim")
   wait_until("toggleterm open after agent terminal", function()
@@ -1738,6 +1942,8 @@ local function test_toggleterm_hides_agent_terminal(repo)
   end, 3000)
   assert_true(visible_agent_float_count() == 0, "agent terminal remained visible after <leader>tt")
   close_agent_terminals()
+  vim.g.luanphan_agent_status_dir = original_status_dir
+  vim.fn.delete(status_dir, "rf")
 end
 
 local function test_worktree_switch_restores_agent_terminal(repo, worktree)
@@ -2138,8 +2344,20 @@ local setup_ok, setup_err = xpcall(function()
     test_workspace_and_master_project_discovery()
   end)
 
+  test("workspace project picker discovers workspaces and checked-out branches", function()
+    test_workspace_project_discovery()
+  end)
+
   test("active agent picker discovers running project terminals", function()
     test_active_agent_discovery(repo, worktree)
+  end)
+
+  test("agent picker replaces the visible repository agent window", function()
+    test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
+  end)
+
+  test("filetype refresh uses each target buffer context", function()
+    test_filetype_refire_uses_target_buffer()
   end)
 
   test("lsp definition and references", function()
