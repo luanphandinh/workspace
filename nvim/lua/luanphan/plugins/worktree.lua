@@ -187,6 +187,21 @@ local function setup()
     return nil
   end
 
+  local function close_other_agent_windows(target_bufnr)
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_is_valid(win) then
+        local buf = vim.api.nvim_win_get_buf(win)
+        if buf ~= target_bufnr
+          and vim.bo[buf].buftype == "terminal"
+          and vim.b[buf].luanphan_persist_term
+          and not vim.b[buf].luanphan_toggleterm
+        then
+          pcall(vim.api.nvim_win_close, win, false)
+        end
+      end
+    end
+  end
+
   local function find_tree_window()
     for _, win in ipairs(vim.api.nvim_list_wins()) do
       local buf = vim.api.nvim_win_get_buf(win)
@@ -1209,6 +1224,7 @@ local function setup()
     if instance.path ~= safe_getcwd() then
       switch_to(instance.path, "agent project")
     end
+    close_other_agent_windows(instance.bufnr)
     local ok, agents = pcall(require, "luanphan.plugins.agents")
     if not ok or type(agents.focus) ~= "function" or not agents.focus(instance.agent) then
       vim.notify("could not focus " .. instance.agent .. " agent", vim.log.levels.ERROR)

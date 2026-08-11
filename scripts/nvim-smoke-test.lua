@@ -1322,6 +1322,100 @@ local function test_active_agent_discovery(repo, worktree)
   assert_true(ok, tostring(err))
 end
 
+local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
+  local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
+  local original_buf = vim.api.nvim_get_current_buf()
+  local original_codex = vim.g.codex_agent_bufnr
+  local original_cursor = vim.g.cursor_agent_bufnr
+  local agents = require("luanphan.plugins.agents")
+  local original_focus = agents.focus
+  local jobs = {}
+  local buffers = {}
+
+  local function start_terminal(cwd)
+    local buf = vim.api.nvim_create_buf(false, true)
+    local job
+    vim.api.nvim_buf_call(buf, function()
+      job = vim.fn.termopen({ "sh", "-c", "sleep 30" }, { cwd = cwd })
+    end)
+    assert_true(type(job) == "number" and job > 0, "failed to start agent switch fixture")
+    vim.b[buf].luanphan_persist_term = true
+    jobs[#jobs + 1] = job
+    buffers[#buffers + 1] = buf
+    return buf
+  end
+
+  local function window_for_buffer(bufnr)
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_buf(win) == bufnr then
+        return win
+      end
+    end
+    return nil
+  end
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(repo))
+    local old_buf = start_terminal(repo)
+    local target_buf = start_terminal(worktree)
+    vim.g.codex_agent_bufnr = { [repo] = old_buf }
+    vim.g.cursor_agent_bufnr = { [worktree] = target_buf }
+
+    vim.api.nvim_open_win(old_buf, true, {
+      relative = "editor",
+      row = 1,
+      col = 1,
+      width = 40,
+      height = 10,
+      style = "minimal",
+      border = "single",
+    })
+    assert_true(window_for_buffer(old_buf) ~= nil, "old repository agent fixture is not visible")
+
+    agents.focus = function(name)
+      assert_true(name == "cursor", "agent switch focused the wrong agent type")
+      if not window_for_buffer(target_buf) then
+        vim.api.nvim_open_win(target_buf, true, {
+          relative = "editor",
+          row = 1,
+          col = 1,
+          width = 40,
+          height = 10,
+          style = "minimal",
+          border = "single",
+        })
+      end
+      return true
+    end
+
+    api.activate_agent({ agent = "cursor", path = worktree, bufnr = target_buf })
+    assert_true(realpath(vim.fn.getcwd()) == realpath(worktree), "agent switch did not change repositories")
+    assert_true(window_for_buffer(old_buf) == nil, "old repository agent window remained visible")
+    assert_true(window_for_buffer(target_buf) ~= nil, "selected repository agent window was not focused")
+    assert_true(visible_agent_float_count() == 1, "agent switch left multiple agent windows visible")
+  end, debug.traceback)
+
+  agents.focus = original_focus
+  vim.g.codex_agent_bufnr = original_codex
+  vim.g.cursor_agent_bufnr = original_cursor
+  for _, job in ipairs(jobs) do
+    pcall(vim.fn.jobstop, job)
+  end
+  for _, buf in ipairs(buffers) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+  if vim.api.nvim_buf_is_valid(original_buf) then
+    pcall(vim.api.nvim_set_current_buf, original_buf)
+  end
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  end
+  assert_true(ok, tostring(err))
+end
+
 local function test_filetype_refire_uses_target_buffer()
   local api = worktree_test_api()
   local original_buf = vim.api.nvim_get_current_buf()
@@ -2256,6 +2350,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("active agent picker discovers running project terminals", function()
     test_active_agent_discovery(repo, worktree)
+  end)
+
+  test("agent picker replaces the visible repository agent window", function()
+    test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
   end)
 
   test("filetype refresh uses each target buffer context", function()
