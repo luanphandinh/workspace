@@ -2142,6 +2142,63 @@ local function test_git_diff_previews(worktree)
   close_diffview()
 end
 
+local function select_git_diff_repository(expected_count)
+  local prompt_bufnr = nil
+  wait_until("git diff repository picker", function()
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local buf = vim.api.nvim_win_get_buf(win)
+      if vim.bo[buf].filetype == "TelescopePrompt" then
+        local picker = require("telescope.actions.state").get_current_picker(buf)
+        if picker
+          and picker.prompt_title == "Git Diff Repository"
+          and type(picker.manager) == "table"
+          and picker.manager:num_results() == expected_count
+        then
+          prompt_bufnr = buf
+          return true
+        end
+      end
+    end
+    return false
+  end, 5000)
+
+  local picker = require("telescope.actions.state").get_current_picker(prompt_bufnr)
+  local selection = picker:get_selection()
+  assert_true(selection and selection.value and selection.value.path, "git diff repository picker has no selection")
+  require("telescope.actions").select_default(prompt_bufnr)
+  return selection.value.path
+end
+
+local function test_git_diff_picker_from_workspace_root()
+  local original_cwd = vim.fn.getcwd()
+  local _, workspaces, station, workspace_name = make_project_scope_fixture()
+  local workspace_root = station .. "/local_workspaces/" .. workspace_name
+  local selected_repo = workspaces["example-project-a"]
+
+  write(selected_repo .. "/README.md", { "committed branch change" })
+  run({ "git", "add", "README.md" }, selected_repo)
+  run({ "git", "commit", "-m", "branch diff fixture" }, selected_repo)
+  write(selected_repo .. "/README.md", { "committed branch change", "working tree change" })
+  vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
+
+  local function open_from_picker(lhs)
+    invoke_map(lhs)
+    local picked = select_git_diff_repository(2)
+    assert_true(realpath(picked) == realpath(selected_repo), lhs .. " selected an unexpected repository")
+    wait_for_diffview()
+
+    local view = require("diffview.lib").get_current_view()
+    local root = view and view.adapter and view.adapter.ctx and view.adapter.ctx.toplevel
+    assert_true(root and realpath(root) == realpath(picked), lhs .. " opened Diffview in the wrong repository")
+    assert_true(realpath(vim.fn.getcwd()) == realpath(workspace_root), lhs .. " changed the workspace cwd")
+    close_diffview()
+  end
+
+  open_from_picker("<leader>gd")
+  open_from_picker("<leader>gD")
+  vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+end
+
 local function test_git_diff_refresh_preserves_directory_folds(worktree)
   local first_path = "nested/first.txt"
   local later_path = "nested/later.txt"
@@ -2491,6 +2548,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("git diff previews", function()
     test_git_diff_previews(worktree)
+  end)
+
+  test("git diff picker from workspace root", function()
+    test_git_diff_picker_from_workspace_root()
   end)
 
   test("git diff original file jump starts go runtime", function()
