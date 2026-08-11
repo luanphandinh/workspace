@@ -2110,14 +2110,47 @@ local function test_worktree_switch_restores_agent_terminal(repo, worktree)
   local worktree_win = window_for_buffer(worktree_buf)
   assert_true(worktree_win ~= nil, "worktree agent terminal was not visible before explicit focus")
   pcall(vim.api.nvim_win_close, worktree_win, false)
+
+  local source_win = vim.api.nvim_get_current_win()
+  local polluted_options = {
+    cursorbind = true,
+    diff = true,
+    foldenable = true,
+    foldmethod = "diff",
+    list = true,
+    scrollbind = true,
+    spell = true,
+    winhighlight = "Normal:ErrorMsg",
+    wrap = false,
+  }
+  local saved_options = {}
+  for name, value in pairs(polluted_options) do
+    saved_options[name] = vim.api.nvim_get_option_value(name, { win = source_win })
+    vim.api.nvim_set_option_value(name, value, { win = source_win, scope = "local" })
+  end
+  local function assert_clean_terminal_window(win)
+    assert_true(vim.wo[win].diff == false, "agent terminal inherited diff mode")
+    assert_true(vim.wo[win].scrollbind == false, "agent terminal inherited scroll binding")
+    assert_true(vim.wo[win].cursorbind == false, "agent terminal inherited cursor binding")
+    assert_true(vim.wo[win].foldmethod == "manual", "agent terminal inherited fold formatting")
+    assert_true(vim.wo[win].list == false, "agent terminal inherited list formatting")
+    assert_true(vim.wo[win].spell == false, "agent terminal inherited spell checking")
+    assert_true(vim.wo[win].wrap == true, "agent terminal inherited wrapping")
+    assert_true(not vim.wo[win].winhighlight:find("ErrorMsg", 1, true), "agent terminal inherited highlights")
+  end
+
   assert_true(agent.focus(repo_buf), "agent could not focus the selected repository terminal")
-  assert_true(window_for_buffer(repo_buf) ~= nil, "agent focused the cwd terminal instead of the selected terminal")
+  local repo_win = window_for_buffer(repo_buf)
+  assert_true(repo_win ~= nil, "agent focused the cwd terminal instead of the selected terminal")
+  assert_clean_terminal_window(repo_win)
   assert_true(window_for_buffer(worktree_buf) == nil, "cwd terminal reopened while focusing another terminal")
 
-  local repo_win = window_for_buffer(repo_buf)
-  assert_true(repo_win ~= nil, "repository agent terminal was not visible after explicit focus")
   pcall(vim.api.nvim_win_close, repo_win, false)
   assert_true(agent.focus(worktree_buf), "agent could not restore the selected worktree terminal")
+  assert_clean_terminal_window(window_for_buffer(worktree_buf))
+  for name, value in pairs(saved_options) do
+    vim.api.nvim_set_option_value(name, value, { win = source_win, scope = "local" })
+  end
 end
 
 local function test_deleted_workspace_falls_back_to_master_worktree_from_lazy_key()

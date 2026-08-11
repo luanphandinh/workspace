@@ -246,6 +246,43 @@ local function apply_agent_scrollback(buf)
   end
 end
 
+local function configure_terminal_window(win)
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    return
+  end
+  local options = {
+    breakindent = false,
+    colorcolumn = "",
+    concealcursor = "",
+    conceallevel = 0,
+    cursorbind = false,
+    cursorcolumn = false,
+    cursorline = false,
+    diff = false,
+    foldcolumn = "0",
+    foldenable = false,
+    foldexpr = "0",
+    foldmethod = "manual",
+    linebreak = false,
+    list = false,
+    number = false,
+    relativenumber = false,
+    scrollbind = false,
+    smoothscroll = false,
+    spell = false,
+    statuscolumn = "",
+    winblend = 0,
+    winfixbuf = false,
+    winfixheight = false,
+    winfixwidth = false,
+    winhighlight = "EndOfBuffer:",
+    wrap = true,
+  }
+  for name, value in pairs(options) do
+    pcall(vim.api.nvim_set_option_value, name, value, { win = win, scope = "local" })
+  end
+end
+
 local function lock_cursor_window(win)
   if config.window_mode == "float" or not config.lock_split then
     return
@@ -447,6 +484,7 @@ local function restore_agent_bufnr()
   if cur then
     local rwin = win_for_buf(cur)
     if rwin then
+      configure_terminal_window(rwin)
       lock_cursor_window(rwin)
     end
   end
@@ -458,6 +496,7 @@ local function open_terminal_split()
   else
     vim.cmd("split")
   end
+  configure_terminal_window(vim.api.nvim_get_current_win())
   vim.cmd("enew")
   apply_split_size()
   lock_cursor_window()
@@ -476,7 +515,7 @@ end
 local function open_terminal_float()
   local buf = vim.api.nvim_create_buf(false, true)
   local g = get_float_geometry()
-  vim.api.nvim_open_win(buf, true, {
+  local win = vim.api.nvim_open_win(buf, true, {
     relative = "editor",
     row = g.row,
     col = g.col,
@@ -485,6 +524,7 @@ local function open_terminal_float()
     style = "minimal",
     border = config.float_border or "single",
   })
+  configure_terminal_window(win)
   state.float_geometry = {
     relative = "editor",
     row = g.row,
@@ -520,6 +560,7 @@ local function show_terminal_split(bufnr)
   else
     vim.cmd("split")
   end
+  configure_terminal_window(vim.api.nvim_get_current_win())
   vim.api.nvim_win_set_buf(0, cur)
   apply_agent_scrollback(cur)
   apply_split_size()
@@ -533,7 +574,7 @@ local function show_terminal_float(bufnr)
   local cur = bufnr or current_bufnr()
   if not cur then return end
   local g = get_float_geometry()
-  vim.api.nvim_open_win(cur, true, {
+  local win = vim.api.nvim_open_win(cur, true, {
     relative = "editor",
     row = g.row,
     col = g.col,
@@ -542,6 +583,7 @@ local function show_terminal_float(bufnr)
     style = "minimal",
     border = config.float_border or "single",
   })
+  configure_terminal_window(win)
   state.float_geometry = {
     relative = "editor",
     row = g.row,
@@ -608,6 +650,8 @@ function API.focus(bufnr)
     show_terminal(cur)
     return true
   end
+  configure_terminal_window(win)
+  lock_cursor_window(win)
   vim.api.nvim_set_current_win(win)
   vim.defer_fn(function()
     vim.cmd("startinsert")
