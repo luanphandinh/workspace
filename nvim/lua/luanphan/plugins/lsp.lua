@@ -280,14 +280,6 @@ return {
         cmd = { gopls_cmd },
         root_markers = { "go.mod", ".git" },
         filetypes = { "go", "gomod", "gowork", "gotmpl" },
-        -- Default reuse matches workspace folders; subtle root path differences spawn a 2nd gopls.
-        -- Prefer one process per Nvim — gopls handles the module tree from the first workspace.
-        reuse_client = function(client, config)
-          if client.name ~= "gopls" or config.name ~= "gopls" or client:is_stopped() then
-            return false
-          end
-          return true
-        end,
         settings = {
           gopls = {
             analyses = {

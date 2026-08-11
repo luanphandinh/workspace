@@ -1575,6 +1575,76 @@ local function test_lsp_definition_and_references(repo)
   assert_lsp_code_action_keymaps()
 end
 
+local function test_workspace_root_uses_one_gopls_per_module()
+  local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
+  local workspace = temp_root .. "/example-multi-module-workspace"
+  local modules = {}
+
+  for index, name in ipairs({ "example-module-a", "example-module-b" }) do
+    local path = workspace .. "/" .. name
+    vim.fn.mkdir(path, "p")
+    run({ "git", "init", "-b", "main" }, path)
+    write(path .. "/go.mod", {
+      "module example.com/" .. name,
+      "",
+      "go 1.21",
+    })
+    write(path .. "/main.go", {
+      "package " .. name:gsub("%-", ""),
+      "",
+      "func Value() string {",
+      string.format('\treturn "module-%d"', index),
+      "}",
+    })
+    modules[#modules + 1] = { path = path, file = path .. "/main.go" }
+  end
+
+  api.switch_to(workspace, "workspace root")
+  local buffers = {}
+  local clients = {}
+  for index, module in ipairs(modules) do
+    buffers[index] = open_go_file(module.file)
+    clients[index] = active_lsp_client(buffers[index], "gopls")
+    assert_true(clients[index] ~= nil, "workspace module has no gopls client")
+    assert_true(
+      realpath(clients[index].config.root_dir) == realpath(module.path),
+      "gopls attached with the wrong module root"
+    )
+  end
+  assert_true(clients[1].id ~= clients[2].id, "workspace modules unexpectedly reused one gopls client")
+
+  local old_ids = { clients[1].id, clients[2].id }
+  api.switch_to(modules[1].path, "workspace project")
+  local module_a_buf = open_go_file(modules[1].file)
+  local module_a_client = active_lsp_client(module_a_buf, "gopls")
+  assert_true(module_a_client ~= nil, "gopls did not restart after switching to a workspace project")
+  assert_true(
+    realpath(module_a_client.config.root_dir) == realpath(modules[1].path),
+    "switched project gopls has the wrong root"
+  )
+  assert_true(module_a_client.id ~= old_ids[1] and module_a_client.id ~= old_ids[2], "gopls was not restarted")
+  wait_until("stale workspace gopls clients to stop", function()
+    for _, id in ipairs(old_ids) do
+      local client = vim.lsp.get_client_by_id(id)
+      if client and not client:is_stopped() then
+        return false
+      end
+    end
+    return true
+  end)
+
+  local live_gopls = 0
+  for _, client in ipairs(vim.lsp.get_clients({ name = "gopls" })) do
+    if not client:is_stopped() then
+      live_gopls = live_gopls + 1
+    end
+  end
+  assert_true(live_gopls == 1, "project switch left stale gopls clients running")
+
+  api.switch_to(original_cwd, "project")
+end
+
 local function test_lsp_recursive_incoming_call_graph(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   local shared_file = repo .. "/shared.go"
@@ -2372,6 +2442,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("lsp definition and references", function()
     test_lsp_definition_and_references(repo)
+  end)
+
+  test("workspace root starts one gopls client per Go module", function()
+    test_workspace_root_uses_one_gopls_per_module()
   end)
 
   test("lsp recursive incoming call graph", function()
