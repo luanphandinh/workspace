@@ -1113,7 +1113,7 @@ end
 local function test_workspace_and_master_project_discovery()
   local api = worktree_test_api()
   local original_cwd = vim.fn.getcwd()
-  local sources, workspaces = make_project_scope_fixture()
+  local sources, workspaces, station, workspace_name = make_project_scope_fixture()
   local nested = workspaces["example-project-a"] .. "/nested"
   vim.fn.mkdir(nested, "p")
   vim.cmd("cd " .. vim.fn.fnameescape(nested))
@@ -1192,6 +1192,23 @@ local function test_workspace_and_master_project_discovery()
   assert_true(picker.position == 3, "reverse selection did not skip the root header")
   assert_true(vim.fn.exists(":ProjectSwitch") == 2, "ProjectSwitch command is missing")
 
+  local workspace_root = station .. "/local_workspaces/" .. workspace_name
+  local normalized_workspace_root = realpath(workspace_root)
+  vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
+  local from_workspace_root, resolved_root = api.list_all_project_repos()
+  assert_true(#from_workspace_root == 4, "workspace root discovery returned an unexpected project count")
+  assert_true(realpath(resolved_root) == normalized_workspace_root, "non-git workspace root was not resolved")
+  local workspace_root_projects = {}
+  for _, project in ipairs(from_workspace_root) do
+    workspace_root_projects[realpath(project.path)] = project
+  end
+  for project_path in pairs(expected) do
+    local project = workspace_root_projects[project_path]
+    assert_true(project ~= nil, "workspace root discovery omitted " .. project_path)
+    local expected_scope = vim.startswith(project_path, normalized_workspace_root .. "/") and "workspace" or "root"
+    assert_true(project.scope == expected_scope, "workspace root discovery assigned the wrong scope")
+  end
+
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
 end
 
@@ -1217,12 +1234,22 @@ local function test_workspace_project_discovery()
   assert_true(by_name[empty_workspace_name].empty == true, "empty workspace was not marked empty")
 
   local repos = api.list_workspace_repos(by_name[workspace_name])
+  assert_true(#repos == 3, "workspace picker targets omitted the workspace root")
+  assert_true(repos[1].workspace_root == true, "workspace root is not the first picker target")
+  assert_true(realpath(repos[1].path) == realpath(by_name[workspace_name].path), "workspace root path is incorrect")
+  assert_true(repos[1].branch == "workspace root", "workspace root label is incorrect")
   local branches = {}
   for _, repo in ipairs(repos) do
-    branches[repo.name] = repo.branch
+    if not repo.workspace_root then
+      branches[repo.name] = repo.branch
+    end
   end
   assert_true(branches["example-project-a"] == "feature/a", "workspace project branch is incorrect")
   assert_true(branches["example-project-b-long"] == "feature/b", "workspace project branch is incorrect")
+
+  local empty_targets = api.list_workspace_repos(by_name[empty_workspace_name])
+  assert_true(#empty_targets == 1, "empty workspace should expose only its workspace root")
+  assert_true(empty_targets[1].workspace_root == true, "empty workspace root is not selectable")
 
   vim.cmd("cd " .. vim.fn.fnameescape(sources["example-project-a"]))
   local from_master, master_root = api.list_workspace_directories()
@@ -1563,6 +1590,76 @@ local function test_lsp_definition_and_references(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   assert_lsp_navigation(repo .. "/main.go")
   assert_lsp_code_action_keymaps()
+end
+
+local function test_workspace_root_uses_one_gopls_per_module()
+  local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
+  local workspace = temp_root .. "/example-multi-module-workspace"
+  local modules = {}
+
+  for index, name in ipairs({ "example-module-a", "example-module-b" }) do
+    local path = workspace .. "/" .. name
+    vim.fn.mkdir(path, "p")
+    run({ "git", "init", "-b", "main" }, path)
+    write(path .. "/go.mod", {
+      "module example.com/" .. name,
+      "",
+      "go 1.21",
+    })
+    write(path .. "/main.go", {
+      "package " .. name:gsub("%-", ""),
+      "",
+      "func Value() string {",
+      string.format('\treturn "module-%d"', index),
+      "}",
+    })
+    modules[#modules + 1] = { path = path, file = path .. "/main.go" }
+  end
+
+  api.switch_to(workspace, "workspace root")
+  local buffers = {}
+  local clients = {}
+  for index, module in ipairs(modules) do
+    buffers[index] = open_go_file(module.file)
+    clients[index] = active_lsp_client(buffers[index], "gopls")
+    assert_true(clients[index] ~= nil, "workspace module has no gopls client")
+    assert_true(
+      realpath(clients[index].config.root_dir) == realpath(module.path),
+      "gopls attached with the wrong module root"
+    )
+  end
+  assert_true(clients[1].id ~= clients[2].id, "workspace modules unexpectedly reused one gopls client")
+
+  local old_ids = { clients[1].id, clients[2].id }
+  api.switch_to(modules[1].path, "workspace project")
+  local module_a_buf = open_go_file(modules[1].file)
+  local module_a_client = active_lsp_client(module_a_buf, "gopls")
+  assert_true(module_a_client ~= nil, "gopls did not restart after switching to a workspace project")
+  assert_true(
+    realpath(module_a_client.config.root_dir) == realpath(modules[1].path),
+    "switched project gopls has the wrong root"
+  )
+  assert_true(module_a_client.id ~= old_ids[1] and module_a_client.id ~= old_ids[2], "gopls was not restarted")
+  wait_until("stale workspace gopls clients to stop", function()
+    for _, id in ipairs(old_ids) do
+      local client = vim.lsp.get_client_by_id(id)
+      if client and not client:is_stopped() then
+        return false
+      end
+    end
+    return true
+  end)
+
+  local live_gopls = 0
+  for _, client in ipairs(vim.lsp.get_clients({ name = "gopls" })) do
+    if not client:is_stopped() then
+      live_gopls = live_gopls + 1
+    end
+  end
+  assert_true(live_gopls == 1, "project switch left stale gopls clients running")
+
+  api.switch_to(original_cwd, "project")
 end
 
 local function test_lsp_recursive_incoming_call_graph(repo)
@@ -2362,6 +2459,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("lsp definition and references", function()
     test_lsp_definition_and_references(repo)
+  end)
+
+  test("workspace root starts one gopls client per Go module", function()
+    test_workspace_root_uses_one_gopls_per_module()
   end)
 
   test("lsp recursive incoming call graph", function()

@@ -1,6 +1,6 @@
 ---
 name: "local-tech-design"
-description: "Tech Design Genius"
+description: "Create concise, evidence-backed technical designs for local multi-repo workspaces, with strict section ownership and anti-repetition rules."
 ---
 
 # About you
@@ -23,22 +23,31 @@ Every tech design lives inside a **multi-repo git-worktree workspace** built by 
 - The microservice mapping file (`<tech_doc_name>_mapping.md`) and any implementation plans (e.g. plan files produced by `superpowers:writing-plans`) ALSO live under `<root>/local_workspaces/<workspace-name>/tech_doc/`. Keeping the doc, the mapping, and the plans co-located means future sessions can pick up the full context by looking inside the workspace folder.
 ## Format of the tech design
 - Do NOT PUT ANY empty line in between lines, just new line is enough, no empty line
-- **Exception — Markdown tables MUST be followed by one blank line.** After every Markdown table in the tech design, insert exactly one empty line before the next heading, bullet list, paragraph, code block, diagram, or another table. This applies to ALL tables in the tech design (§4 Decisions, §5/§6 field tables, §7 Effort, §8 Release Checklist, mapping-style tables if ever included, and any ad-hoc comparison table). This rule overrides the "no empty line" rule because without the blank line, the next line can be parsed as part of the table.
+- **Exception — Markdown tables MUST be followed by one blank line.** After every Markdown table in the tech design, insert exactly one empty line before the next heading, bullet list, paragraph, code block, diagram, or another table. This applies to all tables, including the §4 choice table, §5/§6 field tables, the optional §6 service summary, and ad-hoc comparison tables. This rule overrides the "no empty line" rule because without the blank line, the next line can be parsed as part of the table.
 - **Exception — HTML block boundaries MUST have one blank line.**
   - Insert exactly one blank line after every `</details>` before the next Markdown block.
   - Insert exactly one blank line before `<details>` when it follows a heading, list, paragraph, or another `</details>`.
   - This overrides the "no empty lines" rule; without it, renderers may treat following headings as raw text.
-- **Tables — header styling.** Every Markdown table in the doc (§4 Decisions table, §5/§6 field tables, §7 Effort, §8 Release Checklist, etc.) MUST render its header row as **bold + gray-background**. Implementation:
+- **Tables — header styling.** Every Markdown table in the doc MUST render its header row as **bold + gray-background**. Implementation:
   - Wrap each header cell in `**…**` so the text is bold even in renderers that don't auto-bold the header row.
   - Auto-applies a gray fill to the header row of Markdown tables — combining auto-fill with the explicit `**…**` gives bold + gray-bg with no extra markup.
   - Example header row: `| **Field** | **Type** | **Notes** | **Details** |` — applies to *every* table in the doc, not just field tables.
 ## TLDR — short & concise (universal, applies to the entire doc)
 **Brevity is the rule everywhere.** Every section, every bullet, every table cell, every code-block name, every diagram label. The whole tech doc should be skimmable in under five minutes and still convey every key point.
+- **User feedback overrides template completeness.** Brevity wins over filling optional headings, rows, bullets, diagrams, tables, or examples.
 - **One short phrase beats a sentence; a noun phrase beats a sentence; a verb + identifier beats a noun phrase.** Pick the shortest form that still carries the meaning.
 - **Don't restate context the reader can derive** (no "as discussed above", no "this means that", no "in other words").
 - **Cut throat-clearing**: drop "in order to", "with the goal of", "it should be noted that", "we propose to", "the team has decided that".
 - **Specific beats abstract.** "Add `<field-name>` to `<RequestStruct>`" beats "extend the request schema with context needed downstream".
-- **Don't over-explain in headings, names, or summary cells when the body or a referenced section already carries the detail.** Trust the structure: a §8 release item doesn't restate §6's diff; a §7 task name doesn't restate §6's logic; a `Code change` summary doesn't recap the diff.
+- **Don't over-explain in headings, names, or summary cells when the primary artefact already carries the detail.** Trust the structure: a §8 production action doesn't restate §6's diff; a §7 rollout phase doesn't restate §8's action; a `Code change` summary doesn't recap the folded block.
+- **One fact, one home — strict ownership:**
+  - Architecture flow belongs only in §3.
+  - Unresolved architectural trade-offs belong only in §4.
+  - Implementation details belong only in folded §6 blocks.
+  - Production deployment actions belong only in §8.
+  - Never repeat a fact across these sections, including as a summary, pointer, caption, or rephrasing.
+- **Trust primary artefacts.** If a diagram, folded code/config block, field name, or upstream requirement already communicates the information, do not explain it again.
+- **Avoid inventory tables.** Add a consumer inventory only when it materially compares at least three consumers. For multi-service scope, prefer one compact service summary table in §6 over separate inventories.
 - **This rule wins on conflict.** If a per-section rule says "1–2 sentences" and one short phrase suffices, write the phrase. If a per-section rule says "2–4 sub-bullets" and 1 says everything, use 1.
 ## Diff format (universal — applies to code, IDL, schema, anything)
 **Every diff in the doc — Go/Python/etc. code, Thrift/Protobuf IDL, SQL DDL, YAML config, anything else — uses the same parent-context pattern.** The point: reviewers should grok WHERE in the parent block the change lives, which conditions/fields surround it, and what runs after, without us pasting the entire block. This rule is referenced from §5 and §6 (and anywhere else a diff appears) — do NOT redefine it inline; just follow it.
@@ -63,7 +72,7 @@ Use a fenced ```diff``` block. Identifier names appear naturally in the diff; no
 </details>
 ````
 This makes the block render as a collapsed disclosure widget on GitHub / GitLab natively, and on Lark / Confluence the converter maps the wrapper to the platform's native collapsible code primitive (collapsed by default + named title) — see Sync-to-remote rule #12 for the per-platform conversion. Never emit a bare ```diff``` block without the wrapper.
-**Exception — substantial NEW function**: when a cohesive new behaviour is large enough that embedding it in an existing function would make the diff hard to review, prefer extracting it into a focused function. Show the complete new function in a normal language code block, without diff markers or `...`; do not render that new function as a diff. Then show a separate small `diff` block for the existing caller that invokes it, preserving the parent-context pattern above. This extraction is allowed by the new-code gate when it isolates a substantial responsibility rather than creating a speculative wrapper.
+**Exception — substantial NEW function**: when a cohesive new behaviour is large enough that embedding it in an existing function would make the diff hard to review, prefer extracting it into a focused function. Show the complete new function in a normal language code block, without diff markers or `...`; do not render that new function as a diff. Wrap it in the same named `<details>` disclosure as every other §6 implementation block. Then show a separate small `diff` block for the existing caller that invokes it, preserving the parent-context pattern above. This extraction is allowed by the new-code gate when it isolates a substantial responsibility rather than creating a speculative wrapper.
 **Exception — other fully NEW parent blocks**: when a new struct/service/table or similar non-function definition has no prior version, show the **entire definition** with `+` on every line and no `...` elisions. Reviewers need the full definition because there is no existing context to compare.
 **New-code gate for proposed diffs:** §5/§6 Code changes MUST reuse the local-coding "New code gate — no speculative abstractions" rule. Do not propose new files, types, wrappers, helpers, option structs, adapters, aliases, or exported APIs unless the design proves one of the allowed conditions: directly required by the request, a substantial cohesive responsibility qualifying for the standalone-new-function rule above, 2+ real call sites needing shared logic now, an import-cycle break without duplicated logic, or public-API compatibility for existing callers. Otherwise show the direct change to the existing function/signature/body. Type aliases are justified only for compatibility with existing callers; otherwise use the real concrete type directly.
 Code-change example (existing function, placeholders only):
@@ -124,7 +133,7 @@ IDL-diff example (NEW method — show everything, no elision):
 ```
 ````
 ## Nested-list table cell format (universal — applies to any table cell that holds a 2-level nested list)
-**Define the cell shape ONCE here; rules elsewhere (§4 Detail, §4 Decisions, anything else that needs nested content in a table cell) reference this format and add only their own content constraints.** Do NOT redefine the encoding inline.
+**Define the cell shape ONCE here; rules elsewhere (§4 `Options / trade-offs` and any other cell that needs nested content) reference this format and add only their own content constraints.** Do NOT redefine the encoding inline.
 **Source encoding** — kept compact so the cell stays a valid Markdown table cell while still being parsable into a nested list:
 - **Level 1 (item header)** — a bold line: `**<header text>**`. **No leading bullet character.** Header text is short.
 - **Level 2 (sub-bullet)** — a line starting with `• ` (bullet + space) followed by the bullet text.
@@ -165,7 +174,7 @@ Heading hierarchy is **strict and contiguous: H1 > H2 > H3 > H4 > H5**. Never ju
 | §3 Solution Overview | `# 3. Solution Overview`          | `## 3.1 Architecture flowchart`, `## 3.2 Cross-service sequence diagrams` | `### <diagram name>` (under §3.2 — required when there are 2+ sequence diagrams; omit the H3 when there's exactly 1) | —                                 | —                                 |
 | §4 Design Decisions| `# 4. Design Decisions`           | none by default — entire section is ONE table; H2 sub-sections (`## 4.X <name>`) added ONLY when user explicitly asks for a deeper writeup | —                                 | —                                 | —                                 |
 | §5 External        | `# 5. External Technical Design`  | `## <method/api_name>`            | `### Request`, `### Response`, `### Logic change`, `### Code change` | — | — |
-| §6 Internal        | `# 6. Internal Technical Design`  | `## 6.X Service: <Name>`          | `### API changes`, `### Infra changes`, `### Impact + mitigation` (omitted by default — keep ONLY if there's a genuinely critical cross-cutting risk; cap 3 points) | `#### <method/api_name>` (under API changes) or `#### Redis library change` etc. (under Infra changes) | `##### Request`, `##### Response`, `##### Logic change`, `##### Code change` |
+| §6 Internal        | `# 6. Internal Technical Design`  | `## 6.X Service: <Name>`          | folded `<details>` blocks only | — | — |
 
 The examples below use `### N.` for §1..§8 purely because they're embedded in this SKILL.md (which has its own H1/H2 above). In the tech doc you generate, those become `# N.`, every `#### X.Y` becomes `## X.Y`, and so on per the table above.
 
@@ -178,7 +187,7 @@ The examples below use `### N.` for §1..§8 purely because they're embedded in 
 - **No background dumps** — existing-system context belongs in §3's diagram labels or in the relevant §6 microservice section, not here. If a reader needs the architecture to grasp the problem, the problem statement is too abstract; rewrite the bullet.
 
 ### 2. Links
-Placeholder block — the user fills in URLs later. Pre-populate with empty bullets:
+**Links only.** Never put repository mappings, code paths, evidence, ownership notes, or implementation references here; those stay in `<tech_doc_name>_mapping.md` and exploration evidence. Pre-populate with empty URL bullets:
 ```
 - Tracking ticket:
 - PRD / requirement doc:
@@ -212,40 +221,24 @@ The "wide-angle lens" section: every reader should be able to grok the new archi
 - Generic labels are **forbidden**: never write `call`, `request`, `read`, `write`, `query`, `update`, `notify`, `event`, `process` on their own. If you can't name the operation, the arrow is ambiguous — fix the diagram before keeping it.
 
 ### 4. Design Decisions
-**ONE single table for the entire §4 — by default, no sub-headings, no per-decision prose, no separate comparison tables.** Every meaningful design choice lives as a row in the same table so reviewers see the rationale after first understanding the solution.
-**High-impact only — cap at 3–4 rows total.** Each row answers ONE concrete question that came up while designing AND would meaningfully change the architecture if picked differently (caching strategy, data-sync model, schema shape that crosses services, rollout strategy with risk, error semantics that propagate, etc.). Drop trivial / obvious / upstream-fixed choices entirely; their resolution shows up naturally in the §6 Code change content.
-**What to OMIT** as a row:
-- **Already specified upstream** (PRD, requirements doc, parent tech doc) — cite the upstream doc once in §2 Links and skip.
-- Dictated by an existing convention or framework default.
-- Easily reversible local-to-one-file picks (rename a field, swap a struct).
-- A typical reviewer wouldn't push back on either alternative.
-**Bias hard toward fewer rows.** Zero rows is fine if upstream specs pin every meaningful choice; in that case write `N/A — all design choices fixed by <link in §2>`. If you have more than 4 rows, drop the weakest until only heavyweights remain.
-**The table — exactly 4 columns, in this exact order:**
-| **#**   | **Name**             | **Detail**                                                                                                                                                              | **Decisions**                                                                                                                                                                          |
-| ------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 4.1     | <short topic>        | **Summary**<br>• <constraint / trigger 1><br>• <constraint / trigger 2><br><br>**Target**<br>• <goal 1><br>• <goal 2>                                                   | **Option 1 — <preferred short name> (Preferred)**<br>• <logic step 1><br>• <logic step 2><br><br>**Option 2 — <short name>**<br>• <logic step 1><br>• <logic step 2>                    |
-| 4.2     | <short topic>        | **Summary**<br>• <constraint 1><br><br>**Target**<br>• <goal 1><br>• <goal 2>                                                                                          | **Option 1 — <preferred short name> (Preferred)**<br>• <logic step 1><br>• <logic step 2><br><br>**Option 2 — <short name>**<br>• <logic step 1><br>• <logic step 2><br><br>**Option 3 — <short name>**<br>• <logic step 1><br>• <logic step 2> |
-| 4.3     | <short topic>        | **Summary**<br>• <upstream constraint that left only one viable path><br><br>**Target**<br>• <goal>                                                                    | **Option 1 — <preferred short name> (Preferred)**<br>• <logic step 1><br>• <logic step 2>                                                                                              |
-- **#** — `4.<N>`, contiguous starting at `4.1`.
-- **Name** — short noun-phrase topic. **NOT a question** (no `?`, no "How should we…", no "Should we…"). Scannable.
-- **Detail** — uses the **Nested-list table cell format**. Constraints specific to this column:
-  - Exactly **TWO Level-1 items**, in this fixed order: `**Summary**`, then `**Target**`.
-  - **1–3 Level-2 sub-bullets** per Level-1 item.
-  - All sub-bullets are **statements, never questions**. `Summary` bullets state the constraint or trigger; `Target` bullets state the concrete goal.
-- **Decisions** — uses the **Nested-list table cell format**. Constraints specific to this column:
-  - **Up to 3 Level-1 items** for complex decisions; **just 1** for forced picks.
-  - **The Preferred option is ALWAYS Option 1**. Alternatives become Option 2 and Option 3. Keep the `**(Preferred)**` suffix for explicit confirmation.
-  - Level-1 header shape: `**Option <N> — <short name>**`, numbered contiguously from 1.
-  - **2–4 Level-2 sub-bullets** per option, describing what it does, where, when, and fallback.
-**No per-decision sub-sections by default.** The table above is the entire §4.
-**Promote to an H2 sub-section ONLY when the user explicitly asks** (e.g. "expand 4.2 with a comparison table"). Add a `(see §4.2 below)` pointer in the table row when this happens.
+**Only unresolved, high-impact architectural choices belong here.** A row must have at least two viable options that materially change architecture, cross-service contracts, data ownership, reliability, or irreversible rollout risk.
+- Exclude trivial, forced, reversible, convention-fixed, or upstream-fixed choices without mentioning them.
+- Never invent an obvious alternative to populate the table.
+- Zero rows is preferred when the architecture is already fixed. Write exactly `N/A — no unresolved high-impact architectural choices.`
+- Cap the table at four rows. Ask the user only about choices that remain unresolved and block the design.
+| **#** | **Choice** | **Options / trade-offs** | **Recommendation** |
+| ----- | ---------- | ------------------------ | ------------------ |
+| 4.1 | <short architectural choice> | **Option 1 — <name>**<br>• <material benefit><br>• <material cost><br><br>**Option 2 — <name>**<br>• <material benefit><br>• <material cost> | <option> — <one-phrase reason> |
+- Use the Nested-list table cell format only for `Options / trade-offs`; maximum three viable options and two short bullets per option.
+- Do not restate constraints already visible in §3 or linked upstream requirements.
+- No per-decision prose or sub-sections unless the user explicitly requests a deeper comparison.
 
 ### 5. External Technical Design
 - Changes affecting external clients (mobile apps, web frontends, partner integrations, public APIs).
 - Changes or constraints discovered from `<root>/_external/` repos also belong here. Treat those repos as external contract owners: describe required request/response/logic/code-contract diffs, but do not list them as internal implementation repos.
 - For NEW APIs: full request/response schema.
 - For existing APIs: ONLY the diff fields.
-- If no external changes: write `N/A — internal-only change` and move on.
+- If there is no external contract change, this section is exactly one line: `N/A — no external contract change.` Do not mention internal dependencies, library/module versions, or implementation details.
 - **Per-API structure** (heading levels in the OUTPUT tech doc):
   - `## <method/api_name>` (H2) — one block per external method that changes.
   - Inside each block, fixed-label sub-headings at H3, in this exact order:
@@ -270,78 +263,27 @@ The "wide-angle lens" section: every reader should be able to grok the new archi
   - **Field** = name only, plain text — **no backticks**, no descriptions, no markup, no `<br>`. Write `field_a`, never `` `field_a` ``. Same in prose: refer to fields plainly. Backticks belong only on actual code snippets, never on field names.
   - **Type** = the IDL type only. Same no-backtick rule.
   - **Notes** = a SHORT status tag — one of `New`, `Updated`, `Exist`, `Removed`. Nothing else in this column. Reviewers scan this column to see the shape of the diff at a glance.
-  - **Details** = the actual explanation: what changed for `Updated`, the constraint or purpose for `New`, the reason an `Exist` row is in the table at all (context, backcompat, still required by some client), the deprecation path for `Removed`. Keep it concise — one short phrase per row, no sentences, no nested bullets, no `<br>`. If a row has no real reason to exist beyond completeness, drop the row.
+  - **Details** = only information not already clear from the field name, type, status, diff, or upstream contract. Leave it empty when self-evident. If a row has no reason beyond completeness, drop it.
 
 ### 6. Internal Technical Design
-**Two-level structure**: Service → then API-method (or Infra-action). Use the codebase mapping from the `<tech_doc_name>_mapping.md` file as the canonical service list. For each service that changes:
+Use `<tech_doc_name>_mapping.md` as the canonical service list; never copy repository paths or mapping evidence into the doc.
+- For two or more changed services, use at most one compact `Service | Change | Risk` summary table. Skip it when it adds no comparison value.
+- Each `## 6.X Service: <Name>` section has at most three short visible bullets total. Include only service-specific facts not already communicated by §3, §4, §5, or the folded blocks.
+- Put request/response diffs, logic, code, schema, and config under named `<details>` disclosures. All implementation code/config is collapsed by default. If §5 already owns an external schema, omit it from §6 without a pointer.
+- Prefer the code/config artefact over prose. Do not explain identifiers, fields, branches, or call order that the folded block already shows.
+- For substantial new functions, show the complete function in a folded language block and a separate small folded diff for its existing caller.
+- When tests need documentation, group them into at most five behavior categories. Never list individual test cases, test function names, or repetitive input permutations; keep test detail folded.
+- Do not place architecture or sequence diagrams here; §3 owns flow. Do not place deployment commands here; §8 owns production actions.
 
-#### 6.X Service: <ServiceName>
-
-##### API changes
-For EACH API method that changes, one block, in this exact order:
-
-###### <method/api_full_name>
-Each per-method block (`#### <method>` H4 in the tech doc) has these fixed-label sub-headings at H5, in this exact order:
-
-- `##### Request`
-- `##### Response`
-- `##### Logic change`
-- `##### Code change`
-
-If the same API is already documented in §5 (External Technical Design), **omit `Request` and `Response` entirely** — no heading, no field table, no IDL diff block, no pointer, no "see §5" line. The block then has only `Logic change` + `Code change` headings. Don't duplicate the schema or IDL across sections.
-
-The content under each heading:
-
-- Under **Request** / **Response** — TWO artefacts in this exact order, identical to §5:
-  1. The `Field | Type | Notes | Details` 4-column table (only rows worth listing).
-  2. An **IDL diff code block** for the request struct (under Request) and the response struct (under Response), following the **universal Diff format** rule. NEW method → entire struct with `+` on every line, no elisions; existing method → diff with parent-context pattern.
-- Under **Logic change** — 2–5 bullets describing the **high-level behaviour change** at the API level: what the method now does differently end-to-end. This is the "what" only. Drilling into specific helper functions, private method names, internal struct fields, or anything wrapped in backticks belongs in the Code change diff, not here.
-- Under **Code change** — follow the **universal Diff format** rule. For a substantial new function, show the complete function in a normal language code block and use a separate diff only for the existing caller that invokes it.
-
-##### Infra changes (omit the heading entirely if the service has no infra work)
-Only use this section when the change touches infrastructure (Redis client, Kafka consumer, DB driver, message broker, cache layer, etc.). Each block is named by **the infra action**, never by source file or function:
-
-Examples of infra-action block names (H4 in the tech doc):
-
-- `#### Redis library change`
-- `#### Kafka consumer change`
-- `#### DB schema migration`
-
-Each infra-action block has these fixed-label sub-headings at H5:
-
-- `##### Logic change` — high-level only, same rule as API changes.
-- `##### Code change` — follow the **universal Diff format** rule (covers code AND schema/DDL/config changes, including the standalone-new-function rule).
-
-##### Impact + mitigation
-**Omit this heading entirely by default.** Only include it when the service introduces a **genuinely critical, cross-cutting risk** that reviewers must be warned about up front (e.g. breaking change to an upstream contract, data migration with rollback constraints, latency budget eaten by a new sync RPC). If nothing meets that bar — no heading, no empty placeholder, no "N/A". Keep the noise floor low.
-**When kept, the section is a tight nested list — at most 3 critical points.** Format:
-- **Level 1** — one bullet per critical point. Each bullet is **a single line stating the problem** (what breaks, what regresses, what risks blowing up). No prose paragraph, no multi-clause sentence — one short statement.
-- **Level 2 (indented child)** — exactly one sub-bullet under each Level-1 point, prefixed `Mitigation: `, stating concretely how the risk is handled (feature flag, rollout step, fallback path, monitoring alert, etc.). One line.
-- **Cap: 3 Level-1 points.** If you have a 4th, either it's not actually critical (drop it) or two of the existing ones are the same risk in disguise (merge them). The list is a triage signal — bloating it dilutes attention.
-Example shape (placeholders):
-```
-- <Problem 1 in one line>
-  - Mitigation: <one-line concrete handling>
-- <Problem 2 in one line>
-  - Mitigation: <one-line concrete handling>
-```
-— Do NOT put sequence diagrams here; those live in §3.2 so they're surfaced before the deep-dive.
-
-### 7. Effort & Estimation
-A small Markdown table — exactly 4 columns in this order:
-| **Microservice / task** | **Owner**     | **Effort (d)** | **Notes**                       |
-| ----------------------- | ------------- | -------------- | ------------------------------- |
-| <service-a>             | <owner / TBD> | <person-days>  | <empty or a few words>          |
-| <task-name>             | <owner / TBD> | <person-days>  | blocked on <X>                  |
-- Per the **TLDR rule**, every cell is as short as possible. The §6 diff is the source of truth for what's actually being built — never restate §6 content here.
-- **Microservice / task** — service name (e.g. `service-a`) or short task verb-phrase (e.g. `migrate redis client`, `backfill region column`). NO description of what the work does. If the reader needs to know what's in the change, they read §6.
-- **Owner** — single name, or `TBD` if unassigned.
-- **Effort (d)** — person-days, rounded to halves (`0.5`, `1`, `1.5`, …).
-- **Notes** — keep **empty by default**. Only fill it when there's a genuinely useful planning signal (a blocker, an external dependency, a non-obvious risk). Even then, prefer a single short phrase (`blocked on <dependency>`, `needs data review`, `depends on §4.2 pick`). Use the **Nested-list table cell format** ONLY when there are 2+ structured categories worth listing (e.g. multiple dependencies + multiple risks); cap 3 Level-1 items, 1–3 sub-bullets each. If you can't justify the structure, leave it as a single phrase.
+### 7. Rollout Plan
+- At most four numbered phases or gates.
+- State sequencing, exposure, and decision gates only; do not repeat implementation details from §6 or concrete production actions from §8.
+- Omit obvious CI/CD steps. If no staged rollout is needed, write `N/A — direct rollout.`
 
 ### 8. Release Checklist
 **Production-deploy only.** What physically goes to prod — nothing else. NO dev-flow items (no MR-merge gates, no test-green gates, no review-approval gates, no testing-env deploys, no rollback-doc reminders); those belong in the team's normal CI/CD.
 Per the **TLDR rule**, every line is **verb + name**. NO description of what's in the release, why, or what it does — §6 is the source of truth.
+- Include production actions only. Never add implementation requirements, test reminders, design constraints, or rollout rationale.
 - **Services to deploy** — `Deploy <service-name>`. Just that. Order = rollout order if there's a dependency.
 - **Configs / dynamic settings** — `Update <namespace>/<key> = <new-value> (<env>)` or `Enable feature flag <flag-name> (<env>, <%>)`. NO explanation of what the config controls.
 - **EXCEPTION — multi-step releases for one service.** Only when a single service needs ordered sub-steps (e.g. schema migration before app deploy, shadow → canary → 100%, dependency cutover) — promote it to a nested checklist under the service's bullet. Single-step deploys stay one line.
@@ -410,20 +352,23 @@ flowchart TB
   linkStyle 3 stroke:#16a34a,stroke-width:2px,color:#16a34a
   linkStyle 4 stroke:#16a34a,stroke-width:2px,color:#16a34a
 ```
+## Final brevity gate
+Run this gate before final approval and before every remote sync:
+1. **Anti-repetition pass:** remove anything already communicated by a diagram, folded code/config block, field name, upstream requirement, or another section. Do not replace removed text with a pointer.
+2. **Five-minute budget:** visible non-code prose outside `<details>` blocks must stay below 200 source lines. If it reaches 200 lines, cut content before proceeding.
+3. **Readability failures:** flag and fix every repeated concept and every visible paragraph longer than three source lines. Prefer deletion, a short bullet, or a primary artefact.
+4. **Ownership check:** §3 flow, §4 unresolved trade-offs, folded §6 implementation, and §8 production actions must not overlap.
+5. **Template check:** remove optional structure that does not add information. User feedback overrides template completeness.
 ## Design loop (workflow — how to fill the 8 sections)
 - The doc is **never final** until the feature is in production. Keep asking for feedback after every revision.
-- **First round**: produce a draft of all 8 sections in order. §4 (Design Decisions) typically has the most back-and-forth — surface every non-trivial decision you can think of, with options and a recommendation, and let the user steer.
-- **MANDATORY brainstorming pass after the first draft.** Once microservices are discovered (per the mapping file rule) AND the first draft is on disk under `<workspace>/tech_doc/`, **invoke `superpowers:brainstorming`** to systematically walk through every design decision with the user — including the trivial / forced / upstream-fixed ones that will NOT make it into the §4 table. The point: don't silently drop those low-impact picks; surface them so the user can confirm or override. Any artefacts produced by brainstorming or by `superpowers:writing-plans` are saved under `<root>/local_workspaces/<workspace-name>/tech_doc/` so they live alongside the doc and the mapping file.
-  - Brainstorming output is a list of decisions split into two buckets:
-    1. **Tabled decisions** — the high-impact ones that satisfy the §4 inclusion criteria. These become rows in the §4 Decisions table.
-    2. **Omitted decisions** — the trivial / reversible / upstream-fixed / convention-forced picks. These get **recorded but not tabled**.
-  - **The user must confirm both buckets** before you continue. If the user wants something moved (table → omitted, or omitted → table), update accordingly and re-confirm.
-  - **Omitted decisions MUST still be stated in the doc** — never leave them invisible. Add a one-line bullet for each omitted pick at the end of §4 under a small italic note: `*Omitted from the table (low-impact / forced / upstream-fixed):*` followed by a flat bullet list. Each line is `<short topic> — <picked option> (<one-phrase reason for omitting>)`.
-- **Subsequent rounds**: only revise the sections that actually changed. Don't rewrite §1/§2/§7/§8 unless the requirement itself shifted. New questions that arise during §6 deep-dive get added back into the brainstorming bucket and re-classified (table vs omitted) — promote into §4 only if genuinely high-impact.
+- **First round:** produce the eight top-level sections in order, using the exact N/A lines where required and leaving optional structures empty when they add no information.
+- Ask the user only about unresolved, high-impact architectural choices that block a sound design. Do not surface, record, or request confirmation for trivial, forced, reversible, convention-fixed, or upstream-fixed choices.
+- **Subsequent rounds:** revise only sections whose facts changed. Remove resolved §4 rows instead of preserving decision history in the design.
 - **For mapping, cross-service exploration, and diagrams**: invoke/use `local-code-explore` first so the confirmed mapping, §3, and §6 share one verified call graph instead of separately reconstructed flows.
 - **For §6 (Internal Technical Design)**: dispatch one FOCUSED AGENT TASK per microservice IN PARALLEL — each agent explores its repo, computes the IDL/logic/code diff, applies the local-coding new-code gate to every proposed added file/type/function/helper/wrapper/alias/API, and reports back. The main agent stitches the results into §6 and reconciles it with the `local-code-explore` graph.
 - **Permission:** invoking `local-tech-design` is explicit permission to use sub-agents when the §6 agent-task rule or `local-code-explore` fan-out rule matches. Do not avoid sub-agents or ask again for permission unless sub-agent tooling is unavailable.
 - Use the codebase mapping from `<tech_doc_name>_mapping.md` as the canonical microservice list — never guess service boundaries.
+- Run the Final brevity gate after every revision and again before presenting or syncing the design.
 ## Sync to remote (when the user provides a URL)
 **HARD RULE — sync is ALWAYS user-invoked, NEVER automatic.** Do NOT push the tech doc (or any part of it) to a remote URL on your own initiative. This applies even when the user has previously synced. Every remote write — first upload, every incremental update, every section replacement — requires an **explicit, current-turn instruction** from the user (e.g. "sync to <URL>", "push the §6 update to Lark", "update the remote doc"). Until that instruction arrives, the local file under `tech_doc/` is the only artefact you touch. If you finish a revision round and notice a remote URL was previously provided, do NOT auto-push the new revision — wait for the user to ask. Surface a one-line reminder if useful (e.g. "Local doc updated. Want me to sync the changes to <URL>?"), then stop.
 **Trigger**: user explicitly asks to sync, and a URL is on hand (either provided this turn or previously confirmed for this doc). Detect the platform from the URL host + path and route to the right skill:
@@ -437,7 +382,7 @@ If the URL doesn't match any pattern above, ask the user which platform it is ra
 **Upload algorithm**:
 1. **Fetch the remote first.** If it's empty / placeholder / brand-new, build the initial payload from the local tech doc but omit §2 Links. Also omit §8 Release Checklist until the user separately confirms its exact content. Never use a whole-document overwrite that would bypass these exclusions.
 2. **Use the reusable compare helper before writing.** First locate the installed copy of this skill, then inspect and run the helper from that installed skill directory: `<installed-skill-dir>/scripts/tech_doc_compare.py`. Do not assume the current working tree is the active skill installation. Run `<installed-skill-dir>/scripts/tech_doc_compare.py plan --local <tech_doc.md> --remote <remote-url>` for Lark docx, or `<installed-skill-dir>/scripts/tech_doc_compare.py plan --local <tech_doc.md> --remote-file <remote-export.md>` when the remote content has already been exported. Use `--json` when the changed-section list will be consumed by another script. This helper is read-only: it canonicalizes remote/local exports into comparable content blocks, reports normal text changes, reports diagrams as `diagram_sections`, reports §8 as `confirmation_sections`, and reports §2 as `ignored_sections`. Never mix these protected groups into normal text updates. If the helper reports `unsafe` because the remote has no parseable headings, do NOT treat local sections as new; fall back to a targeted keyword/section fetch and exact text replacement for the requested change. Do not recreate one-off comparison scripts unless this helper cannot represent the current document format.
-3. If the remote has existing content → compute a **section-level diff** using the §1..§8 numbered headings (and their sub-headings: §4.X, §5.`<method>`, §6.X Service, §6.X.`<method>`, etc.) as the diff boundaries. Prefer the compare helper output as the diff plan. For each heading whose body actually changed, replace **only that section** remotely. **Never overwrite the entire doc.** Apply these section policies before writing:
+3. If the remote has existing content → compute a **section-level diff** using the §1..§8 numbered headings and supported sub-headings such as §5 methods and §6 service sections as diff boundaries; treat each `<details>` block as an indivisible implementation artefact. Prefer the compare helper output as the diff plan. For each heading whose body actually changed, replace **only that section** remotely. **Never overwrite the entire doc.** Apply these section policies before writing:
    - **§2 Links — remote source of truth.** Never create, replace, delete, reorder, or synchronize this section from the local doc. Ignore every local/remote difference in Links and preserve the remote section exactly.
    - **§8 Release Checklist — separate confirmation required.** Do not create or modify it under a normal sync instruction. Show the exact proposed §8 change and ask the user to confirm that Release Checklist update explicitly, just like diagram replacement confirmation.
 4. Walk both local and remote as a heading tree (`H1 > H2 > H3 > ...`). The **deepest** heading whose body differs is the replacement unit — don't replace a parent if only one child changed. Identical sections are skipped.
@@ -459,7 +404,7 @@ If the URL doesn't match any pattern above, ask the user which platform it is ra
    - If OpenAPI conversion is required, pipe `whiteboard-cli` output directly into `lark-cli`; never persist SVG/PNG intermediates.
 8. **Confirmation gate**: before the FIRST remote write, list to the user the exact set of sections about to change. The user's current-turn sync instruction authorizes normal exact-text updates and new unprotected sections. It does NOT authorize block replacement, diagram replacement, or any §8 Release Checklist update. Each protected update requires separate explicit confirmation.
 9. **Local file is the source of truth except §2 Links.** Sync is one-way (local → remote) for normal sections. Links is remote-owned and must remain untouched; never pull it into local or push local Links remotely unless the user explicitly requests a separate non-sync editing task.
-10. **Table cells using the Nested-list table cell format MUST be uploaded as platform-native nested lists, NOT as `<br>•` run-on text.** This applies to the §4 Detail and Decisions columns and any other cell that opts into the format. The remote cell must visually show indented sub-items (Level-1 header > Level-2 sub-bullets), not a single paragraph with `•` characters and line breaks left as literal text.
+10. **Table cells using the Nested-list table cell format MUST be uploaded as platform-native nested lists, NOT as `<br>•` run-on text.** This applies to the §4 `Options / trade-offs` column and any other cell that opts into the format. The remote cell must visually show indented sub-items (Level-1 header > Level-2 sub-bullets), not a single paragraph with `•` characters and line breaks left as literal text.
    - **Parse the source cell** per the encoding defined in the Nested-list cell format section (bold non-indented line = Level 1; `• ` line = Level 2; `<br>` within an item; `<br><br>` between items). Preserve the bold marker on Level-1 lines as bold formatting on the rendered list item.
    - **CRITICAL — `<br>` and `•` are PARSER MARKERS, not content.** Both characters must be **consumed entirely** during parsing and **never appear** in the text content of any rendered list item:
      - `<br>` is a structural separator (line boundary inside the cell). It must NOT survive into a rendered list item's body and become a hard line break inside that item. A Level-2 sub-bullet renders as **ONE continuous line of text**, full stop — no internal `<br>`-induced line breaks splitting one bullet's text into two visual lines.
@@ -472,9 +417,9 @@ If the URL doesn't match any pattern above, ask the user which platform it is ra
      - **Confluence**: emit `<ul><li>...</li></ul>` for Level 1 with a nested `<ul><li>...</li></ul>` inside each `<li>` for Level 2. Strip the source `•` and `<br>` markers entirely.
      - **Google Docs / Sheets**: `documents.batchUpdate` with `createParagraphBullets` requests scoped to the cell range; Level-2 sub-bullets get `nestingLevel: 1`.
      - **Git markdown**: GFM table cells don't support multi-line markdown lists, so emit explicit `<ul><li>...</li></ul>` HTML inside the cell — GitHub / GitLab honor the HTML and render proper nested lists.
-11. **Table column widths on remote — applies to EVERY table in the doc** (§4 Decisions table, §5/§6 field tables, §7 Effort table, §8 Release Checklist when separately authorized, and any future tables). When writing to a rich-text platform that supports explicit column widths (Lark / Confluence / Google Docs), set widths to **maximize horizontal use of the row** instead of leaving the platform's default even-distribution — the goal is to stop wide-content cells from wrapping mid-sentence onto extra lines.
-   - **Narrow columns (set as small as possible while keeping the widest value on one line)**: numbering / index / short-tag columns — `#` in §4, `**Field**` and `**Type**` in §5/§6 field tables, `**Owner**` and `**Effort (d)**` in §7, status checkboxes in §8. Pick the smallest width the platform supports that still keeps the longest cell value on one line.
-   - **Wide content columns (give them the rest of the row width)**: `Detail` and `Decisions` in §4, `Notes` / `Details` in §5/§6 field tables, `Notes` in §7, the description text in §8 — distribute the remaining row width proportionally to content density. A single Level-2 sub-bullet should fit on ONE rendered line; Level-1 items shouldn't get fragmented.
+11. **Table column widths on remote — applies to every table in the doc**, including the §4 choice table, §5/§6 field tables, the optional §6 service summary, and future tables. When writing to a rich-text platform that supports explicit column widths (Lark / Confluence / Google Docs), set widths to **maximize horizontal use of the row** instead of leaving the platform's default even-distribution — the goal is to stop wide-content cells from wrapping mid-sentence onto extra lines.
+   - **Narrow columns (set as small as possible while keeping the widest value on one line)**: numbering, index, short-tag, field, type, and service-name columns. Pick the smallest width the platform supports that still keeps the longest cell value on one line.
+   - **Wide content columns (give them the rest of the row width)**: `Options / trade-offs`, `Recommendation`, `Change`, `Risk`, `Notes`, and `Details`. Distribute the remaining row width proportionally to content density. A single Level-2 sub-bullet should fit on one rendered line; Level-1 items should not get fragmented.
    - **Per-platform mechanism**: Lark docx — set `column_width` on each table column block during `docs +update`; Confluence — emit `<colgroup><col style="width: …%"></col>…</colgroup>` inside the `<table>`; Google Docs — `updateTableColumnProperties` with explicit `columnWidthPx` per column.
    - **Markdown remote (git)**: GFM tables don't support explicit widths — skip width control entirely; renderers auto-fit. Don't pad the source with extra dashes trying to fake widths.
    - **Verify after write**: re-fetch the page and confirm narrow columns haven't been auto-widened, wide content cells use the full available row width, and no wide cell wraps a single sub-bullet onto a second line just because the column was too narrow.

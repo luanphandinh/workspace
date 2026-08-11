@@ -587,12 +587,10 @@ local function setup()
 
   local function list_all_project_repos()
     local siblings, current_root = list_sibling_repos()
-    if not current_root then
-      return {}, nil
-    end
-
     local marker = "/" .. WS_CONTAINER .. "/"
-    local marker_start = current_root:find(marker, 1, true)
+    local cwd = safe_getcwd()
+    local marker_path = current_root or cwd
+    local marker_start = marker_path:find(marker, 1, true)
     local repos = {}
     local seen = {}
 
@@ -610,12 +608,28 @@ local function setup()
       end
     end
 
-    append(siblings, marker_start and "workspace" or "root")
-    if marker_start then
-      append(list_repos_in_dir(current_root:sub(1, marker_start - 1)), "root")
+    if current_root then
+      append(siblings, marker_start and "workspace" or "root")
+      if marker_start then
+        append(list_repos_in_dir(current_root:sub(1, marker_start - 1)), "root")
+      end
+      return repos, current_root
     end
 
-    return repos, current_root
+    if not marker_start then
+      return {}, nil
+    end
+
+    local workstation = cwd:sub(1, marker_start - 1)
+    local workspace_name = cwd:sub(marker_start + #marker):match("^([^/]+)")
+    if not workspace_name then
+      return {}, nil
+    end
+
+    local workspace = workstation .. marker .. workspace_name
+    append(list_repos_in_dir(workspace), "workspace")
+    append(list_repos_in_dir(workstation), "root")
+    return repos, workspace
   end
 
   local function workstation_root()
@@ -678,7 +692,14 @@ local function setup()
   end
 
   local function list_workspace_repos(workspace)
-    local repos = {}
+    local repos = {
+      {
+        name = workspace.name,
+        path = workspace.path,
+        branch = "workspace root",
+        workspace_root = true,
+      },
+    }
     for _, repo in ipairs(workspace.repos or list_repos_in_dir(workspace.path)) do
       repos[#repos + 1] = {
         name = repo.name,
@@ -1116,14 +1137,10 @@ local function setup()
 
   local function pick_workspace_repositories(workspace)
     local repos = list_workspace_repos(workspace)
-    if #repos == 0 then
-      vim.notify(workspace.name .. " has no code repo yet", vim.log.levels.INFO)
-      return
-    end
-
     local pickers, finders, conf, actions, action_state = telescope_modules()
     if not pickers then return end
-    local current_root = git_root(safe_getcwd())
+    local current = safe_getcwd()
+    local current_root = git_root(current) or current
     local name_width = 0
     for _, repo in ipairs(repos) do
       name_width = math.max(name_width, #repo.name)
@@ -1131,6 +1148,7 @@ local function setup()
 
     pickers.new({}, {
       prompt_title = "Workspace Projects: " .. workspace.name,
+      default_selection_index = 1,
       finder = finders.new_table({
         results = repos,
         entry_maker = function(repo)
@@ -1156,7 +1174,8 @@ local function setup()
             return
           end
           vim.schedule(function()
-            switch_to(selection.value.path, "workspace project")
+            local kind = selection.value.workspace_root and "workspace root" or "workspace project"
+            switch_to(selection.value.path, kind)
           end)
         end)
         return true
