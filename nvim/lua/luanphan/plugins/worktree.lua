@@ -587,12 +587,10 @@ local function setup()
 
   local function list_all_project_repos()
     local siblings, current_root = list_sibling_repos()
-    if not current_root then
-      return {}, nil
-    end
-
     local marker = "/" .. WS_CONTAINER .. "/"
-    local marker_start = current_root:find(marker, 1, true)
+    local cwd = safe_getcwd()
+    local marker_path = current_root or cwd
+    local marker_start = marker_path:find(marker, 1, true)
     local repos = {}
     local seen = {}
 
@@ -610,12 +608,28 @@ local function setup()
       end
     end
 
-    append(siblings, marker_start and "workspace" or "root")
-    if marker_start then
-      append(list_repos_in_dir(current_root:sub(1, marker_start - 1)), "root")
+    if current_root then
+      append(siblings, marker_start and "workspace" or "root")
+      if marker_start then
+        append(list_repos_in_dir(current_root:sub(1, marker_start - 1)), "root")
+      end
+      return repos, current_root
     end
 
-    return repos, current_root
+    if not marker_start then
+      return {}, nil
+    end
+
+    local workstation = cwd:sub(1, marker_start - 1)
+    local workspace_name = cwd:sub(marker_start + #marker):match("^([^/]+)")
+    if not workspace_name then
+      return {}, nil
+    end
+
+    local workspace = workstation .. marker .. workspace_name
+    append(list_repos_in_dir(workspace), "workspace")
+    append(list_repos_in_dir(workstation), "root")
+    return repos, workspace
   end
 
   local function workstation_root()

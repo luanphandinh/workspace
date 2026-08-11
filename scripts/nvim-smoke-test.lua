@@ -1113,7 +1113,7 @@ end
 local function test_workspace_and_master_project_discovery()
   local api = worktree_test_api()
   local original_cwd = vim.fn.getcwd()
-  local sources, workspaces = make_project_scope_fixture()
+  local sources, workspaces, station, workspace_name = make_project_scope_fixture()
   local nested = workspaces["example-project-a"] .. "/nested"
   vim.fn.mkdir(nested, "p")
   vim.cmd("cd " .. vim.fn.fnameescape(nested))
@@ -1191,6 +1191,23 @@ local function test_workspace_and_master_project_discovery()
   api.move_project_selection(picker, -1)
   assert_true(picker.position == 3, "reverse selection did not skip the root header")
   assert_true(vim.fn.exists(":ProjectSwitch") == 2, "ProjectSwitch command is missing")
+
+  local workspace_root = station .. "/local_workspaces/" .. workspace_name
+  local normalized_workspace_root = realpath(workspace_root)
+  vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
+  local from_workspace_root, resolved_root = api.list_all_project_repos()
+  assert_true(#from_workspace_root == 4, "workspace root discovery returned an unexpected project count")
+  assert_true(realpath(resolved_root) == normalized_workspace_root, "non-git workspace root was not resolved")
+  local workspace_root_projects = {}
+  for _, project in ipairs(from_workspace_root) do
+    workspace_root_projects[realpath(project.path)] = project
+  end
+  for project_path in pairs(expected) do
+    local project = workspace_root_projects[project_path]
+    assert_true(project ~= nil, "workspace root discovery omitted " .. project_path)
+    local expected_scope = vim.startswith(project_path, normalized_workspace_root .. "/") and "workspace" or "root"
+    assert_true(project.scope == expected_scope, "workspace root discovery assigned the wrong scope")
+  end
 
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
 end
