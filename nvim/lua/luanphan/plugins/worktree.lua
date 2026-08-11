@@ -1245,7 +1245,7 @@ local function setup()
     end
     close_other_agent_windows(instance.bufnr)
     local ok, agents = pcall(require, "luanphan.plugins.agents")
-    if not ok or type(agents.focus) ~= "function" or not agents.focus(instance.agent) then
+    if not ok or type(agents.focus) ~= "function" or not agents.focus(instance.agent, instance.bufnr) then
       vim.notify("could not focus " .. instance.agent .. " agent", vim.log.levels.ERROR)
     end
   end

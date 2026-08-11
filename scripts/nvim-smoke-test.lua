@@ -1400,8 +1400,9 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
     })
     assert_true(window_for_buffer(old_buf) ~= nil, "old repository agent fixture is not visible")
 
-    agents.focus = function(name)
+    agents.focus = function(name, bufnr)
       assert_true(name == "cursor", "agent switch focused the wrong agent type")
+      assert_true(bufnr == target_buf, "agent switch did not focus the selected workspace terminal")
       if not window_for_buffer(target_buf) then
         vim.api.nvim_open_win(target_buf, true, {
           relative = "editor",
@@ -2080,6 +2081,43 @@ local function test_worktree_switch_restores_agent_terminal(repo, worktree)
   wait_until("repo agent terminal restored", function()
     return visible_agent_float_count() == 1
   end, 1000)
+
+  worktree_test_api().switch_to(worktree)
+  wait_until("worktree agent terminal restored again", function()
+    return visible_agent_float_count() == 1
+  end, 1000)
+
+  local buffers = vim.g.smoke_agent_bufnr
+  local repo_buf = nil
+  local worktree_buf = nil
+  for path, bufnr in pairs(buffers) do
+    if realpath(path) == realpath(repo) then
+      repo_buf = bufnr
+    elseif realpath(path) == realpath(worktree) then
+      worktree_buf = bufnr
+    end
+  end
+  assert_true(repo_buf and worktree_buf, "agent terminal buffers were not persisted per workspace")
+  local function window_for_buffer(bufnr)
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_buf(win) == bufnr then
+        return win
+      end
+    end
+    return nil
+  end
+
+  local worktree_win = window_for_buffer(worktree_buf)
+  assert_true(worktree_win ~= nil, "worktree agent terminal was not visible before explicit focus")
+  pcall(vim.api.nvim_win_close, worktree_win, false)
+  assert_true(agent.focus(repo_buf), "agent could not focus the selected repository terminal")
+  assert_true(window_for_buffer(repo_buf) ~= nil, "agent focused the cwd terminal instead of the selected terminal")
+  assert_true(window_for_buffer(worktree_buf) == nil, "cwd terminal reopened while focusing another terminal")
+
+  local repo_win = window_for_buffer(repo_buf)
+  assert_true(repo_win ~= nil, "repository agent terminal was not visible after explicit focus")
+  pcall(vim.api.nvim_win_close, repo_win, false)
+  assert_true(agent.focus(worktree_buf), "agent could not restore the selected worktree terminal")
 end
 
 local function test_deleted_workspace_falls_back_to_master_worktree_from_lazy_key()

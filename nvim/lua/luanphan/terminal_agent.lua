@@ -380,9 +380,7 @@ local function set_float_close_keymaps(bufnr)
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
   local opts = { buffer = bufnr, noremap = true, silent = true, nowait = true }
   local function close_float()
-    local cur = current_bufnr()
-    if not cur then return end
-    local w = win_for_buf(cur)
+    local w = win_for_buf(bufnr)
     if w and vim.api.nvim_win_is_valid(w) then
       pcall(vim.api.nvim_win_close, w, false)
     end
@@ -514,8 +512,8 @@ local function open_terminal()
   end
 end
 
-local function show_terminal_split()
-  local cur = current_bufnr()
+local function show_terminal_split(bufnr)
+  local cur = bufnr or current_bufnr()
   if not cur then return end
   if config.split == "vertical" then
     vsplit_right()
@@ -531,8 +529,8 @@ local function show_terminal_split()
   end, 10)
 end
 
-local function show_terminal_float()
-  local cur = current_bufnr()
+local function show_terminal_float(bufnr)
+  local cur = bufnr or current_bufnr()
   if not cur then return end
   local g = get_float_geometry()
   vim.api.nvim_open_win(cur, true, {
@@ -558,11 +556,11 @@ local function show_terminal_float()
   end, 10)
 end
 
-local function show_terminal()
+local function show_terminal(bufnr)
   if config.window_mode == "float" then
-    show_terminal_float()
+    show_terminal_float(bufnr)
   else
-    show_terminal_split()
+    show_terminal_split(bufnr)
   end
 end
 
@@ -598,22 +596,23 @@ function API.set_float_position(pos)
   end
 end
 
---- Jump to the agent terminal (float or split) for the current cwd. If the buffer is hidden, shows it again.
-function API.focus()
-  local cur = current_bufnr()
+--- Focus an agent terminal, showing its buffer when hidden.
+function API.focus(bufnr)
+  local cur = bufnr or current_bufnr()
   if not cur or not term_buffer_alive(cur) then
     nx("no agent terminal — use " .. profile.hint_open .. " to open", vim.log.levels.INFO)
-    return
+    return false
   end
   local win = win_for_buf(cur)
   if not win then
-    show_terminal()
-    return
+    show_terminal(cur)
+    return true
   end
   vim.api.nvim_set_current_win(win)
   vim.defer_fn(function()
     vim.cmd("startinsert")
   end, 10)
+  return true
 end
 
 local function get_job_id(bufnr)
