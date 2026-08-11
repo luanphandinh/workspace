@@ -88,12 +88,11 @@ function M.set_float_position(pos)
   end
 end
 
-function M.focus(name)
+function M.focus(name, bufnr)
   if not agent_defs[name] then
     return false
   end
-  setup_agent(name).focus()
-  return true
+  return setup_agent(name).focus(bufnr)
 end
 
 local function key_spec(name, action)

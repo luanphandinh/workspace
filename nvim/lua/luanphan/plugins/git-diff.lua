@@ -26,12 +26,15 @@ local function close_or_focus_existing_diffview()
   return true
 end
 
-local function toggle_diffview()
-  if close_or_focus_existing_diffview() then
-    return
+local function open_diffview(repo, revision)
+  local command = "DiffviewOpen"
+  if revision and revision ~= "" then
+    command = command .. " " .. revision
   end
-
-  vim.cmd("DiffviewOpen")
+  if repo and repo ~= "" then
+    command = command .. " -C" .. vim.fn.fnameescape(repo)
+  end
+  vim.cmd(command)
 end
 
 local function toggle_file_history()
@@ -363,6 +366,120 @@ local function first_line(output)
   return output[1]
 end
 
+local function git_root(path)
+  return first_line(git_systemlist({ "git", "-C", path, "rev-parse", "--show-toplevel" }))
+end
+
+local function git_branch(path)
+  return first_line(git_systemlist({ "git", "-C", path, "symbolic-ref", "--short", "-q", "HEAD" }))
+    or first_line(git_systemlist({ "git", "-C", path, "rev-parse", "--short", "HEAD" }))
+    or "detached"
+end
+
+local function list_child_git_repositories(parent)
+  local uv = vim.uv or vim.loop
+  local scan = uv.fs_scandir(parent)
+  if not scan then
+    return {}
+  end
+
+  local repositories = {}
+  while true do
+    local name, entry_type = uv.fs_scandir_next(scan)
+    if not name then
+      break
+    end
+
+    local path = parent .. "/" .. name
+    if (entry_type == "directory" or entry_type == "link")
+      and uv.fs_stat(path .. "/.git")
+      and vim.fn.isdirectory(path) == 1
+    then
+      local root = git_root(path)
+      if root and (uv.fs_realpath(root) or root) == (uv.fs_realpath(path) or path) then
+        repositories[#repositories + 1] = {
+          name = name,
+          path = root,
+          branch = git_branch(root),
+        }
+      end
+    end
+  end
+
+  table.sort(repositories, function(left, right)
+    return left.name:lower() < right.name:lower()
+  end)
+  return repositories
+end
+
+local function pick_child_git_repository(parent, action)
+  local repositories = list_child_git_repositories(parent)
+  if #repositories == 0 then
+    vim.notify("no immediate child git repositories found", vim.log.levels.WARN)
+    return
+  end
+
+  local ok_pickers, pickers = pcall(require, "telescope.pickers")
+  local ok_finders, finders = pcall(require, "telescope.finders")
+  local ok_config, config = pcall(require, "telescope.config")
+  local ok_actions, actions = pcall(require, "telescope.actions")
+  local ok_state, action_state = pcall(require, "telescope.actions.state")
+  if not (ok_pickers and ok_finders and ok_config and ok_actions and ok_state) then
+    vim.notify("telescope not available", vim.log.levels.ERROR)
+    return
+  end
+
+  local name_width = 0
+  for _, repository in ipairs(repositories) do
+    name_width = math.max(name_width, #repository.name)
+  end
+
+  pickers.new({}, {
+    prompt_title = "Git Diff Repository",
+    finder = finders.new_table({
+      results = repositories,
+      entry_maker = function(repository)
+        return {
+          value = repository,
+          display = string.format("%-" .. name_width .. "s [%s]", repository.name, repository.branch),
+          ordinal = repository.name,
+        }
+      end,
+    }),
+    sorter = config.values.generic_sorter({}),
+    attach_mappings = function(prompt_bufnr)
+      actions.select_default:replace(function()
+        local selection = action_state.get_selected_entry()
+        actions.close(prompt_bufnr)
+        if not selection or not selection.value or not selection.value.path then
+          vim.notify("git diff repository picker: no selection", vim.log.levels.WARN)
+          return
+        end
+        vim.schedule(function()
+          action(selection.value.path)
+        end)
+      end)
+      return true
+    end,
+  }):find()
+end
+
+local function with_diff_repository(action)
+  return function()
+    if close_or_focus_existing_diffview() then
+      return
+    end
+
+    local cwd = vim.fn.getcwd()
+    local root = git_root(cwd)
+    if root then
+      action(root)
+      return
+    end
+    pick_child_git_repository(cwd, action)
+  end
+end
+
 local function current_line_commit()
   local file = vim.api.nvim_buf_get_name(0)
   if file == "" or vim.fn.filereadable(file) ~= 1 then
@@ -420,26 +537,17 @@ local function open_current_line_commit()
   vim.cmd("DiffviewOpen " .. commit .. "^!")
 end
 
-local function toggle_branch_diff()
-  if close_or_focus_existing_diffview() then
-    return
-  end
-
+local function open_branch_diff(repo)
   local base_branch = "main"
-  local result = vim.fn.system("git rev-parse --verify main 2>/dev/null")
-  if vim.v.shell_error ~= 0 then
-    result = vim.fn.system("git rev-parse --verify master 2>/dev/null")
-    if vim.v.shell_error == 0 then
+  if not git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "main" }) then
+    if git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "master" }) then
       base_branch = "master"
-    else
-      result = vim.fn.system("git rev-parse --verify develop 2>/dev/null")
-      if vim.v.shell_error == 0 then
-        base_branch = "develop"
-      end
+    elseif git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "develop" }) then
+      base_branch = "develop"
     end
   end
 
-  vim.cmd("DiffviewOpen " .. base_branch .. "...HEAD")
+  open_diffview(repo, base_branch .. "...HEAD")
 end
 
 local function with_diffview(fn)
@@ -450,8 +558,10 @@ local function with_diffview(fn)
 end
 
 local function setup_diffview_keymaps()
-  vim.keymap.set("n", "<leader>gd", with_diffview(toggle_diffview), { desc = "Diff current changes" })
-  vim.keymap.set("n", "<leader>gD", with_diffview(toggle_branch_diff), { desc = "Diff branch vs base" })
+  vim.keymap.set("n", "<leader>gd", with_diffview(with_diff_repository(function(repo)
+    open_diffview(repo)
+  end)), { desc = "Diff current changes" })
+  vim.keymap.set("n", "<leader>gD", with_diffview(with_diff_repository(open_branch_diff)), { desc = "Diff branch vs base" })
   vim.keymap.set("n", "<leader>gb", with_diffview(open_current_line_commit), { desc = "Blame commit at line" })
   vim.keymap.set("n", "<leader>gH", with_diffview(toggle_file_history), { desc = "File history (current)" })
   vim.keymap.set("n", "<leader>gA", with_diffview(toggle_all_file_history), { desc = "File history (all)" })
