@@ -227,6 +227,54 @@ notify = ["$TMP/home/bin/codex-turn-ended-notify", "--no-implicit-tmux-pane"]
 multi_agent = true
 TOML
 
+python3 - "$TMP/home" <<'PY'
+import json
+import pathlib
+import sys
+
+home = pathlib.Path(sys.argv[1])
+notify = str(home / "bin" / "codex-turn-ended-notify")
+
+fixtures = {
+    home / ".claude" / "settings.json": {
+        "hooks": {
+            "UserPromptSubmit": [{"hooks": [
+                {"type": "command", "command": f"{notify} --status running"},
+                {"type": "command", "command": "custom-claude-prompt-hook"},
+            ]}],
+            "SessionStart": [{"hooks": [
+                {"type": "command", "command": f"{notify} --status idle"},
+            ]}],
+        },
+    },
+    home / ".cursor" / "hooks.json": {
+        "version": 1,
+        "hooks": {
+            "beforeSubmitPrompt": [
+                {"command": f"{notify} --status running"},
+                {"command": "custom-cursor-prompt-hook"},
+            ],
+            "sessionStart": [{"command": f"{notify} --status idle"}],
+        },
+    },
+    home / ".codex" / "hooks.json": {
+        "hooks": {
+            "UserPromptSubmit": [{"hooks": [
+                {"type": "command", "command": f"{notify} --status running"},
+                {"type": "command", "command": "custom-codex-prompt-hook"},
+            ]}],
+            "SessionStart": [{"hooks": [
+                {"type": "command", "command": f"{notify} --status idle"},
+            ]}],
+        },
+    },
+}
+
+for path, data in fixtures.items():
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+PY
+
 HOME="$TMP/home" python3 "$ROOT/bin/sync-agent-notification-hooks"
 HOME="$TMP/home" python3 "$ROOT/bin/sync-agent-notification-hooks"
 
@@ -247,11 +295,21 @@ claude_stop = [
 ]
 assert len([cmd for cmd in claude_stop if notify in cmd]) == 1, claude_stop
 assert any("AGENT_NOTIFY_TITLE=Claude" in cmd for cmd in claude_stop), claude_stop
+assert "SessionStart" not in claude["hooks"], claude
+assert [
+    hook["command"]
+    for group in claude["hooks"]["UserPromptSubmit"]
+    for hook in group["hooks"]
+] == ["custom-claude-prompt-hook"], claude
 
 cursor = json.loads((home / ".cursor" / "hooks.json").read_text())
 cursor_stop = [hook["command"] for hook in cursor["hooks"]["stop"]]
 assert len([cmd for cmd in cursor_stop if notify in cmd]) == 1, cursor_stop
 assert any("AGENT_NOTIFY_TITLE=Cursor" in cmd for cmd in cursor_stop), cursor_stop
+assert "sessionStart" not in cursor["hooks"], cursor
+assert [hook["command"] for hook in cursor["hooks"]["beforeSubmitPrompt"]] == [
+    "custom-cursor-prompt-hook"
+], cursor
 
 codex = json.loads((home / ".codex" / "hooks.json").read_text())
 codex_stop = [
@@ -262,6 +320,12 @@ codex_stop = [
 ]
 assert len([cmd for cmd in codex_stop if notify in cmd]) == 1, codex_stop
 assert any("AGENT_NOTIFY_TITLE=Codex" in cmd for cmd in codex_stop), codex_stop
+assert "SessionStart" not in codex["hooks"], codex
+assert [
+    hook["command"]
+    for group in codex["hooks"]["UserPromptSubmit"]
+    for hook in group["hooks"]
+] == ["custom-codex-prompt-hook"], codex
 
 config = (home / ".codex" / "config.toml").read_text()
 assert "notify =" not in config, config

@@ -3,6 +3,7 @@ local uv = vim.uv or vim.loop
 local tests = {}
 local temp_root
 local cleanup_fixture_id = 0
+local project_scope_fixture_id = 0
 
 local agent_cli_commands = {
   { command = "cursor-agent", lhs = "<leader>ac", plugin = "luanphan-cursor-agent", g_bufnr = "cursor_agent_bufnr" },
@@ -219,8 +220,12 @@ local function make_workspace_cleanup_fixture()
 end
 
 local function make_project_scope_fixture()
-  local station = temp_root .. "/example-station"
-  local workspace_root = station .. "/local_workspaces/example-workspace"
+  project_scope_fixture_id = project_scope_fixture_id + 1
+  local suffix = tostring(project_scope_fixture_id)
+  local station = temp_root .. "/example-station-" .. suffix
+  local workspace_name = "example-workspace-" .. suffix
+  local empty_workspace_name = "example-empty-" .. suffix
+  local workspace_root = station .. "/local_workspaces/" .. workspace_name
   local sources = {}
   local workspaces = {}
 
@@ -244,7 +249,8 @@ local function make_project_scope_fixture()
     workspaces[project.name] = workspace
   end
 
-  return sources, workspaces
+  vim.fn.mkdir(station .. "/local_workspaces/" .. empty_workspace_name, "p")
+  return sources, workspaces, station, workspace_name, empty_workspace_name
 end
 
 local function find_position(buf, needle, line_match)
@@ -1070,6 +1076,11 @@ local function test_worktree_plugin_starts_lazy()
     type(project_map) == "table" and type(project_map.callback) == "function",
     "<leader>gp is not a lazy callback mapping"
   )
+  local repository_map = vim.fn.maparg("<leader>gr", "n", false, true)
+  assert_true(
+    type(repository_map) == "table" and type(repository_map.callback) == "function",
+    "<leader>gr is not a lazy callback mapping"
+  )
   assert_true(vim.fn.maparg("<leader>gP", "n") == "", "<leader>gP should not have a duplicate project picker")
   local agent_map = vim.fn.maparg("<leader>g;", "n", false, true)
   assert_true(
@@ -1180,6 +1191,45 @@ local function test_workspace_and_master_project_discovery()
   api.move_project_selection(picker, -1)
   assert_true(picker.position == 3, "reverse selection did not skip the root header")
   assert_true(vim.fn.exists(":ProjectSwitch") == 2, "ProjectSwitch command is missing")
+
+  vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+end
+
+local function test_workspace_project_discovery()
+  local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
+  local sources, workspaces, station, workspace_name, empty_workspace_name = make_project_scope_fixture()
+  local nested = workspaces["example-project-a"] .. "/nested"
+  vim.fn.mkdir(nested, "p")
+  vim.cmd("cd " .. vim.fn.fnameescape(nested))
+
+  local workspace_entries, root = api.list_workspace_directories()
+  assert_true(realpath(root) == realpath(station), "workspace discovery did not resolve the workstation root")
+  local by_name = {}
+  for _, workspace in ipairs(workspace_entries) do
+    by_name[workspace.name] = workspace
+  end
+  assert_true(#workspace_entries == 2, "workspace discovery returned an unexpected workspace count")
+  assert_true(by_name[workspace_name] ~= nil, "workspace discovery omitted a workspace with repositories")
+  assert_true(by_name[workspace_name].empty == false, "workspace with repositories was marked empty")
+  assert_true(#by_name[workspace_name].repos == 2, "workspace repository count is incorrect")
+  assert_true(by_name[empty_workspace_name] ~= nil, "workspace discovery omitted an empty workspace")
+  assert_true(by_name[empty_workspace_name].empty == true, "empty workspace was not marked empty")
+
+  local repos = api.list_workspace_repos(by_name[workspace_name])
+  local branches = {}
+  for _, repo in ipairs(repos) do
+    branches[repo.name] = repo.branch
+  end
+  assert_true(branches["example-project-a"] == "feature/a", "workspace project branch is incorrect")
+  assert_true(branches["example-project-b-long"] == "feature/b", "workspace project branch is incorrect")
+
+  vim.cmd("cd " .. vim.fn.fnameescape(sources["example-project-a"]))
+  local from_master, master_root = api.list_workspace_directories()
+  assert_true(realpath(master_root) == realpath(station), "master repository did not resolve the workstation root")
+  assert_true(#from_master == 2, "master repository discovered different workspaces")
+  assert_true(vim.fn.exists(":ProjectSwitch") == 2, "ProjectSwitch command is missing")
+  assert_true(vim.fn.exists(":RepositorySwitch") == 2, "RepositorySwitch command is missing")
 
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
 end
@@ -2198,6 +2248,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("project picker discovers grouped workspace and root repositories", function()
     test_workspace_and_master_project_discovery()
+  end)
+
+  test("workspace project picker discovers workspaces and checked-out branches", function()
+    test_workspace_project_discovery()
   end)
 
   test("active agent picker discovers running project terminals", function()

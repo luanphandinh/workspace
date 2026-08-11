@@ -77,6 +77,48 @@ def command(title):
     )
 
 
+def is_managed_status_hook(hook):
+    if not isinstance(hook, dict):
+        return False
+    hook_command = hook.get("command")
+    if not isinstance(hook_command, str) or str(NOTIFY) not in hook_command:
+        return False
+    return "--status running" in hook_command or "--status idle" in hook_command
+
+
+def remove_nested_status_hooks(hooks, event):
+    groups = hooks.get(event)
+    if not isinstance(groups, list):
+        return
+
+    remaining_groups = []
+    for group in groups:
+        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+            remaining_groups.append(group)
+            continue
+        remaining_hooks = [hook for hook in group["hooks"] if not is_managed_status_hook(hook)]
+        if remaining_hooks:
+            updated_group = dict(group)
+            updated_group["hooks"] = remaining_hooks
+            remaining_groups.append(updated_group)
+
+    if remaining_groups:
+        hooks[event] = remaining_groups
+    else:
+        hooks.pop(event, None)
+
+
+def remove_flat_status_hooks(hooks, event):
+    event_hooks = hooks.get(event)
+    if not isinstance(event_hooks, list):
+        return
+    remaining_hooks = [hook for hook in event_hooks if not is_managed_status_hook(hook)]
+    if remaining_hooks:
+        hooks[event] = remaining_hooks
+    else:
+        hooks.pop(event, None)
+
+
 def sync_claude():
     path = HOME / ".claude" / "settings.json"
     data = read_json(path, {})
@@ -88,6 +130,9 @@ def sync_claude():
     if not isinstance(hooks, dict):
         print(f"sync-agent-notification-hooks: expected hooks object in {path}", file=sys.stderr)
         raise SystemExit(1)
+
+    remove_nested_status_hooks(hooks, "UserPromptSubmit")
+    remove_nested_status_hooks(hooks, "SessionStart")
 
     stop = hooks.setdefault("Stop", [])
     if not isinstance(stop, list):
@@ -133,6 +178,9 @@ def sync_cursor():
         print(f"sync-agent-notification-hooks: expected hooks object in {path}", file=sys.stderr)
         raise SystemExit(1)
 
+    remove_flat_status_hooks(hooks, "beforeSubmitPrompt")
+    remove_flat_status_hooks(hooks, "sessionStart")
+
     stop = hooks.setdefault("stop", [])
     if not isinstance(stop, list):
         print(f"sync-agent-notification-hooks: expected hooks.stop array in {path}", file=sys.stderr)
@@ -157,6 +205,9 @@ def sync_codex():
     if not isinstance(hooks, dict):
         print(f"sync-agent-notification-hooks: expected hooks object in {path}", file=sys.stderr)
         raise SystemExit(1)
+
+    remove_nested_status_hooks(hooks, "UserPromptSubmit")
+    remove_nested_status_hooks(hooks, "SessionStart")
 
     stop = hooks.setdefault("Stop", [])
     if not isinstance(stop, list):
