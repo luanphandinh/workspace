@@ -2129,6 +2129,7 @@ local function test_worktree_switch_restores_agent_terminal(repo, worktree)
     vim.api.nvim_set_option_value(name, value, { win = source_win, scope = "local" })
   end
   local function assert_clean_terminal_window(win)
+    local buf = vim.api.nvim_win_get_buf(win)
     assert_true(vim.wo[win].diff == false, "agent terminal inherited diff mode")
     assert_true(vim.wo[win].scrollbind == false, "agent terminal inherited scroll binding")
     assert_true(vim.wo[win].cursorbind == false, "agent terminal inherited cursor binding")
@@ -2137,6 +2138,7 @@ local function test_worktree_switch_restores_agent_terminal(repo, worktree)
     assert_true(vim.wo[win].spell == false, "agent terminal inherited spell checking")
     assert_true(vim.wo[win].wrap == true, "agent terminal inherited wrapping")
     assert_true(not vim.wo[win].winhighlight:find("ErrorMsg", 1, true), "agent terminal inherited highlights")
+    assert_true(vim.bo[buf].syntax == "", "agent terminal inherited syntax highlighting")
   end
 
   assert_true(agent.focus(repo_buf), "agent could not focus the selected repository terminal")
@@ -2144,6 +2146,36 @@ local function test_worktree_switch_restores_agent_terminal(repo, worktree)
   assert_true(repo_win ~= nil, "agent focused the cwd terminal instead of the selected terminal")
   assert_clean_terminal_window(repo_win)
   assert_true(window_for_buffer(worktree_buf) == nil, "cwd terminal reopened while focusing another terminal")
+
+  local target_buf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_call(target_buf, function()
+    vim.bo.filetype = "go"
+  end)
+  local callback_buf = nil
+  local group = vim.api.nvim_create_augroup("SmokeLspRecoveryBufferContext", { clear = true })
+  vim.api.nvim_create_autocmd("FileType", {
+    group = group,
+    buffer = target_buf,
+    callback = function()
+      callback_buf = vim.api.nvim_get_current_buf()
+    end,
+  })
+  vim.api.nvim_exec_autocmds("BufEnter", {
+    group = "LuanphanLspRecoverEnteredBuffers",
+    buffer = target_buf,
+    modeline = false,
+  })
+  wait_until("LSP recovery FileType refresh", function()
+    return callback_buf ~= nil
+  end, 3000)
+  assert_true(callback_buf == target_buf, "LSP recovery FileType ran in the agent terminal")
+  assert_true(vim.bo[repo_buf].syntax == "", "LSP recovery applied source syntax to the agent terminal")
+  pcall(vim.api.nvim_buf_delete, target_buf, { force = true })
+  pcall(vim.api.nvim_del_augroup_by_id, group)
+
+  vim.bo[repo_buf].syntax = "go"
+  assert_true(agent.focus(repo_buf), "agent could not repair a polluted terminal")
+  assert_true(vim.bo[repo_buf].syntax == "", "agent focus did not clear inherited syntax highlighting")
 
   pcall(vim.api.nvim_win_close, repo_win, false)
   assert_true(agent.focus(worktree_buf), "agent could not restore the selected worktree terminal")

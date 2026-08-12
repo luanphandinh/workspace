@@ -190,7 +190,9 @@ local function refire_current_file_runtime(buf)
         vim.cmd("filetype detect")
       end)
     end
-    pcall(vim.api.nvim_exec_autocmds, "FileType", { buffer = buf, modeline = false })
+    pcall(vim.api.nvim_buf_call, buf, function()
+      vim.api.nvim_exec_autocmds("FileType", { buffer = buf, modeline = false })
+    end)
   end)
 end
 

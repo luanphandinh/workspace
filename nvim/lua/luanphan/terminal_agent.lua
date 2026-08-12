@@ -246,10 +246,21 @@ local function apply_agent_scrollback(buf)
   end
 end
 
+local function configure_terminal_buffer(buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) or vim.bo[buf].buftype ~= "terminal" then
+    return
+  end
+  pcall(vim.treesitter.stop, buf)
+  pcall(vim.api.nvim_buf_call, buf, function()
+    vim.bo.syntax = ""
+  end)
+end
+
 local function configure_terminal_window(win)
   if not win or not vim.api.nvim_win_is_valid(win) then
     return
   end
+  configure_terminal_buffer(vim.api.nvim_win_get_buf(win))
   local options = {
     breakindent = false,
     colorcolumn = "",
@@ -503,6 +514,7 @@ local function open_terminal_split()
   local buf = vim.api.nvim_get_current_buf()
   local cwd = cwd_key()
   vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
+  configure_terminal_buffer(buf)
   apply_agent_scrollback(buf)
   set_agent_bufnr(buf, cwd)
   attach_term_close(buf)
@@ -534,6 +546,7 @@ local function open_terminal_float()
   }
   local cwd = cwd_key()
   vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
+  configure_terminal_buffer(buf)
   apply_agent_scrollback(buf)
   set_agent_bufnr(buf, cwd)
   attach_term_close(buf)

@@ -90,7 +90,9 @@ local function recover_lsp_for_entered_buffer(ev)
     if ok_lazy then
       pcall(lazy.load, { plugins = { "nvim-lspconfig" } })
     end
-    pcall(vim.api.nvim_exec_autocmds, "FileType", { buffer = buf, modeline = false })
+    pcall(vim.api.nvim_buf_call, buf, function()
+      vim.api.nvim_exec_autocmds("FileType", { buffer = buf, modeline = false })
+    end)
   end)
 end
 
