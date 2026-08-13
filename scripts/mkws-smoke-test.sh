@@ -379,6 +379,10 @@ EOF
 		mkws --name feature-sync --branch feature/sync --add repo-sync >/dev/null
 	)
 	sync_workspace="$sync_root/local_workspaces/feature-sync"
+	if git -C "$sync_workspace/repo-sync" rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1; then
+		printf 'new workspace branch unexpectedly inherited a base upstream\n' >&2
+		exit 1
+	fi
 	printf 'local sync\n' > "$sync_workspace/repo-sync/sync.txt"
 	git -C "$sync_workspace/repo-sync" add sync.txt
 	git -C "$sync_workspace/repo-sync" commit -q -m "local sync"
@@ -392,6 +396,45 @@ EOF
 		mkws sync --push repo-sync >/dev/null
 	)
 	assert_remote_branch_exists "$sync_root/repo-sync" "feature/sync"
+	assert_eq "origin/feature/sync" "$(git -C "$sync_workspace/repo-sync" rev-parse --abbrev-ref '@{upstream}')"
+
+	branch_pull_seed="$TMP/mkws-branch-pull-seed"
+	branch_pull_remote="$TMP/mkws-branch-pull-remote.git"
+	branch_pull_root="$TMP/mkws-branch-pull-root"
+	branch_pull_updater="$TMP/mkws-branch-pull-updater"
+	init_repo "$branch_pull_seed"
+	git clone -q --bare "$branch_pull_seed" "$branch_pull_remote"
+	mkdir -p "$branch_pull_root"
+	git clone -q "$branch_pull_remote" "$branch_pull_root/repo-branch-pull"
+	git -C "$branch_pull_root/repo-branch-pull" config user.name "Example User"
+	git -C "$branch_pull_root/repo-branch-pull" config user.email "user@example.com"
+	git -C "$branch_pull_root/repo-branch-pull" switch -q -c feature/pull --track origin/main
+	printf 'local feature\n' > "$branch_pull_root/repo-branch-pull/local-feature.txt"
+	git -C "$branch_pull_root/repo-branch-pull" add local-feature.txt
+	git -C "$branch_pull_root/repo-branch-pull" commit -q -m "local feature"
+	(
+		cd "$branch_pull_root"
+		mkws push repo-branch-pull >/dev/null
+	)
+	assert_eq "origin/feature/pull" "$(git -C "$branch_pull_root/repo-branch-pull" rev-parse --abbrev-ref '@{upstream}')"
+
+	# Recreate the legacy bad state to verify pull repairs existing workspaces.
+	git -C "$branch_pull_root/repo-branch-pull" branch --set-upstream-to origin/main feature/pull >/dev/null
+	git clone -q "$branch_pull_remote" "$branch_pull_updater"
+	git -C "$branch_pull_updater" config user.name "Example User"
+	git -C "$branch_pull_updater" config user.email "user@example.com"
+	git -C "$branch_pull_updater" switch -q feature/pull
+	printf 'remote feature update\n' > "$branch_pull_updater/remote-feature.txt"
+	git -C "$branch_pull_updater" add remote-feature.txt
+	git -C "$branch_pull_updater" commit -q -m "remote feature update"
+	git -C "$branch_pull_updater" push -q origin feature/pull
+	(
+		cd "$branch_pull_root"
+		mkws pull repo-branch-pull > "$TMP/mkws-branch-pull.out"
+	)
+	assert_exists "$branch_pull_root/repo-branch-pull/remote-feature.txt"
+	assert_eq "origin/feature/pull" "$(git -C "$branch_pull_root/repo-branch-pull" rev-parse --abbrev-ref '@{upstream}')"
+	assert_contains "$TMP/mkws-branch-pull.out" "git pull --ff-only origin"
 
 	pull_seed="$TMP/mkws-pull-seed"
 	pull_remote="$TMP/mkws-pull-remote.git"

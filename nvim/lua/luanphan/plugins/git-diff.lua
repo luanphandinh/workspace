@@ -1,6 +1,24 @@
 local recent_paths = require("luanphan.recent_paths")
 
+local pending_workspace_diff = nil
+local switch_workspace_diff
+local close_workspace_diff
+
 local function find_diffview_tab()
+  local ok, lib = pcall(require, "diffview.lib")
+  if ok then
+    for _, view in ipairs(lib.views or {}) do
+      if view.tabpage and vim.api.nvim_tabpage_is_valid(view.tabpage) then
+        local state = view._luanphan_workspace_diff
+        local active = state and state.views and state.views[state.active] or nil
+        if active and active.tabpage and vim.api.nvim_tabpage_is_valid(active.tabpage) then
+          return active.tabpage
+        end
+        return view.tabpage
+      end
+    end
+  end
+
   for _, tabid in ipairs(vim.api.nvim_list_tabpages()) do
     local wins = vim.api.nvim_tabpage_list_wins(tabid)
     for _, winid in ipairs(wins) do
@@ -20,7 +38,13 @@ local function close_or_focus_existing_diffview()
   end
 
   if existing_tab == vim.api.nvim_get_current_tabpage() then
-    vim.cmd("DiffviewClose")
+    local ok, lib = pcall(require, "diffview.lib")
+    local view = ok and lib.get_current_view() or nil
+    if view and view._luanphan_workspace_diff and close_workspace_diff then
+      close_workspace_diff(view)
+    else
+      vim.cmd("DiffviewClose")
+    end
   else
     vim.api.nvim_set_current_tabpage(existing_tab)
   end
@@ -396,6 +420,12 @@ local function set_diffview_keymaps(view, buf)
   vim.keymap.set("n", "<leader>gp", function()
     push_diffview()
   end, { buffer = buf, desc = "Push origin HEAD" })
+  vim.keymap.set("n", "[r", function()
+    switch_workspace_diff(view, -1, false, true)
+  end, { buffer = buf, desc = "Previous diff repository" })
+  vim.keymap.set("n", "]r", function()
+    switch_workspace_diff(view, 1, false, true)
+  end, { buffer = buf, desc = "Next diff repository" })
 end
 
 local function set_diffview_tab_keymaps(view)
@@ -503,7 +533,31 @@ local function git_branch(path)
     or "detached"
 end
 
-local function list_child_git_repositories(parent)
+local function default_base_branch(repo)
+  if git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "main" }) then
+    return "main"
+  end
+  if git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "master" }) then
+    return "master"
+  end
+  if git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "develop" }) then
+    return "develop"
+  end
+  return "main"
+end
+
+local function repository_has_worktree_diff(repo)
+  local status = git_systemlist({ "git", "-C", repo, "status", "--porcelain", "--untracked-files=normal" })
+  return status ~= nil and #status > 0
+end
+
+local function repository_has_branch_diff(repo)
+  local base = default_base_branch(repo)
+  vim.fn.system({ "git", "-C", repo, "diff", "--quiet", base .. "...HEAD", "--" })
+  return vim.v.shell_error == 1
+end
+
+local function list_child_git_repositories(parent, has_diff)
   local uv = vim.uv or vim.loop
   local scan = uv.fs_scandir(parent)
   if not scan then
@@ -528,72 +582,337 @@ local function list_child_git_repositories(parent)
           name = name,
           path = root,
           branch = git_branch(root),
+          has_diff = has_diff and has_diff(root) or false,
         }
       end
     end
   end
 
-  return recent_paths.sort(repositories, function(repository)
+  recent_paths.sort(repositories, function(repository)
     return repository.path
   end, function(left, right)
     return left.name:lower() < right.name:lower()
   end)
+
+  local changed = {}
+  local clean = {}
+  for _, repository in ipairs(repositories) do
+    local target = repository.has_diff and changed or clean
+    target[#target + 1] = repository
+  end
+  vim.list_extend(changed, clean)
+  return changed
 end
 
-local function pick_child_git_repository(parent, action)
-  local repositories = list_child_git_repositories(parent)
+local repository_bar_namespace = vim.api.nvim_create_namespace("luanphan-diff-repositories")
+local render_repository_bar
+
+local function current_diffview(view)
+  if view and view.tabpage and vim.api.nvim_tabpage_is_valid(view.tabpage) then
+    return view
+  end
+  local ok, lib = pcall(require, "diffview.lib")
+  return ok and lib.get_current_view() or nil
+end
+
+local function workspace_diff_state(view)
+  view = current_diffview(view)
+  return view and view._luanphan_workspace_diff or nil, view
+end
+
+local function focus_diff_content(view)
+  local function focus()
+    view = current_diffview(view)
+    if not view or not view.tabpage or not vim.api.nvim_tabpage_is_valid(view.tabpage) then
+      return false
+    end
+    local layout = view.cur_layout
+    if not layout or type(layout.get_main_win) ~= "function" then
+      return false
+    end
+    local ok, main = pcall(function()
+      return layout:get_main_win()
+    end)
+    if not ok or not main or not main.id or not vim.api.nvim_win_is_valid(main.id) then
+      return false
+    end
+    vim.api.nvim_set_current_tabpage(view.tabpage)
+    vim.api.nvim_set_current_win(main.id)
+    return true
+  end
+
+  if not focus() then
+    vim.defer_fn(focus, 50)
+  end
+end
+
+local function focus_repository_bar(state, index)
+  local view = state.views and state.views[index] or nil
+  local bar = state.bars and state.bars[index] or nil
+  if not view or not view.tabpage or not vim.api.nvim_tabpage_is_valid(view.tabpage) then
+    return false
+  end
+  if not bar or not vim.api.nvim_win_is_valid(bar.win) or not vim.api.nvim_buf_is_valid(bar.buf) then
+    return false
+  end
+
+  vim.api.nvim_set_current_tabpage(view.tabpage)
+  render_repository_bar(state, bar.buf, bar.win)
+  vim.api.nvim_set_current_win(bar.win)
+  return true
+end
+
+render_repository_bar = function(state, buf, win)
+  local line = ""
+  local ranges = {}
+  for index, repository in ipairs(state.repositories) do
+    if index > 1 then
+      line = line .. "  "
+    end
+    local start_col = #line
+    local label = repository.name
+    if index == (state.selected or state.active) then
+      label = "[" .. label .. "]"
+    end
+    line = line .. label
+    ranges[index] = { start_col = start_col, end_col = #line }
+  end
+
+  vim.bo[buf].modifiable = true
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { line })
+  vim.bo[buf].modifiable = false
+  vim.api.nvim_buf_clear_namespace(buf, repository_bar_namespace, 0, -1)
+  for index, range in ipairs(ranges) do
+    local group = "DiffviewRepoTabInactive"
+    if index == (state.selected or state.active) then
+      group = "DiffviewRepoTabSelected"
+    elseif index == state.active then
+      group = "DiffviewRepoTabActive"
+    end
+    vim.api.nvim_buf_add_highlight(buf, repository_bar_namespace, group, 0, range.start_col, range.end_col)
+  end
+
+  state.ranges = ranges
+  local selected = ranges[state.selected or state.active]
+  if selected and vim.api.nvim_win_is_valid(win) then
+    vim.api.nvim_win_set_cursor(win, { 1, selected.start_col })
+  end
+end
+
+local function repository_at_column(state, column)
+  for index, range in ipairs(state.ranges or {}) do
+    if column >= range.start_col and column < range.end_col then
+      return index
+    end
+  end
+  return nil
+end
+
+local function create_repository_bar(view, state, index, focus)
+  if not view.tabpage or not vim.api.nvim_tabpage_is_valid(view.tabpage) then
+    return
+  end
+
+  local previous_win = vim.api.nvim_get_current_win()
+  vim.api.nvim_set_current_tabpage(view.tabpage)
+  vim.cmd("topleft 1new")
+  local win = vim.api.nvim_get_current_win()
+  local buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_name(buf, "workspace-diff://repositories/" .. tostring(view.tabpage))
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].filetype = "DiffviewRepoBar"
+  vim.bo[buf].undofile = false
+  vim.b[buf].luanphan_workspace_diff_bar = true
+  vim.wo[win].number = false
+  vim.wo[win].relativenumber = false
+  vim.wo[win].cursorline = false
+  vim.wo[win].cursorcolumn = false
+  vim.wo[win].foldcolumn = "0"
+  vim.wo[win].signcolumn = "no"
+  vim.wo[win].statuscolumn = ""
+  vim.wo[win].winfixheight = true
+  vim.wo[win].wrap = false
+  vim.wo[win].winhighlight = "Normal:TabLineFill,EndOfBuffer:TabLineFill"
+  vim.api.nvim_win_set_height(win, 1)
+
+  state.bars[index] = { buf = buf, win = win }
+  render_repository_bar(state, buf, win)
+
+  vim.keymap.set("n", "h", function()
+    switch_workspace_diff(view, -1, false, false)
+  end, { buffer = buf, desc = "Previous diff repository" })
+  vim.keymap.set("n", "l", function()
+    switch_workspace_diff(view, 1, false, false)
+  end, { buffer = buf, desc = "Next diff repository" })
+  vim.keymap.set("n", "<Left>", function()
+    switch_workspace_diff(view, -1, false, false)
+  end, { buffer = buf, desc = "Previous diff repository" })
+  vim.keymap.set("n", "<Right>", function()
+    switch_workspace_diff(view, 1, false, false)
+  end, { buffer = buf, desc = "Next diff repository" })
+  vim.keymap.set("n", "<LeftMouse>", function()
+    local mouse = vim.fn.getmousepos()
+    if mouse.winid == win then
+      switch_workspace_diff(view, repository_at_column(state, math.max(mouse.column - 1, 0)), true, false)
+    end
+  end, { buffer = buf, desc = "Open diff repository" })
+  vim.keymap.set("n", "q", function()
+    close_workspace_diff(view)
+  end, { buffer = buf, silent = true, desc = "Close Diffview" })
+  set_diffview_keymaps(view, buf)
+
+  if focus == "diff" then
+    focus_diff_content(view)
+  elseif focus == "bar" then
+    focus_repository_bar(state, index)
+  elseif vim.api.nvim_win_is_valid(previous_win) then
+    vim.api.nvim_set_current_win(previous_win)
+  end
+end
+
+local function attach_workspace_diff(view)
+  local pending = pending_workspace_diff
+  if not pending or not pending.state or #pending.state.repositories < 2 then
+    return
+  end
+
+  local state = pending.state
+  local index = pending.index
+  local repository = state.repositories[index]
+  local root = view.adapter and view.adapter.ctx and view.adapter.ctx.toplevel
+  if not repository or not same_real_path(root, repository.path) then
+    return
+  end
+
+  pending_workspace_diff = nil
+  state.active = index
+  state.selected = index
+  state.views[index] = view
+  view._luanphan_workspace_diff = state
+  view._luanphan_workspace_diff_index = index
+  create_repository_bar(view, state, index, pending.focus)
+end
+
+local function open_workspace_diff(parent, repositories, action)
   if #repositories == 0 then
     vim.notify("no immediate child git repositories found", vim.log.levels.WARN)
     return
   end
-
-  local ok_pickers, pickers = pcall(require, "telescope.pickers")
-  local ok_finders, finders = pcall(require, "telescope.finders")
-  local ok_config, config = pcall(require, "telescope.config")
-  local ok_actions, actions = pcall(require, "telescope.actions")
-  local ok_state, action_state = pcall(require, "telescope.actions.state")
-  if not (ok_pickers and ok_finders and ok_config and ok_actions and ok_state) then
-    vim.notify("telescope not available", vim.log.levels.ERROR)
+  if #repositories == 1 then
+    recent_paths.touch(repositories[1].path)
+    action(repositories[1].path)
     return
   end
 
-  local name_width = 0
-  for _, repository in ipairs(repositories) do
-    name_width = math.max(name_width, #repository.name)
-  end
-
-  pickers.new({}, {
-    prompt_title = "Git Diff Repository",
-    finder = finders.new_table({
-      results = repositories,
-      entry_maker = function(repository)
-        return {
-          value = repository,
-          display = string.format("%-" .. name_width .. "s [%s]", repository.name, repository.branch),
-          ordinal = repository.name,
-        }
-      end,
-    }),
-    sorter = config.values.generic_sorter({}),
-    attach_mappings = function(prompt_bufnr)
-      actions.select_default:replace(function()
-        local selection = action_state.get_selected_entry()
-        actions.close(prompt_bufnr)
-        if not selection or not selection.value or not selection.value.path then
-          vim.notify("git diff repository picker: no selection", vim.log.levels.WARN)
-          return
-        end
-        recent_paths.touch(selection.value.path)
-        vim.schedule(function()
-          action(selection.value.path)
-        end)
-      end)
-      return true
-    end,
-  }):find()
+  local state = {
+    parent = parent,
+    repositories = repositories,
+    active = 1,
+    selected = 1,
+    open = action,
+    views = {},
+    bars = {},
+  }
+  pending_workspace_diff = { state = state, index = 1, focus = "initial" }
+  recent_paths.touch(repositories[1].path)
+  action(repositories[1].path)
 end
 
-local function with_diff_repository(action)
+switch_workspace_diff = function(view, target, absolute, focus_diff)
+  local state
+  state, view = workspace_diff_state(view)
+  if not state then
+    return
+  end
+
+  local count = #state.repositories
+  local index = absolute and target or ((state.active - 1 + target) % count) + 1
+  if not index or not state.repositories[index] then
+    return
+  end
+
+  state.active = index
+  state.selected = index
+  recent_paths.touch(state.repositories[index].path)
+
+  local target_view = state.views[index]
+  if target_view and target_view.tabpage and vim.api.nvim_tabpage_is_valid(target_view.tabpage) then
+    if focus_diff then
+      focus_diff_content(target_view)
+    else
+      focus_repository_bar(state, index)
+    end
+    return
+  end
+
+  pending_workspace_diff = {
+    state = state,
+    index = index,
+    focus = focus_diff and "diff" or "bar",
+  }
+  focus_diff_content(view)
+  vim.schedule(function()
+    local ok, err = pcall(state.open, state.repositories[index].path)
+    if not ok then
+      pending_workspace_diff = nil
+      vim.notify("Could not switch diff repository: " .. tostring(err), vim.log.levels.ERROR)
+    end
+  end)
+end
+
+close_workspace_diff = function(view)
+  view = current_diffview(view)
+  local state = view and view._luanphan_workspace_diff or nil
+  if not state then
+    vim.cmd("DiffviewClose")
+    return
+  end
+
+  local ok, lib = pcall(require, "diffview.lib")
+  if not ok then
+    return
+  end
+
+  local target_tab = lib.get_prev_non_view_tabpage()
+  local views = {}
+  for _, retained in pairs(state.views) do
+    views[#views + 1] = retained
+  end
+  table.sort(views, function(left, right)
+    local left_number = left.tabpage and vim.api.nvim_tabpage_is_valid(left.tabpage)
+      and vim.api.nvim_tabpage_get_number(left.tabpage) or -1
+    local right_number = right.tabpage and vim.api.nvim_tabpage_is_valid(right.tabpage)
+      and vim.api.nvim_tabpage_get_number(right.tabpage) or -1
+    return left_number > right_number
+  end)
+
+  state.closing = true
+  for _, retained in ipairs(views) do
+    if retained.tabpage and vim.api.nvim_tabpage_is_valid(retained.tabpage) then
+      retained:close()
+    end
+    lib.dispose_view(retained)
+  end
+  state.views = {}
+  state.bars = {}
+  if target_tab and vim.api.nvim_tabpage_is_valid(target_tab) then
+    vim.api.nvim_set_current_tabpage(target_tab)
+  end
+end
+
+local function close_current_diffview()
+  local ok, lib = pcall(require, "diffview.lib")
+  local view = ok and lib.get_current_view() or nil
+  if view and view._luanphan_workspace_diff then
+    close_workspace_diff(view)
+  else
+    vim.cmd("DiffviewClose")
+  end
+end
+
+local function with_diff_repository(action, has_diff)
   return function()
     if close_or_focus_existing_diffview() then
       return
@@ -606,7 +925,7 @@ local function with_diff_repository(action)
       action(root)
       return
     end
-    pick_child_git_repository(cwd, action)
+    open_workspace_diff(cwd, list_child_git_repositories(cwd, has_diff), action)
   end
 end
 
@@ -668,16 +987,7 @@ local function open_current_line_commit()
 end
 
 local function open_branch_diff(repo)
-  local base_branch = "main"
-  if not git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "main" }) then
-    if git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "master" }) then
-      base_branch = "master"
-    elseif git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "develop" }) then
-      base_branch = "develop"
-    end
-  end
-
-  open_diffview(repo, base_branch .. "...HEAD")
+  open_diffview(repo, default_base_branch(repo) .. "...HEAD")
 end
 
 local function with_diffview(fn)
@@ -690,8 +1000,11 @@ end
 local function setup_diffview_keymaps()
   vim.keymap.set("n", "<leader>gd", with_diffview(with_diff_repository(function(repo)
     open_diffview(repo)
-  end)), { desc = "Diff current changes" })
-  vim.keymap.set("n", "<leader>gD", with_diffview(with_diff_repository(open_branch_diff)), { desc = "Diff branch vs base" })
+  end, repository_has_worktree_diff)), { desc = "Diff current changes" })
+  vim.keymap.set("n", "<leader>gD", with_diffview(with_diff_repository(
+    open_branch_diff,
+    repository_has_branch_diff
+  )), { desc = "Diff branch vs base" })
   vim.keymap.set("n", "<leader>gb", with_diffview(open_current_line_commit), { desc = "Blame commit at line" })
   vim.keymap.set("n", "<leader>gH", with_diffview(toggle_file_history), { desc = "File history (current)" })
   vim.keymap.set("n", "<leader>gA", with_diffview(toggle_all_file_history), { desc = "File history (all)" })
@@ -714,6 +1027,9 @@ return {
     dependencies = "nvim-lua/plenary.nvim",
     init = setup_diffview_keymaps,
     config = function()
+      vim.api.nvim_set_hl(0, "DiffviewRepoTabSelected", { link = "TabLineSel", default = true })
+      vim.api.nvim_set_hl(0, "DiffviewRepoTabActive", { link = "DiffText", default = true })
+      vim.api.nvim_set_hl(0, "DiffviewRepoTabInactive", { link = "TabLine", default = true })
       require("diffview").setup({
         view = {
           default = {
@@ -746,9 +1062,18 @@ return {
             set_diffview_tab_keymaps(view)
             set_diffview_keymaps(view, 0)
             preserve_diffview_folds(view)
+            attach_workspace_diff(view)
             vim.schedule(function()
               set_diffview_tab_keymaps(view)
             end)
+          end,
+          view_closed = function(view)
+            local state = view._luanphan_workspace_diff
+            local index = view._luanphan_workspace_diff_index
+            if state and index and state.views[index] == view then
+              state.views[index] = nil
+              state.bars[index] = nil
+            end
           end,
         },
       })
@@ -759,7 +1084,7 @@ return {
         callback = function()
           local bufname = vim.api.nvim_buf_get_name(0)
           if bufname:match("diffview://") then
-            vim.keymap.set("n", "q", "<cmd>DiffviewClose<cr>", { buffer = true, silent = true })
+            vim.keymap.set("n", "q", close_current_diffview, { buffer = true, silent = true })
           end
           if current_tab_has_diffview() then
             set_diffview_keymaps(nil, 0)

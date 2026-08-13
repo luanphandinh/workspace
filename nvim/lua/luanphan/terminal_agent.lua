@@ -433,9 +433,6 @@ local function set_float_close_keymaps(bufnr)
       pcall(vim.api.nvim_win_close, w, false)
     end
   end
-  -- <C-j> intentionally excluded: the agent CLI uses Ctrl-J (newline) for
-  -- its own input, so we let the keystroke flow straight to the PTY instead
-  -- of stealing it to close the float.
   for _, key in ipairs({ "<C-h>", "<C-k>", "<C-l>" }) do
     -- Terminal mode: leave the PTY first, then close on the next tick so the
     -- mode switch finishes before we rip the window out.
@@ -446,6 +443,8 @@ local function set_float_close_keymaps(bufnr)
       )
       vim.schedule(close_float)
     end, opts)
+  end
+  for _, key in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
     vim.keymap.set("n", key, close_float, opts)
   end
 end

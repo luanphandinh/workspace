@@ -607,7 +607,7 @@ def resolve_existing_workspace_context(pwd: Path, name_flag: str) -> Path:
 # ---------------------------------------------------------------------------
 # pull mode: iterate every immediate subfolder of the target; for each one
 # that's a git repo (source repo or worktree — `.git` can be a dir or a file),
-# run `git pull` on the currently checked-out branch.
+# pull the same-named branch from origin and repair its upstream configuration.
 # ---------------------------------------------------------------------------
 def cmd_pull(folders: list) -> int:
     repos = expand_targets(folders, include_default_external=True)
@@ -635,8 +635,28 @@ def cmd_pull(folders: list) -> int:
         if branch == "HEAD":
             log.warn("detached HEAD, skipping")
             return "skipped"
-        log.info(f"pull latest data from {BOLD}{branch}{RESET}")
-        proc = run(["git", "-C", str(sub), "pull", "--ff-only"])
+        remote = run(
+            [
+                "git", "-C", str(sub), "ls-remote", "--exit-code",
+                "--heads", "origin", branch,
+            ]
+        )
+        if remote.returncode == 2:
+            log.warn(f"no origin/{branch}, skipping")
+            return "skipped"
+        if remote.returncode != 0:
+            log.raw((remote.stdout or "").rstrip())
+            log.raw((remote.stderr or "").rstrip())
+            log.fail(f"could not inspect origin/{branch}")
+            return "failed"
+
+        log.info(f"git pull --ff-only origin {BOLD}{branch}{RESET}")
+        proc = run(
+            [
+                "git", "-C", str(sub), "pull", "--ff-only",
+                "--set-upstream", "origin", branch,
+            ]
+        )
         log.raw((proc.stdout or "").rstrip())
         log.raw((proc.stderr or "").rstrip())
         if proc.returncode == 0:
@@ -1118,7 +1138,9 @@ def cmd_merge(target: str, folders: list) -> int:
     return 0 if failed == 0 else 1
 
 
-# push mode: `git push origin HEAD` for every matching repo, in parallel.
+# push mode: `git push --set-upstream origin HEAD` for every matching repo, in
+# parallel. This keeps later pulls tied to the current branch instead of the
+# base ref from which a workspace branch was created.
 # Detached HEAD is skipped. Non-ff / auth failures are reported as failures
 # but don't halt — user can inspect the list and retry individually.
 # ---------------------------------------------------------------------------
@@ -1138,8 +1160,8 @@ def cmd_push(folders: list) -> int:
         if not branch or branch == "HEAD":
             log.warn("detached HEAD, skipping")
             return "skipped"
-        log.info(f"git push origin HEAD ({BOLD}{branch}{RESET})")
-        proc = run(["git", "-C", str(sub), "push", "origin", "HEAD"])
+        log.info(f"git push --set-upstream origin HEAD ({BOLD}{branch}{RESET})")
+        proc = run(["git", "-C", str(sub), "push", "--set-upstream", "origin", "HEAD"])
         log.raw((proc.stdout or "").rstrip())
         log.raw((proc.stderr or "").rstrip())
         if proc.returncode == 0:
@@ -1210,7 +1232,10 @@ def cmd_sync(folders: list, push: bool = False) -> int:
         else:
             info(f"git pull --ff-only origin {BOLD}{cur_branch}{RESET}")
             pp = run(
-                ["git", "-C", str(sub), "pull", "--ff-only", "origin", cur_branch],
+                [
+                    "git", "-C", str(sub), "pull", "--ff-only",
+                    "--set-upstream", "origin", cur_branch,
+                ],
                 capture=False,
             )
             if pp.returncode != 0:
@@ -1246,8 +1271,11 @@ def cmd_sync(folders: list, push: bool = False) -> int:
             synced += 1
             continue
 
-        info(f"git push origin HEAD")
-        pushp = run(["git", "-C", str(sub), "push", "origin", "HEAD"], capture=False)
+        info("git push --set-upstream origin HEAD")
+        pushp = run(
+            ["git", "-C", str(sub), "push", "--set-upstream", "origin", "HEAD"],
+            capture=False,
+        )
         if pushp.returncode != 0:
             fail("push failed")
             push_fails.append(sub.name)
@@ -1735,6 +1763,11 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             capture=False,
         )
         if proc.returncode == 0:
+            # Starting from origin/main can make Git track the base branch.
+            # Leave the upstream unset until the same-named branch is pushed.
+            run(
+                ["git", "-C", str(wt_path), "branch", "--unset-upstream", branch_for_repo]
+            )
             ok(f"worktree added at {wt_path}")
             if not already_recorded:
                 append_repo(yml, leaf, branch_for_repo, base_for_repo)
@@ -1781,8 +1814,9 @@ Modes:
              selects each configured base_branch or detected main/master. A
              branch argument applies the same branch to every repo. Best effort
              and parallel; normal Git worktree branch locks are preserved.
-  pull       `git pull --ff-only` on the currently checked-out branch of every
-             matching repo. Takes any number of folder args (absolute, relative,
+  pull       Pull `origin/<current-branch>` with `--ff-only` for every matching
+             repo and repair its upstream. Repos without that remote branch are
+             skipped. Takes any number of folder args (absolute, relative,
              or a bare name under $PWD). Each arg is either a git repo (pulled
              directly) or a directory whose immediate git-repo subfolders are
              pulled. No args → iterate $PWD's subfolders and immediate git
@@ -1794,9 +1828,9 @@ Modes:
                mkws pull _external              # only external repos
                mkws pull ./local_workspaces/myws    # every worktree in a workspace
                mkws pull /abs/repo-a ./repo-b   # mix absolute and relative
-  push       `git push origin HEAD` on the current branch of every matching
-             repo. Parallel. Detached HEAD is skipped. Non-ff / auth failures
-             are reported at the end; the batch does not halt.
+  push       `git push --set-upstream origin HEAD` on the current branch of
+             every matching repo. Parallel. Detached HEAD is skipped. Non-ff /
+             auth failures are reported at the end; the batch does not halt.
              Examples:
                mkws push                     # push every repo under $PWD
                mkws push repo-a repo-b       # two specific repos
