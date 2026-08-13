@@ -770,6 +770,27 @@ local function find_diffview_tab()
   return nil
 end
 
+local function find_workspace_diff_bar()
+  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+      local buf = vim.api.nvim_win_get_buf(win)
+      if vim.b[buf].luanphan_workspace_diff_bar then
+        return tab, win, buf
+      end
+    end
+  end
+  return nil, nil, nil
+end
+
+local function wait_for_diffview_repository(path)
+  wait_until("diffview repository " .. path, function()
+    local ok, lib = pcall(require, "diffview.lib")
+    local view = ok and lib.get_current_view() or nil
+    local root = view and view.adapter and view.adapter.ctx and view.adapter.ctx.toplevel
+    return root and realpath(root) == realpath(path)
+  end, 10000)
+end
+
 local function focus_file_window_inside_diffview_tab(path)
   local tab = find_diffview_tab()
   assert_true(tab ~= nil, "Diffview tab was not found")
@@ -2331,6 +2352,7 @@ local function test_git_diff_previews(worktree)
 
   invoke_map("<leader>gd")
   wait_for_diffview()
+  assert_true(find_workspace_diff_bar() == nil, "single-repository diff unexpectedly created a repository bar")
   focus_file_window_inside_diffview_tab(worktree .. "/main.go")
   invoke_map("<leader>gd")
   wait_until("diffview closes from file window", function()
@@ -2342,64 +2364,48 @@ local function test_git_diff_previews(worktree)
   close_diffview()
 end
 
-local function select_git_diff_repository(expected_count, move_next)
-  local prompt_bufnr = nil
-  wait_until("git diff repository picker", function()
-    for _, win in ipairs(vim.api.nvim_list_wins()) do
-      local buf = vim.api.nvim_win_get_buf(win)
-      if vim.bo[buf].filetype == "TelescopePrompt" then
-        local picker = require("telescope.actions.state").get_current_picker(buf)
-        if picker
-          and picker.prompt_title == "Git Diff Repository"
-          and type(picker.manager) == "table"
-          and picker.manager:num_results() == expected_count
-        then
-          prompt_bufnr = buf
-          return true
-        end
-      end
-    end
-    return false
-  end, 5000)
-
-  local picker = require("telescope.actions.state").get_current_picker(prompt_bufnr)
-  if move_next then
-    require("telescope.actions").move_selection_next(prompt_bufnr)
-  end
-  local selection = picker:get_selection()
-  assert_true(selection and selection.value and selection.value.path, "git diff repository picker has no selection")
-  require("telescope.actions").select_default(prompt_bufnr)
-  return selection.value.path
-end
-
-local function test_git_diff_picker_from_workspace_root()
+local function test_git_diff_repository_bar_from_workspace_root()
   local original_cwd = vim.fn.getcwd()
   local _, workspaces, station, workspace_name = make_project_scope_fixture()
   local workspace_root = station .. "/local_workspaces/" .. workspace_name
-  local selected_repo = workspaces["example-project-b-long"]
+  local first_repo = workspaces["example-project-a"]
+  local second_repo = workspaces["example-project-b-long"]
   vim.fn.delete(vim.g.luanphan_recent_paths_file)
 
-  write(selected_repo .. "/README.md", { "committed branch change" })
-  run({ "git", "add", "README.md" }, selected_repo)
-  run({ "git", "commit", "-m", "branch diff fixture" }, selected_repo)
-  write(selected_repo .. "/README.md", { "committed branch change", "working tree change" })
+  write(first_repo .. "/first-change.txt", { "first repository change" })
+  write(second_repo .. "/second-change.txt", { "second repository change" })
   vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
 
-  local function open_from_picker(lhs, move_next)
-    invoke_map(lhs)
-    local picked = select_git_diff_repository(2, move_next)
-    assert_true(realpath(picked) == realpath(selected_repo), lhs .. " selected an unexpected repository")
-    wait_for_diffview()
+  invoke_map("<leader>gd")
+  wait_for_diffview()
+  wait_for_diffview_repository(first_repo)
+  local tab, bar_win, bar_buf = find_workspace_diff_bar()
+  assert_true(tab ~= nil and bar_win ~= nil and bar_buf ~= nil, "multi-repository diff did not create a repository bar")
+  local line = vim.api.nvim_buf_get_lines(bar_buf, 0, 1, false)[1] or ""
+  assert_true(line:find("[example-project-a]", 1, true) ~= nil, "initial diff repository is not highlighted")
+  assert_true(line:find("example-project-b-long", 1, true) ~= nil, "repository bar omitted a child repository")
 
-    local view = require("diffview.lib").get_current_view()
-    local root = view and view.adapter and view.adapter.ctx and view.adapter.ctx.toplevel
-    assert_true(root and realpath(root) == realpath(picked), lhs .. " opened Diffview in the wrong repository")
-    assert_true(realpath(vim.fn.getcwd()) == realpath(workspace_root), lhs .. " changed the workspace cwd")
-    close_diffview()
+  local bar_row = vim.fn.win_screenpos(bar_win)[1]
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+    assert_true(bar_row <= vim.fn.win_screenpos(win)[1], "repository bar is not the top Diffview window")
   end
 
-  open_from_picker("<leader>gd", true)
-  open_from_picker("<leader>gD")
+  wait_until("next diff repository mapping", function()
+    local map = vim.fn.maparg("]r", "n", false, true)
+    return type(map) == "table" and type(map.callback) == "function"
+  end, 3000)
+  invoke_map("]r")
+  wait_for_diffview_repository(second_repo)
+  _, _, bar_buf = find_workspace_diff_bar()
+  line = vim.api.nvim_buf_get_lines(bar_buf, 0, 1, false)[1] or ""
+  assert_true(line:find("[example-project-b-long]", 1, true) ~= nil, "switched diff repository is not highlighted")
+  assert_true(realpath(vim.fn.getcwd()) == realpath(workspace_root), "repository switching changed the workspace cwd")
+  close_diffview()
+
+  invoke_map("<leader>gD")
+  wait_for_diffview()
+  assert_true(find_workspace_diff_bar() ~= nil, "branch diff omitted the multi-repository bar")
+  close_diffview()
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
 end
 
@@ -2408,7 +2414,7 @@ local function test_git_diff_separate_commit_and_push_from_workspace_root()
   local original_input = vim.ui.input
   local _, workspaces, station, workspace_name = make_project_scope_fixture()
   local workspace_root = station .. "/local_workspaces/" .. workspace_name
-  local selected_repo = workspaces["example-project-a"]
+  local selected_repo = workspaces["example-project-b-long"]
   local remote = station .. "/example-remote.git"
   local message = "commit from diffview"
   local staged_file = selected_repo .. "/committed-from-diff.txt"
@@ -2424,9 +2430,10 @@ local function test_git_diff_separate_commit_and_push_from_workspace_root()
   local ok, err = xpcall(function()
     vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
     invoke_map("<leader>gd")
-    local picked = select_git_diff_repository(2)
-    assert_true(realpath(picked) == realpath(selected_repo), "diff commit selected the wrong repository")
     wait_for_diffview()
+    wait_for_diffview_repository(workspaces["example-project-a"])
+    invoke_map("]r")
+    wait_for_diffview_repository(selected_repo)
     focus_file_window_inside_diffview_tab(staged_file)
 
     wait_until("diff commit keymap", function()
@@ -2846,8 +2853,8 @@ local setup_ok, setup_err = xpcall(function()
     test_git_diff_previews(worktree)
   end)
 
-  test("git diff picker from workspace root", function()
-    test_git_diff_picker_from_workspace_root()
+  test("git diff repository bar from workspace root", function()
+    test_git_diff_repository_bar_from_workspace_root()
   end)
 
   test("git diff separates commit and push for its selected repository", function()
