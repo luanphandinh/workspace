@@ -2423,7 +2423,17 @@ local function test_git_diff_repository_bar_from_workspace_root()
   local workspace_root = station .. "/local_workspaces/" .. workspace_name
   local first_repo = workspaces["example-project-a"]
   local second_repo = workspaces["example-project-b-long"]
+  local clean_repo = workspace_root .. "/example-project-clean"
   vim.fn.delete(vim.g.luanphan_recent_paths_file)
+
+  vim.fn.mkdir(clean_repo, "p")
+  run({ "git", "init", "-b", "main" }, clean_repo)
+  run({ "git", "config", "user.name", "Example User" }, clean_repo)
+  run({ "git", "config", "user.email", "example@example.invalid" }, clean_repo)
+  write(clean_repo .. "/README.md", { "clean repository" })
+  run({ "git", "add", "." }, clean_repo)
+  run({ "git", "commit", "-m", "clean fixture" }, clean_repo)
+  require("luanphan.recent_paths").touch(clean_repo)
 
   write(first_repo .. "/first-change.txt", {
     "first repository change",
@@ -2452,6 +2462,9 @@ local function test_git_diff_repository_bar_from_workspace_root()
   local line = vim.api.nvim_buf_get_lines(bar_buf, 0, 1, false)[1] or ""
   assert_true(line:find("[example-project-a]", 1, true) ~= nil, "initial diff repository is not highlighted")
   assert_true(line:find("example-project-b-long", 1, true) ~= nil, "repository bar omitted a child repository")
+  local changed_position = line:find("example-project-b-long", 1, true)
+  local clean_position = line:find("example-project-clean", 1, true)
+  assert_true(clean_position and clean_position > changed_position, "clean repository was not moved behind changed repositories")
 
   local bar_row = vim.fn.win_screenpos(bar_win)[1]
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
@@ -2502,9 +2515,19 @@ local function test_git_diff_repository_bar_from_workspace_root()
     return not has_visible_diffview()
   end, 5000)
 
+  write(second_repo .. "/branch-change.txt", { "committed branch change" })
+  run({ "git", "add", "branch-change.txt" }, second_repo)
+  run({ "git", "commit", "-m", "branch diff fixture" }, second_repo)
+  require("luanphan.recent_paths").touch(clean_repo)
   invoke_map("<leader>gD")
   wait_for_diffview()
-  assert_true(find_workspace_diff_bar() ~= nil, "branch diff omitted the multi-repository bar")
+  _, _, bar_buf = find_workspace_diff_bar()
+  assert_true(bar_buf ~= nil, "branch diff omitted the multi-repository bar")
+  line = vim.api.nvim_buf_get_lines(bar_buf, 0, 1, false)[1] or ""
+  assert_true(
+    line:find("[example-project-b-long]", 1, true) ~= nil,
+    "branch diff did not move the changed repository ahead of clean repositories"
+  )
   close_diffview()
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
 end
@@ -2523,6 +2546,7 @@ local function test_git_diff_separate_commit_and_push_from_workspace_root()
 
   run({ "git", "init", "--bare", remote })
   run({ "git", "remote", "add", "origin", remote }, selected_repo)
+  write(workspaces["example-project-a"] .. "/unrelated-change.txt", { "keep first repository changed" })
   write(staged_file, { "staged change" })
   write(unstaged_file, { "unstaged change" })
   run({ "git", "add", "committed-from-diff.txt" }, selected_repo)

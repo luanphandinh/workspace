@@ -533,7 +533,31 @@ local function git_branch(path)
     or "detached"
 end
 
-local function list_child_git_repositories(parent)
+local function default_base_branch(repo)
+  if git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "main" }) then
+    return "main"
+  end
+  if git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "master" }) then
+    return "master"
+  end
+  if git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "develop" }) then
+    return "develop"
+  end
+  return "main"
+end
+
+local function repository_has_worktree_diff(repo)
+  local status = git_systemlist({ "git", "-C", repo, "status", "--porcelain", "--untracked-files=normal" })
+  return status ~= nil and #status > 0
+end
+
+local function repository_has_branch_diff(repo)
+  local base = default_base_branch(repo)
+  vim.fn.system({ "git", "-C", repo, "diff", "--quiet", base .. "...HEAD", "--" })
+  return vim.v.shell_error == 1
+end
+
+local function list_child_git_repositories(parent, has_diff)
   local uv = vim.uv or vim.loop
   local scan = uv.fs_scandir(parent)
   if not scan then
@@ -558,16 +582,26 @@ local function list_child_git_repositories(parent)
           name = name,
           path = root,
           branch = git_branch(root),
+          has_diff = has_diff and has_diff(root) or false,
         }
       end
     end
   end
 
-  return recent_paths.sort(repositories, function(repository)
+  recent_paths.sort(repositories, function(repository)
     return repository.path
   end, function(left, right)
     return left.name:lower() < right.name:lower()
   end)
+
+  local changed = {}
+  local clean = {}
+  for _, repository in ipairs(repositories) do
+    local target = repository.has_diff and changed or clean
+    target[#target + 1] = repository
+  end
+  vim.list_extend(changed, clean)
+  return changed
 end
 
 local repository_bar_namespace = vim.api.nvim_create_namespace("luanphan-diff-repositories")
@@ -878,7 +912,7 @@ local function close_current_diffview()
   end
 end
 
-local function with_diff_repository(action)
+local function with_diff_repository(action, has_diff)
   return function()
     if close_or_focus_existing_diffview() then
       return
@@ -891,7 +925,7 @@ local function with_diff_repository(action)
       action(root)
       return
     end
-    open_workspace_diff(cwd, list_child_git_repositories(cwd), action)
+    open_workspace_diff(cwd, list_child_git_repositories(cwd, has_diff), action)
   end
 end
 
@@ -953,16 +987,7 @@ local function open_current_line_commit()
 end
 
 local function open_branch_diff(repo)
-  local base_branch = "main"
-  if not git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "main" }) then
-    if git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "master" }) then
-      base_branch = "master"
-    elseif git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "develop" }) then
-      base_branch = "develop"
-    end
-  end
-
-  open_diffview(repo, base_branch .. "...HEAD")
+  open_diffview(repo, default_base_branch(repo) .. "...HEAD")
 end
 
 local function with_diffview(fn)
@@ -975,8 +1000,11 @@ end
 local function setup_diffview_keymaps()
   vim.keymap.set("n", "<leader>gd", with_diffview(with_diff_repository(function(repo)
     open_diffview(repo)
-  end)), { desc = "Diff current changes" })
-  vim.keymap.set("n", "<leader>gD", with_diffview(with_diff_repository(open_branch_diff)), { desc = "Diff branch vs base" })
+  end, repository_has_worktree_diff)), { desc = "Diff current changes" })
+  vim.keymap.set("n", "<leader>gD", with_diffview(with_diff_repository(
+    open_branch_diff,
+    repository_has_branch_diff
+  )), { desc = "Diff branch vs base" })
   vim.keymap.set("n", "<leader>gb", with_diffview(open_current_line_commit), { desc = "Blame commit at line" })
   vim.keymap.set("n", "<leader>gH", with_diffview(toggle_file_history), { desc = "File history (current)" })
   vim.keymap.set("n", "<leader>gA", with_diffview(toggle_all_file_history), { desc = "File history (all)" })
