@@ -148,6 +148,7 @@ local function make_fixture()
   temp_root = vim.fn.tempname()
   vim.fn.delete(temp_root, "rf")
   vim.fn.mkdir(temp_root, "p")
+  vim.g.luanphan_recent_paths_file = temp_root .. "/recent-paths.json"
 
   local repo = temp_root .. "/example-repo"
   local worktree = temp_root .. "/example-worktree"
@@ -1071,22 +1072,30 @@ local function test_worktree_plugin_starts_lazy()
   local plugin = worktree_plugin()
   assert_true(plugin and plugin.lazy == true, "worktree plugin is not lazy")
   assert_true(not worktree_plugin_loaded(), "worktree plugin loaded during startup")
-  local project_map = vim.fn.maparg("<leader>gp", "n", false, true)
+  local project_map = vim.fn.maparg("<leader>wp", "n", false, true)
   assert_true(
     type(project_map) == "table" and type(project_map.callback) == "function",
-    "<leader>gp is not a lazy callback mapping"
+    "<leader>wp is not a lazy callback mapping"
   )
-  local repository_map = vim.fn.maparg("<leader>gr", "n", false, true)
+  local repository_map = vim.fn.maparg("<leader>wr", "n", false, true)
   assert_true(
     type(repository_map) == "table" and type(repository_map.callback) == "function",
-    "<leader>gr is not a lazy callback mapping"
+    "<leader>wr is not a lazy callback mapping"
+  )
+  local workspace_map = vim.fn.maparg("<leader>ww", "n", false, true)
+  assert_true(
+    type(workspace_map) == "table" and type(workspace_map.callback) == "function",
+    "<leader>ww is not a lazy callback mapping"
   )
   assert_true(vim.fn.maparg("<leader>gP", "n") == "", "<leader>gP should not have a duplicate project picker")
-  local agent_map = vim.fn.maparg("<leader>g;", "n", false, true)
+  local agent_map = vim.fn.maparg("<leader>w;", "n", false, true)
   assert_true(
     type(agent_map) == "table" and type(agent_map.callback) == "function",
-    "<leader>g; is not a lazy callback mapping"
+    "<leader>w; is not a lazy callback mapping"
   )
+  for _, old_lhs in ipairs({ "<leader>gp", "<leader>gr", "<leader>gw", "<leader>g;" }) do
+    assert_true(vim.fn.maparg(old_lhs, "n") == "", old_lhs .. " workspace mapping should be removed")
+  end
 end
 
 local function test_adjacent_project_discovery(repo, worktree)
@@ -1108,6 +1117,88 @@ local function test_adjacent_project_discovery(repo, worktree)
   assert_true(vim.fn.exists(":ProjectSwitch") == 2, "ProjectSwitch command is missing")
 
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+end
+
+local function test_recent_navigation_ordering(repo, worktree)
+  local api = worktree_test_api()
+  local recent_paths = require("luanphan.recent_paths")
+  local original_cwd = vim.fn.getcwd()
+  local state_file = vim.g.luanphan_recent_paths_file
+  vim.fn.delete(state_file)
+
+  local ok, err = xpcall(function()
+    local items = {
+      { name = "example-a", path = repo },
+      { name = "example-b", path = worktree },
+    }
+    recent_paths.touch(worktree)
+    recent_paths.sort(items, function(item) return item.path end)
+    assert_true(items[1].name == "example-b", "shared recent-path ordering did not promote the latest path")
+    recent_paths.touch(repo)
+    recent_paths.sort(items, function(item) return item.path end)
+    assert_true(items[1].name == "example-a", "revisiting a path did not move it back to the front")
+
+    vim.cmd("cd " .. vim.fn.fnameescape(repo))
+    recent_paths.touch(worktree)
+    local trees = api.list_worktrees()
+    assert_true(realpath(trees[1].path) == realpath(worktree), "worktree picker is not ordered by recent visits")
+
+    local sources, workspaces, station, workspace_name, empty_workspace_name = make_project_scope_fixture()
+    local workspace_a = workspaces["example-project-a"]
+    local workspace_b = workspaces["example-project-b-long"]
+    local source_b = sources["example-project-b-long"]
+    vim.cmd("cd " .. vim.fn.fnameescape(workspace_a))
+
+    recent_paths.touch(workspace_b)
+    local projects = api.list_all_project_repos()
+    assert_true(
+      realpath(projects[1].path) == realpath(workspace_b),
+      "repository picker did not promote the latest workspace repository"
+    )
+
+    recent_paths.touch(source_b)
+    projects = api.list_all_project_repos()
+    local first_root = nil
+    for _, project in ipairs(projects) do
+      if project.scope == "root" then
+        first_root = project
+        break
+      end
+    end
+    assert_true(
+      first_root and realpath(first_root.path) == realpath(source_b),
+      "repository picker did not promote the latest root repository within its group"
+    )
+
+    local empty_workspace = station .. "/local_workspaces/" .. empty_workspace_name
+    recent_paths.touch(empty_workspace)
+    local workspace_entries = api.list_workspace_directories()
+    assert_true(
+      realpath(workspace_entries[1].path) == realpath(empty_workspace),
+      "workspace picker did not promote the latest workspace"
+    )
+
+    local selected_workspace = nil
+    for _, workspace in ipairs(workspace_entries) do
+      if workspace.name == workspace_name then
+        selected_workspace = workspace
+        break
+      end
+    end
+    assert_true(selected_workspace ~= nil, "recent-order fixture workspace was not discovered")
+    recent_paths.touch(workspace_b)
+    local workspace_repos = api.list_workspace_repos(selected_workspace)
+    assert_true(
+      realpath(workspace_repos[1].path) == realpath(workspace_b),
+      "workspace project picker did not promote the latest repository"
+    )
+  end, debug.traceback)
+
+  vim.fn.delete(state_file)
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  end
+  assert_true(ok, tostring(err))
 end
 
 local function test_workspace_and_master_project_discovery()
@@ -1298,8 +1389,14 @@ local function test_active_agent_discovery(repo, worktree)
     assert_true(agent_status.write("codex", repo, "running"), "failed to record first agent state")
     assert_true(agent_status.write("cursor", worktree, "idle"), "failed to record second agent state")
 
+    local recent_paths = require("luanphan.recent_paths")
+    recent_paths.touch(worktree)
     local instances = api.list_active_agents()
     assert_true(#instances == 2, "active agent discovery returned an unexpected instance count")
+    assert_true(instances[1].agent == "cursor", "agent picker did not promote the latest project")
+    recent_paths.touch(repo)
+    instances = api.list_active_agents()
+    assert_true(instances[1].agent == "codex", "agent picker did not move a revisited project to the front")
     local by_agent = {}
     for _, instance in ipairs(instances) do
       by_agent[instance.agent] = instance
@@ -2190,13 +2287,13 @@ local function test_deleted_workspace_falls_back_to_master_worktree_from_lazy_ke
   vim.cmd("cd " .. vim.fn.fnameescape(workspace))
 
   run({ "git", "worktree", "remove", "--force", workspace }, source)
-  feed_normal((vim.g.mapleader or "\\") .. "gw")
+  feed_normal((vim.g.mapleader or "\\") .. "ww")
 
   local expected = realpath(source)
   wait_until("master worktree fallback", function()
     return realpath(vim.fn.getcwd()) == expected
   end, 10000)
-  assert_true(worktree_plugin_loaded(), "worktree plugin did not lazy-load from <leader>gw")
+  assert_true(worktree_plugin_loaded(), "worktree plugin did not lazy-load from <leader>ww")
 end
 
 local function test_deleted_workspace_started_at_workspace_falls_back_to_master_worktree()
@@ -2216,7 +2313,7 @@ local function test_deleted_workspace_started_at_workspace_falls_back_to_master_
     "assert_true(not (plugin._ and plugin._.loaded), 'worktree plugin loaded before key')",
     "local out = vim.fn.systemlist({ 'git', '-C', source, 'worktree', 'remove', '--force', workspace })",
     "assert_true(vim.v.shell_error == 0, table.concat(out, '\\n'))",
-    "vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes((vim.g.mapleader or '\\\\') .. 'gw', true, false, true), 'xt', false)",
+    "vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes((vim.g.mapleader or '\\\\') .. 'ww', true, false, true), 'xt', false)",
     "local ok = vim.wait(10000, function() return realpath(cwd()) == expected end, 50, false)",
     "assert_true(ok, 'cwd did not fall back to master: ' .. cwd())",
     "assert_true(plugin._ and plugin._.loaded, 'worktree plugin did not load after key')",
@@ -2245,7 +2342,7 @@ local function test_git_diff_previews(worktree)
   close_diffview()
 end
 
-local function select_git_diff_repository(expected_count)
+local function select_git_diff_repository(expected_count, move_next)
   local prompt_bufnr = nil
   wait_until("git diff repository picker", function()
     for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -2266,6 +2363,9 @@ local function select_git_diff_repository(expected_count)
   end, 5000)
 
   local picker = require("telescope.actions.state").get_current_picker(prompt_bufnr)
+  if move_next then
+    require("telescope.actions").move_selection_next(prompt_bufnr)
+  end
   local selection = picker:get_selection()
   assert_true(selection and selection.value and selection.value.path, "git diff repository picker has no selection")
   require("telescope.actions").select_default(prompt_bufnr)
@@ -2276,7 +2376,8 @@ local function test_git_diff_picker_from_workspace_root()
   local original_cwd = vim.fn.getcwd()
   local _, workspaces, station, workspace_name = make_project_scope_fixture()
   local workspace_root = station .. "/local_workspaces/" .. workspace_name
-  local selected_repo = workspaces["example-project-a"]
+  local selected_repo = workspaces["example-project-b-long"]
+  vim.fn.delete(vim.g.luanphan_recent_paths_file)
 
   write(selected_repo .. "/README.md", { "committed branch change" })
   run({ "git", "add", "README.md" }, selected_repo)
@@ -2284,9 +2385,9 @@ local function test_git_diff_picker_from_workspace_root()
   write(selected_repo .. "/README.md", { "committed branch change", "working tree change" })
   vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
 
-  local function open_from_picker(lhs)
+  local function open_from_picker(lhs, move_next)
     invoke_map(lhs)
-    local picked = select_git_diff_repository(2)
+    local picked = select_git_diff_repository(2, move_next)
     assert_true(realpath(picked) == realpath(selected_repo), lhs .. " selected an unexpected repository")
     wait_for_diffview()
 
@@ -2297,9 +2398,97 @@ local function test_git_diff_picker_from_workspace_root()
     close_diffview()
   end
 
-  open_from_picker("<leader>gd")
+  open_from_picker("<leader>gd", true)
   open_from_picker("<leader>gD")
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+end
+
+local function test_git_diff_separate_commit_and_push_from_workspace_root()
+  local original_cwd = vim.fn.getcwd()
+  local original_input = vim.ui.input
+  local _, workspaces, station, workspace_name = make_project_scope_fixture()
+  local workspace_root = station .. "/local_workspaces/" .. workspace_name
+  local selected_repo = workspaces["example-project-a"]
+  local remote = station .. "/example-remote.git"
+  local message = "commit from diffview"
+  local staged_file = selected_repo .. "/committed-from-diff.txt"
+  local unstaged_file = selected_repo .. "/left-unstaged.txt"
+  vim.fn.delete(vim.g.luanphan_recent_paths_file)
+
+  run({ "git", "init", "--bare", remote })
+  run({ "git", "remote", "add", "origin", remote }, selected_repo)
+  write(staged_file, { "staged change" })
+  write(unstaged_file, { "unstaged change" })
+  run({ "git", "add", "committed-from-diff.txt" }, selected_repo)
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
+    invoke_map("<leader>gd")
+    local picked = select_git_diff_repository(2)
+    assert_true(realpath(picked) == realpath(selected_repo), "diff commit selected the wrong repository")
+    wait_for_diffview()
+    focus_file_window_inside_diffview_tab(staged_file)
+
+    wait_until("diff commit keymap", function()
+      local map = vim.fn.maparg("<leader>gc", "n", false, true)
+      return type(map) == "table"
+        and type(map.callback) == "function"
+        and map.desc == "Commit staged changes"
+    end, 3000)
+
+    vim.ui.input = function(_, callback)
+      callback(message)
+    end
+    invoke_map("<leader>gc")
+
+    local branch = run({ "git", "rev-parse", "--abbrev-ref", "HEAD" }, selected_repo)[1]
+    wait_until("diff commit", function()
+      local subject = vim.fn.systemlist({ "git", "-C", selected_repo, "log", "-1", "--format=%s" })
+      return vim.v.shell_error == 0 and subject[1] == message
+    end, 10000)
+    vim.fn.system({
+      "git", "--git-dir", remote, "rev-parse", "--verify", "refs/heads/" .. branch,
+    })
+    assert_true(vim.v.shell_error ~= 0, "diff commit unexpectedly pushed before <leader>gp")
+    local commit_callback_settled = false
+    vim.defer_fn(function()
+      commit_callback_settled = true
+    end, 100)
+    wait_until("diff commit callback", function()
+      return commit_callback_settled
+    end, 1000)
+
+    local push_map = vim.fn.maparg("<leader>gp", "n", false, true)
+    assert_true(
+      type(push_map) == "table" and type(push_map.callback) == "function" and push_map.desc == "Push origin HEAD",
+      "Diffview <leader>gp push mapping is missing"
+    )
+    invoke_map("<leader>gp")
+    wait_until("diff commit push", function()
+      vim.fn.system({
+        "git", "--git-dir", remote, "rev-parse", "--verify", "refs/heads/" .. branch,
+      })
+      return vim.v.shell_error == 0
+    end, 10000)
+
+    local subject = run({ "git", "log", "-1", "--format=%s" }, selected_repo)[1]
+    assert_true(subject == message, "diff commit used the wrong message or repository")
+    local local_head = run({ "git", "rev-parse", "HEAD" }, selected_repo)[1]
+    local remote_head = run({ "git", "--git-dir", remote, "rev-parse", "refs/heads/" .. branch })[1]
+    assert_true(local_head == remote_head, "diff commit did not push the selected repository branch")
+    local status = table.concat(run({ "git", "status", "--short" }, selected_repo), "\n")
+    assert_true(status:find("left%-unstaged%.txt") ~= nil, "diff commit unexpectedly staged unrelated changes")
+    assert_true(realpath(vim.fn.getcwd()) == realpath(workspace_root), "diff commit changed the workspace cwd")
+  end, debug.traceback)
+
+  vim.ui.input = original_input
+  if has_visible_diffview() then
+    close_diffview()
+  end
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  end
+  assert_true(ok, tostring(err))
 end
 
 local function test_git_diff_refresh_preserves_directory_folds(worktree)
@@ -2597,6 +2786,10 @@ local setup_ok, setup_err = xpcall(function()
     test_adjacent_project_discovery(repo, worktree)
   end)
 
+  test("navigation pickers order destinations by most recent visit", function()
+    test_recent_navigation_ordering(repo, worktree)
+  end)
+
   test("project picker discovers grouped workspace and root repositories", function()
     test_workspace_and_master_project_discovery()
   end)
@@ -2655,6 +2848,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("git diff picker from workspace root", function()
     test_git_diff_picker_from_workspace_root()
+  end)
+
+  test("git diff separates commit and push for its selected repository", function()
+    test_git_diff_separate_commit_and_push_from_workspace_root()
   end)
 
   test("git diff original file jump starts go runtime", function()
