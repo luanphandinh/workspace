@@ -1,3 +1,5 @@
+local recent_paths = require("luanphan.recent_paths")
+
 local function find_diffview_tab()
   for _, tabid in ipairs(vim.api.nvim_list_tabpages()) do
     local wins = vim.api.nvim_tabpage_list_wins(tabid)
@@ -190,7 +192,9 @@ local function refire_current_file_runtime(buf)
         vim.cmd("filetype detect")
       end)
     end
-    pcall(vim.api.nvim_exec_autocmds, "FileType", { buffer = buf, modeline = false })
+    pcall(vim.api.nvim_buf_call, buf, function()
+      vim.api.nvim_exec_autocmds("FileType", { buffer = buf, modeline = false })
+    end)
   end)
 end
 
@@ -265,20 +269,143 @@ local function jump_to_original_file(view)
   open_original_file(path, current_original_line(path, view), ok and lib or nil)
 end
 
-local function set_diffview_jump_keymap(view, buf)
+local function diffview_repository()
+  local ok, lib = pcall(require, "diffview.lib")
+  local view = ok and lib.get_current_view() or nil
+  if not view then
+    return nil, nil
+  end
+  local repo = view and view.adapter and view.adapter.ctx and view.adapter.ctx.toplevel
+  if type(repo) ~= "string" or repo == "" then
+    return nil, view
+  end
+  return repo, view
+end
+
+local function git_error(label, code, stdout, stderr)
+  local lines = {}
+  vim.list_extend(lines, stderr or {})
+  vim.list_extend(lines, stdout or {})
+  local detail = vim.trim(table.concat(lines, "\n"))
+  local message = string.format("%s failed (exit %d)", label, code)
+  if detail ~= "" then
+    message = message .. ": " .. detail
+  end
+  vim.notify(message, vim.log.levels.ERROR)
+end
+
+local function run_git(repo, args, callback)
+  local command = { "git", "-C", repo }
+  vim.list_extend(command, args)
+  local stdout = {}
+  local stderr = {}
+  local job = vim.fn.jobstart(command, {
+    stdout_buffered = true,
+    stderr_buffered = true,
+    on_stdout = function(_, data)
+      stdout = data or {}
+    end,
+    on_stderr = function(_, data)
+      stderr = data or {}
+    end,
+    on_exit = function(_, code)
+      vim.schedule(function()
+        callback(code, stdout, stderr)
+      end)
+    end,
+  })
+  if job <= 0 then
+    vim.notify("Could not start git command", vim.log.levels.ERROR)
+    return false
+  end
+  return true
+end
+
+local operation_in_progress = {}
+
+local function commit_diffview()
+  local repo, view = diffview_repository()
+  if not repo then
+    vim.notify("Commit is only available inside an active Diffview", vim.log.levels.WARN)
+    return
+  end
+  if operation_in_progress[repo] then
+    vim.notify("Git operation already in progress for " .. vim.fn.fnamemodify(repo, ":t"), vim.log.levels.WARN)
+    return
+  end
+
+  vim.ui.input({ prompt = "Commit message: " }, function(message)
+    message = message and vim.trim(message) or ""
+    if message == "" then
+      return
+    end
+
+    operation_in_progress[repo] = "commit"
+    vim.notify("Committing " .. vim.fn.fnamemodify(repo, ":t") .. "...")
+    local started = run_git(repo, { "commit", "-m", message }, function(code, stdout, stderr)
+      operation_in_progress[repo] = nil
+      if code ~= 0 then
+        git_error("Commit", code, stdout, stderr)
+        return
+      end
+
+      if view and vim.is_callable(view.update_files) then
+        pcall(view.update_files, view)
+      end
+      vim.notify("Committed: " .. message)
+    end)
+    if not started then
+      operation_in_progress[repo] = nil
+    end
+  end)
+end
+
+local function push_diffview()
+  local repo = diffview_repository()
+  if not repo then
+    vim.notify("Push is only available inside an active Diffview", vim.log.levels.WARN)
+    return
+  end
+  if operation_in_progress[repo] then
+    vim.notify("Git operation already in progress for " .. vim.fn.fnamemodify(repo, ":t"), vim.log.levels.WARN)
+    return
+  end
+
+  operation_in_progress[repo] = "push"
+  vim.notify("Pushing " .. vim.fn.fnamemodify(repo, ":t") .. " to origin HEAD...")
+  local started = run_git(repo, { "push", "origin", "HEAD" }, function(code, stdout, stderr)
+    operation_in_progress[repo] = nil
+    if code ~= 0 then
+      git_error("Push", code, stdout, stderr)
+      return
+    end
+    vim.notify("Push successful")
+  end)
+  if not started then
+    operation_in_progress[repo] = nil
+  end
+end
+
+local function set_diffview_keymaps(view, buf)
   vim.keymap.set("n", "<leader>gf", function()
     jump_to_original_file(view)
   end, { buffer = buf, desc = "Jump to original file" })
+  vim.keymap.set("n", "<leader>gc", function()
+    commit_diffview()
+  end, { buffer = buf, desc = "Commit staged changes" })
+  vim.keymap.set("n", "<leader>gp", function()
+    push_diffview()
+  end, { buffer = buf, desc = "Push origin HEAD" })
 end
 
-local function set_diffview_tab_jump_keymaps(view)
+local function set_diffview_tab_keymaps(view)
   local tab = view and view.tabpage or vim.api.nvim_get_current_tabpage()
   if not vim.api.nvim_tabpage_is_valid(tab) then
     return
   end
 
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
-    set_diffview_jump_keymap(view, vim.api.nvim_win_get_buf(win))
+    set_diffview_keymaps(view, vim.api.nvim_win_get_buf(win))
   end
 end
 
@@ -406,10 +533,11 @@ local function list_child_git_repositories(parent)
     end
   end
 
-  table.sort(repositories, function(left, right)
+  return recent_paths.sort(repositories, function(repository)
+    return repository.path
+  end, function(left, right)
     return left.name:lower() < right.name:lower()
   end)
-  return repositories
 end
 
 local function pick_child_git_repository(parent, action)
@@ -455,6 +583,7 @@ local function pick_child_git_repository(parent, action)
           vim.notify("git diff repository picker: no selection", vim.log.levels.WARN)
           return
         end
+        recent_paths.touch(selection.value.path)
         vim.schedule(function()
           action(selection.value.path)
         end)
@@ -473,6 +602,7 @@ local function with_diff_repository(action)
     local cwd = vim.fn.getcwd()
     local root = git_root(cwd)
     if root then
+      recent_paths.touch(root)
       action(root)
       return
     end
@@ -613,11 +743,11 @@ return {
             vim.api.nvim_tabpage_set_var(0, "diffview_active", true)
             vim.cmd("filetype detect")
 
-            set_diffview_tab_jump_keymaps(view)
-            set_diffview_jump_keymap(view, 0)
+            set_diffview_tab_keymaps(view)
+            set_diffview_keymaps(view, 0)
             preserve_diffview_folds(view)
             vim.schedule(function()
-              set_diffview_tab_jump_keymaps(view)
+              set_diffview_tab_keymaps(view)
             end)
           end,
         },
@@ -632,7 +762,7 @@ return {
             vim.keymap.set("n", "q", "<cmd>DiffviewClose<cr>", { buffer = true, silent = true })
           end
           if current_tab_has_diffview() then
-            set_diffview_jump_keymap(nil, 0)
+            set_diffview_keymaps(nil, 0)
           end
         end,
       })

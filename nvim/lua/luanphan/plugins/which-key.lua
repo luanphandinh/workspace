@@ -28,6 +28,7 @@ return {
         { "<leader>k", group = "Editor" },
         { "<leader>r", group = "Restart", icon = { icon = " ", color = "cyan" } },
         { "<leader>t", group = "Toggle" },
+        { "<leader>w", group = "Workspace", icon = { icon = "󰍹 ", color = "cyan" } },
         { "<leader>x", group = "Claude", icon = { icon = " ", color = "green" } },
         { "<leader>t1", desc = "Live grep case sensitivity", icon = toggle_icons.live_grep_case_sensitive },
         { "<leader>t2", desc = "Live grep regex", icon = toggle_icons.live_grep_regex },

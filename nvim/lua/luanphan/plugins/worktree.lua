@@ -36,6 +36,7 @@ local function setup()
     { name = "claude", key = "claude_agent_bufnr" },
     { name = "cursor", key = "cursor_agent_bufnr" },
   }
+  local recent_paths = require("luanphan.recent_paths")
 
   -- Transient map of "apply this cursor when the file is first BufReadPost'd
   -- in the current nvim session". Populated by `restore_buffers`, consumed
@@ -134,7 +135,7 @@ local function setup()
     local prev_positions = type(prev) == "table" and prev.positions or nil
 
     -- Prefer the currently-focused file. If the user happened to be on a
-    -- [No Name] / tree / picker buffer when pressing <leader>gw, fall back
+    -- [No Name] / tree / picker buffer when pressing <leader>ww, fall back
     -- to whatever was active last time (if it's still in the files list).
     local active = find_active_file()
     if not active and prev_active and seen[prev_active] then
@@ -543,7 +544,9 @@ local function setup()
       end
     end
     if cur.path then table.insert(trees, cur) end
-    return trees
+    return recent_paths.sort(trees, function(tree)
+      return tree.path
+    end)
   end
 
   local function list_repos_in_dir(parent)
@@ -562,8 +565,11 @@ local function setup()
         repos[#repos + 1] = { name = name, path = path }
       end
     end
-    table.sort(repos, function(a, b) return a.name < b.name end)
-    return repos
+    return recent_paths.sort(repos, function(repo)
+      return repo.path
+    end, function(a, b)
+      return a.name < b.name
+    end)
   end
 
   local function list_sibling_repos()
@@ -687,7 +693,11 @@ local function setup()
         }
       end
     end
-    table.sort(workspaces, function(a, b) return a.name < b.name end)
+    recent_paths.sort(workspaces, function(workspace)
+      return workspace.path
+    end, function(a, b)
+      return a.name < b.name
+    end)
     return workspaces, root
   end
 
@@ -707,7 +717,9 @@ local function setup()
         branch = project_branch(repo.path),
       }
     end
-    return repos
+    return recent_paths.sort(repos, function(repo)
+      return repo.path
+    end)
   end
 
   local function group_project_entries(repos, current_root)
@@ -829,7 +841,9 @@ local function setup()
       end
     end
 
-    table.sort(instances, function(a, b)
+    recent_paths.sort(instances, function(instance)
+      return instance.path
+    end, function(a, b)
       if a.context == b.context then
         return a.agent < b.agent
       end
@@ -860,7 +874,7 @@ local function setup()
     return instances
   end
 
-  switch_to = function(path, kind)
+  switch_to = function(path, kind, visit_path)
     if vim.fn.isdirectory(path) == 0 then
       vim.notify("worktree path not found: " .. path, vim.log.levels.ERROR)
       return
@@ -899,6 +913,7 @@ local function setup()
 
     -- 3. cd. Fires DirChangedPre/DirChanged for the persistent-terminal modules.
     vim.cmd("cd " .. vim.fn.fnameescape(path))
+    recent_paths.touch(visit_path or path)
 
     -- 4. Stop every LSP client AND wipe the diagnostics each one published.
     --    `client:stop()` alone leaves stale diagnostics painted on any buffer
@@ -1045,6 +1060,7 @@ local function setup()
           end
           local target = sel.value.path
           if target == cur_root then
+            recent_paths.touch(target)
             vim.notify("already in this worktree", vim.log.levels.INFO)
             return
           end
@@ -1060,7 +1076,7 @@ local function setup()
           end
           -- Defer the switch so telescope has fully closed its float/window.
           vim.schedule(function()
-            switch_to(final_target)
+            switch_to(final_target, nil, target)
           end)
         end)
         return true
@@ -1115,6 +1131,7 @@ local function setup()
           end
           actions.close(prompt_bufnr)
           if selection.value.path == current_root then
+            recent_paths.touch(selection.value.path)
             vim.notify("already in this project", vim.log.levels.INFO)
             return
           end
@@ -1170,6 +1187,7 @@ local function setup()
             return
           end
           if selection.value.path == current_root then
+            recent_paths.touch(selection.value.path)
             vim.notify("already in this project", vim.log.levels.INFO)
             return
           end
@@ -1230,6 +1248,7 @@ local function setup()
             return
           end
           local workspace = selection.value
+          recent_paths.touch(workspace.path)
           vim.schedule(function()
             pick_workspace_repositories(workspace)
           end)
@@ -1242,6 +1261,8 @@ local function setup()
   local function activate_agent(instance)
     if instance.path ~= safe_getcwd() then
       switch_to(instance.path, "agent project")
+    else
+      recent_paths.touch(instance.path)
     end
     close_other_agent_windows(instance.bufnr)
     local ok, agents = pcall(require, "luanphan.plugins.agents")
@@ -1311,10 +1332,10 @@ local function setup()
     vim.api.nvim_create_user_command("AgentSwitch", pick_agent, {
       desc = "Switch nvim instance to a project with an active agent",
     })
-    vim.keymap.set("n", "<leader>gw", pick_worktree, { desc = "Switch worktree" })
-    vim.keymap.set("n", "<leader>gr", pick_project, { desc = "Go to repository" })
-    vim.keymap.set("n", "<leader>gp", pick_workspace_project, { desc = "Pick workspace project" })
-    vim.keymap.set("n", "<leader>g;", pick_agent, { desc = "Switch to active agent project" })
+    vim.keymap.set("n", "<leader>ww", pick_worktree, { desc = "Switch workspace" })
+    vim.keymap.set("n", "<leader>wr", pick_project, { desc = "Pick repository" })
+    vim.keymap.set("n", "<leader>wp", pick_workspace_project, { desc = "Pick project" })
+    vim.keymap.set("n", "<leader>w;", pick_agent, { desc = "Switch active agent" })
   end
 
   register_keymap()
@@ -1327,6 +1348,7 @@ local function setup()
     pick_agent = pick_agent,
     activate_agent = activate_agent,
     list_sibling_repos = list_sibling_repos,
+    list_worktrees = list_worktrees,
     list_all_project_repos = list_all_project_repos,
     list_workspace_directories = list_workspace_directories,
     list_workspace_repos = list_workspace_repos,
@@ -1374,10 +1396,10 @@ return {
     init = init,
     cmd = { "WorktreeSwitch", "ProjectSwitch", "RepositorySwitch", "AgentSwitch" },
     keys = {
-      { "<leader>gw", pick_worktree, desc = "Switch worktree" },
-      { "<leader>gr", pick_project, desc = "Go to repository" },
-      { "<leader>gp", pick_workspace_project, desc = "Pick workspace project" },
-      { "<leader>g;", pick_agent, desc = "Switch to active agent project" },
+      { "<leader>ww", pick_worktree, desc = "Switch workspace" },
+      { "<leader>wr", pick_project, desc = "Pick repository" },
+      { "<leader>wp", pick_workspace_project, desc = "Pick project" },
+      { "<leader>w;", pick_agent, desc = "Switch active agent" },
     },
     config = ensure_setup,
   },
