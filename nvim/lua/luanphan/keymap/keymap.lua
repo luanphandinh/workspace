@@ -122,6 +122,8 @@ vim.keymap.set("x", "<leader>p", "\"_dP")
 -- Window / terminal navigation
 vim.keymap.set("n", "<C-f>", "<cmd>slient !tmux neww tmux-sessionizer<CR>")
 vim.keymap.set("n", "<C-h>", "<C-w>h", { noremap = true, silent = true })
+vim.keymap.set("n", "<C-j>", "<C-w>j", { noremap = true, silent = true })
+vim.keymap.set("n", "<C-k>", "<C-w>k", { noremap = true, silent = true })
 vim.keymap.set("n", "<C-l>", "<C-w>l", { noremap = true, silent = true })
 
 -- |CTRL-W_o| like |:only| but keep nvim-tree / NERDTree sidebar if open
@@ -134,8 +136,7 @@ vim.keymap.set("n", "<C-w><C-o>", only_keep_tree, { desc = "Close other windows 
 -- Terminal mode: escape terminal and switch windows
 vim.keymap.set("t", "<C-h>", "<C-\\><C-n><C-w>h", { desc = "Exit terminal and go left" })
 vim.keymap.set("t", "<C-l>", "<C-\\><C-n><C-w>l", { desc = "Exit terminal and go right" })
--- vim.keymap.set("t", "<C-j>", "<C-\\><C-n><C-w>j", { desc = "Exit terminal and go down" })
--- vim.keymap.set("t", "<C-k>", "<C-\\><C-n><C-w>k", { desc = "Exit terminal and go up" })
+-- Keep <C-j>/<C-k> available to terminal programs for newline and line editing.
 vim.keymap.set("t", "<Esc>", "<C-\\><C-n>", { desc = "Exit terminal mode" })
 vim.keymap.set("t", "<C-]>", function()
   local job = vim.b.terminal_job_id
