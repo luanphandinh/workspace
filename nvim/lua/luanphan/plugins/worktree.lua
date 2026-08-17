@@ -801,27 +801,6 @@ local function setup()
     return workspaces, root
   end
 
-  local function list_workspace_repos(workspace)
-    local repos = {
-      {
-        name = workspace.name,
-        path = workspace.path,
-        branch = "workspace root",
-        workspace_root = true,
-      },
-    }
-    for _, repo in ipairs(workspace.repos or list_repos_in_dir(workspace.path)) do
-      repos[#repos + 1] = {
-        name = repo.name,
-        path = repo.path,
-        branch = project_branch(repo.path),
-      }
-    end
-    return recent_paths.sort(repos, function(repo)
-      return repo.path
-    end)
-  end
-
   local function group_project_entries(repos, current_root)
     local name_width = 0
     for _, repo in ipairs(repos) do
@@ -1253,53 +1232,13 @@ local function setup()
     }):find()
   end
 
-  local function pick_workspace_repositories(workspace)
-    local repos = list_workspace_repos(workspace)
-    local pickers, finders, conf, actions, action_state = telescope_modules()
-    if not pickers then return end
-    local current = safe_getcwd()
-    local current_root = git_root(current) or current
-    local name_width = 0
-    for _, repo in ipairs(repos) do
-      name_width = math.max(name_width, #repo.name)
+  local function activate_workspace(workspace)
+    if workspace.path == safe_getcwd() then
+      recent_paths.touch(workspace.path)
+      vim.notify("already in this workspace", vim.log.levels.INFO)
+      return
     end
-
-    pickers.new({}, {
-      prompt_title = "Workspace Projects: " .. workspace.name,
-      default_selection_index = 1,
-      finder = finders.new_table({
-        results = repos,
-        entry_maker = function(repo)
-          local marker = repo.path == current_root and "* " or "  "
-          return {
-            value = repo,
-            display = string.format("%s%-" .. name_width .. "s [%s]", marker, repo.name, repo.branch),
-            ordinal = repo.name,
-          }
-        end,
-      }),
-      sorter = conf.generic_sorter({}),
-      attach_mappings = function(prompt_bufnr, _map)
-        actions.select_default:replace(function()
-          local selection = action_state.get_selected_entry()
-          actions.close(prompt_bufnr)
-          if not selection or not selection.value or not selection.value.path then
-            vim.notify("workspace project picker: no selection", vim.log.levels.WARN)
-            return
-          end
-          if selection.value.path == current_root then
-            recent_paths.touch(selection.value.path)
-            vim.notify("already in this project", vim.log.levels.INFO)
-            return
-          end
-          vim.schedule(function()
-            local kind = selection.value.workspace_root and "workspace root" or "workspace project"
-            switch_to(selection.value.path, kind)
-          end)
-        end)
-        return true
-      end,
-    }):find()
+    switch_to(workspace.path, "workspace root")
   end
 
   local function pick_workspace_project()
@@ -1349,9 +1288,8 @@ local function setup()
             return
           end
           local workspace = selection.value
-          recent_paths.touch(workspace.path)
           vim.schedule(function()
-            pick_workspace_repositories(workspace)
+            activate_workspace(workspace)
           end)
         end)
         return true
@@ -1425,7 +1363,7 @@ local function setup()
       desc = "Switch nvim instance to another git worktree",
     })
     vim.api.nvim_create_user_command("ProjectSwitch", pick_workspace_project, {
-      desc = "Pick a local workspace and switch to one of its git repositories",
+      desc = "Pick a local workspace and switch to its root",
     })
     vim.api.nvim_create_user_command("RepositorySwitch", pick_project, {
       desc = "Switch nvim instance to an adjacent workspace or root git repository",
@@ -1435,7 +1373,7 @@ local function setup()
     })
     vim.keymap.set("n", "<leader>ww", pick_worktree, { desc = "Switch workspace" })
     vim.keymap.set("n", "<leader>wr", pick_project, { desc = "Pick repository" })
-    vim.keymap.set("n", "<leader>wp", pick_workspace_project, { desc = "Pick project" })
+    vim.keymap.set("n", "<leader>wp", pick_workspace_project, { desc = "Pick workspace" })
     vim.keymap.set("n", "<leader>w;", pick_agent, { desc = "Switch active agent" })
   end
 
@@ -1447,12 +1385,12 @@ local function setup()
     pick_project = pick_project,
     pick_workspace_project = pick_workspace_project,
     pick_agent = pick_agent,
+    activate_workspace = activate_workspace,
     activate_agent = activate_agent,
     list_sibling_repos = list_sibling_repos,
     list_worktrees = list_worktrees,
     list_all_project_repos = list_all_project_repos,
     list_workspace_directories = list_workspace_directories,
-    list_workspace_repos = list_workspace_repos,
     group_project_entries = group_project_entries,
     make_project_sorter = make_project_sorter,
     move_project_selection = move_project_selection,
@@ -1499,7 +1437,7 @@ return {
     keys = {
       { "<leader>ww", pick_worktree, desc = "Switch workspace" },
       { "<leader>wr", pick_project, desc = "Pick repository" },
-      { "<leader>wp", pick_workspace_project, desc = "Pick project" },
+      { "<leader>wp", pick_workspace_project, desc = "Pick workspace" },
       { "<leader>w;", pick_agent, desc = "Switch active agent" },
     },
     config = ensure_setup,

@@ -1224,7 +1224,7 @@ local function test_recent_navigation_ordering(repo, worktree)
     local trees = api.list_worktrees()
     assert_true(realpath(trees[1].path) == realpath(worktree), "worktree picker is not ordered by recent visits")
 
-    local sources, workspaces, station, workspace_name, empty_workspace_name = make_project_scope_fixture()
+    local sources, workspaces, station, _, empty_workspace_name = make_project_scope_fixture()
     local workspace_a = workspaces["example-project-a"]
     local workspace_b = workspaces["example-project-b-long"]
     local source_b = sources["example-project-b-long"]
@@ -1257,21 +1257,6 @@ local function test_recent_navigation_ordering(repo, worktree)
     assert_true(
       realpath(workspace_entries[1].path) == realpath(empty_workspace),
       "workspace picker did not promote the latest workspace"
-    )
-
-    local selected_workspace = nil
-    for _, workspace in ipairs(workspace_entries) do
-      if workspace.name == workspace_name then
-        selected_workspace = workspace
-        break
-      end
-    end
-    assert_true(selected_workspace ~= nil, "recent-order fixture workspace was not discovered")
-    recent_paths.touch(workspace_b)
-    local workspace_repos = api.list_workspace_repos(selected_workspace)
-    assert_true(
-      realpath(workspace_repos[1].path) == realpath(workspace_b),
-      "workspace project picker did not promote the latest repository"
     )
   end, debug.traceback)
 
@@ -1405,23 +1390,11 @@ local function test_workspace_project_discovery()
   assert_true(by_name[empty_workspace_name] ~= nil, "workspace discovery omitted an empty workspace")
   assert_true(by_name[empty_workspace_name].empty == true, "empty workspace was not marked empty")
 
-  local repos = api.list_workspace_repos(by_name[workspace_name])
-  assert_true(#repos == 3, "workspace picker targets omitted the workspace root")
-  assert_true(repos[1].workspace_root == true, "workspace root is not the first picker target")
-  assert_true(realpath(repos[1].path) == realpath(by_name[workspace_name].path), "workspace root path is incorrect")
-  assert_true(repos[1].branch == "workspace root", "workspace root label is incorrect")
-  local branches = {}
-  for _, repo in ipairs(repos) do
-    if not repo.workspace_root then
-      branches[repo.name] = repo.branch
-    end
-  end
-  assert_true(branches["example-project-a"] == "feature/a", "workspace project branch is incorrect")
-  assert_true(branches["example-project-b-long"] == "feature/b", "workspace project branch is incorrect")
-
-  local empty_targets = api.list_workspace_repos(by_name[empty_workspace_name])
-  assert_true(#empty_targets == 1, "empty workspace should expose only its workspace root")
-  assert_true(empty_targets[1].workspace_root == true, "empty workspace root is not selectable")
+  api.activate_workspace(by_name[workspace_name])
+  assert_true(
+    realpath(vim.fn.getcwd()) == realpath(by_name[workspace_name].path),
+    "workspace selection did not switch directly to the workspace root"
+  )
 
   vim.cmd("cd " .. vim.fn.fnameescape(sources["example-project-a"]))
   local from_master, master_root = api.list_workspace_directories()
@@ -3037,7 +3010,7 @@ local setup_ok, setup_err = xpcall(function()
     test_workspace_and_master_project_discovery()
   end)
 
-  test("workspace project picker discovers workspaces and checked-out branches", function()
+  test("workspace picker switches directly to the selected workspace root", function()
     test_workspace_project_discovery()
   end)
 
