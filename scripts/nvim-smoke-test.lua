@@ -688,6 +688,26 @@ local function test_diff_windows_keep_diff_folds_on_enter()
 
   assert_true(fold_state(left_win) == "diff:0", "left diff fold state changed to " .. fold_state(left_win))
   assert_true(fold_state(right_win) == "diff:0", "right diff fold state changed to " .. fold_state(right_win))
+
+  for _, win in ipairs({ left_win, right_win }) do
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_call(win, function()
+        vim.cmd("diffoff")
+      end)
+    end
+  end
+  if vim.api.nvim_win_is_valid(right_win) then
+    vim.api.nvim_win_close(right_win, true)
+  end
+  if vim.api.nvim_win_is_valid(left_win) then
+    vim.api.nvim_set_current_win(left_win)
+    vim.cmd("enew")
+  end
+  for _, buf in ipairs({ left_buf, right_buf }) do
+    if vim.api.nvim_buf_is_valid(buf) and buf ~= vim.api.nvim_get_current_buf() then
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end
+  end
 end
 
 local function test_go_runtime_recovers_when_entering_loaded_buffer(worktree)
@@ -2149,6 +2169,66 @@ local function test_worktree_switch_keeps_lsp(worktree)
   assert_lsp_navigation(worktree .. "/main.go")
 end
 
+local function test_worktree_switch_restores_repository_jumplist(repo, worktree)
+  local api = worktree_test_api()
+  close_agent_terminals()
+
+  local function make_jump_files(root, prefix)
+    local paths = {}
+    for index, suffix in ipairs({ "first", "second", "current" }) do
+      local path = root .. "/" .. prefix .. "-" .. suffix .. ".txt"
+      write(path, {
+        suffix .. " line 1",
+        suffix .. " line 2",
+        suffix .. " line 3",
+        suffix .. " line 4",
+      })
+      paths[index] = path
+    end
+    return paths
+  end
+
+  local function build_jumplist(paths)
+    vim.cmd("clearjumps")
+    vim.cmd("edit " .. vim.fn.fnameescape(paths[1]))
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    vim.cmd("edit " .. vim.fn.fnameescape(paths[2]))
+    vim.api.nvim_win_set_cursor(0, { 3, 0 })
+    vim.cmd("edit " .. vim.fn.fnameescape(paths[3]))
+    vim.api.nvim_win_set_cursor(0, { 4, 0 })
+  end
+
+  local function jump_back(expected_path, expected_line)
+    vim.api.nvim_feedkeys(vim.keycode("<C-o>"), "nx", false)
+    assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(expected_path), "jump history restored wrong file")
+    assert_true(vim.api.nvim_win_get_cursor(0)[1] == expected_line, "jump history restored wrong line")
+  end
+
+  local repo_paths = make_jump_files(repo, "repo-jump")
+  local worktree_paths = make_jump_files(worktree, "worktree-jump")
+
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  build_jumplist(repo_paths)
+  api.switch_to(worktree, "worktree")
+  build_jumplist(worktree_paths)
+
+  api.switch_to(repo, "repository")
+  assert_true(
+    realpath(vim.api.nvim_buf_get_name(0)) == realpath(repo_paths[3]),
+    "repository active file was not restored: " .. vim.api.nvim_buf_get_name(0)
+  )
+  assert_true(vim.api.nvim_win_get_cursor(0)[1] == 4, "repository active cursor was not restored")
+  jump_back(repo_paths[2], 3)
+
+  api.switch_to(worktree, "worktree")
+  assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(worktree_paths[3]), "worktree active file was not restored")
+  jump_back(worktree_paths[2], 3)
+
+  api.switch_to(repo, "repository")
+  assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(repo_paths[2]), "mid-list active file was not restored")
+  jump_back(repo_paths[1], 2)
+end
+
 local function test_worktree_switch_hides_toggleterm(repo, worktree)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
 
@@ -2440,6 +2520,10 @@ local function test_git_diff_repository_bar_from_workspace_root()
     "cursor state should persist",
     "last line",
   })
+  write(first_repo .. "/README.md", {
+    "replacement line one",
+    "replacement line two",
+  })
   write(second_repo .. "/second-change.txt", { "second repository change" })
   vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
 
@@ -2460,8 +2544,29 @@ local function test_git_diff_repository_bar_from_workspace_root()
   local saved_line = math.min(2, vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(initial_main_win)))
   vim.api.nvim_win_set_cursor(initial_main_win, { saved_line, 0 })
   local line = vim.api.nvim_buf_get_lines(bar_buf, 0, 1, false)[1] or ""
-  assert_true(line:find("[example-project-a]", 1, true) ~= nil, "initial diff repository is not highlighted")
+  assert_true(
+    line:find("[example-project-a +5 -1]", 1, true) ~= nil,
+    "initial diff repository omitted aggregate line changes"
+  )
   assert_true(line:find("example-project-b-long", 1, true) ~= nil, "repository bar omitted a child repository")
+  assert_true(
+    line:find("example-project-b-long +1 -0", 1, true) ~= nil,
+    "repository bar omitted untracked line changes"
+  )
+  assert_true(
+    line:find("example-project-clean +", 1, true) == nil,
+    "clean repository displayed line changes"
+  )
+  local namespace = vim.api.nvim_get_namespaces()["luanphan-diff-repositories"]
+  local stat_highlights = {}
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(bar_buf, namespace, 0, -1, { details = true })) do
+    local group = mark[4].hl_group
+    if group == "DiffviewFilePanelInsertions" or group == "DiffviewFilePanelDeletions" then
+      stat_highlights[group] = true
+    end
+  end
+  assert_true(stat_highlights.DiffviewFilePanelInsertions, "repository additions were not highlighted")
+  assert_true(stat_highlights.DiffviewFilePanelDeletions, "repository deletions were not highlighted")
   local changed_position = line:find("example-project-b-long", 1, true)
   local clean_position = line:find("example-project-clean", 1, true)
   assert_true(clean_position and clean_position > changed_position, "clean repository was not moved behind changed repositories")
@@ -2484,7 +2589,10 @@ local function test_git_diff_repository_bar_from_workspace_root()
   assert_true(vim.api.nvim_get_current_buf() == bar_buf, "repository browsing did not focus the selected repository bar")
   assert_true(vim.api.nvim_get_current_win() == bar_win, "repository browsing moved focus into the diff")
   line = vim.api.nvim_buf_get_lines(bar_buf, 0, 1, false)[1] or ""
-  assert_true(line:find("[example-project-b-long]", 1, true) ~= nil, "visible diff repository is not highlighted")
+  assert_true(
+    line:find("[example-project-b-long +1 -0]", 1, true) ~= nil,
+    "visible diff repository is not highlighted"
+  )
 
   invoke_map("h")
   wait_for_diffview_repository(first_repo)
@@ -2525,8 +2633,8 @@ local function test_git_diff_repository_bar_from_workspace_root()
   assert_true(bar_buf ~= nil, "branch diff omitted the multi-repository bar")
   line = vim.api.nvim_buf_get_lines(bar_buf, 0, 1, false)[1] or ""
   assert_true(
-    line:find("[example-project-b-long]", 1, true) ~= nil,
-    "branch diff did not move the changed repository ahead of clean repositories"
+    line:find("[example-project-b-long +1 -0]", 1, true) ~= nil,
+    "branch diff omitted committed line changes"
   )
   close_diffview()
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
@@ -2967,6 +3075,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("worktree switch keeps lsp", function()
     test_worktree_switch_keeps_lsp(worktree)
+  end)
+
+  test("worktree switch restores repository jump history", function()
+    test_worktree_switch_restores_repository_jumplist(repo, worktree)
   end)
 
   test("worktree switch hides toggleterm", function()
