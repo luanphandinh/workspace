@@ -2520,6 +2520,10 @@ local function test_git_diff_repository_bar_from_workspace_root()
     "cursor state should persist",
     "last line",
   })
+  write(first_repo .. "/README.md", {
+    "replacement line one",
+    "replacement line two",
+  })
   write(second_repo .. "/second-change.txt", { "second repository change" })
   vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
 
@@ -2540,8 +2544,29 @@ local function test_git_diff_repository_bar_from_workspace_root()
   local saved_line = math.min(2, vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(initial_main_win)))
   vim.api.nvim_win_set_cursor(initial_main_win, { saved_line, 0 })
   local line = vim.api.nvim_buf_get_lines(bar_buf, 0, 1, false)[1] or ""
-  assert_true(line:find("[example-project-a]", 1, true) ~= nil, "initial diff repository is not highlighted")
+  assert_true(
+    line:find("[example-project-a +5 -1]", 1, true) ~= nil,
+    "initial diff repository omitted aggregate line changes"
+  )
   assert_true(line:find("example-project-b-long", 1, true) ~= nil, "repository bar omitted a child repository")
+  assert_true(
+    line:find("example-project-b-long +1 -0", 1, true) ~= nil,
+    "repository bar omitted untracked line changes"
+  )
+  assert_true(
+    line:find("example-project-clean +", 1, true) == nil,
+    "clean repository displayed line changes"
+  )
+  local namespace = vim.api.nvim_get_namespaces()["luanphan-diff-repositories"]
+  local stat_highlights = {}
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(bar_buf, namespace, 0, -1, { details = true })) do
+    local group = mark[4].hl_group
+    if group == "DiffviewFilePanelInsertions" or group == "DiffviewFilePanelDeletions" then
+      stat_highlights[group] = true
+    end
+  end
+  assert_true(stat_highlights.DiffviewFilePanelInsertions, "repository additions were not highlighted")
+  assert_true(stat_highlights.DiffviewFilePanelDeletions, "repository deletions were not highlighted")
   local changed_position = line:find("example-project-b-long", 1, true)
   local clean_position = line:find("example-project-clean", 1, true)
   assert_true(clean_position and clean_position > changed_position, "clean repository was not moved behind changed repositories")
@@ -2564,7 +2589,10 @@ local function test_git_diff_repository_bar_from_workspace_root()
   assert_true(vim.api.nvim_get_current_buf() == bar_buf, "repository browsing did not focus the selected repository bar")
   assert_true(vim.api.nvim_get_current_win() == bar_win, "repository browsing moved focus into the diff")
   line = vim.api.nvim_buf_get_lines(bar_buf, 0, 1, false)[1] or ""
-  assert_true(line:find("[example-project-b-long]", 1, true) ~= nil, "visible diff repository is not highlighted")
+  assert_true(
+    line:find("[example-project-b-long +1 -0]", 1, true) ~= nil,
+    "visible diff repository is not highlighted"
+  )
 
   invoke_map("h")
   wait_for_diffview_repository(first_repo)
@@ -2605,8 +2633,8 @@ local function test_git_diff_repository_bar_from_workspace_root()
   assert_true(bar_buf ~= nil, "branch diff omitted the multi-repository bar")
   line = vim.api.nvim_buf_get_lines(bar_buf, 0, 1, false)[1] or ""
   assert_true(
-    line:find("[example-project-b-long]", 1, true) ~= nil,
-    "branch diff did not move the changed repository ahead of clean repositories"
+    line:find("[example-project-b-long +1 -0]", 1, true) ~= nil,
+    "branch diff omitted committed line changes"
   )
   close_diffview()
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))

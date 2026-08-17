@@ -546,18 +546,51 @@ local function default_base_branch(repo)
   return "main"
 end
 
-local function repository_has_worktree_diff(repo)
-  local status = git_systemlist({ "git", "-C", repo, "status", "--porcelain", "--untracked-files=normal" })
-  return status ~= nil and #status > 0
+local function parse_numstat(lines)
+  local additions = 0
+  local deletions = 0
+  for _, line in ipairs(lines or {}) do
+    local added, deleted = line:match("^(%d+)%s+(%d+)")
+    additions = additions + (tonumber(added) or 0)
+    deletions = deletions + (tonumber(deleted) or 0)
+  end
+  return additions, deletions
 end
 
-local function repository_has_branch_diff(repo)
+local function repository_worktree_stats(repo)
+  local status = git_systemlist({ "git", "-C", repo, "status", "--porcelain", "--untracked-files=normal" })
+  local additions, deletions = parse_numstat(git_systemlist({ "git", "-C", repo, "diff", "--numstat", "HEAD", "--" }))
+  local untracked = git_systemlist({ "git", "-C", repo, "ls-files", "--others", "--exclude-standard" }) or {}
+  for _, path in ipairs(untracked) do
+    local output = vim.fn.systemlist({
+      "git", "-C", repo, "diff", "--no-index", "--numstat", "--", "/dev/null", repo .. "/" .. path,
+    })
+    local added, deleted = parse_numstat(output)
+    additions = additions + added
+    deletions = deletions + deleted
+  end
+  return {
+    has_diff = status ~= nil and #status > 0,
+    additions = additions,
+    deletions = deletions,
+  }
+end
+
+local function repository_branch_stats(repo)
   local base = default_base_branch(repo)
   vim.fn.system({ "git", "-C", repo, "diff", "--quiet", base .. "...HEAD", "--" })
-  return vim.v.shell_error == 1
+  local has_diff = vim.v.shell_error == 1
+  local additions, deletions = parse_numstat(
+    git_systemlist({ "git", "-C", repo, "diff", "--numstat", base .. "...HEAD", "--" })
+  )
+  return {
+    has_diff = has_diff,
+    additions = additions,
+    deletions = deletions,
+  }
 end
 
-local function list_child_git_repositories(parent, has_diff)
+local function list_child_git_repositories(parent, change_stats)
   local uv = vim.uv or vim.loop
   local scan = uv.fs_scandir(parent)
   if not scan then
@@ -578,11 +611,14 @@ local function list_child_git_repositories(parent, has_diff)
     then
       local root = git_root(path)
       if root and (uv.fs_realpath(root) or root) == (uv.fs_realpath(path) or path) then
+        local stats = change_stats and change_stats(root) or {}
         repositories[#repositories + 1] = {
           name = name,
           path = root,
           branch = git_branch(root),
-          has_diff = has_diff and has_diff(root) or false,
+          has_diff = stats.has_diff or false,
+          additions = stats.additions or 0,
+          deletions = stats.deletions or 0,
         }
       end
     end
@@ -665,16 +701,31 @@ end
 render_repository_bar = function(state, buf, win)
   local line = ""
   local ranges = {}
+  local stat_ranges = {}
   for index, repository in ipairs(state.repositories) do
     if index > 1 then
       line = line .. "  "
     end
     local start_col = #line
-    local label = repository.name
-    if index == (state.selected or state.active) then
-      label = "[" .. label .. "]"
+    local selected = index == (state.selected or state.active)
+    if selected then
+      line = line .. "["
     end
-    line = line .. label
+    line = line .. repository.name
+    if repository.has_diff then
+      line = line .. " "
+      local addition_start = #line
+      line = line .. "+" .. tostring(repository.additions)
+      local deletion_start = #line + 1
+      line = line .. " -" .. tostring(repository.deletions)
+      stat_ranges[index] = {
+        addition = { start_col = addition_start, end_col = deletion_start - 1 },
+        deletion = { start_col = deletion_start, end_col = #line },
+      }
+    end
+    if selected then
+      line = line .. "]"
+    end
     ranges[index] = { start_col = start_col, end_col = #line }
   end
 
@@ -690,6 +741,25 @@ render_repository_bar = function(state, buf, win)
       group = "DiffviewRepoTabActive"
     end
     vim.api.nvim_buf_add_highlight(buf, repository_bar_namespace, group, 0, range.start_col, range.end_col)
+    local stats = stat_ranges[index]
+    if stats then
+      vim.api.nvim_buf_add_highlight(
+        buf,
+        repository_bar_namespace,
+        "DiffviewFilePanelInsertions",
+        0,
+        stats.addition.start_col,
+        stats.addition.end_col
+      )
+      vim.api.nvim_buf_add_highlight(
+        buf,
+        repository_bar_namespace,
+        "DiffviewFilePanelDeletions",
+        0,
+        stats.deletion.start_col,
+        stats.deletion.end_col
+      )
+    end
   end
 
   state.ranges = ranges
@@ -1000,10 +1070,10 @@ end
 local function setup_diffview_keymaps()
   vim.keymap.set("n", "<leader>gd", with_diffview(with_diff_repository(function(repo)
     open_diffview(repo)
-  end, repository_has_worktree_diff)), { desc = "Diff current changes" })
+  end, repository_worktree_stats)), { desc = "Diff current changes" })
   vim.keymap.set("n", "<leader>gD", with_diffview(with_diff_repository(
     open_branch_diff,
-    repository_has_branch_diff
+    repository_branch_stats
   )), { desc = "Diff branch vs base" })
   vim.keymap.set("n", "<leader>gb", with_diffview(open_current_line_commit), { desc = "Blame commit at line" })
   vim.keymap.set("n", "<leader>gH", with_diffview(toggle_file_history), { desc = "File history (current)" })
