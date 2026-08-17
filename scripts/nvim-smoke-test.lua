@@ -2583,11 +2583,11 @@ local function test_git_diff_repository_bar_from_workspace_root()
   wait_for_diffview_repository(first_repo)
   local active_view = require("diffview.lib").get_current_view()
   local main_win = active_view.cur_layout:get_main_win().id
-  wait_until("repository bar diff focus", function()
-    return vim.api.nvim_get_current_win() ~= bar_win
+  wait_until("repository bar file tree focus", function()
+    return active_view.panel.winid and vim.api.nvim_get_current_win() == active_view.panel.winid
   end, 3000)
   _, bar_win = find_workspace_diff_bar()
-  assert_true(vim.api.nvim_get_current_win() == main_win, "o did not focus the selected repository diff")
+  assert_true(vim.api.nvim_get_current_win() == active_view.panel.winid, "o did not focus the selected repository file tree")
   assert_true(active_view.cur_entry.path == "first-change.txt", "repository switch lost the selected diff file")
   assert_true(vim.api.nvim_win_get_cursor(main_win)[1] == saved_line, "repository switch lost the diff cursor line")
   assert_true(realpath(vim.fn.getcwd()) == realpath(workspace_root), "repository switching changed the workspace cwd")
