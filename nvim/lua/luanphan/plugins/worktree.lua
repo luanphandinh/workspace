@@ -28,6 +28,7 @@ local function setup()
   --       files     = { abs_paths… },
   --       positions = { [abs_path] = { line, col }, … },  -- per-file cursor
   --       active    = abs_path|nil,
+  --       jumps     = { { path, line, col }, … },
   --     } }
   local BUFSTORE_KEY = "luanphan_workspace_buffers"
   local WS_CONTAINER = "local_workspaces"
@@ -162,15 +163,75 @@ local function setup()
   -- so we have a place to `:edit` the restored active file without hijacking
   -- the tree pane. Returns nil if there is no editor window left.
   local function find_editor_window()
-    for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local function is_editor(win)
       local buf = vim.api.nvim_win_get_buf(win)
       local bt = vim.bo[buf].buftype
       local ft = vim.bo[buf].filetype
-      if bt == "" and ft ~= "NvimTree" then
+      return bt == "" and ft ~= "NvimTree"
+    end
+
+    local current = vim.api.nvim_get_current_win()
+    if is_editor(current) then
+      return current
+    end
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if is_editor(win) then
+        return win
+      end
+    end
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if is_editor(win) then
         return win
       end
     end
     return nil
+  end
+
+  local function jump_path(jump)
+    if jump.bufnr and jump.bufnr > 0 and vim.api.nvim_buf_is_valid(jump.bufnr) then
+      local name = vim.api.nvim_buf_get_name(jump.bufnr)
+      if name ~= "" then
+        return name
+      end
+    end
+    if type(jump.filename) == "string" and jump.filename ~= "" then
+      return vim.fn.fnamemodify(jump.filename, ":p")
+    end
+    return nil
+  end
+
+  local function snapshot_jumplist(cwd)
+    local win = find_editor_window()
+    if not win then return end
+
+    local ok, result = pcall(vim.api.nvim_win_call, win, function()
+      return vim.fn.getjumplist()
+    end)
+    if not ok or type(result) ~= "table" then return end
+
+    local list = result[1] or {}
+    local index = math.min(result[2] or #list, #list)
+    local jumps = {}
+    for i = 1, index do
+      local jump = list[i]
+      local path = jump_path(jump)
+      if path and vim.fn.filereadable(path) == 1 then
+        local normalized = vim.fn.fnamemodify(path, ":p"):gsub("/$", "")
+        local root = vim.fn.fnamemodify(cwd, ":p"):gsub("/$", "")
+        if normalized == root or vim.startswith(normalized, root .. "/") then
+          jumps[#jumps + 1] = {
+            path = normalized,
+            line = jump.lnum or 1,
+            col = jump.col or 0,
+          }
+        end
+      end
+    end
+
+    local store = vim.g[BUFSTORE_KEY] or {}
+    store[cwd] = type(store[cwd]) == "table" and store[cwd] or {}
+    store[cwd].jumps = jumps
+    vim.g[BUFSTORE_KEY] = store
   end
 
   -- Visible agent float for the current cwd. Toggleterm splits also set
@@ -384,6 +445,45 @@ local function setup()
     if vim.api.nvim_win_is_valid(original_win) then
       pcall(vim.api.nvim_set_current_win, original_win)
     end
+  end
+
+  local function restore_jumplist(cwd, active_path)
+    clear_all_jumplists()
+
+    local store = vim.g[BUFSTORE_KEY] or {}
+    local entry = store[cwd]
+    local jumps = type(entry) == "table" and entry.jumps or nil
+    if not jumps or #jumps == 0 or not active_path then return end
+
+    local win = find_editor_window()
+    if not win then return end
+    local active_pos = type(entry.positions) == "table" and entry.positions[active_path] or nil
+
+    pcall(vim.api.nvim_win_call, win, function()
+      local scratch_buffers = {}
+      for _, jump in ipairs(jumps) do
+        if vim.fn.filereadable(jump.path) == 1
+          and pcall(vim.cmd, "keepjumps hide edit " .. vim.fn.fnameescape(jump.path))
+        then
+          local line = math.min(math.max(1, jump.line or 1), vim.api.nvim_buf_line_count(0))
+          pcall(vim.api.nvim_win_set_cursor, 0, { line, jump.col or 0 })
+          if pcall(vim.cmd, "hide enew") then
+            scratch_buffers[#scratch_buffers + 1] = vim.api.nvim_get_current_buf()
+          end
+        end
+      end
+
+      pcall(vim.cmd, "keepjumps hide edit " .. vim.fn.fnameescape(active_path))
+      if active_pos then
+        local line = math.min(math.max(1, active_pos.line or 1), vim.api.nvim_buf_line_count(0))
+        pcall(vim.api.nvim_win_set_cursor, 0, { line, active_pos.col or 0 })
+      end
+      for _, buf in ipairs(scratch_buffers) do
+        if vim.api.nvim_buf_is_valid(buf) and buf ~= vim.api.nvim_get_current_buf() then
+          pcall(vim.api.nvim_buf_delete, buf, { force = true })
+        end
+      end
+    end)
   end
 
   local function close_toggleterm_windows()
@@ -885,6 +985,7 @@ local function setup()
     local old_cwd = safe_getcwd()
     if old_cwd ~= "" then
       snapshot_buffers(old_cwd)
+      snapshot_jumplist(old_cwd)
     end
 
     -- 2a. Close nvim-tree first if it's open. The tree pane has its own
@@ -960,13 +1061,17 @@ local function setup()
     --    on what they were last looking at.
     local restored, reopened = restore_buffers(cwd)
 
-    -- 7. Re-attach LSP for every currently-loaded buffer in the new cwd by
+    -- 7. Restore this repository's backward jump history. Neovim has no
+    --    jumplist setter, so each saved location is replayed as a native jump.
+    restore_jumplist(cwd, reopened)
+
+    -- 8. Re-attach LSP for every currently-loaded buffer in the new cwd by
     --    re-firing FileType. Picks up the buffer that's still on screen
     --    (whichever one survived the cleanup) so diagnostics/code-actions
     --    work immediately, without waiting for the user to BufEnter.
     refire_filetype_all()
 
-    -- 8. Re-open nvim-tree if it was open before. Pass the new cwd as the
+    -- 9. Re-open nvim-tree if it was open before. Pass the new cwd as the
     --    open path AND follow up with `change_root` — the tree caches its
     --    last root across close/open cycles, so without the explicit path
     --    it would re-open rooted at the previous worktree (the "stuck at
@@ -979,12 +1084,8 @@ local function setup()
       pcall(tree_api.tree.change_root, cwd)
     end
 
-    -- 9. Focus priority: agent float > reopened active file > nvim-tree.
+    -- 10. Focus priority: agent float > reopened active file > nvim-tree.
     focus_after_switch(reopened)
-
-    -- 10. Jumplists are window-local but not workspace-local; clear them after
-    --     the switch settles so <C-o>/<C-i> cannot reopen old worktree files.
-    clear_all_jumplists()
 
     local msg = "Switched to " .. (kind or "worktree") .. ": " .. path
     if restored > 0 then
