@@ -183,16 +183,16 @@ local actions = {
         defaults = {
           file_ignore_patterns = ignore_dot_git,
           vimgrep_arguments = show_gitignore
-              and { "rg", "--color=never", "--no-heading", "--with-filename", "--line-number", "--column", "--smart-case", "--hidden", "--no-ignore" }
-              or { "rg", "--color=never", "--no-heading", "--with-filename", "--line-number", "--column", "--smart-case", "--hidden" },
+              and { "rg", "--color=never", "--no-heading", "--with-filename", "--line-number", "--column", "--smart-case", "--no-ignore" }
+              or { "rg", "--color=never", "--no-heading", "--with-filename", "--line-number", "--column", "--smart-case" },
         },
         pickers = {
           find_files = {
-            hidden = true,
+            hidden = false,
             file_ignore_patterns = ignore_dot_git,
             find_command = show_gitignore
-                and { "rg", "--files", "--hidden", "--follow", "--no-ignore" }
-                or { "rg", "--files", "--hidden", "--follow" },
+                and { "rg", "--files", "--follow", "--no-ignore" }
+                or { "rg", "--files", "--follow" },
           },
         },
       })

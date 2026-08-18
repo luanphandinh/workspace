@@ -844,6 +844,24 @@ local function setup()
     return workspaces, root
   end
 
+  local function list_workspace_destinations()
+    local workspaces, root = list_workspace_directories()
+    if not root then
+      return {}, nil
+    end
+
+    local destinations = {
+      {
+        name = "root",
+        path = root,
+        root = true,
+        empty = false,
+      },
+    }
+    vim.list_extend(destinations, workspaces)
+    return destinations, root
+  end
+
   local function group_project_entries(repos, current_root)
     local name_width = 0
     for _, repo in ipairs(repos) do
@@ -1281,7 +1299,7 @@ local function setup()
       vim.notify("already in this workspace", vim.log.levels.INFO)
       return
     end
-    switch_to(workspace.path, "workspace root")
+    switch_to(workspace.path, workspace.root and "root workspace" or "workspace root")
   end
 
   local function pick_workspace_project()
@@ -1289,18 +1307,25 @@ local function setup()
       return
     end
 
-    local workspaces = list_workspace_directories()
+    local workspaces, root = list_workspace_destinations()
     if #workspaces == 0 then
-      vim.notify("no local workspaces found", vim.log.levels.WARN)
+      vim.notify("no workspace root found", vim.log.levels.WARN)
       return
     end
 
     local pickers, finders, conf, actions, action_state = telescope_modules()
     if not pickers then return end
     local current = safe_getcwd()
+    local current_destination = root
+    for _, workspace in ipairs(workspaces) do
+      if not workspace.root and path_is_in_dir(current, workspace.path) then
+        current_destination = workspace.path
+        break
+      end
+    end
     local default_selection = 1
     for index, workspace in ipairs(workspaces) do
-      if path_is_in_dir(current, workspace.path) then
+      if workspace.path == current_destination then
         default_selection = index
         break
       end
@@ -1312,7 +1337,7 @@ local function setup()
       finder = finders.new_table({
         results = workspaces,
         entry_maker = function(workspace)
-          local marker = path_is_in_dir(current, workspace.path) and "* " or "  "
+          local marker = workspace.path == current_destination and "* " or "  "
           local suffix = workspace.empty and " [no code repo yet]" or ""
           return {
             value = workspace,
@@ -1434,6 +1459,7 @@ local function setup()
     list_worktrees = list_worktrees,
     list_all_project_repos = list_all_project_repos,
     list_workspace_directories = list_workspace_directories,
+    list_workspace_destinations = list_workspace_destinations,
     group_project_entries = group_project_entries,
     make_project_sorter = make_project_sorter,
     move_project_selection = move_project_selection,

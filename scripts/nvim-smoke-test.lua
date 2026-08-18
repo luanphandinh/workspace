@@ -1179,6 +1179,49 @@ local function test_worktree_plugin_starts_lazy()
   end
 end
 
+local function test_nvim_tree_hides_dotfiles()
+  local config = require("nvim-tree.config").g_clone()
+  assert_true(config and config.filters.dotfiles == true, "nvim-tree should hide dotfiles")
+end
+
+local function test_searches_follow_tree_dotfiles()
+  local fixture = temp_root .. "/live-grep-hidden"
+  write(fixture .. "/visible.txt", { "search target" })
+  write(fixture .. "/.hidden/hidden.txt", { "search target" })
+
+  local function search()
+    local args = { "rg", "--files-with-matches" }
+    vim.list_extend(args, require("luanphan.telescope_grep_opts").additional_args())
+    vim.list_extend(args, { "search target", "." })
+    local result = vim.system(args, { cwd = fixture, text = true }):wait()
+    assert_true(result.code == 0, "live grep fixture failed: " .. (result.stderr or ""))
+    return result.stdout
+  end
+
+  local function find_files()
+    local args = require("luanphan.telescope_find_opts").find_command()
+    local result = vim.system(args, { cwd = fixture, text = true }):wait()
+    assert_true(result.code == 0, "find files fixture failed: " .. (result.stderr or ""))
+    return result.stdout
+  end
+
+  local hidden = search()
+  assert_true(hidden:find("visible.txt", 1, true) ~= nil, "live grep omitted a visible file")
+  assert_true(hidden:find(".hidden", 1, true) == nil, "live grep included a hidden directory")
+  assert_true(find_files():find(".hidden", 1, true) == nil, "find files included a hidden directory")
+
+  local tree_api = require("nvim-tree.api")
+  tree_api.tree.open({ path = fixture, focus = true })
+  assert_true(vim.bo.filetype == "NvimTree", "nvim-tree did not open for the dotfile toggle fixture")
+  invoke_map("H")
+  assert_true(vim.g.luanphan_show_dotfiles == 1, "nvim-tree did not publish visible dotfile state")
+  assert_true(search():find(".hidden", 1, true) ~= nil, "live grep did not follow visible dotfile state")
+  assert_true(find_files():find(".hidden", 1, true) ~= nil, "find files did not follow visible dotfile state")
+  invoke_map("H")
+  assert_true(vim.g.luanphan_show_dotfiles == 0, "nvim-tree did not restore hidden dotfile state")
+  tree_api.tree.close()
+end
+
 local function test_adjacent_project_discovery(repo, worktree)
   local api = worktree_test_api()
   local original_cwd = vim.fn.getcwd()
@@ -1389,6 +1432,19 @@ local function test_workspace_project_discovery()
   assert_true(#by_name[workspace_name].repos == 2, "workspace repository count is incorrect")
   assert_true(by_name[empty_workspace_name] ~= nil, "workspace discovery omitted an empty workspace")
   assert_true(by_name[empty_workspace_name].empty == true, "empty workspace was not marked empty")
+
+  local destinations, destination_root = api.list_workspace_destinations()
+  assert_true(realpath(destination_root) == realpath(station), "workspace destinations resolved the wrong root")
+  assert_true(#destinations == 3, "workspace destinations returned an unexpected count")
+  assert_true(destinations[1].root == true, "workspace destinations did not put root first")
+  assert_true(destinations[1].name == "root", "workspace root destination has the wrong name")
+  assert_true(realpath(destinations[1].path) == realpath(station), "workspace root destination has the wrong path")
+
+  api.activate_workspace(destinations[1])
+  assert_true(
+    realpath(vim.fn.getcwd()) == realpath(station),
+    "root workspace selection did not switch to the workstation root"
+  )
 
   api.activate_workspace(by_name[workspace_name])
   assert_true(
@@ -2931,6 +2987,14 @@ local setup_ok, setup_err = xpcall(function()
     test_worktree_plugin_starts_lazy()
   end)
 
+  test("nvim-tree hides dotfiles", function()
+    test_nvim_tree_hides_dotfiles()
+  end)
+
+  test("file searches follow nvim-tree dotfile visibility", function()
+    test_searches_follow_tree_dotfiles()
+  end)
+
   test("toggle icons reflect state", function()
     test_toggle_icons_reflect_state()
   end)
@@ -3027,7 +3091,7 @@ local setup_ok, setup_err = xpcall(function()
     test_workspace_and_master_project_discovery()
   end)
 
-  test("workspace picker switches directly to the selected workspace root", function()
+  test("workspace picker switches to root and workspace destinations", function()
     test_workspace_project_discovery()
   end)
 
