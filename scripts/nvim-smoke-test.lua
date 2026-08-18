@@ -1653,16 +1653,23 @@ end
 
 local function test_filetype_refire_uses_target_buffer()
   local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
   local original_buf = vim.api.nvim_get_current_buf()
-  local markdown_buf = vim.api.nvim_create_buf(false, false)
-  local other_buf = vim.api.nvim_create_buf(false, false)
+  local fixture = temp_root .. "/filetype-context"
+  local markdown_path = fixture .. "/context.md"
+  local other_path = fixture .. "/other.txt"
+  write(markdown_path, { "# Context" })
+  write(other_path, { "other" })
+  vim.cmd("cd " .. vim.fn.fnameescape(fixture))
+  vim.cmd("edit " .. vim.fn.fnameescape(markdown_path))
+  local markdown_buf = vim.api.nvim_get_current_buf()
+  vim.cmd("edit " .. vim.fn.fnameescape(other_path))
+  local other_buf = vim.api.nvim_get_current_buf()
   local group = vim.api.nvim_create_augroup("SmokeFileTypeBufferContext", { clear = true })
   local callback_buf = nil
 
   local ok, err = xpcall(function()
-    vim.api.nvim_set_current_buf(markdown_buf)
     vim.bo[markdown_buf].filetype = "markdown"
-    vim.api.nvim_set_current_buf(other_buf)
     vim.api.nvim_create_autocmd("FileType", {
       group = group,
       pattern = "markdown",
@@ -1680,6 +1687,9 @@ local function test_filetype_refire_uses_target_buffer()
   pcall(vim.api.nvim_del_augroup_by_id, group)
   if vim.api.nvim_buf_is_valid(original_buf) then
     pcall(vim.api.nvim_set_current_buf, original_buf)
+  end
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
   end
   for _, buf in ipairs({ markdown_buf, other_buf }) do
     if vim.api.nvim_buf_is_valid(buf) then
@@ -2196,6 +2206,58 @@ local function test_worktree_switch_keeps_lsp(worktree)
     return realpath(vim.fn.getcwd()) == expected
   end, 10000)
   assert_lsp_navigation(worktree .. "/main.go")
+end
+
+local function test_worktree_switch_hides_foreign_file(repo, worktree)
+  local api = worktree_test_api()
+  local clean_path = repo .. "/switch-clean.go"
+  local modified_path = repo .. "/switch-modified.go"
+  write(clean_path, { "package main", "", "var switchClean = true" })
+  write(modified_path, { "package main", "", "var switchModified = true" })
+
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  vim.cmd("edit " .. vim.fn.fnameescape(modified_path))
+  local modified_buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(modified_buf, -1, -1, false, { "var pendingChange = true" })
+  vim.cmd("hide edit " .. vim.fn.fnameescape(clean_path))
+  local clean_buf = vim.api.nvim_get_current_buf()
+
+  local store = vim.g[api.store_key] or {}
+  store[worktree] = nil
+  vim.g[api.store_key] = store
+
+  local foreign_filetype_events = 0
+  local group = vim.api.nvim_create_augroup("SmokeWorktreeForeignFile", { clear = true })
+  vim.api.nvim_create_autocmd("FileType", {
+    group = group,
+    callback = function(args)
+      if args.buf == modified_buf then
+        foreign_filetype_events = foreign_filetype_events + 1
+      end
+    end,
+  })
+
+  api.switch_to(worktree, "worktree")
+  assert_true(realpath(vim.fn.getcwd()) == realpath(worktree), "worktree switch did not change cwd")
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local visible = vim.api.nvim_win_get_buf(win)
+    assert_true(visible ~= clean_buf, "previous repository file remained visible after switch")
+    assert_true(visible ~= modified_buf, "modified previous repository file remained visible after switch")
+  end
+  assert_true(not vim.api.nvim_buf_is_valid(clean_buf), "unmodified foreign buffer was not deleted")
+  assert_true(vim.api.nvim_buf_is_valid(modified_buf), "modified foreign buffer was discarded")
+  assert_true(vim.bo[modified_buf].modified, "modified foreign buffer lost its unsaved state")
+  assert_true(foreign_filetype_events == 0, "foreign buffer restarted its filetype after switch")
+
+  api.snapshot(worktree)
+  local entry = (vim.g[api.store_key] or {})[worktree] or {}
+  for _, path in ipairs(entry.files or {}) do
+    assert_true(realpath(path) ~= realpath(modified_path), "foreign buffer leaked into repository snapshot")
+  end
+
+  vim.api.nvim_del_augroup_by_id(group)
+  vim.bo[modified_buf].modified = false
+  vim.api.nvim_buf_delete(modified_buf, { force = true })
 end
 
 local function test_worktree_switch_restores_repository_jumplist(repo, worktree)
@@ -3129,6 +3191,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("worktree switch keeps lsp", function()
     test_worktree_switch_keeps_lsp(worktree)
+  end)
+
+  test("worktree switch hides files from the previous repository", function()
+    test_worktree_switch_hides_foreign_file(repo, worktree)
   end)
 
   test("worktree switch restores repository jump history", function()

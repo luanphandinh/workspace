@@ -81,13 +81,21 @@ local function setup()
     end,
   })
 
+  local function path_is_in_dir(path, dir)
+    if path == dir then return true end
+    if dir:sub(-1) == "/" then
+      return vim.startswith(path, dir)
+    end
+    return vim.startswith(path, dir .. "/")
+  end
+
   -- Currently-focused file (or any visible file window) at snapshot time, so
   -- we can re-open it in an editor window when the user comes back.
-  local function find_active_file()
+  local function find_active_file(cwd)
     local cur = vim.api.nvim_get_current_buf()
     if vim.bo[cur].buftype == "" then
       local name = vim.api.nvim_buf_get_name(cur)
-      if name ~= "" and vim.fn.filereadable(name) == 1 then
+      if name ~= "" and vim.fn.filereadable(name) == 1 and path_is_in_dir(name, cwd) then
         return name
       end
     end
@@ -95,7 +103,7 @@ local function setup()
       local buf = vim.api.nvim_win_get_buf(win)
       if vim.bo[buf].buftype == "" and vim.bo[buf].filetype ~= "NvimTree" then
         local name = vim.api.nvim_buf_get_name(buf)
-        if name ~= "" and vim.fn.filereadable(name) == 1 then
+        if name ~= "" and vim.fn.filereadable(name) == 1 and path_is_in_dir(name, cwd) then
           return name
         end
       end
@@ -132,7 +140,11 @@ local function setup()
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       if vim.bo[buf].buflisted and vim.bo[buf].buftype == "" then
         local name = vim.api.nvim_buf_get_name(buf)
-        if name ~= "" and vim.fn.filereadable(name) == 1 and not seen[name] then
+        if name ~= ""
+          and vim.fn.filereadable(name) == 1
+          and path_is_in_dir(name, cwd)
+          and not seen[name]
+        then
           seen[name] = true
           files[#files + 1] = name
           local pos = buffer_cursor(buf)
@@ -149,7 +161,7 @@ local function setup()
     -- Prefer the currently-focused file. If the user happened to be on a
     -- [No Name] / tree / picker buffer when pressing <leader>ww, fall back
     -- to whatever was active last time (if it's still in the files list).
-    local active = find_active_file()
+    local active = find_active_file(cwd)
     if not active and prev_active and seen[prev_active] then
       active = prev_active
     end
@@ -318,14 +330,6 @@ local function setup()
     if vim.api.nvim_tabpage_is_valid(original) then
       pcall(vim.api.nvim_set_current_tabpage, original)
     end
-  end
-
-  local function path_is_in_dir(path, dir)
-    if path == dir then return true end
-    if dir:sub(-1) == "/" then
-      return vim.startswith(path, dir)
-    end
-    return vim.startswith(path, dir .. "/")
   end
 
   local function safe_getcwd()
@@ -538,6 +542,28 @@ local function setup()
     end
   end
 
+  -- Keep unsaved foreign buffers loaded, but never leave one visible after
+  -- changing repositories. Unmodified buffers are deleted by the cleanup
+  -- pass below; modified buffers remain hidden until their repository is
+  -- selected again.
+  local function detach_foreign_file_windows(cwd)
+    local replacement = nil
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_is_valid(win) then
+        local buf = vim.api.nvim_win_get_buf(win)
+        local name = vim.api.nvim_buf_get_name(buf)
+        if vim.bo[buf].buftype == ""
+          and vim.bo[buf].filetype ~= "NvimTree"
+          and name ~= ""
+          and not path_is_in_dir(name, cwd)
+        then
+          replacement = replacement or vim.api.nvim_create_buf(true, false)
+          pcall(vim.api.nvim_win_set_buf, win, replacement)
+        end
+      end
+    end
+  end
+
   -- Focus priority after a switch:
   --   1. visible agent float
   --   2. window showing the file we just re-opened
@@ -582,7 +608,7 @@ local function setup()
 
     local restored = 0
     for _, path in ipairs(files) do
-      if vim.fn.filereadable(path) == 1 then
+      if vim.fn.filereadable(path) == 1 and path_is_in_dir(path, cwd) then
         if pcall(vim.cmd, "badd " .. vim.fn.fnameescape(path)) then
           restored = restored + 1
         end
@@ -595,7 +621,7 @@ local function setup()
     if positions then
       local pending = vim.g[PENDING_POS_KEY] or {}
       for path, pos in pairs(positions) do
-        if vim.fn.filereadable(path) == 1 then
+        if vim.fn.filereadable(path) == 1 and path_is_in_dir(path, cwd) then
           pending[path] = pos
         end
       end
@@ -605,11 +631,11 @@ local function setup()
     -- Pick what to re-open: prefer the saved `active`, but fall back to the
     -- first file in the saved list if `active` is missing or unreadable.
     local target_file = nil
-    if active and vim.fn.filereadable(active) == 1 then
+    if active and vim.fn.filereadable(active) == 1 and path_is_in_dir(active, cwd) then
       target_file = active
     else
       for _, path in ipairs(files) do
-        if vim.fn.filereadable(path) == 1 then
+        if vim.fn.filereadable(path) == 1 and path_is_in_dir(path, cwd) then
           target_file = path
           break
         end
@@ -651,9 +677,11 @@ local function setup()
   -- `lsp_restart.refire_filetype(nil)` but inlined so this module stays
   -- self-contained.
   local function refire_filetype_all()
+    local cwd = safe_getcwd()
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].buftype == "" then
-        if not vim.b[buf].luanphan_jumplist_replayed then
+        local name = vim.api.nvim_buf_get_name(buf)
+        if name ~= "" and path_is_in_dir(name, cwd) and not vim.b[buf].luanphan_jumplist_replayed then
           pcall(vim.api.nvim_buf_call, buf, function()
             vim.api.nvim_exec_autocmds("FileType", { buffer = buf })
           end)
@@ -1072,12 +1100,14 @@ local function setup()
     -- to the old workspace should also go.
     pcall(vim.diagnostic.reset)
 
-    -- 5. Drop buffers that don't belong in the new cwd (terminals + foreign
+    -- 5. Detach visible foreign files, then drop buffers that don't belong
+    --    in the new cwd (terminals + foreign
     --    files). Persistent-terminal-marked buffers are kept. Iterates by
     --    `buflisted OR loaded` so that listed-but-unloaded buffers from a
     --    previous restore (the ones we `:badd`'d under the old cwd) also get
     --    cleaned up — otherwise they'd pile up across repeated switches.
     local cwd = safe_getcwd()
+    detach_foreign_file_windows(cwd)
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       local persist = vim.b[buf].luanphan_persist_term
       local relevant = vim.bo[buf].buflisted or vim.api.nvim_buf_is_loaded(buf)
