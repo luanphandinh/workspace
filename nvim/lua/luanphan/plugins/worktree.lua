@@ -70,13 +70,32 @@ local function setup()
     end,
   })
 
+  vim.api.nvim_create_autocmd("BufEnter", {
+    group = vim.api.nvim_create_augroup("LuanphanWorktreeReplayFileType", { clear = true }),
+    callback = function(args)
+      if not vim.b[args.buf].luanphan_jumplist_replayed then return end
+      vim.b[args.buf].luanphan_jumplist_replayed = nil
+      pcall(vim.api.nvim_buf_call, args.buf, function()
+        vim.api.nvim_exec_autocmds("FileType", { buffer = args.buf, modeline = false })
+      end)
+    end,
+  })
+
+  local function path_is_in_dir(path, dir)
+    if path == dir then return true end
+    if dir:sub(-1) == "/" then
+      return vim.startswith(path, dir)
+    end
+    return vim.startswith(path, dir .. "/")
+  end
+
   -- Currently-focused file (or any visible file window) at snapshot time, so
   -- we can re-open it in an editor window when the user comes back.
-  local function find_active_file()
+  local function find_active_file(cwd)
     local cur = vim.api.nvim_get_current_buf()
     if vim.bo[cur].buftype == "" then
       local name = vim.api.nvim_buf_get_name(cur)
-      if name ~= "" and vim.fn.filereadable(name) == 1 then
+      if name ~= "" and vim.fn.filereadable(name) == 1 and path_is_in_dir(name, cwd) then
         return name
       end
     end
@@ -84,7 +103,7 @@ local function setup()
       local buf = vim.api.nvim_win_get_buf(win)
       if vim.bo[buf].buftype == "" and vim.bo[buf].filetype ~= "NvimTree" then
         local name = vim.api.nvim_buf_get_name(buf)
-        if name ~= "" and vim.fn.filereadable(name) == 1 then
+        if name ~= "" and vim.fn.filereadable(name) == 1 and path_is_in_dir(name, cwd) then
           return name
         end
       end
@@ -121,7 +140,11 @@ local function setup()
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       if vim.bo[buf].buflisted and vim.bo[buf].buftype == "" then
         local name = vim.api.nvim_buf_get_name(buf)
-        if name ~= "" and vim.fn.filereadable(name) == 1 and not seen[name] then
+        if name ~= ""
+          and vim.fn.filereadable(name) == 1
+          and path_is_in_dir(name, cwd)
+          and not seen[name]
+        then
           seen[name] = true
           files[#files + 1] = name
           local pos = buffer_cursor(buf)
@@ -138,7 +161,7 @@ local function setup()
     -- Prefer the currently-focused file. If the user happened to be on a
     -- [No Name] / tree / picker buffer when pressing <leader>ww, fall back
     -- to whatever was active last time (if it's still in the files list).
-    local active = find_active_file()
+    local active = find_active_file(cwd)
     if not active and prev_active and seen[prev_active] then
       active = prev_active
     end
@@ -309,14 +332,6 @@ local function setup()
     end
   end
 
-  local function path_is_in_dir(path, dir)
-    if path == dir then return true end
-    if dir:sub(-1) == "/" then
-      return vim.startswith(path, dir)
-    end
-    return vim.startswith(path, dir .. "/")
-  end
-
   local function safe_getcwd()
     local ok, cwd = pcall(vim.fn.getcwd)
     if ok and cwd and cwd ~= "" then
@@ -459,12 +474,35 @@ local function setup()
     if not win then return end
     local active_pos = type(entry.positions) == "table" and entry.positions[active_path] or nil
 
+    -- Native jump reconstruction must visit each file without initializing it.
+    local previous_eventignore = vim.o.eventignore
+    local ignored_events = vim.split(previous_eventignore, ",", { trimempty = true })
+    local ignored = {}
+    for _, event in ipairs(ignored_events) do
+      ignored[event] = true
+    end
+    for _, event in ipairs({ "BufEnter", "BufWinEnter", "FileType" }) do
+      if not ignored[event] then
+        ignored_events[#ignored_events + 1] = event
+      end
+    end
+    vim.o.eventignore = table.concat(ignored_events, ",")
+
     pcall(vim.api.nvim_win_call, win, function()
       local scratch_buffers = {}
+      local replay_buffers = {}
+      local loaded_before = {}
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_loaded(buf) then
+          loaded_before[buf] = true
+        end
+      end
+
       for _, jump in ipairs(jumps) do
         if vim.fn.filereadable(jump.path) == 1
           and pcall(vim.cmd, "keepjumps hide edit " .. vim.fn.fnameescape(jump.path))
         then
+          replay_buffers[vim.api.nvim_get_current_buf()] = true
           local line = math.min(math.max(1, jump.line or 1), vim.api.nvim_buf_line_count(0))
           pcall(vim.api.nvim_win_set_cursor, 0, { line, jump.col or 0 })
           if pcall(vim.cmd, "hide enew") then
@@ -478,12 +516,19 @@ local function setup()
         local line = math.min(math.max(1, active_pos.line or 1), vim.api.nvim_buf_line_count(0))
         pcall(vim.api.nvim_win_set_cursor, 0, { line, active_pos.col or 0 })
       end
+      local active_buf = vim.api.nvim_get_current_buf()
       for _, buf in ipairs(scratch_buffers) do
-        if vim.api.nvim_buf_is_valid(buf) and buf ~= vim.api.nvim_get_current_buf() then
+        if vim.api.nvim_buf_is_valid(buf) and buf ~= active_buf then
           pcall(vim.api.nvim_buf_delete, buf, { force = true })
         end
       end
+      for buf in pairs(replay_buffers) do
+        if buf ~= active_buf and not loaded_before[buf] and vim.api.nvim_buf_is_valid(buf) then
+          vim.b[buf].luanphan_jumplist_replayed = true
+        end
+      end
     end)
+    vim.o.eventignore = previous_eventignore
   end
 
   local function close_toggleterm_windows()
@@ -492,6 +537,28 @@ local function setup()
         local buf = vim.api.nvim_win_get_buf(win)
         if vim.b[buf].luanphan_toggleterm or vim.b[buf].toggle_number then
           pcall(vim.api.nvim_win_close, win, false)
+        end
+      end
+    end
+  end
+
+  -- Keep unsaved foreign buffers loaded, but never leave one visible after
+  -- changing repositories. Unmodified buffers are deleted by the cleanup
+  -- pass below; modified buffers remain hidden until their repository is
+  -- selected again.
+  local function detach_foreign_file_windows(cwd)
+    local replacement = nil
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_is_valid(win) then
+        local buf = vim.api.nvim_win_get_buf(win)
+        local name = vim.api.nvim_buf_get_name(buf)
+        if vim.bo[buf].buftype == ""
+          and vim.bo[buf].filetype ~= "NvimTree"
+          and name ~= ""
+          and not path_is_in_dir(name, cwd)
+        then
+          replacement = replacement or vim.api.nvim_create_buf(true, false)
+          pcall(vim.api.nvim_win_set_buf, win, replacement)
         end
       end
     end
@@ -541,7 +608,7 @@ local function setup()
 
     local restored = 0
     for _, path in ipairs(files) do
-      if vim.fn.filereadable(path) == 1 then
+      if vim.fn.filereadable(path) == 1 and path_is_in_dir(path, cwd) then
         if pcall(vim.cmd, "badd " .. vim.fn.fnameescape(path)) then
           restored = restored + 1
         end
@@ -554,7 +621,7 @@ local function setup()
     if positions then
       local pending = vim.g[PENDING_POS_KEY] or {}
       for path, pos in pairs(positions) do
-        if vim.fn.filereadable(path) == 1 then
+        if vim.fn.filereadable(path) == 1 and path_is_in_dir(path, cwd) then
           pending[path] = pos
         end
       end
@@ -564,11 +631,11 @@ local function setup()
     -- Pick what to re-open: prefer the saved `active`, but fall back to the
     -- first file in the saved list if `active` is missing or unreadable.
     local target_file = nil
-    if active and vim.fn.filereadable(active) == 1 then
+    if active and vim.fn.filereadable(active) == 1 and path_is_in_dir(active, cwd) then
       target_file = active
     else
       for _, path in ipairs(files) do
-        if vim.fn.filereadable(path) == 1 then
+        if vim.fn.filereadable(path) == 1 and path_is_in_dir(path, cwd) then
           target_file = path
           break
         end
@@ -610,11 +677,15 @@ local function setup()
   -- `lsp_restart.refire_filetype(nil)` but inlined so this module stays
   -- self-contained.
   local function refire_filetype_all()
+    local cwd = safe_getcwd()
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].buftype == "" then
-        pcall(vim.api.nvim_buf_call, buf, function()
-          vim.api.nvim_exec_autocmds("FileType", { buffer = buf })
-        end)
+        local name = vim.api.nvim_buf_get_name(buf)
+        if name ~= "" and path_is_in_dir(name, cwd) and not vim.b[buf].luanphan_jumplist_replayed then
+          pcall(vim.api.nvim_buf_call, buf, function()
+            vim.api.nvim_exec_autocmds("FileType", { buffer = buf })
+          end)
+        end
       end
     end
   end
@@ -801,25 +872,22 @@ local function setup()
     return workspaces, root
   end
 
-  local function list_workspace_repos(workspace)
-    local repos = {
+  local function list_workspace_destinations()
+    local workspaces, root = list_workspace_directories()
+    if not root then
+      return {}, nil
+    end
+
+    local destinations = {
       {
-        name = workspace.name,
-        path = workspace.path,
-        branch = "workspace root",
-        workspace_root = true,
+        name = "root",
+        path = root,
+        root = true,
+        empty = false,
       },
     }
-    for _, repo in ipairs(workspace.repos or list_repos_in_dir(workspace.path)) do
-      repos[#repos + 1] = {
-        name = repo.name,
-        path = repo.path,
-        branch = project_branch(repo.path),
-      }
-    end
-    return recent_paths.sort(repos, function(repo)
-      return repo.path
-    end)
+    vim.list_extend(destinations, workspaces)
+    return destinations, root
   end
 
   local function group_project_entries(repos, current_root)
@@ -1032,12 +1100,14 @@ local function setup()
     -- to the old workspace should also go.
     pcall(vim.diagnostic.reset)
 
-    -- 5. Drop buffers that don't belong in the new cwd (terminals + foreign
+    -- 5. Detach visible foreign files, then drop buffers that don't belong
+    --    in the new cwd (terminals + foreign
     --    files). Persistent-terminal-marked buffers are kept. Iterates by
     --    `buflisted OR loaded` so that listed-but-unloaded buffers from a
     --    previous restore (the ones we `:badd`'d under the old cwd) also get
     --    cleaned up — otherwise they'd pile up across repeated switches.
     local cwd = safe_getcwd()
+    detach_foreign_file_windows(cwd)
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       local persist = vim.b[buf].luanphan_persist_term
       local relevant = vim.bo[buf].buflisted or vim.api.nvim_buf_is_loaded(buf)
@@ -1253,53 +1323,13 @@ local function setup()
     }):find()
   end
 
-  local function pick_workspace_repositories(workspace)
-    local repos = list_workspace_repos(workspace)
-    local pickers, finders, conf, actions, action_state = telescope_modules()
-    if not pickers then return end
-    local current = safe_getcwd()
-    local current_root = git_root(current) or current
-    local name_width = 0
-    for _, repo in ipairs(repos) do
-      name_width = math.max(name_width, #repo.name)
+  local function activate_workspace(workspace)
+    if workspace.path == safe_getcwd() then
+      recent_paths.touch(workspace.path)
+      vim.notify("already in this workspace", vim.log.levels.INFO)
+      return
     end
-
-    pickers.new({}, {
-      prompt_title = "Workspace Projects: " .. workspace.name,
-      default_selection_index = 1,
-      finder = finders.new_table({
-        results = repos,
-        entry_maker = function(repo)
-          local marker = repo.path == current_root and "* " or "  "
-          return {
-            value = repo,
-            display = string.format("%s%-" .. name_width .. "s [%s]", marker, repo.name, repo.branch),
-            ordinal = repo.name,
-          }
-        end,
-      }),
-      sorter = conf.generic_sorter({}),
-      attach_mappings = function(prompt_bufnr, _map)
-        actions.select_default:replace(function()
-          local selection = action_state.get_selected_entry()
-          actions.close(prompt_bufnr)
-          if not selection or not selection.value or not selection.value.path then
-            vim.notify("workspace project picker: no selection", vim.log.levels.WARN)
-            return
-          end
-          if selection.value.path == current_root then
-            recent_paths.touch(selection.value.path)
-            vim.notify("already in this project", vim.log.levels.INFO)
-            return
-          end
-          vim.schedule(function()
-            local kind = selection.value.workspace_root and "workspace root" or "workspace project"
-            switch_to(selection.value.path, kind)
-          end)
-        end)
-        return true
-      end,
-    }):find()
+    switch_to(workspace.path, workspace.root and "root workspace" or "workspace root")
   end
 
   local function pick_workspace_project()
@@ -1307,18 +1337,25 @@ local function setup()
       return
     end
 
-    local workspaces = list_workspace_directories()
+    local workspaces, root = list_workspace_destinations()
     if #workspaces == 0 then
-      vim.notify("no local workspaces found", vim.log.levels.WARN)
+      vim.notify("no workspace root found", vim.log.levels.WARN)
       return
     end
 
     local pickers, finders, conf, actions, action_state = telescope_modules()
     if not pickers then return end
     local current = safe_getcwd()
+    local current_destination = root
+    for _, workspace in ipairs(workspaces) do
+      if not workspace.root and path_is_in_dir(current, workspace.path) then
+        current_destination = workspace.path
+        break
+      end
+    end
     local default_selection = 1
     for index, workspace in ipairs(workspaces) do
-      if path_is_in_dir(current, workspace.path) then
+      if workspace.path == current_destination then
         default_selection = index
         break
       end
@@ -1330,7 +1367,7 @@ local function setup()
       finder = finders.new_table({
         results = workspaces,
         entry_maker = function(workspace)
-          local marker = path_is_in_dir(current, workspace.path) and "* " or "  "
+          local marker = workspace.path == current_destination and "* " or "  "
           local suffix = workspace.empty and " [no code repo yet]" or ""
           return {
             value = workspace,
@@ -1349,9 +1386,8 @@ local function setup()
             return
           end
           local workspace = selection.value
-          recent_paths.touch(workspace.path)
           vim.schedule(function()
-            pick_workspace_repositories(workspace)
+            activate_workspace(workspace)
           end)
         end)
         return true
@@ -1425,7 +1461,7 @@ local function setup()
       desc = "Switch nvim instance to another git worktree",
     })
     vim.api.nvim_create_user_command("ProjectSwitch", pick_workspace_project, {
-      desc = "Pick a local workspace and switch to one of its git repositories",
+      desc = "Pick a local workspace and switch to its root",
     })
     vim.api.nvim_create_user_command("RepositorySwitch", pick_project, {
       desc = "Switch nvim instance to an adjacent workspace or root git repository",
@@ -1435,7 +1471,7 @@ local function setup()
     })
     vim.keymap.set("n", "<leader>ww", pick_worktree, { desc = "Switch workspace" })
     vim.keymap.set("n", "<leader>wr", pick_project, { desc = "Pick repository" })
-    vim.keymap.set("n", "<leader>wp", pick_workspace_project, { desc = "Pick project" })
+    vim.keymap.set("n", "<leader>wp", pick_workspace_project, { desc = "Pick workspace" })
     vim.keymap.set("n", "<leader>w;", pick_agent, { desc = "Switch active agent" })
   end
 
@@ -1447,12 +1483,13 @@ local function setup()
     pick_project = pick_project,
     pick_workspace_project = pick_workspace_project,
     pick_agent = pick_agent,
+    activate_workspace = activate_workspace,
     activate_agent = activate_agent,
     list_sibling_repos = list_sibling_repos,
     list_worktrees = list_worktrees,
     list_all_project_repos = list_all_project_repos,
     list_workspace_directories = list_workspace_directories,
-    list_workspace_repos = list_workspace_repos,
+    list_workspace_destinations = list_workspace_destinations,
     group_project_entries = group_project_entries,
     make_project_sorter = make_project_sorter,
     move_project_selection = move_project_selection,
@@ -1499,7 +1536,7 @@ return {
     keys = {
       { "<leader>ww", pick_worktree, desc = "Switch workspace" },
       { "<leader>wr", pick_project, desc = "Pick repository" },
-      { "<leader>wp", pick_workspace_project, desc = "Pick project" },
+      { "<leader>wp", pick_workspace_project, desc = "Pick workspace" },
       { "<leader>w;", pick_agent, desc = "Switch active agent" },
     },
     config = ensure_setup,

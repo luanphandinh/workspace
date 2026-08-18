@@ -15,7 +15,10 @@ end
 
 --- Extra ripgrep args for |telescope.builtin.live_grep|.
 function M.additional_args()
-  local args = { "--hidden" }
+  local args = {}
+  if vim.g.luanphan_show_dotfiles == 1 then
+    table.insert(args, "--hidden")
+  end
   -- Default Telescope |vimgrep_arguments| includes |--smart-case|, which still matches
   -- all-lowercase patterns case-insensitively without |-i|. When the user wants strict case
   -- matching, append |--case-sensitive| so it overrides |--smart-case|.

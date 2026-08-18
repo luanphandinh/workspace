@@ -382,6 +382,58 @@ local function test_markdown_browser_preview_keymap()
   assert_true(refresh_events.BufWritePost, "browser Markdown preview should refresh after markdown writes")
 end
 
+local function test_markdown_preview_toggle_does_not_block()
+  local file = temp_root .. "/preview-toggle.md"
+  local old_browserfunc = vim.g.mkdp_browserfunc
+  local old_channel = vim.g.mkdp_node_channel_id
+  local old_clients_active = vim.g.mkdp_clients_active
+  local channel = nil
+  write(file, { "# Preview" })
+
+  vim.cmd([[
+    function! SmokeMarkdownPreviewBrowser(url) abort
+      let g:smoke_markdown_preview_url = a:url
+    endfunction
+  ]])
+  vim.g.mkdp_browserfunc = "SmokeMarkdownPreviewBrowser"
+  vim.g.mkdp_node_channel_id = nil
+  vim.g.mkdp_clients_active = 0
+
+  local ok, err = xpcall(function()
+    vim.cmd("edit " .. vim.fn.fnameescape(file))
+    vim.bo.filetype = "markdown"
+    vim.b.MarkdownPreviewToggleBool = 0
+    local preview_map = vim.fn.maparg("<leader>fp", "n", false, true)
+
+    preview_map.callback()
+    assert_true(vim.b.MarkdownPreviewToggleBool == 1, "markdown preview did not enter running state")
+    wait_until("markdown preview RPC child", function()
+      channel = tonumber(vim.g.mkdp_node_channel_id)
+      return channel ~= nil and channel > 0
+    end, 5000)
+
+    local started = uv.hrtime()
+    preview_map.callback()
+    local elapsed_ms = (uv.hrtime() - started) / 1000000
+    assert_true(elapsed_ms < 500, "markdown preview stop blocked Neovim")
+    assert_true(vim.b.MarkdownPreviewToggleBool == 0, "markdown preview did not leave running state")
+    wait_until("markdown preview RPC child exit", function()
+      local stopped, result = pcall(vim.fn.jobwait, { channel }, 0)
+      return stopped and type(result) == "table" and result[1] ~= -1
+    end, 5000)
+  end, debug.traceback)
+
+  if channel then
+    pcall(vim.fn.jobstop, channel)
+  end
+  vim.g.mkdp_browserfunc = old_browserfunc
+  vim.g.mkdp_node_channel_id = old_channel
+  vim.g.mkdp_clients_active = old_clients_active
+  vim.g.smoke_markdown_preview_url = nil
+  pcall(vim.cmd, "delfunction SmokeMarkdownPreviewBrowser")
+  assert_true(ok, tostring(err))
+end
+
 local function test_csv_preview_keymap()
   local csv = temp_root .. "/preview.csv"
   local log = temp_root .. "/csvlens-preview.log"
@@ -1179,6 +1231,49 @@ local function test_worktree_plugin_starts_lazy()
   end
 end
 
+local function test_nvim_tree_hides_dotfiles()
+  local config = require("nvim-tree.config").g_clone()
+  assert_true(config and config.filters.dotfiles == true, "nvim-tree should hide dotfiles")
+end
+
+local function test_searches_follow_tree_dotfiles()
+  local fixture = temp_root .. "/live-grep-hidden"
+  write(fixture .. "/visible.txt", { "search target" })
+  write(fixture .. "/.hidden/hidden.txt", { "search target" })
+
+  local function search()
+    local args = { "rg", "--files-with-matches" }
+    vim.list_extend(args, require("luanphan.telescope_grep_opts").additional_args())
+    vim.list_extend(args, { "search target", "." })
+    local result = vim.system(args, { cwd = fixture, text = true }):wait()
+    assert_true(result.code == 0, "live grep fixture failed: " .. (result.stderr or ""))
+    return result.stdout
+  end
+
+  local function find_files()
+    local args = require("luanphan.telescope_find_opts").find_command()
+    local result = vim.system(args, { cwd = fixture, text = true }):wait()
+    assert_true(result.code == 0, "find files fixture failed: " .. (result.stderr or ""))
+    return result.stdout
+  end
+
+  local hidden = search()
+  assert_true(hidden:find("visible.txt", 1, true) ~= nil, "live grep omitted a visible file")
+  assert_true(hidden:find(".hidden", 1, true) == nil, "live grep included a hidden directory")
+  assert_true(find_files():find(".hidden", 1, true) == nil, "find files included a hidden directory")
+
+  local tree_api = require("nvim-tree.api")
+  tree_api.tree.open({ path = fixture, focus = true })
+  assert_true(vim.bo.filetype == "NvimTree", "nvim-tree did not open for the dotfile toggle fixture")
+  invoke_map("H")
+  assert_true(vim.g.luanphan_show_dotfiles == 1, "nvim-tree did not publish visible dotfile state")
+  assert_true(search():find(".hidden", 1, true) ~= nil, "live grep did not follow visible dotfile state")
+  assert_true(find_files():find(".hidden", 1, true) ~= nil, "find files did not follow visible dotfile state")
+  invoke_map("H")
+  assert_true(vim.g.luanphan_show_dotfiles == 0, "nvim-tree did not restore hidden dotfile state")
+  tree_api.tree.close()
+end
+
 local function test_adjacent_project_discovery(repo, worktree)
   local api = worktree_test_api()
   local original_cwd = vim.fn.getcwd()
@@ -1224,7 +1319,7 @@ local function test_recent_navigation_ordering(repo, worktree)
     local trees = api.list_worktrees()
     assert_true(realpath(trees[1].path) == realpath(worktree), "worktree picker is not ordered by recent visits")
 
-    local sources, workspaces, station, workspace_name, empty_workspace_name = make_project_scope_fixture()
+    local sources, workspaces, station, _, empty_workspace_name = make_project_scope_fixture()
     local workspace_a = workspaces["example-project-a"]
     local workspace_b = workspaces["example-project-b-long"]
     local source_b = sources["example-project-b-long"]
@@ -1257,21 +1352,6 @@ local function test_recent_navigation_ordering(repo, worktree)
     assert_true(
       realpath(workspace_entries[1].path) == realpath(empty_workspace),
       "workspace picker did not promote the latest workspace"
-    )
-
-    local selected_workspace = nil
-    for _, workspace in ipairs(workspace_entries) do
-      if workspace.name == workspace_name then
-        selected_workspace = workspace
-        break
-      end
-    end
-    assert_true(selected_workspace ~= nil, "recent-order fixture workspace was not discovered")
-    recent_paths.touch(workspace_b)
-    local workspace_repos = api.list_workspace_repos(selected_workspace)
-    assert_true(
-      realpath(workspace_repos[1].path) == realpath(workspace_b),
-      "workspace project picker did not promote the latest repository"
     )
   end, debug.traceback)
 
@@ -1405,23 +1485,24 @@ local function test_workspace_project_discovery()
   assert_true(by_name[empty_workspace_name] ~= nil, "workspace discovery omitted an empty workspace")
   assert_true(by_name[empty_workspace_name].empty == true, "empty workspace was not marked empty")
 
-  local repos = api.list_workspace_repos(by_name[workspace_name])
-  assert_true(#repos == 3, "workspace picker targets omitted the workspace root")
-  assert_true(repos[1].workspace_root == true, "workspace root is not the first picker target")
-  assert_true(realpath(repos[1].path) == realpath(by_name[workspace_name].path), "workspace root path is incorrect")
-  assert_true(repos[1].branch == "workspace root", "workspace root label is incorrect")
-  local branches = {}
-  for _, repo in ipairs(repos) do
-    if not repo.workspace_root then
-      branches[repo.name] = repo.branch
-    end
-  end
-  assert_true(branches["example-project-a"] == "feature/a", "workspace project branch is incorrect")
-  assert_true(branches["example-project-b-long"] == "feature/b", "workspace project branch is incorrect")
+  local destinations, destination_root = api.list_workspace_destinations()
+  assert_true(realpath(destination_root) == realpath(station), "workspace destinations resolved the wrong root")
+  assert_true(#destinations == 3, "workspace destinations returned an unexpected count")
+  assert_true(destinations[1].root == true, "workspace destinations did not put root first")
+  assert_true(destinations[1].name == "root", "workspace root destination has the wrong name")
+  assert_true(realpath(destinations[1].path) == realpath(station), "workspace root destination has the wrong path")
 
-  local empty_targets = api.list_workspace_repos(by_name[empty_workspace_name])
-  assert_true(#empty_targets == 1, "empty workspace should expose only its workspace root")
-  assert_true(empty_targets[1].workspace_root == true, "empty workspace root is not selectable")
+  api.activate_workspace(destinations[1])
+  assert_true(
+    realpath(vim.fn.getcwd()) == realpath(station),
+    "root workspace selection did not switch to the workstation root"
+  )
+
+  api.activate_workspace(by_name[workspace_name])
+  assert_true(
+    realpath(vim.fn.getcwd()) == realpath(by_name[workspace_name].path),
+    "workspace selection did not switch directly to the workspace root"
+  )
 
   vim.cmd("cd " .. vim.fn.fnameescape(sources["example-project-a"]))
   local from_master, master_root = api.list_workspace_directories()
@@ -1624,16 +1705,23 @@ end
 
 local function test_filetype_refire_uses_target_buffer()
   local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
   local original_buf = vim.api.nvim_get_current_buf()
-  local markdown_buf = vim.api.nvim_create_buf(false, false)
-  local other_buf = vim.api.nvim_create_buf(false, false)
+  local fixture = temp_root .. "/filetype-context"
+  local markdown_path = fixture .. "/context.md"
+  local other_path = fixture .. "/other.txt"
+  write(markdown_path, { "# Context" })
+  write(other_path, { "other" })
+  vim.cmd("cd " .. vim.fn.fnameescape(fixture))
+  vim.cmd("edit " .. vim.fn.fnameescape(markdown_path))
+  local markdown_buf = vim.api.nvim_get_current_buf()
+  vim.cmd("edit " .. vim.fn.fnameescape(other_path))
+  local other_buf = vim.api.nvim_get_current_buf()
   local group = vim.api.nvim_create_augroup("SmokeFileTypeBufferContext", { clear = true })
   local callback_buf = nil
 
   local ok, err = xpcall(function()
-    vim.api.nvim_set_current_buf(markdown_buf)
     vim.bo[markdown_buf].filetype = "markdown"
-    vim.api.nvim_set_current_buf(other_buf)
     vim.api.nvim_create_autocmd("FileType", {
       group = group,
       pattern = "markdown",
@@ -1651,6 +1739,9 @@ local function test_filetype_refire_uses_target_buffer()
   pcall(vim.api.nvim_del_augroup_by_id, group)
   if vim.api.nvim_buf_is_valid(original_buf) then
     pcall(vim.api.nvim_set_current_buf, original_buf)
+  end
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
   end
   for _, buf in ipairs({ markdown_buf, other_buf }) do
     if vim.api.nvim_buf_is_valid(buf) then
@@ -2169,6 +2260,58 @@ local function test_worktree_switch_keeps_lsp(worktree)
   assert_lsp_navigation(worktree .. "/main.go")
 end
 
+local function test_worktree_switch_hides_foreign_file(repo, worktree)
+  local api = worktree_test_api()
+  local clean_path = repo .. "/switch-clean.go"
+  local modified_path = repo .. "/switch-modified.go"
+  write(clean_path, { "package main", "", "var switchClean = true" })
+  write(modified_path, { "package main", "", "var switchModified = true" })
+
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  vim.cmd("edit " .. vim.fn.fnameescape(modified_path))
+  local modified_buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(modified_buf, -1, -1, false, { "var pendingChange = true" })
+  vim.cmd("hide edit " .. vim.fn.fnameescape(clean_path))
+  local clean_buf = vim.api.nvim_get_current_buf()
+
+  local store = vim.g[api.store_key] or {}
+  store[worktree] = nil
+  vim.g[api.store_key] = store
+
+  local foreign_filetype_events = 0
+  local group = vim.api.nvim_create_augroup("SmokeWorktreeForeignFile", { clear = true })
+  vim.api.nvim_create_autocmd("FileType", {
+    group = group,
+    callback = function(args)
+      if args.buf == modified_buf then
+        foreign_filetype_events = foreign_filetype_events + 1
+      end
+    end,
+  })
+
+  api.switch_to(worktree, "worktree")
+  assert_true(realpath(vim.fn.getcwd()) == realpath(worktree), "worktree switch did not change cwd")
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local visible = vim.api.nvim_win_get_buf(win)
+    assert_true(visible ~= clean_buf, "previous repository file remained visible after switch")
+    assert_true(visible ~= modified_buf, "modified previous repository file remained visible after switch")
+  end
+  assert_true(not vim.api.nvim_buf_is_valid(clean_buf), "unmodified foreign buffer was not deleted")
+  assert_true(vim.api.nvim_buf_is_valid(modified_buf), "modified foreign buffer was discarded")
+  assert_true(vim.bo[modified_buf].modified, "modified foreign buffer lost its unsaved state")
+  assert_true(foreign_filetype_events == 0, "foreign buffer restarted its filetype after switch")
+
+  api.snapshot(worktree)
+  local entry = (vim.g[api.store_key] or {})[worktree] or {}
+  for _, path in ipairs(entry.files or {}) do
+    assert_true(realpath(path) ~= realpath(modified_path), "foreign buffer leaked into repository snapshot")
+  end
+
+  vim.api.nvim_del_augroup_by_id(group)
+  vim.bo[modified_buf].modified = false
+  vim.api.nvim_buf_delete(modified_buf, { force = true })
+end
+
 local function test_worktree_switch_restores_repository_jumplist(repo, worktree)
   local api = worktree_test_api()
   close_agent_terminals()
@@ -2176,12 +2319,13 @@ local function test_worktree_switch_restores_repository_jumplist(repo, worktree)
   local function make_jump_files(root, prefix)
     local paths = {}
     for index, suffix in ipairs({ "first", "second", "current" }) do
-      local path = root .. "/" .. prefix .. "-" .. suffix .. ".txt"
+      local path = root .. "/" .. prefix .. "-" .. suffix .. ".go"
+      local symbol = (prefix .. "_" .. suffix):gsub("[^%w_]", "_")
       write(path, {
-        suffix .. " line 1",
-        suffix .. " line 2",
-        suffix .. " line 3",
-        suffix .. " line 4",
+        "package main",
+        "",
+        "// " .. suffix .. " jump target",
+        "var " .. symbol .. " = 1",
       })
       paths[index] = path
     end
@@ -2212,13 +2356,29 @@ local function test_worktree_switch_restores_repository_jumplist(repo, worktree)
   api.switch_to(worktree, "worktree")
   build_jumplist(worktree_paths)
 
+  local replay_filetypes = {}
+  local group = vim.api.nvim_create_augroup("SmokeJumplistLspIsolation", { clear = true })
+  vim.api.nvim_create_autocmd("FileType", {
+    group = group,
+    pattern = "go",
+    callback = function(args)
+      replay_filetypes[realpath(vim.api.nvim_buf_get_name(args.buf))] = true
+    end,
+  })
   api.switch_to(repo, "repository")
   assert_true(
     realpath(vim.api.nvim_buf_get_name(0)) == realpath(repo_paths[3]),
     "repository active file was not restored: " .. vim.api.nvim_buf_get_name(0)
   )
+  assert_true(replay_filetypes[realpath(repo_paths[3])] == true, "active Go buffer did not run normal FileType startup")
+  assert_true(replay_filetypes[realpath(repo_paths[1])] == nil, "jumplist replay triggered FileType for a hidden Go buffer")
+  assert_true(replay_filetypes[realpath(repo_paths[2])] == nil, "jumplist replay triggered FileType for a hidden Go buffer")
   assert_true(vim.api.nvim_win_get_cursor(0)[1] == 4, "repository active cursor was not restored")
   jump_back(repo_paths[2], 3)
+  wait_until("jumped Go buffer FileType startup", function()
+    return replay_filetypes[realpath(repo_paths[2])] == true
+  end, 3000)
+  vim.api.nvim_del_augroup_by_id(group)
 
   api.switch_to(worktree, "worktree")
   assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(worktree_paths[3]), "worktree active file was not restored")
@@ -2606,15 +2766,15 @@ local function test_git_diff_repository_bar_from_workspace_root()
   invoke_map("h")
   wait_for_diffview_repository(first_repo)
 
-  feed_normal("<C-j>")
+  invoke_map("o")
   wait_for_diffview_repository(first_repo)
   local active_view = require("diffview.lib").get_current_view()
   local main_win = active_view.cur_layout:get_main_win().id
-  wait_until("repository bar downward navigation", function()
-    return vim.api.nvim_get_current_win() ~= bar_win
+  wait_until("repository bar file tree focus", function()
+    return active_view.panel.winid and vim.api.nvim_get_current_win() == active_view.panel.winid
   end, 3000)
   _, bar_win = find_workspace_diff_bar()
-  assert_true(vim.api.nvim_get_current_win() ~= bar_win, "<C-j> left focus in the repository bar")
+  assert_true(vim.api.nvim_get_current_win() == active_view.panel.winid, "o did not focus the selected repository file tree")
   assert_true(active_view.cur_entry.path == "first-change.txt", "repository switch lost the selected diff file")
   assert_true(vim.api.nvim_win_get_cursor(main_win)[1] == saved_line, "repository switch lost the diff cursor line")
   assert_true(realpath(vim.fn.getcwd()) == realpath(workspace_root), "repository switching changed the workspace cwd")
@@ -2941,6 +3101,14 @@ local setup_ok, setup_err = xpcall(function()
     test_worktree_plugin_starts_lazy()
   end)
 
+  test("nvim-tree hides dotfiles", function()
+    test_nvim_tree_hides_dotfiles()
+  end)
+
+  test("file searches follow nvim-tree dotfile visibility", function()
+    test_searches_follow_tree_dotfiles()
+  end)
+
   test("toggle icons reflect state", function()
     test_toggle_icons_reflect_state()
   end)
@@ -2955,6 +3123,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("markdown browser preview keymap", function()
     test_markdown_browser_preview_keymap()
+  end)
+
+  test("markdown preview toggle does not block", function()
+    test_markdown_preview_toggle_does_not_block()
   end)
 
   test("csv preview keymap", function()
@@ -3037,7 +3209,7 @@ local setup_ok, setup_err = xpcall(function()
     test_workspace_and_master_project_discovery()
   end)
 
-  test("workspace project picker discovers workspaces and checked-out branches", function()
+  test("workspace picker switches to root and workspace destinations", function()
     test_workspace_project_discovery()
   end)
 
@@ -3075,6 +3247,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("worktree switch keeps lsp", function()
     test_worktree_switch_keeps_lsp(worktree)
+  end)
+
+  test("worktree switch hides files from the previous repository", function()
+    test_worktree_switch_hides_foreign_file(repo, worktree)
   end)
 
   test("worktree switch restores repository jump history", function()

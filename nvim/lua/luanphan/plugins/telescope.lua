@@ -1,5 +1,5 @@
 local function find_files()
-  require("telescope.builtin").find_files()
+  require("luanphan.telescope_find_opts").find_files()
 end
 
 local function live_grep()
@@ -100,8 +100,8 @@ return {
         },
         pickers = {
           find_files = {
-            hidden = true, -- show dotfiles
-            find_command = { "rg", "--files", "--hidden", "--follow" },
+            hidden = false,
+            find_command = { "rg", "--files", "--follow" },
             file_ignore_patterns = ignore_dot_git,
           },
           live_grep = {

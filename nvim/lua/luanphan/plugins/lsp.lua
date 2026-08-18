@@ -72,6 +72,9 @@ local function recover_lsp_for_entered_buffer(ev)
   if not vim.api.nvim_buf_is_loaded(buf) or vim.bo[buf].buftype ~= "" then
     return
   end
+  if vim.b[buf].luanphan_jumplist_replayed then
+    return
+  end
 
   local ft = vim.bo[buf].filetype
   local server = lsp_recover_filetypes[ft]
