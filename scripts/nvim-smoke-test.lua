@@ -2149,12 +2149,13 @@ local function test_worktree_switch_restores_repository_jumplist(repo, worktree)
   local function make_jump_files(root, prefix)
     local paths = {}
     for index, suffix in ipairs({ "first", "second", "current" }) do
-      local path = root .. "/" .. prefix .. "-" .. suffix .. ".txt"
+      local path = root .. "/" .. prefix .. "-" .. suffix .. ".go"
+      local symbol = (prefix .. "_" .. suffix):gsub("[^%w_]", "_")
       write(path, {
-        suffix .. " line 1",
-        suffix .. " line 2",
-        suffix .. " line 3",
-        suffix .. " line 4",
+        "package main",
+        "",
+        "// " .. suffix .. " jump target",
+        "var " .. symbol .. " = 1",
       })
       paths[index] = path
     end
@@ -2185,13 +2186,29 @@ local function test_worktree_switch_restores_repository_jumplist(repo, worktree)
   api.switch_to(worktree, "worktree")
   build_jumplist(worktree_paths)
 
+  local replay_filetypes = {}
+  local group = vim.api.nvim_create_augroup("SmokeJumplistLspIsolation", { clear = true })
+  vim.api.nvim_create_autocmd("FileType", {
+    group = group,
+    pattern = "go",
+    callback = function(args)
+      replay_filetypes[realpath(vim.api.nvim_buf_get_name(args.buf))] = true
+    end,
+  })
   api.switch_to(repo, "repository")
   assert_true(
     realpath(vim.api.nvim_buf_get_name(0)) == realpath(repo_paths[3]),
     "repository active file was not restored: " .. vim.api.nvim_buf_get_name(0)
   )
+  assert_true(replay_filetypes[realpath(repo_paths[3])] == true, "active Go buffer did not run normal FileType startup")
+  assert_true(replay_filetypes[realpath(repo_paths[1])] == nil, "jumplist replay triggered FileType for a hidden Go buffer")
+  assert_true(replay_filetypes[realpath(repo_paths[2])] == nil, "jumplist replay triggered FileType for a hidden Go buffer")
   assert_true(vim.api.nvim_win_get_cursor(0)[1] == 4, "repository active cursor was not restored")
   jump_back(repo_paths[2], 3)
+  wait_until("jumped Go buffer FileType startup", function()
+    return replay_filetypes[realpath(repo_paths[2])] == true
+  end, 3000)
+  vim.api.nvim_del_augroup_by_id(group)
 
   api.switch_to(worktree, "worktree")
   assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(worktree_paths[3]), "worktree active file was not restored")

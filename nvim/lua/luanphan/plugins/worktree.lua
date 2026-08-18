@@ -70,6 +70,17 @@ local function setup()
     end,
   })
 
+  vim.api.nvim_create_autocmd("BufEnter", {
+    group = vim.api.nvim_create_augroup("LuanphanWorktreeReplayFileType", { clear = true }),
+    callback = function(args)
+      if not vim.b[args.buf].luanphan_jumplist_replayed then return end
+      vim.b[args.buf].luanphan_jumplist_replayed = nil
+      pcall(vim.api.nvim_buf_call, args.buf, function()
+        vim.api.nvim_exec_autocmds("FileType", { buffer = args.buf, modeline = false })
+      end)
+    end,
+  })
+
   -- Currently-focused file (or any visible file window) at snapshot time, so
   -- we can re-open it in an editor window when the user comes back.
   local function find_active_file()
@@ -459,12 +470,35 @@ local function setup()
     if not win then return end
     local active_pos = type(entry.positions) == "table" and entry.positions[active_path] or nil
 
+    -- Native jump reconstruction must visit each file without initializing it.
+    local previous_eventignore = vim.o.eventignore
+    local ignored_events = vim.split(previous_eventignore, ",", { trimempty = true })
+    local ignored = {}
+    for _, event in ipairs(ignored_events) do
+      ignored[event] = true
+    end
+    for _, event in ipairs({ "BufEnter", "BufWinEnter", "FileType" }) do
+      if not ignored[event] then
+        ignored_events[#ignored_events + 1] = event
+      end
+    end
+    vim.o.eventignore = table.concat(ignored_events, ",")
+
     pcall(vim.api.nvim_win_call, win, function()
       local scratch_buffers = {}
+      local replay_buffers = {}
+      local loaded_before = {}
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_loaded(buf) then
+          loaded_before[buf] = true
+        end
+      end
+
       for _, jump in ipairs(jumps) do
         if vim.fn.filereadable(jump.path) == 1
           and pcall(vim.cmd, "keepjumps hide edit " .. vim.fn.fnameescape(jump.path))
         then
+          replay_buffers[vim.api.nvim_get_current_buf()] = true
           local line = math.min(math.max(1, jump.line or 1), vim.api.nvim_buf_line_count(0))
           pcall(vim.api.nvim_win_set_cursor, 0, { line, jump.col or 0 })
           if pcall(vim.cmd, "hide enew") then
@@ -478,12 +512,19 @@ local function setup()
         local line = math.min(math.max(1, active_pos.line or 1), vim.api.nvim_buf_line_count(0))
         pcall(vim.api.nvim_win_set_cursor, 0, { line, active_pos.col or 0 })
       end
+      local active_buf = vim.api.nvim_get_current_buf()
       for _, buf in ipairs(scratch_buffers) do
-        if vim.api.nvim_buf_is_valid(buf) and buf ~= vim.api.nvim_get_current_buf() then
+        if vim.api.nvim_buf_is_valid(buf) and buf ~= active_buf then
           pcall(vim.api.nvim_buf_delete, buf, { force = true })
         end
       end
+      for buf in pairs(replay_buffers) do
+        if buf ~= active_buf and not loaded_before[buf] and vim.api.nvim_buf_is_valid(buf) then
+          vim.b[buf].luanphan_jumplist_replayed = true
+        end
+      end
     end)
+    vim.o.eventignore = previous_eventignore
   end
 
   local function close_toggleterm_windows()
@@ -612,9 +653,11 @@ local function setup()
   local function refire_filetype_all()
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
       if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].buftype == "" then
-        pcall(vim.api.nvim_buf_call, buf, function()
-          vim.api.nvim_exec_autocmds("FileType", { buffer = buf })
-        end)
+        if not vim.b[buf].luanphan_jumplist_replayed then
+          pcall(vim.api.nvim_buf_call, buf, function()
+            vim.api.nvim_exec_autocmds("FileType", { buffer = buf })
+          end)
+        end
       end
     end
   end
