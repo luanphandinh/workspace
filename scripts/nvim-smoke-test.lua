@@ -382,6 +382,58 @@ local function test_markdown_browser_preview_keymap()
   assert_true(refresh_events.BufWritePost, "browser Markdown preview should refresh after markdown writes")
 end
 
+local function test_markdown_preview_toggle_does_not_block()
+  local file = temp_root .. "/preview-toggle.md"
+  local old_browserfunc = vim.g.mkdp_browserfunc
+  local old_channel = vim.g.mkdp_node_channel_id
+  local old_clients_active = vim.g.mkdp_clients_active
+  local channel = nil
+  write(file, { "# Preview" })
+
+  vim.cmd([[
+    function! SmokeMarkdownPreviewBrowser(url) abort
+      let g:smoke_markdown_preview_url = a:url
+    endfunction
+  ]])
+  vim.g.mkdp_browserfunc = "SmokeMarkdownPreviewBrowser"
+  vim.g.mkdp_node_channel_id = nil
+  vim.g.mkdp_clients_active = 0
+
+  local ok, err = xpcall(function()
+    vim.cmd("edit " .. vim.fn.fnameescape(file))
+    vim.bo.filetype = "markdown"
+    vim.b.MarkdownPreviewToggleBool = 0
+    local preview_map = vim.fn.maparg("<leader>fp", "n", false, true)
+
+    preview_map.callback()
+    assert_true(vim.b.MarkdownPreviewToggleBool == 1, "markdown preview did not enter running state")
+    wait_until("markdown preview RPC child", function()
+      channel = tonumber(vim.g.mkdp_node_channel_id)
+      return channel ~= nil and channel > 0
+    end, 5000)
+
+    local started = uv.hrtime()
+    preview_map.callback()
+    local elapsed_ms = (uv.hrtime() - started) / 1000000
+    assert_true(elapsed_ms < 500, "markdown preview stop blocked Neovim")
+    assert_true(vim.b.MarkdownPreviewToggleBool == 0, "markdown preview did not leave running state")
+    wait_until("markdown preview RPC child exit", function()
+      local stopped, result = pcall(vim.fn.jobwait, { channel }, 0)
+      return stopped and type(result) == "table" and result[1] ~= -1
+    end, 5000)
+  end, debug.traceback)
+
+  if channel then
+    pcall(vim.fn.jobstop, channel)
+  end
+  vim.g.mkdp_browserfunc = old_browserfunc
+  vim.g.mkdp_node_channel_id = old_channel
+  vim.g.mkdp_clients_active = old_clients_active
+  vim.g.smoke_markdown_preview_url = nil
+  pcall(vim.cmd, "delfunction SmokeMarkdownPreviewBrowser")
+  assert_true(ok, tostring(err))
+end
+
 local function test_csv_preview_keymap()
   local csv = temp_root .. "/preview.csv"
   local log = temp_root .. "/csvlens-preview.log"
@@ -3071,6 +3123,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("markdown browser preview keymap", function()
     test_markdown_browser_preview_keymap()
+  end)
+
+  test("markdown preview toggle does not block", function()
+    test_markdown_preview_toggle_does_not_block()
   end)
 
   test("csv preview keymap", function()

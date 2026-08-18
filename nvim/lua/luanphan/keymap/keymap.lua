@@ -303,7 +303,44 @@ local function preview_file()
   local ft = vim.bo.filetype
   local ext = vim.fn.fnamemodify(file, ":e"):lower()
   if ft == "markdown" or ft == "rmd" or ext == "md" or ext == "markdown" or ext == "rmd" then
-    vim.cmd("MarkdownPreviewToggle")
+    local bufnr = vim.api.nvim_get_current_buf()
+    if vim.b[bufnr].MarkdownPreviewToggleBool == 1 then
+      vim.b[bufnr].MarkdownPreviewToggleBool = 0
+      vim.g.mkdp_clients_active = 0
+      pcall(vim.api.nvim_buf_call, bufnr, function()
+        pcall(vim.fn["mkdp#autocmd#clear_buf"])
+      end)
+
+      local function stop_preview_job(attempt)
+        local channel = tonumber(vim.g.mkdp_node_channel_id)
+        if not channel or channel <= 0 then
+          if attempt < 10 then
+            vim.defer_fn(function()
+              stop_preview_job(attempt + 1)
+            end, 20)
+          end
+          return
+        end
+
+        pcall(vim.rpcnotify, channel, "close_all_pages")
+        vim.schedule(function()
+          pcall(vim.fn.jobstop, channel)
+          if tonumber(vim.g.mkdp_node_channel_id) == channel then
+            vim.g.mkdp_node_channel_id = nil
+          end
+        end)
+      end
+
+      stop_preview_job(1)
+      return
+    end
+
+    local ok, err = pcall(vim.cmd, "MarkdownPreview")
+    if not ok then
+      vim.notify("Markdown preview failed: " .. tostring(err), vim.log.levels.ERROR)
+      return
+    end
+    vim.b[bufnr].MarkdownPreviewToggleBool = 1
     return
   end
 
