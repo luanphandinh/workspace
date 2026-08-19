@@ -332,6 +332,48 @@ local function assert_lsp_navigation(path)
   assert_true(result_count(refs) >= 2, "references request returned too few locations")
 end
 
+local function assert_lsp_keymap_navigation(buf)
+  local usage = find_position(buf, "targetValue", "return targetValue()")
+  local definition = find_position(buf, "targetValue", "func targetValue")
+
+  local function invoke_lsp_map(lhs)
+    local map = vim.fn.maparg(lhs, "n", false, true)
+    assert_true(type(map) == "table" and type(map.callback) == "function", lhs .. " is not an LSP callback mapping")
+    map.callback()
+  end
+
+  vim.api.nvim_win_set_cursor(0, { usage.line + 1, usage.character })
+  invoke_lsp_map("gd")
+  local jumped = vim.wait(5000, function()
+    return vim.api.nvim_get_current_buf() == buf and vim.api.nvim_win_get_cursor(0)[1] == definition.line + 1
+  end, 50, false)
+  if not jumped then
+    local clients = {}
+    for _, client in ipairs(vim.lsp.get_clients({ bufnr = buf })) do
+      clients[#clients + 1] = string.format(
+        "%s:%d initialized=%s stopped=%s",
+        client.name,
+        client.id,
+        tostring(client.initialized),
+        tostring(client:is_stopped())
+      )
+    end
+    fail(string.format(
+      "gd did not jump: current_buf=%d source_buf=%d cursor=%d direct_results=%d clients=[%s]",
+      vim.api.nvim_get_current_buf(),
+      buf,
+      vim.api.nvim_win_get_cursor(0)[1],
+      result_count(request(buf, "textDocument/definition", usage)),
+      table.concat(clients, ", ")
+    ))
+  end
+
+  invoke_lsp_map("gr")
+  wait_until("gr reference jump", function()
+    return vim.api.nvim_get_current_buf() == buf and vim.api.nvim_win_get_cursor(0)[1] == usage.line + 1
+  end, 5000)
+end
+
 local function assert_lsp_code_action_keymaps()
   local change_definition = vim.fn.maparg("<leader>cd", "n", false, true)
   local code_action = vim.fn.maparg("<leader>ca", "n", false, true)
@@ -1883,6 +1925,51 @@ local function test_lsp_definition_and_references(repo)
   assert_lsp_code_action_keymaps()
 end
 
+local function test_lsp_survives_duplicate_split_close(repo)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  local buf = open_go_file(repo .. "/main.go")
+  local client = active_lsp_client(buf, "gopls")
+  assert_true(client ~= nil, "gopls was not attached before opening a split")
+  local client_id = client.id
+  local original_win = vim.api.nvim_get_current_win()
+
+  vim.cmd("vsplit")
+  local split_win = vim.api.nvim_get_current_win()
+  assert_true(split_win ~= original_win, "vsplit did not create a second window")
+  assert_true(vim.api.nvim_get_current_buf() == buf, "vsplit did not duplicate the Go buffer")
+  vim.api.nvim_win_close(split_win, false)
+
+  assert_true(vim.api.nvim_get_current_win() == original_win, "closing the split did not return to the original window")
+  assert_true(vim.api.nvim_get_current_buf() == buf, "closing the split replaced the original Go buffer")
+  client = active_lsp_client(buf, "gopls")
+  assert_true(client ~= nil and client.id == client_id, "closing a duplicate split detached gopls")
+
+  assert_lsp_keymap_navigation(buf)
+
+  local usage = find_position(buf, "targetValue", "return targetValue()")
+  assert_true(
+    result_count(request(buf, "textDocument/definition", usage)) >= 1,
+    "gopls definition failed after closing a duplicate split"
+  )
+
+  vim.cmd("vsplit")
+  split_win = vim.api.nvim_get_current_win()
+  client:stop(true)
+  wait_until("stale gopls client to stop", function()
+    return client:is_stopped()
+  end, 5000)
+  vim.api.nvim_win_close(split_win, false)
+  assert_lsp_keymap_navigation(buf)
+  wait_until("gopls recovery after split close", function()
+    local recovered = active_lsp_client(buf, "gopls")
+    return recovered ~= nil and recovered.id ~= client_id
+  end, 5000)
+  assert_true(
+    result_count(request(buf, "textDocument/definition", usage)) >= 1,
+    "recovered gopls definition failed after closing a duplicate split"
+  )
+end
+
 local function test_workspace_root_uses_one_gopls_per_module()
   local api = worktree_test_api()
   local original_cwd = vim.fn.getcwd()
@@ -3248,6 +3335,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("lsp definition and references", function()
     test_lsp_definition_and_references(repo)
+  end)
+
+  test("lsp survives duplicate split close", function()
+    test_lsp_survives_duplicate_split_close(repo)
   end)
 
   test("workspace root starts one gopls client per Go module", function()

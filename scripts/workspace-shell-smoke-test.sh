@@ -71,6 +71,18 @@ exit 1
 SH
 chmod +x "$fakebin/codex"
 
+cat > "$fakebin/ps" <<'SH'
+#!/bin/sh
+if [ -n "${CODEX_FAKE_DUPLICATE_DAEMONS:-}" ]; then
+  printf '%s\n' \
+    "999997 ${CODEX_HOME}/packages/standalone/releases/0.1.0/bin/codex app-server --remote-control --listen unix://" \
+    "999998 ${CODEX_HOME}/packages/standalone/releases/0.2.0/bin/codex app-server --remote-control --listen unix://"
+  exit 0
+fi
+exec /bin/ps "$@"
+SH
+chmod +x "$fakebin/ps"
+
 project_jump="$tmp/project-jump"
 repo_jump="$tmp/repo-jump"
 mkdir -p "$project_jump" "$repo_jump"
@@ -156,6 +168,23 @@ grep -Fxq -- '--remote unix:// -C '"$repo_root"' stale-prompt' "$codex_log"
 test ! -e "$stale_home/app-server-control/app-server-control.sock"
 test ! -e "$stale_home/app-server-daemon/app-server.pid"
 test ! -e "$stale_home/app-server-daemon/app-server-updater.pid"
+
+duplicate_home="$tmp/duplicate-codex-home"
+mkdir -p "$duplicate_home/app-server-control" "$duplicate_home/app-server-daemon"
+: > "$duplicate_home/app-server-control/mcodex-remote-control-started"
+: > "$duplicate_home/app-server-control/app-server-control.sock"
+printf '{"pid":999997}\n' > "$duplicate_home/app-server-daemon/app-server.pid"
+printf '{"pid":999996}\n' > "$duplicate_home/app-server-daemon/app-server-updater.pid"
+: > "$codex_log"
+rm -f "$daemon_file"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" CODEX_HOME="$duplicate_home" CODEX_FAKE_DUPLICATE_DAEMONS=1 \
+	sh "$repo_root/bin/mcodex" duplicate-prompt 2> "$tmp/duplicate-stderr"
+grep -Fxq 'mcodex: consolidating duplicate app-server processes' "$tmp/duplicate-stderr"
+grep -Fxq 'remote-control start --json' "$codex_log"
+grep -Fxq -- '--remote unix:// -C '"$repo_root"' duplicate-prompt' "$codex_log"
+test ! -e "$duplicate_home/app-server-control/app-server-control.sock"
+test ! -e "$duplicate_home/app-server-daemon/app-server.pid"
+test ! -e "$duplicate_home/app-server-daemon/app-server-updater.pid"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/bin/shell/workspace.sh'; ! command -v mcodex >/dev/null 2>&1"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; meta-hub project; test \"\$PWD\" = '$project_jump'"

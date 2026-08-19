@@ -100,7 +100,7 @@ local function recover_lsp_for_entered_buffer(ev)
 end
 
 local function setup_lsp_recovery_autocmd()
-  vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter" }, {
+  vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter", "WinEnter" }, {
     group = vim.api.nvim_create_augroup("LuanphanLspRecoverEnteredBuffers", { clear = true }),
     callback = recover_lsp_for_entered_buffer,
   })
@@ -152,32 +152,78 @@ return {
           local bufnr = args.buf
           local opts = { noremap = true, silent = true, buffer = bufnr }
 
-          local previewOpts = {
-            initial_mode = "normal",
-            layout_strategy = "vertical",
-          }
-
-          -- Helper to check if LSP is ready; retries once on stale window
-          local function with_lsp(fn)
-            return function()
-              if #vim.lsp.get_clients({ bufnr = 0 }) == 0 then
-                vim.notify("No LSP client attached. Waiting for LSP...", vim.log.levels.WARN)
-                return
+          local function active_client_attached()
+            for _, attached in ipairs(vim.lsp.get_clients({ bufnr = bufnr })) do
+              if attached.initialized and not attached:is_stopped() then
+                return true
               end
-              local ok, err = pcall(fn)
-              if not ok and type(err) == "string" and err:find("Invalid window") then
-                vim.schedule(function()
-                  pcall(fn)
-                end)
-              elseif not ok then
-                vim.notify(tostring(err), vim.log.levels.ERROR)
+            end
+            return false
+          end
+
+          local function window_for_buffer(preferred)
+            if vim.api.nvim_win_is_valid(preferred) and vim.api.nvim_win_get_buf(preferred) == bufnr then
+              return preferred
+            end
+            for _, win in ipairs(vim.api.nvim_list_wins()) do
+              if vim.api.nvim_win_get_buf(win) == bufnr then
+                return win
               end
             end
           end
 
-          local function telescope_lsp(method)
+          -- Preserve a navigation request while an LSP client is restarting.
+          local function with_lsp(fn)
             return function()
-              require("telescope.builtin")[method](previewOpts)
+              local source_win = vim.api.nvim_get_current_win()
+              local attempts = 0
+
+              local function run()
+                attempts = attempts + 1
+                if not vim.api.nvim_buf_is_valid(bufnr) then
+                  return
+                end
+
+                if not active_client_attached() then
+                  if attempts == 1 then
+                    vim.notify("LSP is reconnecting; navigation will continue when ready", vim.log.levels.WARN)
+                    recover_lsp_for_entered_buffer({ buf = bufnr })
+                  end
+                  if attempts < 50 then
+                    vim.defer_fn(run, 100)
+                  else
+                    vim.notify("LSP did not reconnect in time", vim.log.levels.ERROR)
+                  end
+                  return
+                end
+
+                local target_win = window_for_buffer(source_win)
+                if not target_win then
+                  return
+                end
+                local ok_focus, focus_err = pcall(vim.api.nvim_set_current_win, target_win)
+                if not ok_focus then
+                  vim.notify(tostring(focus_err), vim.log.levels.ERROR)
+                  return
+                end
+                local ok, err = pcall(fn, target_win)
+                if not ok then
+                  vim.notify(tostring(err), vim.log.levels.ERROR)
+                end
+              end
+
+              run()
+            end
+          end
+
+          local function telescope_lsp(method)
+            return function(source_win)
+              require("telescope.builtin")[method]({
+                bufnr = bufnr,
+                winnr = source_win,
+                initial_mode = "normal",
+                layout_strategy = "vertical",
+              })
             end
           end
 
