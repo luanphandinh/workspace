@@ -311,8 +311,20 @@ local function preview_file()
         pcall(vim.fn["mkdp#autocmd#clear_buf"])
       end)
 
+      local function find_preview_channel()
+        for _, channel in ipairs(vim.api.nvim_list_chans()) do
+          if channel.mode == "rpc" and channel.stream == "job" then
+            for _, arg in ipairs(channel.argv or {}) do
+              if tostring(arg):find("markdown-preview.nvim", 1, true) then
+                return channel.id
+              end
+            end
+          end
+        end
+      end
+
       local function stop_preview_job(attempt)
-        local channel = tonumber(vim.g.mkdp_node_channel_id)
+        local channel = find_preview_channel()
         if not channel or channel <= 0 then
           if attempt < 10 then
             vim.defer_fn(function()
@@ -325,9 +337,6 @@ local function preview_file()
         pcall(vim.rpcnotify, channel, "close_all_pages")
         vim.schedule(function()
           pcall(vim.fn.jobstop, channel)
-          if tonumber(vim.g.mkdp_node_channel_id) == channel then
-            vim.g.mkdp_node_channel_id = nil
-          end
         end)
       end
 

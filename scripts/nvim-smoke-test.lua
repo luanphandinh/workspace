@@ -364,7 +364,7 @@ local function test_markdown_browser_preview_keymap()
   assert_true(type(preview_map) == "table" and preview_map.desc == "Preview file", "<leader>fp should preview files")
   assert_true(vim.fn.maparg("<leader>fP", "n") == "", "<leader>fP should be removed")
   assert_true(vim.g.mkdp_auto_start == 0, "browser Markdown preview should not auto-start")
-  assert_true(vim.g.mkdp_auto_close == 1, "browser Markdown preview should auto-close")
+  assert_true(vim.g.mkdp_auto_close == 0, "browser Markdown preview should remain open when its buffer is hidden")
   assert_true(vim.g.mkdp_refresh_slow == 0, "browser Markdown preview should auto-refresh content")
   assert_true(vim.g.mkdp_open_to_the_world == 0, "browser Markdown preview should stay local")
   assert_true(vim.g.mkdp_theme == "light", "browser Markdown preview should use light theme")
@@ -385,10 +385,11 @@ end
 local function test_markdown_preview_toggle_does_not_block()
   local file = temp_root .. "/preview-toggle.md"
   local old_browserfunc = vim.g.mkdp_browserfunc
-  local old_channel = vim.g.mkdp_node_channel_id
   local old_clients_active = vim.g.mkdp_clients_active
   local channel = nil
   write(file, { "# Preview" })
+  local other_file = temp_root .. "/preview-toggle-other.txt"
+  write(other_file, { "Other file" })
 
   vim.cmd([[
     function! SmokeMarkdownPreviewBrowser(url) abort
@@ -396,21 +397,42 @@ local function test_markdown_preview_toggle_does_not_block()
     endfunction
   ]])
   vim.g.mkdp_browserfunc = "SmokeMarkdownPreviewBrowser"
-  vim.g.mkdp_node_channel_id = nil
   vim.g.mkdp_clients_active = 0
+
+  local function find_preview_channel()
+    for _, candidate in ipairs(vim.api.nvim_list_chans()) do
+      if candidate.mode == "rpc" and candidate.stream == "job" then
+        for _, arg in ipairs(candidate.argv or {}) do
+          if tostring(arg):find("markdown-preview.nvim", 1, true) then
+            return candidate.id
+          end
+        end
+      end
+    end
+  end
 
   local ok, err = xpcall(function()
     vim.cmd("edit " .. vim.fn.fnameescape(file))
     vim.bo.filetype = "markdown"
+    local preview_buf = vim.api.nvim_get_current_buf()
     vim.b.MarkdownPreviewToggleBool = 0
     local preview_map = vim.fn.maparg("<leader>fp", "n", false, true)
 
     preview_map.callback()
     assert_true(vim.b.MarkdownPreviewToggleBool == 1, "markdown preview did not enter running state")
     wait_until("markdown preview RPC child", function()
-      channel = tonumber(vim.g.mkdp_node_channel_id)
+      channel = find_preview_channel()
       return channel ~= nil and channel > 0
     end, 5000)
+
+    vim.cmd("edit " .. vim.fn.fnameescape(other_file))
+    assert_true(
+      vim.b[preview_buf].MarkdownPreviewToggleBool == 1,
+      "markdown preview stopped when its buffer was hidden"
+    )
+    local running = vim.fn.jobwait({ channel }, 0)
+    assert_true(type(running) == "table" and running[1] == -1, "markdown preview RPC child exited on buffer switch")
+    vim.api.nvim_set_current_buf(preview_buf)
 
     local started = uv.hrtime()
     preview_map.callback()
@@ -427,7 +449,6 @@ local function test_markdown_preview_toggle_does_not_block()
     pcall(vim.fn.jobstop, channel)
   end
   vim.g.mkdp_browserfunc = old_browserfunc
-  vim.g.mkdp_node_channel_id = old_channel
   vim.g.mkdp_clients_active = old_clients_active
   vim.g.smoke_markdown_preview_url = nil
   pcall(vim.cmd, "delfunction SmokeMarkdownPreviewBrowser")
