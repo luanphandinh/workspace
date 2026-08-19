@@ -12,7 +12,7 @@ Compress the output, not the investigation. Read and verify the full flow first.
 Stop at the first form that carries the fact:
 
 1. Omit it if the reader does not need it.
-2. Do not repeat it if another artifact already shows it.
+2. Do not repeat it if a table, diagram, schema, code block, or other artifact already shows it.
 3. Use an identifier, data example, code block, table, or diagram.
 4. Use one short bullet.
 5. Use a paragraph only for rationale that cannot be encoded above.
@@ -37,15 +37,18 @@ Do not use a table for prose or an inventory that does not compare anything.
 
 - Start with the useful artifact. No preamble or process narration.
 - Use concrete identifiers. Do not translate self-evident names into prose.
-- Keep one idea per bullet and at most three visible bullets per subsection.
+- Use short bullets by default, especially for implementation actions, checks, and conditions.
+- Use numbering only when execution order changes the result, such as rollout or migration sequencing.
+- Keep one idea per bullet. Split compound sentences into separate bullets. Do not use prose semicolons.
+- Keep at most three visible bullets per subsection.
 - Keep visible paragraphs under three source lines.
-- Remove optional headings, examples, and alternatives that add no information.
+- Shorten table cells and diagram labels. Remove optional content that adds no information.
 - Preserve validation, failure behavior, security, compatibility, and explicit requirements. Brevity never removes correctness.
 - End with only unresolved questions, evidence, or verification that changes a decision.
 
 ## Diagrams
 
-Normalize findings into nodes and labeled edges before drawing. The diagram is the flow source of truth; text below it contains evidence or exceptions only.
+Normalize findings into nodes and labeled edges before drawing. The diagram is the flow source of truth. Text below it contains evidence or exceptions only.
 
 - Terminal exploration: read [references/terminal-diagrams.md](references/terminal-diagrams.md).
 - Technical documents: read [references/mermaid-diagrams.md](references/mermaid-diagrams.md).

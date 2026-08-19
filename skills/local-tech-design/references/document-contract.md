@@ -6,7 +6,7 @@ Start directly at `# 1. Overview & Background`. Use these eight H1 sections in o
 
 | Section | Content |
 | --- | --- |
-| 1. Overview & Background | Problem, trigger, success |
+| 1. Overview & Background | Problem, trigger, target or expected outcome |
 | 2. Links | URLs only |
 | 3. Solution Overview | Selected model and end-to-end flow |
 | 4. Design Decisions | Unresolved high-impact choices |
@@ -19,7 +19,7 @@ One fact belongs to one section.
 
 ## 1. Overview & Background
 
-At most three bullets: problem, trigger, observable success. Skip missing items. No system history.
+At most three short bullets: problem, trigger, and `Target` or `Expected outcome`. Never use `Success` as a label. Skip missing items. No system history.
 
 ## 2. Links
 
@@ -73,7 +73,7 @@ Otherwise, one H2 per changed API with only changed request/response fields, beh
 - At most three short visible bullets per service.
 - Put schema, config, logic, code, and test detail in named `<details>` blocks.
 - Add one `Service | Change | Risk` table only when it materially compares at least three services.
-- Group tests into at most five behavior categories; never list individual test cases.
+- Group tests into at most five behavior categories. Never list individual test cases.
 
 Do not repeat architecture, external contracts, or production actions here.
 
@@ -109,8 +109,8 @@ Do not explain code already visible in the block.
 
 Before every presentation or sync:
 
-1. Remove facts already shown by diagrams, data examples, code, field names, requirements, or another section.
-2. Remove optional headings, tables, alternatives, and examples that add no decision value.
-3. Keep visible non-code prose below 200 source lines.
-4. Replace every visible paragraph over three lines with a shorter artifact or bullet.
-5. Check that sections own distinct facts and that every proposed new symbol passes the `local-coding` minimum-solution gate.
+- Remove facts already shown by diagrams, data examples, code, field names, requirements, or another section.
+- Remove optional headings, tables, alternatives, and examples that add no decision value.
+- Keep visible non-code prose below 200 source lines.
+- Replace every visible paragraph over three lines with a shorter artifact or bullet.
+- Check that sections own distinct facts and that every proposed new symbol passes the `local-coding` minimum-solution gate.
