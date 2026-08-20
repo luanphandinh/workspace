@@ -1422,10 +1422,17 @@ local function test_recent_navigation_ordering(repo, worktree)
     local current_root
     projects, current_root = api.list_all_project_repos()
     local grouped = api.group_project_entries(projects, current_root)
-    assert_true(grouped[1].scope == "root", "previous repository group was not promoted")
+    assert_true(grouped[1].scope == "workspace", "root repository recency displaced the workspace group")
+    local root_header = nil
+    for index, entry in ipairs(grouped) do
+      if entry.header and entry.scope == "root" then
+        root_header = index
+        break
+      end
+    end
     assert_true(
-      realpath(grouped[2].path) == realpath(source_b),
-      "previous repository was not the first switch target"
+      root_header and grouped[root_header + 1] and realpath(grouped[root_header + 1].path) == realpath(source_b),
+      "previous root repository was not first within the root group"
     )
 
     local empty_workspace = station .. "/local_workspaces/" .. empty_workspace_name

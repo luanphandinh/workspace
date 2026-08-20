@@ -957,13 +957,18 @@ local function setup()
     end)
 
     local grouped = {}
-    local scope_order = {}
     for _, repo in ipairs(candidates) do
       if not grouped[repo.scope] then
         grouped[repo.scope] = {}
-        scope_order[#scope_order + 1] = repo.scope
       end
       grouped[repo.scope][#grouped[repo.scope] + 1] = repo
+    end
+
+    local scope_order = {}
+    for _, scope in ipairs({ "workspace", "root" }) do
+      if grouped[scope] then
+        scope_order[#scope_order + 1] = scope
+      end
     end
 
     local entries = {}
