@@ -902,6 +902,32 @@ local function setup()
     return path:sub(1, marker_start - 1) .. marker .. workspace_name
   end
 
+  local function list_addable_repositories()
+    local current = safe_getcwd()
+    local workspace = workspace_root_for_path(git_root(current) or current)
+    local root = workstation_root()
+    if not workspace or not root then
+      return {}, nil
+    end
+
+    local present = {}
+    for _, repo in ipairs(list_repos_in_dir(workspace)) do
+      present[repo.name] = true
+    end
+
+    local candidates = {}
+    for _, repo in ipairs(list_repos_in_dir(root)) do
+      if not present[repo.name] then
+        candidates[#candidates + 1] = {
+          name = repo.name,
+          path = repo.path,
+          branch = project_branch(repo.path),
+        }
+      end
+    end
+    return candidates, workspace
+  end
+
   local function group_project_entries(repos, current_root)
     local name_width = 0
     for _, repo in ipairs(repos) do
@@ -1371,6 +1397,86 @@ local function setup()
     }):find()
   end
 
+  local function add_repository(repo, workspace, on_complete)
+    if vim.fn.executable("mkws") ~= 1 then
+      local result = { code = 127, stderr = "mkws is not available on PATH" }
+      vim.notify(result.stderr, vim.log.levels.ERROR)
+      if on_complete then on_complete(result) end
+      return
+    end
+
+    vim.notify("Adding " .. repo.name .. " to workspace...")
+    vim.system({ "mkws", "--add", repo.path }, { cwd = workspace, text = true }, function(result)
+      vim.schedule(function()
+        if result.code ~= 0 then
+          local output = vim.trim((result.stderr or "") .. "\n" .. (result.stdout or ""))
+          output = output:gsub("\27%[[%d;]*m", "")
+          local message = "mkws --add failed for " .. repo.name
+          if output ~= "" then
+            message = message .. ":\n" .. output
+          end
+          vim.notify(message, vim.log.levels.ERROR)
+        else
+          local ok_tree, tree = pcall(require, "nvim-tree.api")
+          if ok_tree then
+            pcall(tree.tree.reload)
+          end
+          vim.notify("Added " .. repo.name .. " to workspace")
+        end
+        if on_complete then on_complete(result) end
+      end)
+    end)
+  end
+
+  local function pick_add_repository()
+    if rescue_deleted_cwd() then
+      return
+    end
+
+    local repositories, workspace = list_addable_repositories()
+    if not workspace then
+      vim.notify("repository add requires a local workspace", vim.log.levels.WARN)
+      return
+    end
+    if #repositories == 0 then
+      vim.notify("all root repositories are already in this workspace", vim.log.levels.INFO)
+      return
+    end
+
+    local pickers, finders, conf, actions, action_state = telescope_modules()
+    if not pickers then return end
+    local name_width = 0
+    for _, repo in ipairs(repositories) do
+      name_width = math.max(name_width, #repo.name)
+    end
+    pickers.new({}, {
+      prompt_title = "Add Repository",
+      finder = finders.new_table({
+        results = repositories,
+        entry_maker = function(repo)
+          return {
+            value = repo,
+            display = string.format("%-" .. name_width .. "s [%s]", repo.name, repo.branch),
+            ordinal = repo.name,
+          }
+        end,
+      }),
+      sorter = conf.generic_sorter({}),
+      attach_mappings = function(prompt_bufnr, _map)
+        actions.select_default:replace(function()
+          local selection = action_state.get_selected_entry()
+          actions.close(prompt_bufnr)
+          if not selection or not selection.value then
+            vim.notify("repository add picker: no selection", vim.log.levels.WARN)
+            return
+          end
+          add_repository(selection.value, workspace)
+        end)
+        return true
+      end,
+    }):find()
+  end
+
   local function activate_workspace(workspace, current_destination)
     if current_destination then
       recent_paths.touch(current_destination)
@@ -1513,6 +1619,7 @@ local function setup()
     pcall(vim.api.nvim_del_user_command, "WorktreeSwitch")
     pcall(vim.api.nvim_del_user_command, "ProjectSwitch")
     pcall(vim.api.nvim_del_user_command, "RepositorySwitch")
+    pcall(vim.api.nvim_del_user_command, "RepositoryAdd")
     pcall(vim.api.nvim_del_user_command, "AgentSwitch")
     vim.api.nvim_create_user_command("WorktreeSwitch", pick_worktree, {
       desc = "Switch nvim instance to another git worktree",
@@ -1523,10 +1630,14 @@ local function setup()
     vim.api.nvim_create_user_command("RepositorySwitch", pick_project, {
       desc = "Switch nvim instance to an adjacent workspace or root git repository",
     })
+    vim.api.nvim_create_user_command("RepositoryAdd", pick_add_repository, {
+      desc = "Add a root repository to the current workspace",
+    })
     vim.api.nvim_create_user_command("AgentSwitch", pick_agent, {
       desc = "Switch nvim instance to a project with an active agent",
     })
     vim.keymap.set("n", "<leader>ww", pick_worktree, { desc = "Switch workspace" })
+    vim.keymap.set("n", "<leader>wa", pick_add_repository, { desc = "Add repository" })
     vim.keymap.set("n", "<leader>wr", pick_project, { desc = "Pick repository" })
     vim.keymap.set("n", "<leader>wp", pick_workspace_project, { desc = "Pick workspace" })
     vim.keymap.set("n", "<leader>w;", pick_agent, { desc = "Switch active agent" })
@@ -1537,6 +1648,7 @@ local function setup()
   local test_api = {
     switch_to = switch_to,
     pick_worktree = pick_worktree,
+    pick_add_repository = pick_add_repository,
     pick_project = pick_project,
     pick_workspace_project = pick_workspace_project,
     pick_agent = pick_agent,
@@ -1545,6 +1657,7 @@ local function setup()
     list_sibling_repos = list_sibling_repos,
     list_worktrees = list_worktrees,
     list_all_project_repos = list_all_project_repos,
+    list_addable_repositories = list_addable_repositories,
     list_workspace_directories = list_workspace_directories,
     list_workspace_destinations = list_workspace_destinations,
     group_project_entries = group_project_entries,
@@ -1552,6 +1665,7 @@ local function setup()
     move_project_selection = move_project_selection,
     list_active_agents = list_active_agents,
     agent_switch_targets = agent_switch_targets,
+    add_repository = add_repository,
     refire_filetype_all = refire_filetype_all,
     snapshot = snapshot_buffers,
     restore = restore_buffers,
@@ -1577,6 +1691,10 @@ local function pick_project()
   ensure_setup().pick_project()
 end
 
+local function pick_add_repository()
+  ensure_setup().pick_add_repository()
+end
+
 local function pick_workspace_project()
   ensure_setup().pick_workspace_project()
 end
@@ -1590,9 +1708,10 @@ return {
     "luanphan-worktree",
     virtual = true,
     init = init,
-    cmd = { "WorktreeSwitch", "ProjectSwitch", "RepositorySwitch", "AgentSwitch" },
+    cmd = { "WorktreeSwitch", "ProjectSwitch", "RepositorySwitch", "RepositoryAdd", "AgentSwitch" },
     keys = {
       { "<leader>ww", pick_worktree, desc = "Switch workspace" },
+      { "<leader>wa", pick_add_repository, desc = "Add repository" },
       { "<leader>wr", pick_project, desc = "Pick repository" },
       { "<leader>wp", pick_workspace_project, desc = "Pick workspace" },
       { "<leader>w;", pick_agent, desc = "Switch active agent" },
