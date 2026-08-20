@@ -1376,6 +1376,9 @@ local function test_recent_navigation_ordering(repo, worktree)
     recent_paths.touch(repo)
     recent_paths.sort(items, function(item) return item.path end)
     assert_true(items[1].name == "example-a", "revisiting a path did not move it back to the front")
+    local targets = recent_paths.switch_targets(items, function(item) return item.path end, repo)
+    assert_true(#targets == 1, "switch targets did not exclude the current path")
+    assert_true(targets[1].name == "example-b", "switch targets did not promote the previous path")
 
     vim.cmd("cd " .. vim.fn.fnameescape(repo))
     recent_paths.touch(worktree)
@@ -1409,12 +1412,36 @@ local function test_recent_navigation_ordering(repo, worktree)
       "repository picker did not promote the latest root repository within its group"
     )
 
+    recent_paths.touch(workspace_a)
+    local current_root
+    projects, current_root = api.list_all_project_repos()
+    local grouped = api.group_project_entries(projects, current_root)
+    assert_true(grouped[1].scope == "root", "previous repository group was not promoted")
+    assert_true(
+      realpath(grouped[2].path) == realpath(source_b),
+      "previous repository was not the first switch target"
+    )
+
     local empty_workspace = station .. "/local_workspaces/" .. empty_workspace_name
     recent_paths.touch(empty_workspace)
     local workspace_entries = api.list_workspace_directories()
     assert_true(
       realpath(workspace_entries[1].path) == realpath(empty_workspace),
       "workspace picker did not promote the latest workspace"
+    )
+
+    local workspace_root = vim.fn.fnamemodify(workspace_a, ":h")
+    recent_paths.touch(workspace_root)
+    recent_paths.touch(empty_workspace)
+    local destinations = api.list_workspace_destinations()
+    local workspace_targets = recent_paths.switch_targets(destinations, function(workspace)
+      return workspace.path
+    end, empty_workspace, function(a, b)
+      return a.name < b.name
+    end)
+    assert_true(
+      realpath(workspace_targets[1].path) == realpath(workspace_root),
+      "workspace switch targets did not promote the previous workspace"
     )
   end, debug.traceback)
 
@@ -1459,12 +1486,18 @@ local function test_workspace_and_master_project_discovery()
     assert_true(project.branch == branch, "combined project discovery reported the wrong branch for " .. project_path)
   end
   local entries = api.group_project_entries(projects, current_root)
-  assert_true(#entries == 7, "grouped project entries returned an unexpected row count")
+  assert_true(#entries == 6, "grouped project entries returned an unexpected row count")
   assert_true(entries[1].header and entries[1].display == "[workspace]", "workspace group header is missing")
   local workspace_root = station .. "/local_workspaces/" .. workspace_name
   assert_true(entries[2].workspace_root and entries[2].display == "  .", "workspace root option is missing")
   assert_true(realpath(entries[2].path) == realpath(workspace_root), "workspace root option has the wrong path")
-  assert_true(entries[5].header and entries[5].display == "[root]", "root group header is missing")
+  assert_true(entries[4].header and entries[4].display == "[root]", "root group header is missing")
+  for _, entry in ipairs(entries) do
+    assert_true(
+      entry.header or realpath(entry.path) ~= realpath(current_root),
+      "grouped project entries included the current repository"
+    )
+  end
   local branch_column = nil
   for _, entry in ipairs(entries) do
     if not entry.header and not entry.workspace_root then
@@ -1481,13 +1514,13 @@ local function test_workspace_and_master_project_discovery()
     return sorter:scoring_function(prompt, entry.ordinal, { value = entry })
   end
   assert_true(score("no-project-matches-this", entries[1]) >= 0, "workspace header was filtered by search")
-  assert_true(score("no-project-matches-this", entries[5]) >= 0, "root header was filtered by search")
+  assert_true(score("no-project-matches-this", entries[4]) >= 0, "root header was filtered by search")
   assert_true(score("no-project-matches-this", entries[3]) < 0, "non-matching project survived search")
   assert_true(score("feature", entries[3]) < 0, "project search matched a branch name")
   assert_true(score("station", entries[3]) < 0, "project search matched a repository path")
   assert_true(score("project", entries[1]) < score("project", entries[3]), "workspace header is not first")
-  assert_true(score("project", entries[4]) < score("project", entries[5]), "root header split the workspace group")
-  assert_true(score("project", entries[5]) < score("project", entries[6]), "root header is not first in its group")
+  assert_true(score("project", entries[3]) < score("project", entries[4]), "root header split the workspace group")
+  assert_true(score("project", entries[4]) < score("project", entries[5]), "root header is not first in its group")
 
   local picker = {
     position = 1,
@@ -1502,12 +1535,12 @@ local function test_workspace_and_master_project_discovery()
   end
   api.move_project_selection(picker, 1)
   assert_true(picker.position == 2, "selection did not skip the workspace header")
-  picker.position = 4
+  picker.position = 3
   api.move_project_selection(picker, 1)
-  assert_true(picker.position == 6, "selection did not skip the root header")
-  picker.position = 6
+  assert_true(picker.position == 5, "selection did not skip the root header")
+  picker.position = 5
   api.move_project_selection(picker, -1)
-  assert_true(picker.position == 4, "reverse selection did not skip the root header")
+  assert_true(picker.position == 3, "reverse selection did not skip the root header")
   assert_true(vim.fn.exists(":ProjectSwitch") == 2, "ProjectSwitch command is missing")
 
   local normalized_workspace_root = realpath(workspace_root)
@@ -1624,6 +1657,9 @@ local function test_active_agent_discovery(repo, worktree)
     recent_paths.touch(repo)
     instances = api.list_active_agents()
     assert_true(instances[1].agent == "codex", "agent picker did not move a revisited project to the front")
+    local switch_targets = api.agent_switch_targets(instances, codex_buf)
+    assert_true(#switch_targets == 1, "agent switch targets did not exclude the current agent")
+    assert_true(switch_targets[1].agent == "cursor", "agent switch targets did not promote the previous agent")
     local by_agent = {}
     for _, instance in ipairs(instances) do
       by_agent[instance.agent] = instance
@@ -2372,6 +2408,8 @@ end
 
 local function test_worktree_switch_hides_foreign_file(repo, worktree)
   local api = worktree_test_api()
+  local recent_paths = require("luanphan.recent_paths")
+  vim.fn.delete(vim.g.luanphan_recent_paths_file)
   local clean_path = repo .. "/switch-clean.go"
   local modified_path = repo .. "/switch-modified.go"
   write(clean_path, { "package main", "", "var switchClean = true" })
@@ -2401,6 +2439,17 @@ local function test_worktree_switch_hides_foreign_file(repo, worktree)
 
   api.switch_to(worktree, "worktree")
   assert_true(realpath(vim.fn.getcwd()) == realpath(worktree), "worktree switch did not change cwd")
+  local targets = recent_paths.switch_targets({
+    { path = repo },
+    { path = worktree },
+  }, function(item)
+    return item.path
+  end, worktree)
+  assert_true(
+    #targets == 1 and realpath(targets[1].path) == realpath(repo),
+    "worktree switch did not preserve the previous destination"
+  )
+  vim.fn.delete(vim.g.luanphan_recent_paths_file)
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local visible = vim.api.nvim_win_get_buf(win)
     assert_true(visible ~= clean_buf, "previous repository file remained visible after switch")

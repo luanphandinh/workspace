@@ -111,4 +111,15 @@ function M.sort(items, path_of, fallback)
   return items
 end
 
+function M.switch_targets(items, path_of, current_path, fallback)
+  local current = normalize(current_path)
+  local targets = {}
+  for _, item in ipairs(items) do
+    if not current or normalize(path_of(item)) ~= current then
+      targets[#targets + 1] = item
+    end
+  end
+  return M.sort(targets, path_of, fallback)
+end
+
 return M
