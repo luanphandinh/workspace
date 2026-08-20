@@ -32,11 +32,7 @@ local function setup()
   --     } }
   local BUFSTORE_KEY = "luanphan_workspace_buffers"
   local WS_CONTAINER = "local_workspaces"
-  local AGENT_BUFFER_KEYS = {
-    { name = "codex", key = "codex_agent_bufnr" },
-    { name = "claude", key = "claude_agent_bufnr" },
-    { name = "cursor", key = "cursor_agent_bufnr" },
-  }
+  local AGENT_BUFFER_KEYS = require("luanphan.plugins.agents").agent_buffer_keys()
   local recent_paths = require("luanphan.recent_paths")
 
   -- Transient map of "apply this cursor when the file is first BufReadPost'd
