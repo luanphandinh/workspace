@@ -951,9 +951,10 @@ local function setup()
         group_order = group_order,
       }
       for _, repo in ipairs(grouped[scope]) do
-        local display = "  ."
+        local marker = repo.path == current_root and "* " or "  "
+        local display = marker .. "."
         if not repo.workspace_root then
-          display = string.format("  %-" .. name_width .. "s [%s]", repo.name, repo.branch)
+          display = string.format("%s%-" .. name_width .. "s [%s]", marker, repo.name, repo.branch)
         end
         entries[#entries + 1] = vim.tbl_extend("force", repo, {
           display = display,
@@ -1042,6 +1043,7 @@ local function setup()
               branch = project_branch(root),
               bufnr = bufnr,
               context = context,
+              destination = root,
               path = cwd,
               status = agent_status.read(agent.name, cwd),
             }
@@ -1063,13 +1065,14 @@ local function setup()
     local status_width = 0
     local context_width = 0
     local current = safe_getcwd()
+    local current_destination = git_root(current) or workspace_root_for_path(current) or current
     for _, instance in ipairs(instances) do
       agent_width = math.max(agent_width, #instance.agent)
       status_width = math.max(status_width, #instance.status)
       context_width = math.max(context_width, #instance.context)
     end
     for _, instance in ipairs(instances) do
-      local marker = instance.path == current and "* " or "  "
+      local marker = instance.destination == current_destination and "* " or "  "
       instance.display = string.format(
         "%s%-" .. agent_width .. "s  [%-" .. status_width .. "s]  %-" .. context_width .. "s  [%s]",
         marker,
@@ -1245,10 +1248,6 @@ local function setup()
     trees = recent_paths.switch_targets(trees, function(tree)
       return tree.path
     end, cur_root)
-    if #trees == 0 then
-      vim.notify("no other worktrees found", vim.log.levels.WARN)
-      return
-    end
     local rel = ""
     if cur ~= cur_root and vim.startswith(cur, cur_root .. "/") then
       rel = cur:sub(#cur_root + 2)
@@ -1260,7 +1259,8 @@ local function setup()
         results = trees,
         entry_maker = function(tree)
           local ref = tree.branch or (tree.head and ("@" .. tree.head)) or "detached"
-          local display = string.format("  %-30s %s", ref, tree.path)
+          local marker = tree.path == cur_root and "* " or "  "
+          local display = string.format("%s%-30s %s", marker, ref, tree.path)
           return {
             value = tree,
             display = display,
@@ -1317,10 +1317,6 @@ local function setup()
     local pickers, finders, conf, actions, action_state = telescope_modules()
     if not pickers then return end
     local entries = group_project_entries(repos, current_root)
-    if #entries == 0 then
-      vim.notify("no other workspace or root git repositories found", vim.log.levels.WARN)
-      return
-    end
     local sorter = make_project_sorter(conf.generic_sorter({}), require("telescope.sorters"))
     pickers.new({}, {
       prompt_title = "Git Projects",
@@ -1413,20 +1409,17 @@ local function setup()
     end, current_destination, function(a, b)
       return a.name < b.name
     end)
-    if #workspaces == 0 then
-      vim.notify("no other workspaces found", vim.log.levels.WARN)
-      return
-    end
 
     pickers.new({}, {
       prompt_title = "Workspaces",
       finder = finders.new_table({
         results = workspaces,
         entry_maker = function(workspace)
+          local marker = workspace.path == current_destination and "* " or "  "
           local suffix = workspace.empty and " [no code repo yet]" or ""
           return {
             value = workspace,
-            display = "  " .. workspace.name .. suffix,
+            display = marker .. workspace.name .. suffix,
             ordinal = workspace.name,
           }
         end,
@@ -1463,28 +1456,10 @@ local function setup()
     end
   end
 
-  local function agent_switch_targets(instances, current_buf)
-    local current_path = nil
-    local targets = {}
-    for _, instance in ipairs(instances) do
-      if instance.bufnr == current_buf then
-        current_path = instance.path
-      else
-        targets[#targets + 1] = instance
-      end
-    end
-    if not current_path then
-      return targets
-    end
-
-    local other_paths = {}
-    local same_path = {}
-    for _, instance in ipairs(targets) do
-      local target = instance.path == current_path and same_path or other_paths
-      target[#target + 1] = instance
-    end
-    vim.list_extend(other_paths, same_path)
-    return other_paths
+  local function agent_switch_targets(instances, current_path)
+    return recent_paths.switch_targets(instances, function(instance)
+      return instance.destination or instance.path
+    end, current_path)
   end
 
   local function pick_agent()
@@ -1493,9 +1468,11 @@ local function setup()
     end
 
     local instances = list_active_agents()
-    instances = agent_switch_targets(instances, vim.api.nvim_get_current_buf())
+    local current = safe_getcwd()
+    local current_destination = git_root(current) or workspace_root_for_path(current) or current
+    instances = agent_switch_targets(instances, current_destination)
     if #instances == 0 then
-      vim.notify("no other active agent terminals found", vim.log.levels.WARN)
+      vim.notify("no active agent terminals found", vim.log.levels.WARN)
       return
     end
 

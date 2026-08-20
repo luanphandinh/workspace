@@ -114,12 +114,24 @@ end
 function M.switch_targets(items, path_of, current_path, fallback)
   local current = normalize(current_path)
   local targets = {}
+  local current_targets = {}
   for _, item in ipairs(items) do
-    if not current or normalize(path_of(item)) ~= current then
-      targets[#targets + 1] = item
-    end
+    local target = current and normalize(path_of(item)) == current and current_targets or targets
+    target[#target + 1] = item
   end
-  return M.sort(targets, path_of, fallback)
+
+  M.sort(targets, path_of, fallback)
+  M.sort(current_targets, path_of, fallback)
+  if #targets == 0 then
+    return current_targets
+  end
+
+  local ordered = { targets[1] }
+  vim.list_extend(ordered, current_targets)
+  for index = 2, #targets do
+    ordered[#ordered + 1] = targets[index]
+  end
+  return ordered
 end
 
 return M
