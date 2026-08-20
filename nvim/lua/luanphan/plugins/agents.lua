@@ -45,6 +45,14 @@ local apis = {}
 local configured = {}
 local setup_opts = {}
 
+function M.agent_buffer_keys()
+  local keys = {}
+  for _, name in ipairs(agent_order) do
+    keys[#keys + 1] = { name = name, key = agent_defs[name].g_bufnr }
+  end
+  return keys
+end
+
 local function resolve_defaults(defaults)
   if type(defaults) == "function" then
     return defaults()

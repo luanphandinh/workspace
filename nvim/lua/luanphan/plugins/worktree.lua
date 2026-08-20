@@ -32,11 +32,7 @@ local function setup()
   --     } }
   local BUFSTORE_KEY = "luanphan_workspace_buffers"
   local WS_CONTAINER = "local_workspaces"
-  local AGENT_BUFFER_KEYS = {
-    { name = "codex", key = "codex_agent_bufnr" },
-    { name = "claude", key = "claude_agent_bufnr" },
-    { name = "cursor", key = "cursor_agent_bufnr" },
-  }
+  local AGENT_BUFFER_KEYS = require("luanphan.plugins.agents").agent_buffer_keys()
   local recent_paths = require("luanphan.recent_paths")
 
   -- Transient map of "apply this cursor when the file is first BufReadPost'd
@@ -890,36 +886,82 @@ local function setup()
     return destinations, root
   end
 
+  local function workspace_root_for_path(path)
+    if not path or path == "" then
+      return nil
+    end
+    local marker = "/" .. WS_CONTAINER .. "/"
+    local marker_start = path:find(marker, 1, true)
+    if not marker_start then
+      return nil
+    end
+    local workspace_name = path:sub(marker_start + #marker):match("^([^/]+)")
+    if not workspace_name then
+      return nil
+    end
+    return path:sub(1, marker_start - 1) .. marker .. workspace_name
+  end
+
   local function group_project_entries(repos, current_root)
     local name_width = 0
     for _, repo in ipairs(repos) do
       name_width = math.max(name_width, #repo.name)
     end
 
-    local entries = {}
-    for _, scope in ipairs({ "workspace", "root" }) do
-      local scoped = {}
-      for _, repo in ipairs(repos) do
-        if repo.scope == scope then
-          scoped[#scoped + 1] = repo
-        end
+    local candidates = vim.deepcopy(repos)
+    local workspace_root = workspace_root_for_path(current_root)
+    if workspace_root then
+      candidates[#candidates + 1] = {
+        name = ".",
+        path = workspace_root,
+        scope = "workspace",
+        workspace_root = true,
+      }
+    end
+    candidates = recent_paths.switch_targets(candidates, function(repo)
+      return repo.path
+    end, current_root, function(a, b)
+      if a.scope ~= b.scope then
+        return a.scope == "workspace"
       end
-      if #scoped > 0 then
-        entries[#entries + 1] = {
-          header = true,
-          scope = scope,
-          display = "[" .. scope .. "]",
-          ordinal = scope,
-          order = #entries + 1,
-        }
-        for _, repo in ipairs(scoped) do
-          local marker = repo.path == current_root and "* " or "  "
-          entries[#entries + 1] = vim.tbl_extend("force", repo, {
-            display = string.format("%s%-" .. name_width .. "s [%s]", marker, repo.name, repo.branch),
-            ordinal = repo.name,
-            order = #entries + 1,
-          })
+      if a.workspace_root ~= b.workspace_root then
+        return a.workspace_root == true
+      end
+      return a.name < b.name
+    end)
+
+    local grouped = {}
+    local scope_order = {}
+    for _, repo in ipairs(candidates) do
+      if not grouped[repo.scope] then
+        grouped[repo.scope] = {}
+        scope_order[#scope_order + 1] = repo.scope
+      end
+      grouped[repo.scope][#grouped[repo.scope] + 1] = repo
+    end
+
+    local entries = {}
+    for group_order, scope in ipairs(scope_order) do
+      entries[#entries + 1] = {
+        header = true,
+        scope = scope,
+        display = "[" .. scope .. "]",
+        ordinal = scope,
+        order = #entries + 1,
+        group_order = group_order,
+      }
+      for _, repo in ipairs(grouped[scope]) do
+        local marker = repo.path == current_root and "* " or "  "
+        local display = marker .. "."
+        if not repo.workspace_root then
+          display = string.format("%s%-" .. name_width .. "s [%s]", marker, repo.name, repo.branch)
         end
+        entries[#entries + 1] = vim.tbl_extend("force", repo, {
+          display = display,
+          ordinal = repo.name,
+          order = #entries + 1,
+          group_order = group_order,
+        })
       end
     end
     return entries
@@ -929,7 +971,7 @@ local function setup()
     return sorters.Sorter:new({
       scoring_function = function(_, prompt, line, entry)
         local value = entry.value
-        local group_offset = value.scope == "root" and 10 or 0
+        local group_offset = ((value.group_order or 1) - 1) * 10
         if value.header then
           return group_offset
         end
@@ -1001,6 +1043,7 @@ local function setup()
               branch = project_branch(root),
               bufnr = bufnr,
               context = context,
+              destination = root,
               path = cwd,
               status = agent_status.read(agent.name, cwd),
             }
@@ -1022,13 +1065,14 @@ local function setup()
     local status_width = 0
     local context_width = 0
     local current = safe_getcwd()
+    local current_destination = git_root(current) or workspace_root_for_path(current) or current
     for _, instance in ipairs(instances) do
       agent_width = math.max(agent_width, #instance.agent)
       status_width = math.max(status_width, #instance.status)
       context_width = math.max(context_width, #instance.context)
     end
     for _, instance in ipairs(instances) do
-      local marker = instance.path == current and "* " or "  "
+      local marker = instance.destination == current_destination and "* " or "  "
       instance.display = string.format(
         "%s%-" .. agent_width .. "s  [%-" .. status_width .. "s]  %-" .. context_width .. "s  [%s]",
         marker,
@@ -1054,6 +1098,7 @@ local function setup()
     if old_cwd ~= "" then
       snapshot_buffers(old_cwd)
       snapshot_jumplist(old_cwd)
+      recent_paths.touch(git_root(old_cwd) or workspace_root_for_path(old_cwd) or old_cwd)
     end
 
     -- 2a. Close nvim-tree first if it's open. The tree pane has its own
@@ -1200,6 +1245,9 @@ local function setup()
     end
 
     local cur_root = git_root(cur) or cur
+    trees = recent_paths.switch_targets(trees, function(tree)
+      return tree.path
+    end, cur_root)
     local rel = ""
     if cur ~= cur_root and vim.startswith(cur, cur_root .. "/") then
       rel = cur:sub(#cur_root + 2)
@@ -1211,7 +1259,7 @@ local function setup()
         results = trees,
         entry_maker = function(tree)
           local ref = tree.branch or (tree.head and ("@" .. tree.head)) or "detached"
-          local marker = (tree.path == cur_root) and "* " or "  "
+          local marker = tree.path == cur_root and "* " or "  "
           local display = string.format("%s%-30s %s", marker, ref, tree.path)
           return {
             value = tree,
@@ -1307,7 +1355,7 @@ local function setup()
             return
           end
           vim.schedule(function()
-            switch_to(selection.value.path, "project")
+            switch_to(selection.value.path, selection.value.workspace_root and "workspace root" or "project")
           end)
         end)
         return true
@@ -1323,7 +1371,10 @@ local function setup()
     }):find()
   end
 
-  local function activate_workspace(workspace)
+  local function activate_workspace(workspace, current_destination)
+    if current_destination then
+      recent_paths.touch(current_destination)
+    end
     if workspace.path == safe_getcwd() then
       recent_paths.touch(workspace.path)
       vim.notify("already in this workspace", vim.log.levels.INFO)
@@ -1353,17 +1404,14 @@ local function setup()
         break
       end
     end
-    local default_selection = 1
-    for index, workspace in ipairs(workspaces) do
-      if workspace.path == current_destination then
-        default_selection = index
-        break
-      end
-    end
+    workspaces = recent_paths.switch_targets(workspaces, function(workspace)
+      return workspace.path
+    end, current_destination, function(a, b)
+      return a.name < b.name
+    end)
 
     pickers.new({}, {
       prompt_title = "Workspaces",
-      default_selection_index = default_selection,
       finder = finders.new_table({
         results = workspaces,
         entry_maker = function(workspace)
@@ -1387,7 +1435,7 @@ local function setup()
           end
           local workspace = selection.value
           vim.schedule(function()
-            activate_workspace(workspace)
+            activate_workspace(workspace, current_destination)
           end)
         end)
         return true
@@ -1408,12 +1456,21 @@ local function setup()
     end
   end
 
+  local function agent_switch_targets(instances, current_path)
+    return recent_paths.switch_targets(instances, function(instance)
+      return instance.destination or instance.path
+    end, current_path)
+  end
+
   local function pick_agent()
     if rescue_deleted_cwd() then
       return
     end
 
     local instances = list_active_agents()
+    local current = safe_getcwd()
+    local current_destination = git_root(current) or workspace_root_for_path(current) or current
+    instances = agent_switch_targets(instances, current_destination)
     if #instances == 0 then
       vim.notify("no active agent terminals found", vim.log.levels.WARN)
       return
@@ -1494,6 +1551,7 @@ local function setup()
     make_project_sorter = make_project_sorter,
     move_project_selection = move_project_selection,
     list_active_agents = list_active_agents,
+    agent_switch_targets = agent_switch_targets,
     refire_filetype_all = refire_filetype_all,
     snapshot = snapshot_buffers,
     restore = restore_buffers,

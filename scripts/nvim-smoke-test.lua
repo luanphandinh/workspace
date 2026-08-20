@@ -332,6 +332,48 @@ local function assert_lsp_navigation(path)
   assert_true(result_count(refs) >= 2, "references request returned too few locations")
 end
 
+local function assert_lsp_keymap_navigation(buf)
+  local usage = find_position(buf, "targetValue", "return targetValue()")
+  local definition = find_position(buf, "targetValue", "func targetValue")
+
+  local function invoke_lsp_map(lhs)
+    local map = vim.fn.maparg(lhs, "n", false, true)
+    assert_true(type(map) == "table" and type(map.callback) == "function", lhs .. " is not an LSP callback mapping")
+    map.callback()
+  end
+
+  vim.api.nvim_win_set_cursor(0, { usage.line + 1, usage.character })
+  invoke_lsp_map("gd")
+  local jumped = vim.wait(5000, function()
+    return vim.api.nvim_get_current_buf() == buf and vim.api.nvim_win_get_cursor(0)[1] == definition.line + 1
+  end, 50, false)
+  if not jumped then
+    local clients = {}
+    for _, client in ipairs(vim.lsp.get_clients({ bufnr = buf })) do
+      clients[#clients + 1] = string.format(
+        "%s:%d initialized=%s stopped=%s",
+        client.name,
+        client.id,
+        tostring(client.initialized),
+        tostring(client:is_stopped())
+      )
+    end
+    fail(string.format(
+      "gd did not jump: current_buf=%d source_buf=%d cursor=%d direct_results=%d clients=[%s]",
+      vim.api.nvim_get_current_buf(),
+      buf,
+      vim.api.nvim_win_get_cursor(0)[1],
+      result_count(request(buf, "textDocument/definition", usage)),
+      table.concat(clients, ", ")
+    ))
+  end
+
+  invoke_lsp_map("gr")
+  wait_until("gr reference jump", function()
+    return vim.api.nvim_get_current_buf() == buf and vim.api.nvim_win_get_cursor(0)[1] == usage.line + 1
+  end, 5000)
+end
+
 local function assert_lsp_code_action_keymaps()
   local change_definition = vim.fn.maparg("<leader>cd", "n", false, true)
   local code_action = vim.fn.maparg("<leader>ca", "n", false, true)
@@ -364,7 +406,7 @@ local function test_markdown_browser_preview_keymap()
   assert_true(type(preview_map) == "table" and preview_map.desc == "Preview file", "<leader>fp should preview files")
   assert_true(vim.fn.maparg("<leader>fP", "n") == "", "<leader>fP should be removed")
   assert_true(vim.g.mkdp_auto_start == 0, "browser Markdown preview should not auto-start")
-  assert_true(vim.g.mkdp_auto_close == 1, "browser Markdown preview should auto-close")
+  assert_true(vim.g.mkdp_auto_close == 0, "browser Markdown preview should remain open when its buffer is hidden")
   assert_true(vim.g.mkdp_refresh_slow == 0, "browser Markdown preview should auto-refresh content")
   assert_true(vim.g.mkdp_open_to_the_world == 0, "browser Markdown preview should stay local")
   assert_true(vim.g.mkdp_theme == "light", "browser Markdown preview should use light theme")
@@ -385,10 +427,11 @@ end
 local function test_markdown_preview_toggle_does_not_block()
   local file = temp_root .. "/preview-toggle.md"
   local old_browserfunc = vim.g.mkdp_browserfunc
-  local old_channel = vim.g.mkdp_node_channel_id
   local old_clients_active = vim.g.mkdp_clients_active
   local channel = nil
   write(file, { "# Preview" })
+  local other_file = temp_root .. "/preview-toggle-other.txt"
+  write(other_file, { "Other file" })
 
   vim.cmd([[
     function! SmokeMarkdownPreviewBrowser(url) abort
@@ -396,21 +439,42 @@ local function test_markdown_preview_toggle_does_not_block()
     endfunction
   ]])
   vim.g.mkdp_browserfunc = "SmokeMarkdownPreviewBrowser"
-  vim.g.mkdp_node_channel_id = nil
   vim.g.mkdp_clients_active = 0
+
+  local function find_preview_channel()
+    for _, candidate in ipairs(vim.api.nvim_list_chans()) do
+      if candidate.mode == "rpc" and candidate.stream == "job" then
+        for _, arg in ipairs(candidate.argv or {}) do
+          if tostring(arg):find("markdown-preview.nvim", 1, true) then
+            return candidate.id
+          end
+        end
+      end
+    end
+  end
 
   local ok, err = xpcall(function()
     vim.cmd("edit " .. vim.fn.fnameescape(file))
     vim.bo.filetype = "markdown"
+    local preview_buf = vim.api.nvim_get_current_buf()
     vim.b.MarkdownPreviewToggleBool = 0
     local preview_map = vim.fn.maparg("<leader>fp", "n", false, true)
 
     preview_map.callback()
     assert_true(vim.b.MarkdownPreviewToggleBool == 1, "markdown preview did not enter running state")
     wait_until("markdown preview RPC child", function()
-      channel = tonumber(vim.g.mkdp_node_channel_id)
+      channel = find_preview_channel()
       return channel ~= nil and channel > 0
     end, 5000)
+
+    vim.cmd("edit " .. vim.fn.fnameescape(other_file))
+    assert_true(
+      vim.b[preview_buf].MarkdownPreviewToggleBool == 1,
+      "markdown preview stopped when its buffer was hidden"
+    )
+    local running = vim.fn.jobwait({ channel }, 0)
+    assert_true(type(running) == "table" and running[1] == -1, "markdown preview RPC child exited on buffer switch")
+    vim.api.nvim_set_current_buf(preview_buf)
 
     local started = uv.hrtime()
     preview_map.callback()
@@ -427,7 +491,6 @@ local function test_markdown_preview_toggle_does_not_block()
     pcall(vim.fn.jobstop, channel)
   end
   vim.g.mkdp_browserfunc = old_browserfunc
-  vim.g.mkdp_node_channel_id = old_channel
   vim.g.mkdp_clients_active = old_clients_active
   vim.g.smoke_markdown_preview_url = nil
   pcall(vim.cmd, "delfunction SmokeMarkdownPreviewBrowser")
@@ -1313,6 +1376,10 @@ local function test_recent_navigation_ordering(repo, worktree)
     recent_paths.touch(repo)
     recent_paths.sort(items, function(item) return item.path end)
     assert_true(items[1].name == "example-a", "revisiting a path did not move it back to the front")
+    local targets = recent_paths.switch_targets(items, function(item) return item.path end, repo)
+    assert_true(#targets == 2, "switch targets discarded an option")
+    assert_true(targets[1].name == "example-b", "switch targets did not promote the previous path")
+    assert_true(targets[2].name == "example-a", "switch targets did not retain the current path")
 
     vim.cmd("cd " .. vim.fn.fnameescape(repo))
     recent_paths.touch(worktree)
@@ -1346,12 +1413,41 @@ local function test_recent_navigation_ordering(repo, worktree)
       "repository picker did not promote the latest root repository within its group"
     )
 
+    recent_paths.touch(workspace_a)
+    local current_root
+    projects, current_root = api.list_all_project_repos()
+    local grouped = api.group_project_entries(projects, current_root)
+    assert_true(grouped[1].scope == "root", "previous repository group was not promoted")
+    assert_true(
+      realpath(grouped[2].path) == realpath(source_b),
+      "previous repository was not the first switch target"
+    )
+
     local empty_workspace = station .. "/local_workspaces/" .. empty_workspace_name
     recent_paths.touch(empty_workspace)
     local workspace_entries = api.list_workspace_directories()
     assert_true(
       realpath(workspace_entries[1].path) == realpath(empty_workspace),
       "workspace picker did not promote the latest workspace"
+    )
+
+    local workspace_root = vim.fn.fnamemodify(workspace_a, ":h")
+    recent_paths.touch(workspace_root)
+    recent_paths.touch(empty_workspace)
+    local destinations = api.list_workspace_destinations()
+    local workspace_targets = recent_paths.switch_targets(destinations, function(workspace)
+      return workspace.path
+    end, empty_workspace, function(a, b)
+      return a.name < b.name
+    end)
+    assert_true(
+      realpath(workspace_targets[1].path) == realpath(workspace_root),
+      "workspace switch targets did not promote the previous workspace"
+    )
+    assert_true(#workspace_targets == #destinations, "workspace switch targets discarded an option")
+    assert_true(
+      realpath(workspace_targets[2].path) == realpath(empty_workspace),
+      "workspace switch targets did not retain the current workspace"
     )
   end, debug.traceback)
 
@@ -1396,12 +1492,23 @@ local function test_workspace_and_master_project_discovery()
     assert_true(project.branch == branch, "combined project discovery reported the wrong branch for " .. project_path)
   end
   local entries = api.group_project_entries(projects, current_root)
-  assert_true(#entries == 6, "grouped project entries returned an unexpected row count")
+  assert_true(#entries == 7, "grouped project entries returned an unexpected row count")
   assert_true(entries[1].header and entries[1].display == "[workspace]", "workspace group header is missing")
-  assert_true(entries[4].header and entries[4].display == "[root]", "root group header is missing")
+  local workspace_root = station .. "/local_workspaces/" .. workspace_name
+  assert_true(entries[2].workspace_root and entries[2].display == "  .", "workspace root option is missing")
+  assert_true(realpath(entries[2].path) == realpath(workspace_root), "workspace root option has the wrong path")
+  assert_true(entries[5].header and entries[5].display == "[root]", "root group header is missing")
+  local current_entry = nil
+  for _, entry in ipairs(entries) do
+    if not entry.header and realpath(entry.path) == realpath(current_root) then
+      current_entry = entry
+    end
+  end
+  assert_true(current_entry ~= nil, "grouped project entries discarded the current repository")
+  assert_true(vim.startswith(current_entry.display, "* "), "current repository marker is missing")
   local branch_column = nil
   for _, entry in ipairs(entries) do
-    if not entry.header then
+    if not entry.header and not entry.workspace_root then
       local column = entry.display:find("[", 1, true)
       assert_true(column ~= nil, "project entry branch label is missing")
       branch_column = branch_column or column
@@ -1415,13 +1522,13 @@ local function test_workspace_and_master_project_discovery()
     return sorter:scoring_function(prompt, entry.ordinal, { value = entry })
   end
   assert_true(score("no-project-matches-this", entries[1]) >= 0, "workspace header was filtered by search")
-  assert_true(score("no-project-matches-this", entries[4]) >= 0, "root header was filtered by search")
-  assert_true(score("no-project-matches-this", entries[2]) < 0, "non-matching project survived search")
-  assert_true(score("feature", entries[2]) < 0, "project search matched a branch name")
-  assert_true(score("station", entries[2]) < 0, "project search matched a repository path")
-  assert_true(score("project", entries[1]) < score("project", entries[2]), "workspace header is not first")
-  assert_true(score("project", entries[3]) < score("project", entries[4]), "root header split the workspace group")
-  assert_true(score("project", entries[4]) < score("project", entries[5]), "root header is not first in its group")
+  assert_true(score("no-project-matches-this", entries[5]) >= 0, "root header was filtered by search")
+  assert_true(score("no-project-matches-this", entries[3]) < 0, "non-matching project survived search")
+  assert_true(score("feature", entries[3]) < 0, "project search matched a branch name")
+  assert_true(score("station", entries[3]) < 0, "project search matched a repository path")
+  assert_true(score("project", entries[1]) < score("project", entries[3]), "workspace header is not first")
+  assert_true(score("project", entries[4]) < score("project", entries[5]), "root header split the workspace group")
+  assert_true(score("project", entries[5]) < score("project", entries[6]), "root header is not first in its group")
 
   local picker = {
     position = 1,
@@ -1436,15 +1543,14 @@ local function test_workspace_and_master_project_discovery()
   end
   api.move_project_selection(picker, 1)
   assert_true(picker.position == 2, "selection did not skip the workspace header")
-  picker.position = 3
+  picker.position = 4
   api.move_project_selection(picker, 1)
-  assert_true(picker.position == 5, "selection did not skip the root header")
-  picker.position = 5
+  assert_true(picker.position == 6, "selection did not skip the root header")
+  picker.position = 6
   api.move_project_selection(picker, -1)
-  assert_true(picker.position == 3, "reverse selection did not skip the root header")
+  assert_true(picker.position == 4, "reverse selection did not skip the root header")
   assert_true(vim.fn.exists(":ProjectSwitch") == 2, "ProjectSwitch command is missing")
 
-  local workspace_root = station .. "/local_workspaces/" .. workspace_name
   local normalized_workspace_root = realpath(workspace_root)
   vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
   local from_workspace_root, resolved_root = api.list_all_project_repos()
@@ -1559,6 +1665,10 @@ local function test_active_agent_discovery(repo, worktree)
     recent_paths.touch(repo)
     instances = api.list_active_agents()
     assert_true(instances[1].agent == "codex", "agent picker did not move a revisited project to the front")
+    local switch_targets = api.agent_switch_targets(instances, repo)
+    assert_true(#switch_targets == 2, "agent switch targets discarded an active agent")
+    assert_true(switch_targets[1].agent == "cursor", "agent switch targets did not promote the previous agent")
+    assert_true(switch_targets[2].agent == "codex", "agent switch targets did not retain the current agent")
     local by_agent = {}
     for _, instance in ipairs(instances) do
       by_agent[instance.agent] = instance
@@ -1860,6 +1970,51 @@ local function test_lsp_definition_and_references(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   assert_lsp_navigation(repo .. "/main.go")
   assert_lsp_code_action_keymaps()
+end
+
+local function test_lsp_survives_duplicate_split_close(repo)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  local buf = open_go_file(repo .. "/main.go")
+  local client = active_lsp_client(buf, "gopls")
+  assert_true(client ~= nil, "gopls was not attached before opening a split")
+  local client_id = client.id
+  local original_win = vim.api.nvim_get_current_win()
+
+  vim.cmd("vsplit")
+  local split_win = vim.api.nvim_get_current_win()
+  assert_true(split_win ~= original_win, "vsplit did not create a second window")
+  assert_true(vim.api.nvim_get_current_buf() == buf, "vsplit did not duplicate the Go buffer")
+  vim.api.nvim_win_close(split_win, false)
+
+  assert_true(vim.api.nvim_get_current_win() == original_win, "closing the split did not return to the original window")
+  assert_true(vim.api.nvim_get_current_buf() == buf, "closing the split replaced the original Go buffer")
+  client = active_lsp_client(buf, "gopls")
+  assert_true(client ~= nil and client.id == client_id, "closing a duplicate split detached gopls")
+
+  assert_lsp_keymap_navigation(buf)
+
+  local usage = find_position(buf, "targetValue", "return targetValue()")
+  assert_true(
+    result_count(request(buf, "textDocument/definition", usage)) >= 1,
+    "gopls definition failed after closing a duplicate split"
+  )
+
+  vim.cmd("vsplit")
+  split_win = vim.api.nvim_get_current_win()
+  client:stop(true)
+  wait_until("stale gopls client to stop", function()
+    return client:is_stopped()
+  end, 5000)
+  vim.api.nvim_win_close(split_win, false)
+  assert_lsp_keymap_navigation(buf)
+  wait_until("gopls recovery after split close", function()
+    local recovered = active_lsp_client(buf, "gopls")
+    return recovered ~= nil and recovered.id ~= client_id
+  end, 5000)
+  assert_true(
+    result_count(request(buf, "textDocument/definition", usage)) >= 1,
+    "recovered gopls definition failed after closing a duplicate split"
+  )
 end
 
 local function test_workspace_root_uses_one_gopls_per_module()
@@ -2262,6 +2417,8 @@ end
 
 local function test_worktree_switch_hides_foreign_file(repo, worktree)
   local api = worktree_test_api()
+  local recent_paths = require("luanphan.recent_paths")
+  vim.fn.delete(vim.g.luanphan_recent_paths_file)
   local clean_path = repo .. "/switch-clean.go"
   local modified_path = repo .. "/switch-modified.go"
   write(clean_path, { "package main", "", "var switchClean = true" })
@@ -2291,6 +2448,19 @@ local function test_worktree_switch_hides_foreign_file(repo, worktree)
 
   api.switch_to(worktree, "worktree")
   assert_true(realpath(vim.fn.getcwd()) == realpath(worktree), "worktree switch did not change cwd")
+  local targets = recent_paths.switch_targets({
+    { path = repo },
+    { path = worktree },
+  }, function(item)
+    return item.path
+  end, worktree)
+  assert_true(
+    #targets == 2
+      and realpath(targets[1].path) == realpath(repo)
+      and realpath(targets[2].path) == realpath(worktree),
+    "worktree switch did not preserve the previous destination"
+  )
+  vim.fn.delete(vim.g.luanphan_recent_paths_file)
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local visible = vim.api.nvim_win_get_buf(win)
     assert_true(visible ~= clean_buf, "previous repository file remained visible after switch")
@@ -3227,6 +3397,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("lsp definition and references", function()
     test_lsp_definition_and_references(repo)
+  end)
+
+  test("lsp survives duplicate split close", function()
+    test_lsp_survives_duplicate_split_close(repo)
   end)
 
   test("workspace root starts one gopls client per Go module", function()

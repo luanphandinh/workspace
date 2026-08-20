@@ -573,6 +573,9 @@ EOF
 		cd "$root/station-c"
 		mkws --name feature-c --branch feature/c --add repo-c >/dev/null
 	)
+	assert_not_exists "$clone/station-c/workstation.yml"
+	assert_not_contains "$clone/registry.yml" "station-c/workstation.yml"
+	meta_hub index -p "$root/station-c" >/dev/null
 	FZF_SELECT="feature-b" meta_hub project >/dev/null
 	assert_contains "$FZF_INPUT" "$root/station-c/local_workspaces/feature-c"
 	assert_contains "$clone/registry.yml" "station-c/workstation.yml"
