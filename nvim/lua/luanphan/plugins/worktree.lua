@@ -890,6 +890,22 @@ local function setup()
     return destinations, root
   end
 
+  local function workspace_root_for_path(path)
+    if not path or path == "" then
+      return nil
+    end
+    local marker = "/" .. WS_CONTAINER .. "/"
+    local marker_start = path:find(marker, 1, true)
+    if not marker_start then
+      return nil
+    end
+    local workspace_name = path:sub(marker_start + #marker):match("^([^/]+)")
+    if not workspace_name then
+      return nil
+    end
+    return path:sub(1, marker_start - 1) .. marker .. workspace_name
+  end
+
   local function group_project_entries(repos, current_root)
     local name_width = 0
     for _, repo in ipairs(repos) do
@@ -899,6 +915,17 @@ local function setup()
     local entries = {}
     for _, scope in ipairs({ "workspace", "root" }) do
       local scoped = {}
+      if scope == "workspace" then
+        local workspace_root = workspace_root_for_path(current_root)
+        if workspace_root then
+          scoped[#scoped + 1] = {
+            name = ".",
+            path = workspace_root,
+            scope = scope,
+            workspace_root = true,
+          }
+        end
+      end
       for _, repo in ipairs(repos) do
         if repo.scope == scope then
           scoped[#scoped + 1] = repo
@@ -914,8 +941,12 @@ local function setup()
         }
         for _, repo in ipairs(scoped) do
           local marker = repo.path == current_root and "* " or "  "
+          local display = marker .. "."
+          if not repo.workspace_root then
+            display = string.format("%s%-" .. name_width .. "s [%s]", marker, repo.name, repo.branch)
+          end
           entries[#entries + 1] = vim.tbl_extend("force", repo, {
-            display = string.format("%s%-" .. name_width .. "s [%s]", marker, repo.name, repo.branch),
+            display = display,
             ordinal = repo.name,
             order = #entries + 1,
           })
@@ -1307,7 +1338,7 @@ local function setup()
             return
           end
           vim.schedule(function()
-            switch_to(selection.value.path, "project")
+            switch_to(selection.value.path, selection.value.workspace_root and "workspace root" or "project")
           end)
         end)
         return true

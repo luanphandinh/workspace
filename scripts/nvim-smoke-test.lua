@@ -1459,12 +1459,15 @@ local function test_workspace_and_master_project_discovery()
     assert_true(project.branch == branch, "combined project discovery reported the wrong branch for " .. project_path)
   end
   local entries = api.group_project_entries(projects, current_root)
-  assert_true(#entries == 6, "grouped project entries returned an unexpected row count")
+  assert_true(#entries == 7, "grouped project entries returned an unexpected row count")
   assert_true(entries[1].header and entries[1].display == "[workspace]", "workspace group header is missing")
-  assert_true(entries[4].header and entries[4].display == "[root]", "root group header is missing")
+  local workspace_root = station .. "/local_workspaces/" .. workspace_name
+  assert_true(entries[2].workspace_root and entries[2].display == "  .", "workspace root option is missing")
+  assert_true(realpath(entries[2].path) == realpath(workspace_root), "workspace root option has the wrong path")
+  assert_true(entries[5].header and entries[5].display == "[root]", "root group header is missing")
   local branch_column = nil
   for _, entry in ipairs(entries) do
-    if not entry.header then
+    if not entry.header and not entry.workspace_root then
       local column = entry.display:find("[", 1, true)
       assert_true(column ~= nil, "project entry branch label is missing")
       branch_column = branch_column or column
@@ -1478,13 +1481,13 @@ local function test_workspace_and_master_project_discovery()
     return sorter:scoring_function(prompt, entry.ordinal, { value = entry })
   end
   assert_true(score("no-project-matches-this", entries[1]) >= 0, "workspace header was filtered by search")
-  assert_true(score("no-project-matches-this", entries[4]) >= 0, "root header was filtered by search")
-  assert_true(score("no-project-matches-this", entries[2]) < 0, "non-matching project survived search")
-  assert_true(score("feature", entries[2]) < 0, "project search matched a branch name")
-  assert_true(score("station", entries[2]) < 0, "project search matched a repository path")
-  assert_true(score("project", entries[1]) < score("project", entries[2]), "workspace header is not first")
-  assert_true(score("project", entries[3]) < score("project", entries[4]), "root header split the workspace group")
-  assert_true(score("project", entries[4]) < score("project", entries[5]), "root header is not first in its group")
+  assert_true(score("no-project-matches-this", entries[5]) >= 0, "root header was filtered by search")
+  assert_true(score("no-project-matches-this", entries[3]) < 0, "non-matching project survived search")
+  assert_true(score("feature", entries[3]) < 0, "project search matched a branch name")
+  assert_true(score("station", entries[3]) < 0, "project search matched a repository path")
+  assert_true(score("project", entries[1]) < score("project", entries[3]), "workspace header is not first")
+  assert_true(score("project", entries[4]) < score("project", entries[5]), "root header split the workspace group")
+  assert_true(score("project", entries[5]) < score("project", entries[6]), "root header is not first in its group")
 
   local picker = {
     position = 1,
@@ -1499,15 +1502,14 @@ local function test_workspace_and_master_project_discovery()
   end
   api.move_project_selection(picker, 1)
   assert_true(picker.position == 2, "selection did not skip the workspace header")
-  picker.position = 3
+  picker.position = 4
   api.move_project_selection(picker, 1)
-  assert_true(picker.position == 5, "selection did not skip the root header")
-  picker.position = 5
+  assert_true(picker.position == 6, "selection did not skip the root header")
+  picker.position = 6
   api.move_project_selection(picker, -1)
-  assert_true(picker.position == 3, "reverse selection did not skip the root header")
+  assert_true(picker.position == 4, "reverse selection did not skip the root header")
   assert_true(vim.fn.exists(":ProjectSwitch") == 2, "ProjectSwitch command is missing")
 
-  local workspace_root = station .. "/local_workspaces/" .. workspace_name
   local normalized_workspace_root = realpath(workspace_root)
   vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
   local from_workspace_root, resolved_root = api.list_all_project_repos()
