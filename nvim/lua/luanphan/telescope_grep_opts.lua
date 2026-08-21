@@ -7,10 +7,39 @@ local M = {}
 --- Telescope does not merge |telescope.setup| `{ pickers = { live_grep = … } }` into
 --- |:Telescope live_grep|; you must call this (or pass opts in Lua) for |additional_args| to run.
 function M.live_grep()
+  local actions = require("telescope.actions")
+  local finders = require("telescope.finders")
+  local make_entry = require("telescope.make_entry")
+  local pickers = require("telescope.pickers")
+  local sorters = require("telescope.sorters")
   local tconf = require("telescope.config")
+  local conf = tconf.values
   local opts = vim.deepcopy(tconf.pickers.live_grep or {})
   opts.additional_args = M.additional_args
-  require("telescope.builtin").live_grep(opts)
+  opts.cwd = opts.cwd or vim.uv.cwd()
+
+  local args = vim.deepcopy(opts.vimgrep_arguments or conf.vimgrep_arguments)
+  vim.list_extend(args, opts.additional_args(opts))
+  local search_dirs = vim.tbl_map(vim.fn.expand, opts.search_dirs or {})
+
+  local finder = finders.new_job(function(prompt)
+    if not prompt or prompt == "" then
+      return nil
+    end
+    return vim.list_extend(vim.deepcopy(args), vim.list_extend({ "--", prompt }, search_dirs))
+  end, opts.entry_maker or make_entry.gen_from_vimgrep(opts), nil, opts.cwd)
+
+  pickers.new(opts, {
+    prompt_title = "Live Grep",
+    finder = finder,
+    previewer = conf.grep_previewer(opts),
+    sorter = require("luanphan.search_priority").wrap_sorter(sorters.highlighter_only(opts)),
+    attach_mappings = function(_, map)
+      map("i", "<C-Space>", actions.to_fuzzy_refine)
+      return true
+    end,
+    push_cursor_on_edit = true,
+  }):find()
 end
 
 --- Extra ripgrep args for |telescope.builtin.live_grep|.

@@ -1283,6 +1283,11 @@ local function test_worktree_plugin_starts_lazy()
     type(workspace_map) == "table" and type(workspace_map.callback) == "function",
     "<leader>ww is not a lazy callback mapping"
   )
+  local add_repository_map = vim.fn.maparg("<leader>wa", "n", false, true)
+  assert_true(
+    type(add_repository_map) == "table" and type(add_repository_map.callback) == "function",
+    "<leader>wa is not a lazy callback mapping"
+  )
   assert_true(vim.fn.maparg("<leader>gP", "n") == "", "<leader>gP should not have a duplicate project picker")
   local agent_map = vim.fn.maparg("<leader>w;", "n", false, true)
   assert_true(
@@ -1335,6 +1340,36 @@ local function test_searches_follow_tree_dotfiles()
   invoke_map("H")
   assert_true(vim.g.luanphan_show_dotfiles == 0, "nvim-tree did not restore hidden dotfile state")
   tree_api.tree.close()
+end
+
+local function test_search_priority_ordering()
+  local priority = require("luanphan.search_priority")
+  local path = temp_root .. "/search-priority/patterns"
+  local defaults = priority.read_patterns(path)
+  assert_true(#defaults == 3, "search priority defaults have the wrong pattern count")
+  assert_true(defaults[1].glob == "*.md", "markdown is not the first deprioritized group")
+  assert_true(defaults[2].glob == "*_test.go", "Go tests are not the second deprioritized group")
+  assert_true(defaults[3].glob == "*_gen.go", "generated Go is not the third deprioritized group")
+
+  write(path, { "*.txt", "", "# ignored comment", "*_test.go" })
+  local customized = priority.read_patterns(path)
+  assert_true(#customized == 2, "search priority did not preserve the customized file")
+  assert_true(customized[1].glob == "*.txt", "search priority replaced the customized first group")
+
+  local base = require("telescope.sorters").empty()
+  local sorter = priority.wrap_sorter(base, defaults)
+  local function score(filename)
+    local entry = { filename = filename, ordinal = filename }
+    return sorter.scoring_function(sorter, "target", filename, entry)
+  end
+
+  local code = score("service/handler.go")
+  local docs = score("docs/design.md")
+  local tests = score("service/handler_test.go")
+  local generated = score("service/schema_gen.go")
+  assert_true(code < docs, "code did not rank above documentation")
+  assert_true(docs < tests, "documentation did not rank above tests")
+  assert_true(tests < generated, "configured pattern order was not preserved")
 end
 
 local function test_adjacent_project_discovery(repo, worktree)
@@ -1417,10 +1452,17 @@ local function test_recent_navigation_ordering(repo, worktree)
     local current_root
     projects, current_root = api.list_all_project_repos()
     local grouped = api.group_project_entries(projects, current_root)
-    assert_true(grouped[1].scope == "root", "previous repository group was not promoted")
+    assert_true(grouped[1].scope == "workspace", "root repository recency displaced the workspace group")
+    local root_header = nil
+    for index, entry in ipairs(grouped) do
+      if entry.header and entry.scope == "root" then
+        root_header = index
+        break
+      end
+    end
     assert_true(
-      realpath(grouped[2].path) == realpath(source_b),
-      "previous repository was not the first switch target"
+      root_header and grouped[root_header + 1] and realpath(grouped[root_header + 1].path) == realpath(source_b),
+      "previous root repository was not first within the root group"
     )
 
     local empty_workspace = station .. "/local_workspaces/" .. empty_workspace_name
@@ -1618,6 +1660,81 @@ local function test_workspace_project_discovery()
   assert_true(vim.fn.exists(":RepositorySwitch") == 2, "RepositorySwitch command is missing")
 
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+end
+
+local function test_add_repository_to_workspace()
+  local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
+  local original_path = vim.env.PATH
+  local original_log = vim.env.MKWS_TEST_LOG
+  local original_fail = vim.env.MKWS_TEST_FAIL
+  local original_notify = vim.notify
+  local sources, workspaces, station, workspace_name = make_project_scope_fixture()
+  local source = station .. "/example-project-c"
+  local workspace = station .. "/local_workspaces/" .. workspace_name
+  local fake_bin = temp_root .. "/fake-mkws-bin"
+  local log = temp_root .. "/fake-mkws.log"
+
+  vim.fn.mkdir(source, "p")
+  run({ "git", "init", "-b", "main" }, source)
+  write_executable(fake_bin .. "/mkws", {
+    "#!/bin/sh",
+    'printf "%s\\n" "$PWD" "$@" > "$MKWS_TEST_LOG"',
+    'if [ "${MKWS_TEST_FAIL:-}" = "1" ]; then',
+    '  printf "%s\\n" "fixture add failure" >&2',
+    "  exit 7",
+    "fi",
+  })
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(workspaces["example-project-a"]))
+    local candidates, resolved_workspace = api.list_addable_repositories()
+    assert_true(#candidates == 1, "repository add candidates included a repository already in the workspace")
+    assert_true(candidates[1].name == "example-project-c", "repository add candidate has the wrong name")
+    assert_true(realpath(candidates[1].path) == realpath(source), "repository add candidate has the wrong path")
+    assert_true(realpath(resolved_workspace) == realpath(workspace), "repository add resolved the wrong workspace")
+
+    vim.env.PATH = fake_bin .. ":" .. original_path
+    vim.env.MKWS_TEST_LOG = log
+    local result = nil
+    api.add_repository(candidates[1], resolved_workspace, function(value)
+      result = value
+    end)
+    wait_until("repository add command", function() return result ~= nil end, 5000)
+    assert_true(result.code == 0, "repository add command failed")
+    local invocation = vim.fn.readfile(log)
+    assert_true(realpath(invocation[1]) == realpath(workspace), "mkws did not run from the workspace root")
+    assert_true(invocation[2] == "--add", "mkws omitted --add")
+    assert_true(realpath(invocation[3]) == realpath(source), "mkws received the wrong source repository")
+
+    local reported_error = nil
+    vim.notify = function(message, level)
+      if level == vim.log.levels.ERROR then
+        reported_error = tostring(message)
+      end
+    end
+    vim.env.MKWS_TEST_FAIL = "1"
+    result = nil
+    api.add_repository(candidates[1], resolved_workspace, function(value)
+      result = value
+    end)
+    wait_until("repository add failure", function() return result ~= nil end, 5000)
+    assert_true(result.code == 7, "repository add did not preserve the mkws exit code")
+    assert_true(
+      reported_error and reported_error:find("fixture add failure", 1, true),
+      "repository add did not report mkws failure output"
+    )
+    assert_true(vim.fn.exists(":RepositoryAdd") == 2, "RepositoryAdd command is missing")
+  end, debug.traceback)
+
+  vim.notify = original_notify
+  vim.env.PATH = original_path
+  vim.env.MKWS_TEST_LOG = original_log
+  vim.env.MKWS_TEST_FAIL = original_fail
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  end
+  assert_true(ok, tostring(err))
 end
 
 local function test_active_agent_discovery(repo, worktree)
@@ -3279,6 +3396,10 @@ local setup_ok, setup_err = xpcall(function()
     test_searches_follow_tree_dotfiles()
   end)
 
+  test("live grep deprioritizes configured patterns", function()
+    test_search_priority_ordering()
+  end)
+
   test("toggle icons reflect state", function()
     test_toggle_icons_reflect_state()
   end)
@@ -3381,6 +3502,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("workspace picker switches to root and workspace destinations", function()
     test_workspace_project_discovery()
+  end)
+
+  test("repository picker adds a root project to the current workspace", function()
+    test_add_repository_to_workspace()
   end)
 
   test("active agent picker discovers running project terminals", function()
