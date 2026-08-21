@@ -1342,6 +1342,36 @@ local function test_searches_follow_tree_dotfiles()
   tree_api.tree.close()
 end
 
+local function test_search_priority_ordering()
+  local priority = require("luanphan.search_priority")
+  local path = temp_root .. "/search-priority/patterns"
+  local defaults = priority.read_patterns(path)
+  assert_true(#defaults == 3, "search priority defaults have the wrong pattern count")
+  assert_true(defaults[1].glob == "*.md", "markdown is not the first deprioritized group")
+  assert_true(defaults[2].glob == "*_test.go", "Go tests are not the second deprioritized group")
+  assert_true(defaults[3].glob == "*_gen.go", "generated Go is not the third deprioritized group")
+
+  write(path, { "*.txt", "", "# ignored comment", "*_test.go" })
+  local customized = priority.read_patterns(path)
+  assert_true(#customized == 2, "search priority did not preserve the customized file")
+  assert_true(customized[1].glob == "*.txt", "search priority replaced the customized first group")
+
+  local base = require("telescope.sorters").empty()
+  local sorter = priority.wrap_sorter(base, defaults)
+  local function score(filename)
+    local entry = { filename = filename, ordinal = filename }
+    return sorter.scoring_function(sorter, "target", filename, entry)
+  end
+
+  local code = score("service/handler.go")
+  local docs = score("docs/design.md")
+  local tests = score("service/handler_test.go")
+  local generated = score("service/schema_gen.go")
+  assert_true(code < docs, "code did not rank above documentation")
+  assert_true(docs < tests, "documentation did not rank above tests")
+  assert_true(tests < generated, "configured pattern order was not preserved")
+end
+
 local function test_adjacent_project_discovery(repo, worktree)
   local api = worktree_test_api()
   local original_cwd = vim.fn.getcwd()
@@ -3364,6 +3394,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("file searches follow nvim-tree dotfile visibility", function()
     test_searches_follow_tree_dotfiles()
+  end)
+
+  test("file searches deprioritize configured patterns", function()
+    test_search_priority_ordering()
   end)
 
   test("toggle icons reflect state", function()
