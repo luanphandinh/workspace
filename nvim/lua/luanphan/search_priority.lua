@@ -86,12 +86,6 @@ function M.wrap_sorter(base, patterns)
   })
 end
 
-function M.wrap_sorter_factory(factory)
-  return function(opts)
-    return M.wrap_sorter(factory(opts))
-  end
-end
-
 function M.open_editor()
   local path = M.ensure_config()
   local buf = vim.fn.bufadd(path)

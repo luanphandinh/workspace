@@ -3396,7 +3396,7 @@ local setup_ok, setup_err = xpcall(function()
     test_searches_follow_tree_dotfiles()
   end)
 
-  test("file searches deprioritize configured patterns", function()
+  test("live grep deprioritizes configured patterns", function()
     test_search_priority_ordering()
   end)
 

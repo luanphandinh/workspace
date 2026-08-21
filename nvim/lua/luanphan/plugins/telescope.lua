@@ -124,9 +124,6 @@ return {
         }
       })
       pcall(require("telescope").load_extension, "fzy_native")
-
-      local values = require("telescope.config").values
-      values.file_sorter = require("luanphan.search_priority").wrap_sorter_factory(values.file_sorter)
     end,
   },
 }
