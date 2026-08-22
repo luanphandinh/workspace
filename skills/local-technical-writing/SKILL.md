@@ -46,6 +46,21 @@ Do not use a table for prose or an inventory that does not compare anything.
 - Preserve validation, failure behavior, security, compatibility, and explicit requirements. Brevity never removes correctness.
 - End with only unresolved questions, evidence, or verification that changes a decision.
 
+## Vocabulary fidelity
+
+- Use only technical terms traceable to the request, code, schema, interface definition, API, message topic, configuration, or established documentation.
+- Prefer exact symbols, handlers, tables, fields, constants, topics, and messages. Do not replace them with invented shorthand, aliases, metaphors, or catch-all nouns.
+- Describe asynchronous data using its exact source plus `event` or `message`. Pair a numeric value with its verified symbolic name as `value(Name)`.
+- Use a proposed identifier only when it appears in the proposed code. Rewrite or delete text that requires unstated context or untraceable vocabulary.
+- Before finalizing, audit every technical noun and remove any term without evidence.
+
+## Condition and operation structure
+
+- Treat conditions and operations as structure. Never print `Condition:` or `Action:` labels.
+- Put a shared condition in a parent bullet and each resulting operation in its own child bullet.
+- Keep one operation per bullet. Split operations joined by conjunctions, commas, or semicolons.
+- Repeat exact identifiers instead of vague section references. Do not invent labels to explain sentence structure.
+
 ## Final-state corrections
 
 - If the user rejects assistant-added content, remove it and anything that exists only to explain, contrast, undo, or justify it.
