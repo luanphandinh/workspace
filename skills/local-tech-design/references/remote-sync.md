@@ -19,6 +19,12 @@ Use `--remote-file <export.md>` when the remote was already exported and `--json
 
 Update the deepest changed heading only. Treat each `<details>` block as one implementation artifact.
 
+## Outbound Markdown
+
+- Pass every non-diagram section through `scripts/tech_doc_compare.py prepare` before writing it remotely. Use `--local <file>` or pipe section Markdown through stdin.
+- The prepared form replaces each HTML disclosure wrapper with an H6 heading and removes its closing tag. Never send `<details>` or `<summary>` tags to Lark.
+- Scan the exact outbound payload before writing and the fetched section afterward. If either disclosure tag remains, stop and correct that section.
+
 ## Protected sections
 
 - `Links`: remote source of truth. Never create, replace, reorder, delete, or pull it during normal sync.
@@ -51,6 +57,6 @@ For an empty remote, create sections selectively; omit Links and Release Checkli
 ## Rich-text fidelity
 
 - Convert nested list markers to native nested lists; do not leave `<br>`, `•`, or `**` as literal content.
-- Keep named implementation blocks collapsed where the platform supports it.
+- Use native disclosure blocks only when the target API supports and round-trips them; otherwise use the prepared heading and code block.
 - Give narrow columns only enough width for identifiers; give comparison/detail columns the remaining width.
 - Re-fetch and verify structure, not only text.
