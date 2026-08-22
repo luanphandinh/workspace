@@ -46,6 +46,13 @@ Do not use a table for prose or an inventory that does not compare anything.
 - Preserve validation, failure behavior, security, compatibility, and explicit requirements. Brevity never removes correctness.
 - End with only unresolved questions, evidence, or verification that changes a decision.
 
+## Final-state corrections
+
+- If the user rejects assistant-added content, remove it and anything that exists only to explain, contrast, undo, or justify it.
+- Treat the rejected content as never proposed. Restore the last approved state, then apply only the requested change.
+- Keep a negative constraint only when the user requested it or the verified final design requires it.
+- Final check: if text would not exist without the rejected content, delete it.
+
 ## Diagrams
 
 Normalize findings into nodes and labeled edges before drawing. The diagram is the flow source of truth. Text below it contains evidence or exceptions only.
