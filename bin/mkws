@@ -1747,7 +1747,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
     info(f"default branch: {BOLD}{branch or '(unset — use repo@branch or pass --branch)'}{RESET}")
     color = GREEN if failed == 0 else YELLOW
     info(f"added: {color}{added}{RESET}, skipped: {skipped}, failed: {color}{failed}{RESET}")
-    return 0
+    return 0 if failed == 0 else 1
 
 
 # ---------------------------------------------------------------------------

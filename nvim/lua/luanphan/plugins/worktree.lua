@@ -1413,6 +1413,11 @@ local function setup()
     vim.notify("Adding " .. repo.name .. " to workspace...")
     vim.system({ "mkws", "--add", repo.path }, { cwd = workspace, text = true }, function(result)
       vim.schedule(function()
+        local target = workspace .. "/" .. repo.name
+        if result.code == 0 and not git_repo_exists(target) then
+          result.code = 1
+          result.stderr = vim.trim((result.stderr or "") .. "\nmkws completed without creating " .. target)
+        end
         if result.code ~= 0 then
           local output = vim.trim((result.stderr or "") .. "\n" .. (result.stdout or ""))
           output = output:gsub("\27%[[%d;]*m", "")

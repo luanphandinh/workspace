@@ -191,6 +191,15 @@ test_mkws() {
 	assert_contains "$workspace/workspace.yml" "branch_name: feature/a"
 	assert_eq "feature/a" "$(git -C "$workspace/repo-a" branch --show-current)"
 
+	mkdir -p "$root/repo-empty"
+	git init -q "$root/repo-empty"
+	(
+		cd "$workspace"
+		EXPECT='could not detect base branch' expect_fail_contains mkws --add "$root/repo-empty"
+	)
+	assert_not_exists "$workspace/repo-empty"
+	assert_not_contains "$workspace/workspace.yml" "name: repo-empty"
+
 	for spec in \
 		"repo-base-a feature/base-a base-a.txt" \
 		"repo-base-c feature/base-a base-c.txt" \

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Compare a local tech doc with remote markdown content.
+"""Prepare and compare a local tech doc with remote markdown content.
 
-This helper is intentionally read-only. It builds a heading-aware section index
-for local and remote markdown, then separates normal changes, remote-owned
-sections, and confirmation-required sections for targeted remote updates.
+It normalizes local-only Markdown before building a heading-aware section index,
+then separates normal changes, remote-owned sections, and confirmation-required
+sections for targeted remote updates.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -26,6 +26,14 @@ FENCE_RE = re.compile(r"^\s*(```|~~~)")
 TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$")
 MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 HTML_TAG_RE = re.compile(r"</?[^>\s]+(?:\s[^>]*)?>")
+DISCLOSURE_OPEN_RE = re.compile(
+    r"<details\b[^>]*>\s*<summary\b[^>]*>(.*?)</summary\s*>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+DISCLOSURE_TAG_RE = re.compile(
+    r"</?(?:details|summary)\b[^>]*>", flags=re.IGNORECASE
+)
+FENCE_LINE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 BLOCK_TAGS = (
     "blockquote",
     "callout",
@@ -180,6 +188,61 @@ def normalize_heading(title: str) -> str:
     title = HTML_TAG_RE.sub("", title)
     title = re.sub(r"\s+", " ", title)
     return title
+
+
+def transform_outside_fences(text: str, transform: Callable[[str], str]) -> str:
+    result: list[str] = []
+    plain: list[str] = []
+    fence_char = ""
+    fence_length = 0
+
+    def flush_plain() -> None:
+        if plain:
+            result.append(transform("".join(plain)))
+            plain.clear()
+
+    for line in text.splitlines(keepends=True):
+        match = FENCE_LINE_RE.match(line)
+        if not fence_char:
+            if not match:
+                plain.append(line)
+                continue
+            flush_plain()
+            marker = match.group(1)
+            fence_char = marker[0]
+            fence_length = len(marker)
+            result.append(line)
+            continue
+
+        result.append(line)
+        if re.match(rf"^\s*{re.escape(fence_char)}{{{fence_length},}}\s*$", line):
+            fence_char = ""
+            fence_length = 0
+
+    flush_plain()
+    return "".join(result)
+
+
+def prepare_remote_markdown(text: str) -> str:
+    def prepare_plain(chunk: str) -> str:
+        def replace_open(match: re.Match[str]) -> str:
+            title = normalize_heading(html.unescape(match.group(1)))
+            if not title:
+                raise ValueError("disclosure block has an empty summary")
+            return f"\n###### {title}\n"
+
+        chunk = DISCLOSURE_OPEN_RE.sub(replace_open, chunk)
+        chunk = re.sub(
+            r"</details\s*>[ \t]*(?:\r?\n|$)",
+            "\n",
+            chunk,
+            flags=re.IGNORECASE,
+        )
+        if DISCLOSURE_TAG_RE.search(chunk):
+            raise ValueError("unrecognized HTML disclosure markup remains")
+        return chunk
+
+    return transform_outside_fences(text, prepare_plain)
 
 
 def normalize_common_markup(text: str) -> str:
@@ -654,6 +717,13 @@ def main(argv: list[str]) -> int:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    prepare_parser = subparsers.add_parser(
+        "prepare", help="prepare local markdown for a remote write"
+    )
+    prepare_parser.add_argument(
+        "--local", default="-", help="local markdown file, or - for stdin"
+    )
+
     def add_common(subparser: argparse.ArgumentParser) -> None:
         subparser.add_argument("--local", required=True, help="local markdown file")
         subparser.add_argument("--remote-file", help="remote markdown export file")
@@ -681,7 +751,23 @@ def main(argv: list[str]) -> int:
     add_common(diff_parser)
 
     args = parser.parse_args(argv)
+
+    if args.command == "prepare":
+        source = sys.stdin.read() if args.local == "-" else read_text(args.local)
+        try:
+            prepared = prepare_remote_markdown(source)
+        except ValueError as error:
+            print(f"prepare failed: {error}", file=sys.stderr)
+            return 2
+        sys.stdout.write(prepared)
+        return 0
+
     local_text, remote_text = load_inputs(args)
+    try:
+        local_text = prepare_remote_markdown(local_text)
+    except ValueError as error:
+        print(f"local markdown is not safe to sync: {error}", file=sys.stderr)
+        return 2
 
     if args.command == "index":
         if args.side in ("local", "both"):

@@ -1677,14 +1677,25 @@ local function test_add_repository_to_workspace()
 
   vim.fn.mkdir(source, "p")
   run({ "git", "init", "-b", "main" }, source)
-  write_executable(fake_bin .. "/mkws", {
-    "#!/bin/sh",
-    'printf "%s\\n" "$PWD" "$@" > "$MKWS_TEST_LOG"',
-    'if [ "${MKWS_TEST_FAIL:-}" = "1" ]; then',
-    '  printf "%s\\n" "fixture add failure" >&2',
-    "  exit 7",
-    "fi",
-  })
+  local function write_fake_mkws(create_target)
+    local lines = {
+      "#!/bin/sh",
+      'printf "%s\\n" "$PWD" "$@" > "$MKWS_TEST_LOG"',
+      'if [ "${MKWS_TEST_FAIL:-}" = "1" ]; then',
+      '  printf "%s\\n" "fixture add failure" >&2',
+      "  exit 7",
+      "fi",
+    }
+    if create_target then
+      vim.list_extend(lines, {
+        'target="$PWD/$(basename "$2")"',
+        'mkdir -p "$target"',
+        ': > "$target/.git"',
+      })
+    end
+    write_executable(fake_bin .. "/mkws", lines)
+  end
+  write_fake_mkws(true)
 
   local ok, err = xpcall(function()
     vim.cmd("cd " .. vim.fn.fnameescape(workspaces["example-project-a"]))
@@ -1706,6 +1717,27 @@ local function test_add_repository_to_workspace()
     assert_true(realpath(invocation[1]) == realpath(workspace), "mkws did not run from the workspace root")
     assert_true(invocation[2] == "--add", "mkws omitted --add")
     assert_true(realpath(invocation[3]) == realpath(source), "mkws received the wrong source repository")
+
+    vim.fn.delete(workspace .. "/example-project-c", "rf")
+    write_fake_mkws(false)
+    result = nil
+    local missing_target_error = nil
+    vim.notify = function(message, level)
+      if level == vim.log.levels.ERROR then
+        missing_target_error = tostring(message)
+      end
+    end
+    api.add_repository(candidates[1], resolved_workspace, function(value)
+      result = value
+    end)
+    wait_until("repository add missing target", function() return result ~= nil end, 5000)
+    assert_true(result.code ~= 0, "repository add accepted a missing worktree")
+    assert_true(
+      missing_target_error and missing_target_error:find("completed without creating", 1, true),
+      "repository add did not report the missing worktree"
+    )
+
+    write_fake_mkws(true)
 
     local reported_error = nil
     vim.notify = function(message, level)
