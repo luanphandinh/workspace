@@ -5,17 +5,16 @@ description: "Use with local code exploration, technical design, coding plans, a
 
 # Minimum Sufficient Technical Writing
 
-Compress the output, not the investigation. Read and verify the full flow first.
+Investigate fully. Write only what the reader needs.
 
-## Compression ladder
+## Minimum form
 
 Stop at the first form that carries the fact:
 
 1. Omit it if the reader does not need it.
 2. Do not repeat it if a table, diagram, schema, code block, or other artifact already shows it.
-3. Use an identifier, data example, code block, table, or diagram.
-4. Use one short bullet.
-5. Use a paragraph only for rationale that cannot be encoded above.
+3. Prefer an exact identifier or artifact over prose.
+4. Use a short bullet; use a paragraph only for necessary rationale.
 
 One fact has one home. Never add a prose recap after a clear artifact.
 
@@ -36,37 +35,28 @@ Do not use a table for prose or an inventory that does not compare anything.
 ## Writing rules
 
 - Start with the useful artifact. No preamble or process narration.
-- Use concrete identifiers. Do not translate self-evident names into prose.
-- Use short bullets by default, especially for implementation actions, checks, and conditions.
-- Use numbering only when execution order changes the result, such as rollout or migration sequencing.
-- Keep one idea per bullet. Split compound sentences into separate bullets. Do not use prose semicolons.
-- Keep at most three visible bullets per subsection.
+- Use short bullets by default. Number only steps whose order changes the result.
+- Put a shared condition in a parent bullet and one operation in each child bullet. Never print `Condition:` or `Action:` labels.
+- Split compound operations. Do not use prose semicolons, vague section references, or labels invented to explain structure.
+- Keep at most three summary bullets per subsection.
 - Keep visible paragraphs under three source lines.
-- Shorten table cells and diagram labels. Remove optional content that adds no information.
-- Preserve validation, failure behavior, security, compatibility, and explicit requirements. Brevity never removes correctness.
+- Shorten table cells and diagram labels. Remove optional content and repeated mappings.
+- Preserve validation, failure behavior, security, compatibility, and explicit requirements.
 - End with only unresolved questions, evidence, or verification that changes a decision.
 
 ## Vocabulary fidelity
 
-- Use only technical terms traceable to the request, code, schema, interface definition, API, message topic, configuration, or established documentation.
-- Prefer exact symbols, handlers, tables, fields, constants, topics, and messages. Do not replace them with invented shorthand, aliases, metaphors, or catch-all nouns.
+- Every technical noun must be traceable to the request, code, schema, interface definition, API, message topic, configuration, or established documentation.
+- Use exact symbols, handlers, tables, fields, constants, topics, and messages. Never replace them with invented shorthand, aliases, metaphors, or catch-all nouns.
 - Describe asynchronous data using its exact source plus `event` or `message`. Pair a numeric value with its verified symbolic name as `value(Name)`.
-- Use a proposed identifier only when it appears in the proposed code. Rewrite or delete text that requires unstated context or untraceable vocabulary.
-- Before finalizing, audit every technical noun and remove any term without evidence.
-
-## Condition and operation structure
-
-- Treat conditions and operations as structure. Never print `Condition:` or `Action:` labels.
-- Put a shared condition in a parent bullet and each resulting operation in its own child bullet.
-- Keep one operation per bullet. Split operations joined by conjunctions, commas, or semicolons.
-- Repeat exact identifiers instead of vague section references. Do not invent labels to explain sentence structure.
+- A proposed identifier is valid only when it appears in proposed code. Rewrite or delete untraceable vocabulary.
 
 ## Final-state corrections
 
 - If the user rejects assistant-added content, remove it and anything that exists only to explain, contrast, undo, or justify it.
 - Treat the rejected content as never proposed. Restore the last approved state, then apply only the requested change.
 - Keep a negative constraint only when the user requested it or the verified final design requires it.
-- Final check: if text would not exist without the rejected content, delete it.
+- If text would not exist without the rejected content, delete it.
 
 ## Diagrams
 

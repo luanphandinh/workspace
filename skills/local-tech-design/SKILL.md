@@ -39,14 +39,13 @@ Read [references/document-contract.md](references/document-contract.md). Use its
 - Put a decision in the document only when it changes architecture, contracts, ownership, reliability, or rollout risk.
 - Never invent alternatives. Ask only about unresolved choices that block a sound design.
 - Document only the requested change and its necessary consequences. Do not add optional decisions, adjacent behavior, or correction history.
-- Keep architecture in the overview, trade-offs in decisions, external contracts in external design, implementation in folded internal blocks, and production actions in the release checklist.
+- Keep architecture in the overview, trade-offs in decisions, external contracts in external design, implementation in internal design artifacts, and production actions in the release checklist.
 - Use the codebase's existing design and implementation patterns. Apply the `local-coding` minimum-solution and new-code gates to every proposed change.
 
 ## Revision loop
 
 - Present the diagram and unresolved decisions first.
-- Revise only sections whose facts changed.
-- Remove resolved decision rows rather than preserving decision history.
+- Revise only sections whose facts changed. Delete stale, duplicate, and resolved content instead of preserving history.
 - Re-run exploration when a revision changes an edge, owner, or contract.
 - Run the compactness gate in the document contract before presenting the draft.
 

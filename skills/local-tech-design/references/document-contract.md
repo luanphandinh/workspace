@@ -74,22 +74,29 @@ If no external contract changes:
 
 Otherwise, one H2 per changed API with only changed request/response fields, behavior, and schema diff. For a new API, show the complete contract. Do not discuss internal libraries or module versions.
 
+Existing fields without an IDL or schema change are not external design. Do not add request/response tables or per-API `N/A` statements; put changed handling in `Logic change` and implementation in `Code changes`.
+
 ## 6. Internal Technical Design
 
 - One H2 per changed service: `## 6.X Service: <name>`.
-- Use at most three short summary bullets before the named change sections.
-- Use `### Code changes` and `### Config changes` exactly when applicable. Do not rename them after a language, platform, or configuration system.
-- Put schema, logic, code, and test detail in named `<details>` blocks.
-- Add one `Service | Change | Risk` table only when it materially compares at least three services.
-- Group tests into at most five behavior categories. Never list individual test cases.
+- Use `### Logic change`, `### Code changes`, and `### Config changes` exactly when applicable. Never nest them under an API section or rename them after an implementation technology.
+- Do not add default sections for reliability, behavior coverage, or tests. Do not add mapping or input/output tables that repeat another artifact.
+- Add a test section only when the testing method adds information; group by at most five behavior categories and never list individual cases.
 
 Do not repeat architecture, external contracts, or production actions here.
 
+### Logic change
+
+- This is the home for service-level runtime conditions and operations. Use exact events, messages, handlers, fields, statuses, constants, tables, and RPC methods.
+- Include replay, retry, duplicate, and failure behavior only when it changes the design.
+- Keep unique reliability behavior here, never in a separate section. Never repeat behavior already shown here.
+
 ### Code changes
 
-- Put implementation diffs under `### Code changes`.
-- Name each artifact `Code change — <symbol> (<path>)`.
-- Keep code-path behavior separate from configuration definitions.
+- Put implementation diffs in named `<details>` blocks: `Code change — <symbol> (<path>)`.
+- Keep runtime intent in `Logic change` and implementation detail here. Do not explain behavior already visible in a diff.
+- Existing code: show its signature, locating context, `-`/`+` lines, and `...` for omissions.
+- New function or schema: show the complete definition; for a new function, add a small caller diff.
 
 ### Config changes
 
@@ -104,7 +111,7 @@ Apply this structure to every changed configuration.
 #### Content order
 
 1. List each changed value as `<config_name>.<nested_key> = <value>`, including the complete dotted path.
-2. Describe runtime behavior with the shared condition-and-operation bullets. Use exact handlers, fields, configuration paths, and outputs.
+2. Describe only the configuration-specific read/use behavior needed to connect the path to exact handlers and outputs. Do not repeat it in `Logic change`.
 3. Add one fenced `diff` block containing the actual configuration change immediately after the runtime behavior.
 
 #### Configuration diff
@@ -140,38 +147,30 @@ Required form:
 
 ## 7. Rollout Plan
 
-At most four sequencing, exposure, or decision gates. Use `N/A — direct rollout.` when staging adds no value.
+At most four ordered steps covering only deployment order, compatibility gates, exposure gates, and end-to-end verification order. Do not repeat configuration values or expected outputs. Use `N/A — direct rollout.` when staging adds no value.
 
 ## 8. Release Checklist
 
-Production actions only, written as `verb + target`:
+Production actions only: register configuration, publish templates, set values, deploy services, and verify production constraints. Write each as `verb + target`:
 
 ```text
+- [ ] Register <configuration>
+- [ ] Publish <template>
+- [ ] Set <configuration>.<key> = <value> (prod)
 - [ ] Deploy <service-a>
-- [ ] Apply migration <migration-a>
-- [ ] Update <namespace>/<key> = <value> (prod)
-- [ ] Enable <flag> (prod, <percent>)
+- [ ] Verify <production-constraint>
 ```
 
-No implementation requirements, tests, reviews, or ordinary CI/CD steps.
-
-## Code artifacts
-
-Wrap diffs and code longer than about ten lines in a named `<details>` block.
-
-- Existing parent: show its signature, only context needed to locate the change, `-`/`+` lines, and `...` for omitted regions.
-- Substantial new function: show the complete function in its language, plus a separate small diff for the existing caller.
-- New schema/type/table: show the complete definition.
-- Names: `Code change — <symbol> (<path>)`, `IDL — <symbol> (<path>)`, or `SQL — <name> (<path>)`.
-
-Do not explain code already visible in the block.
+No implementation requirements, design behavior, tests, reviews, or ordinary CI/CD steps.
 
 ## Compactness gate
 
 Before every presentation or sync:
 
-- Remove facts already shown by diagrams, data examples, code, field names, requirements, or another section.
-- Remove optional headings, tables, alternatives, and examples that add no decision value.
+- Search for `Data and reliability`, `Behavior coverage`, default `Tests`, repeated mappings, and existing-field API tables. Delete anything already shown by `Logic change`, diagrams, contracts, configuration blocks, or code diffs.
+- Move only unique reliability behavior into the relevant `Logic change`; keep exceptional tests grouped by behavior.
+- Remove optional headings, tables, alternatives, and examples that add no decision value. Do not explain their removal.
+- Keep rollout to sequencing and the release checklist to production actions. Every runtime fact must have one primary home.
 - Keep visible non-code prose below 200 source lines.
 - Replace every visible paragraph over three lines with a shorter artifact or bullet.
 - Check that sections own distinct facts and that every proposed new symbol passes the `local-coding` minimum-solution gate.
