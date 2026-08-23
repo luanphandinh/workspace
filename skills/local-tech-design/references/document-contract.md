@@ -93,10 +93,50 @@ Do not repeat architecture, external contracts, or production actions here.
 
 ### Config changes
 
-- Use one `#### <config-name>` subsection per configuration.
-- Write each value directly as `<config-name>.<key> = <value>`, including every nested key in the dotted path.
-- Do not use configuration inventory tables or metadata columns for ownership, readers, sub-keys, or outputs.
-- After the assignments, use the shared condition-and-operation bullet structure to describe runtime behavior.
+Apply this structure to every changed configuration.
+
+#### Subsection heading
+
+- Use one `####` subsection per configuration.
+- Use `#### <config_name> (service: <exact_service_name>)`.
+- Resolve the service from the code that initializes or reads the configuration. Never infer it; report the service as unresolved when it cannot be verified.
+
+#### Content order
+
+1. List each changed value as `<config_name>.<nested_key> = <value>`, including the complete dotted path.
+2. Describe runtime behavior with the shared condition-and-operation bullets. Use exact handlers, fields, configuration paths, and outputs.
+3. Add one fenced `diff` block containing the actual configuration change immediately after the runtime behavior.
+
+#### Configuration diff
+
+- Expand dotted paths into their full nested JSON object structure. Never use dotted keys inside the JSON diff.
+- Include only changed keys and the complete parent object hierarchy needed to locate them.
+- Prefix additions with `+`; use `-` and `+` for replacements; include deletions only when the design removes configuration.
+- Keep placeholders identical to the dotted assignments. Do not repeat runtime behavior in the diff.
+- Use one short diff per configuration. Exclude unrelated values, inventory tables, and metadata columns for readers, outputs, sub-keys, or owners.
+
+Required form:
+
+````markdown
+### Config changes
+
+#### <config_name> (service: <exact_service_name>)
+
+- `<config_name>.<parent_key>.<child_key>.<nested_key> = <value>`
+- When `<verified_condition>`:
+  - `<exact_handler>` reads `<config_name>.<parent_key>.<child_key>.<nested_key>`.
+  - `<exact_handler>` sets `<exact_output_field>`.
+
+```diff
+{
++  "<parent_key>": {
++    "<child_key>": {
++      "<nested_key>": "<value>"
++    }
++  }
+}
+```
+````
 
 ## 7. Rollout Plan
 
