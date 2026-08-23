@@ -39,9 +39,16 @@ Repository mapping and code evidence stay in `<name>_mapping.md`.
 
 Use only the subsections that carry information:
 
-- `## 3.1 Model delta`: current/future table or data example. No prose recap.
-- `## 3.2 Architecture flowchart`: Mermaid flowchart. Diagram only.
-- `## 3.3 Cross-service sequence`: one Mermaid sequence per non-trivial flow. Use short H3 names only when there are multiple diagrams.
+- `## 3.1 Main changes`: required when multiple components or user-visible results are affected.
+- `## 3.2 Model delta`: current/future table or data example. No prose recap.
+- `## 3.3 Architecture flowchart`: Mermaid flowchart. Diagram only.
+- `## 3.4 Cross-service sequence`: one Mermaid sequence per non-trivial flow. Use short H3 names only when there are multiple diagrams.
+
+In `Main changes`:
+
+- Use one short bold parent bullet per component or user-visible result: `- **<name>:**`.
+- Put a shared condition in the parent bullet and each resulting operation in its own child bullet.
+- Name exact fields, handlers, statuses, templates, tables, and messages. Do not add a prose recap.
 
 Every arrow names the exact RPC method, HTTP method/path, SQL operation/table, cache command/key, or message topic.
 
@@ -70,12 +77,26 @@ Otherwise, one H2 per changed API with only changed request/response fields, beh
 ## 6. Internal Technical Design
 
 - One H2 per changed service: `## 6.X Service: <name>`.
-- At most three short visible bullets per service.
-- Put schema, config, logic, code, and test detail in named `<details>` blocks.
+- Use at most three short summary bullets before the named change sections.
+- Use `### Code changes` and `### Config changes` exactly when applicable. Do not rename them after a language, platform, or configuration system.
+- Put schema, logic, code, and test detail in named `<details>` blocks.
 - Add one `Service | Change | Risk` table only when it materially compares at least three services.
 - Group tests into at most five behavior categories. Never list individual test cases.
 
 Do not repeat architecture, external contracts, or production actions here.
+
+### Code changes
+
+- Put implementation diffs under `### Code changes`.
+- Name each artifact `Code change — <symbol> (<path>)`.
+- Keep code-path behavior separate from configuration definitions.
+
+### Config changes
+
+- Use one `#### <config-name>` subsection per configuration.
+- Write each value directly as `<config-name>.<key> = <value>`, including every nested key in the dotted path.
+- Do not use configuration inventory tables or metadata columns for ownership, readers, sub-keys, or outputs.
+- After the assignments, use the shared condition-and-operation bullet structure to describe runtime behavior.
 
 ## 7. Rollout Plan
 
@@ -101,7 +122,7 @@ Wrap diffs and code longer than about ten lines in a named `<details>` block.
 - Existing parent: show its signature, only context needed to locate the change, `-`/`+` lines, and `...` for omitted regions.
 - Substantial new function: show the complete function in its language, plus a separate small diff for the existing caller.
 - New schema/type/table: show the complete definition.
-- Names: `Code change — <symbol> (<path>)`, `IDL — <symbol> (<path>)`, `SQL — <name> (<path>)`, or `Config — <key> (<source>)`.
+- Names: `Code change — <symbol> (<path>)`, `IDL — <symbol> (<path>)`, or `SQL — <name> (<path>)`.
 
 Do not explain code already visible in the block.
 
