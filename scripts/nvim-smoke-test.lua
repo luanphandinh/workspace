@@ -1372,6 +1372,18 @@ local function test_search_priority_ordering()
   assert_true(tests < generated, "configured pattern order was not preserved")
 end
 
+local function test_live_grep_highlights_content_only()
+  local grep = require("luanphan.telescope_grep_opts")
+  local display = "example/path_handler.go:12:8:func ExampleHandler()"
+  local _, coordinates_end = display:find(":%d+:%d+:")
+  local highlights = grep.content_highlights("ExampleHandler", display)
+
+  assert_true(#highlights > 0, "live grep did not highlight matching content")
+  for _, position in ipairs(highlights) do
+    assert_true(position > coordinates_end, "live grep highlighted the filename")
+  end
+end
+
 local function test_adjacent_project_discovery(repo, worktree)
   local api = worktree_test_api()
   local original_cwd = vim.fn.getcwd()
@@ -3430,6 +3442,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("live grep deprioritizes configured patterns", function()
     test_search_priority_ordering()
+  end)
+
+  test("live grep highlights content only", function()
+    test_live_grep_highlights_content_only()
   end)
 
   test("toggle icons reflect state", function()

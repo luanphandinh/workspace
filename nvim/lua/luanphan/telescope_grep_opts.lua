@@ -3,6 +3,19 @@
 
 local M = {}
 
+function M.content_highlights(prompt, display)
+  local _, coordinates_end = display:find(":%d+:%d+:")
+  if not coordinates_end then
+    return {}
+  end
+
+  local positions = require("telescope.algos.fzy").positions(prompt, display:sub(coordinates_end + 1))
+  for index, position in ipairs(positions) do
+    positions[index] = coordinates_end + position
+  end
+  return positions
+end
+
 --- Open project live grep with ripgrep flags from |g:| toggles.
 --- Telescope does not merge |telescope.setup| `{ pickers = { live_grep = … } }` into
 --- |:Telescope live_grep|; you must call this (or pass opts in Lua) for |additional_args| to run.
@@ -29,11 +42,16 @@ function M.live_grep()
     return vim.list_extend(vim.deepcopy(args), vim.list_extend({ "--", prompt }, search_dirs))
   end, opts.entry_maker or make_entry.gen_from_vimgrep(opts), nil, opts.cwd)
 
+  local grep_sorter = sorters.highlighter_only(opts)
+  grep_sorter.highlighter = function(_, prompt, display)
+    return M.content_highlights(prompt, display)
+  end
+
   pickers.new(opts, {
     prompt_title = "Live Grep",
     finder = finder,
     previewer = conf.grep_previewer(opts),
-    sorter = require("luanphan.search_priority").wrap_sorter(sorters.highlighter_only(opts)),
+    sorter = require("luanphan.search_priority").wrap_sorter(grep_sorter),
     attach_mappings = function(_, map)
       map("i", "<C-Space>", actions.to_fuzzy_refine)
       return true
