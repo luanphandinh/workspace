@@ -19,12 +19,9 @@ function M.get_test_name()
   return name
 end
 
----Resolve the full Go import path for the current buffer's package.
----Runs `go list -f '{{.ImportPath}}'` from the file's directory so it works
----correctly inside a `go.work` workspace. (Previously we used `go list -m`,
----which returns EVERY module in the workspace one per line — those lines
----then got splatted into the test command as multiple package args.)
----@return string|nil
+---Resolve the current buffer's Go import path and package directory.
+---@return string|nil import_path
+---@return string|nil package_dir
 function M.get_current_import_path()
   local file_dir = vim.fn.expand('%:p:h')
   if file_dir == "" then return nil end
@@ -38,7 +35,7 @@ function M.get_current_import_path()
   handle:close()
   if result == "" then return nil end
   -- Defensive: if somehow multiple lines slipped through, take the first.
-  return vim.split(result, "\n", { plain = true })[1]
+  return vim.split(result, "\n", { plain = true })[1], file_dir
 end
 
 ---@return string
@@ -58,11 +55,12 @@ end
 --- buffer unless we use |:enew|, so without |enew| the Go file buffer would be replaced (looks "blank").
 --- Prints the exact command in the terminal first, then runs it.
 ---@param shell_cmd string full shell command (passed to &shell like |:terminal|)
-local function run_in_test_terminal(shell_cmd)
+---@param cwd string directory containing the tested Go package
+local function run_in_test_terminal(shell_cmd, cwd)
   vim.cmd("rightbelow vsplit | enew")
   local line = "$ " .. shell_cmd
   local full = string.format("printf '%%s\\n\\n' %s && %s", vim.fn.shellescape(line), shell_cmd)
-  local jid = vim.fn.jobstart(full, { term = true })
+  local jid = vim.fn.jobstart(full, { term = true, cwd = cwd })
   if jid == 0 or jid == -1 then
     vim.notify("Failed to start test in terminal", vim.log.levels.ERROR)
     return
@@ -78,7 +76,7 @@ function M.run_go_test_at_cursor()
     return
   end
 
-  local import_path = M.get_current_import_path()
+  local import_path, package_dir = M.get_current_import_path()
   if not import_path then
     vim.notify("Could not resolve import path (is `go list` valid here?)", vim.log.levels.ERROR)
     return
@@ -91,12 +89,12 @@ function M.run_go_test_at_cursor()
     import_path
   )
 
-  run_in_test_terminal(cmd)
+  run_in_test_terminal(cmd, package_dir)
 end
 
 ---Run all tests in the current package.
 function M.run_go_test_file()
-  local import_path = M.get_current_import_path()
+  local import_path, package_dir = M.get_current_import_path()
   if not import_path then
     vim.notify("Could not resolve import path (is `go list` valid here?)", vim.log.levels.ERROR)
     return
@@ -108,12 +106,12 @@ function M.run_go_test_file()
     import_path
   )
 
-  run_in_test_terminal(cmd)
+  run_in_test_terminal(cmd, package_dir)
 end
 
 ---Run all tests in the current package and its subpackages.
 function M.run_go_test_package()
-  local import_path = M.get_current_import_path()
+  local import_path, package_dir = M.get_current_import_path()
   if not import_path then
     vim.notify("Could not resolve import path (is `go list` valid here?)", vim.log.levels.ERROR)
     return
@@ -125,7 +123,7 @@ function M.run_go_test_package()
     import_path
   )
 
-  run_in_test_terminal(cmd)
+  run_in_test_terminal(cmd, package_dir)
 end
 
 -- lua/telescope_subtests.lua

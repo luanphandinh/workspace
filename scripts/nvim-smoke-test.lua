@@ -859,6 +859,53 @@ local function test_go_runtime_recovers_when_entering_loaded_buffer(worktree)
   assert_true(vim.v.shell_error == 0, table.concat(out, "\n"))
 end
 
+local function test_go_test_runs_from_nested_module()
+  local workspace = temp_root .. "/go-test-workspace"
+  local module = workspace .. "/example-module"
+  local fake_bin = workspace .. "/bin"
+  local marker = workspace .. "/test-cwd"
+  local script = workspace .. "/go-test-cwd.lua"
+
+  write(module .. "/go.mod", {
+    "module example.com/example-module",
+    "",
+    "go 1.21",
+  })
+  write(module .. "/example_test.go", {
+    "package example",
+    "",
+    "func TestNestedModule() {}",
+  })
+  write_executable(fake_bin .. "/go", {
+    "#!/bin/sh",
+    "if [ \"$1\" = \"list\" ]; then",
+    "  printf '%s\\n' 'example.com/example-module'",
+    "  exit 0",
+    "fi",
+    "if [ \"$1\" = \"test\" ]; then",
+    "  pwd > \"$GO_TEST_CWD_FILE\"",
+    "  exit 0",
+    "fi",
+    "exit 1",
+  })
+  write(script, {
+    "local function assert_true(value, message) if not value then error(message, 0) end end",
+    "vim.env.PATH = " .. string.format("%q", fake_bin) .. " .. ':' .. vim.env.PATH",
+    "vim.env.GO_TEST_CWD_FILE = " .. string.format("%q", marker),
+    "vim.cmd('cd ' .. vim.fn.fnameescape(" .. string.format("%q", workspace) .. "))",
+    "vim.cmd('noautocmd edit ' .. vim.fn.fnameescape(" .. string.format("%q", module .. "/example_test.go") .. "))",
+    "vim.api.nvim_win_set_cursor(0, { 3, 0 })",
+    "require('luanphan.plugins.go').run_go_test_at_cursor()",
+    "assert_true(vim.wait(5000, function() return vim.fn.filereadable(" .. string.format("%q", marker) .. ") == 1 end, 50), 'Go test did not run')",
+    "local cwd = vim.fn.readfile(" .. string.format("%q", marker) .. ")[1]",
+    "assert_true(vim.uv.fs_realpath(cwd) == vim.uv.fs_realpath(" .. string.format("%q", module) .. "), 'Go test ran from ' .. tostring(cwd))",
+  })
+
+  local cmd = child_nvim_luafile_command(workspace, script)
+  local out = vim.fn.systemlist(cmd)
+  assert_true(vim.v.shell_error == 0, table.concat(out, "\n"))
+end
+
 local function has_visible_diffview()
   for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
@@ -3514,6 +3561,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("go runtime recovers when entering loaded buffer", function()
     test_go_runtime_recovers_when_entering_loaded_buffer(worktree)
+  end)
+
+  test("Go test runs from nested module", function()
+    test_go_test_runs_from_nested_module()
   end)
 
   test("agent cli commands are executable", function()
