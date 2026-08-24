@@ -22,6 +22,12 @@ from typing import Any, Callable, Iterable
 
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+MANUAL_HEADING_TITLE_NUMBER_RE = re.compile(
+    r"^[1-9]\d?(?:\.\d+)*\.?[ \t]+"
+)
+MANUAL_HEADING_NUMBER_RE = re.compile(
+    r"(?m)^([ \t]{0,3}#{1,6}[ \t]+)[1-9]\d?(?:\.\d+)*\.?[ \t]+"
+)
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$")
 MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
@@ -187,6 +193,7 @@ def normalize_heading(title: str) -> str:
     title = title.strip()
     title = HTML_TAG_RE.sub("", title)
     title = re.sub(r"\s+", " ", title)
+    title = MANUAL_HEADING_TITLE_NUMBER_RE.sub("", title)
     return title
 
 
@@ -225,6 +232,8 @@ def transform_outside_fences(text: str, transform: Callable[[str], str]) -> str:
 
 def prepare_remote_markdown(text: str) -> str:
     def prepare_plain(chunk: str) -> str:
+        chunk = MANUAL_HEADING_NUMBER_RE.sub(r"\1", chunk)
+
         def replace_open(match: re.Match[str]) -> str:
             title = normalize_heading(html.unescape(match.group(1)))
             if not title:

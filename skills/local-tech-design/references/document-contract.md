@@ -1,6 +1,6 @@
 # Technical Design Contract
 
-Start directly at `# 1. Overview & Background`. Use these eight H1 sections in order.
+Start directly at `# 1. Overview & Background`. Use these eight numbered H1 sections in order.
 
 ## Section ownership
 
