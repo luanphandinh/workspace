@@ -25,6 +25,13 @@ Update the deepest changed heading only. Treat each `<details>` block as one imp
 - The prepared form replaces each HTML disclosure wrapper with an H6 heading and removes its closing tag. Never send `<details>` or `<summary>` tags to Lark.
 - Scan the exact outbound payload before writing and the fetched section afterward. If either disclosure tag remains, stop and correct that section.
 
+## Fold code sections
+
+- After syncing, resolve the Wiki token to its Docx `obj_token` and list the document blocks.
+- Select headings whose combined text begins with `Code change —` or `Code path —`.
+- In batches of at most 200, update only those blocks through the Docx block batch-update API with `style.folded=true` and `fields=[3]`. Preserve all text and content; never modify other headings.
+- Re-read the blocks, verify every match is folded, and report matched and folded counts. Use the API, never desktop or browser UI.
+
 ## Protected sections
 
 - `Links`: remote source of truth. Never create, replace, reorder, delete, or pull it during normal sync.
