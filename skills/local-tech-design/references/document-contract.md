@@ -17,6 +17,14 @@ Start directly at `# 1. Overview & Background`. Use these eight H1 sections in o
 
 One fact belongs to one section.
 
+## Cross-service call naming
+
+- Across prose, logic, tables, diagrams, sequences, and call chains, write every cross-service call as `<target-service>.<MethodName>`.
+- Resolve `<target-service>` from verified service-to-repository mapping or service identity. Use one established abbreviation throughout; an unambiguous repository-folder name is acceptable. Never use a bare method or generated service-interface name when an established short name exists.
+- Keep local calls as their exact unprefixed symbols. Write asynchronous edges as `PRODUCE <message-name>` or `CONSUME <message-name>`.
+- Preserve source identifiers inside code and diff blocks, including generated client package names.
+- Before finalizing, audit every cross-service call for a verified, consistent target-service prefix.
+
 ## 1. Overview & Background
 
 At most three short bullets: problem, trigger, and `Target` or `Expected outcome`. Never use `Success` as a label. Skip missing items. No system history.
@@ -93,10 +101,25 @@ Do not repeat architecture, external contracts, or production actions here.
 
 ### Code changes
 
-- Put implementation diffs in named `<details>` blocks: `Code change — <symbol> (<path>)`.
+- Put every implementation artifact in its own closed-by-default `<details>` block, including diffs, code, schemas, request-field tables, and code-path tables. Never add `open`.
+- Every block has exactly one `<summary>` named `Code change — <symbol> (<path>)`. Keep its supporting text and artifact inside the same wrapper:
+
+````markdown
+<details>
+<summary><strong>Code change — <symbol> (<path>)</strong></summary>
+
+```diff
+<implementation diff>
+```
+
+</details>
+````
+
+- Never use H4-H6 headings for individual code-change artifacts. During revisions, preserve every `<details>` and `<summary>` wrapper; rename only summary text. Compactness cleanup must not flatten or remove required wrappers.
 - Keep runtime intent in `Logic change` and implementation detail here. Do not explain behavior already visible in a diff.
 - Existing code: show its signature, locating context, `-`/`+` lines, and `...` for omissions.
 - New function or schema: show the complete definition; for a new function, add a small caller diff.
+- Before presentation, commit, or remote sync, inspect every `### Code changes` section: all direct artifacts are wrapped, each wrapper has one summary, opening and closing counts match, and no `###### Code change` or `###### Code path` heading remains. Any failure blocks completion until corrected. Configuration diffs under `### Config changes` are exempt.
 
 ### Config changes
 
