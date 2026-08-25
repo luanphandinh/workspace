@@ -27,9 +27,21 @@ Update the deepest changed heading only. Treat each `<details>` block as one imp
 
 ## Native heading numbering
 
-- Keep numbered headings in local Markdown. Strip their numeric prefixes only from the outbound payload, then enable or preserve native outline numbering through the current official Docx API or CLI when supported; never use undocumented endpoints.
-- Re-fetch and verify the native numbering state when accessible. If the public API cannot toggle it, keep remote headings unnumbered and report: `Native heading numbering must be enabled once in Lark's document UI; the public API cannot currently toggle it.` Never restore manual prefixes remotely as a workaround.
-- After sync, verify the heading hierarchy, accessible numbering state, and folded code sections.
+- Keep numbered headings in local Markdown. Strip their numeric prefixes only from the outbound payload; never put `1.` or `1.2` in remote heading text.
+- After syncing heading text, replace each H1 and H2 block with the same level and title plus native sequence attributes:
+
+```bash
+lark-cli docs +update \
+  --as user \
+  --doc <doc-token> \
+  --command block_replace \
+  --block-id <heading-block-id> \
+  --content '<h2 seq="auto" seq-level="auto">Heading title</h2>'
+```
+
+- Use `<h1 seq="auto" seq-level="auto">...</h1>` for H1 and `<h2 seq="auto" seq-level="auto">...</h2>` for H2. Preserve the exact unnumbered title and heading level.
+- Do not add sequence attributes to H3-H6; keep those remote headings unnumbered.
+- Re-fetch and verify every H1/H2 has both native sequence attributes, no heading text contains a manual numeric prefix, H3+ has no sequence attributes, and folded code sections remain intact.
 
 ## Fold code sections
 
@@ -44,14 +56,14 @@ Update the deepest changed heading only. Treat each `<details>` block as one imp
 - `Release Checklist`: show the proposed change and obtain separate explicit confirmation.
 - Diagrams/whiteboards: list changed diagram sections and obtain separate explicit replacement authorization.
 
-A normal sync request authorizes exact-text updates and new unprotected sections only. It does not authorize block replacement or protected updates.
+A normal sync request authorizes exact-text updates, new unprotected sections, and text-preserving H1/H2 block replacement for native numbering. It does not authorize other block replacement or protected updates.
 
 ## Write strategy
 
 1. Fetch the exact current section.
 2. Use exact text replacement for an existing section.
 3. Insert only when the section is new.
-4. If exact replacement fails, stop and ask before block replacement.
+4. If exact replacement fails, stop and ask before block replacement, except for the required text-preserving H1/H2 native-numbering update.
 5. Never silently fall back to delete/recreate or whole-document overwrite.
 6. Re-fetch changed sections and verify unrelated content is unchanged.
 
