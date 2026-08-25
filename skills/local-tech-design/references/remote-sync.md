@@ -22,8 +22,21 @@ Update the deepest changed heading only. Treat each `<details>` block as one imp
 ## Outbound Markdown
 
 - Pass every non-diagram section through `scripts/tech_doc_compare.py prepare` before writing it remotely. Use `--local <file>` or pipe section Markdown through stdin.
-- The prepared form replaces each HTML disclosure wrapper with an H6 heading and removes its closing tag. Never send `<details>` or `<summary>` tags to Lark.
+- The prepared form removes manual numeric prefixes from Markdown headings only, replaces each HTML disclosure wrapper with an H6 heading, and removes its closing tag. Never send numbered heading text, `<details>`, or `<summary>` tags to Lark.
 - Scan the exact outbound payload before writing and the fetched section afterward. If either disclosure tag remains, stop and correct that section.
+
+## Native heading numbering
+
+- Keep numbered headings in local Markdown. Strip their numeric prefixes only from the outbound payload, then enable or preserve native outline numbering through the current official Docx API or CLI when supported; never use undocumented endpoints.
+- Re-fetch and verify the native numbering state when accessible. If the public API cannot toggle it, keep remote headings unnumbered and report: `Native heading numbering must be enabled once in Lark's document UI; the public API cannot currently toggle it.` Never restore manual prefixes remotely as a workaround.
+- After sync, verify the heading hierarchy, accessible numbering state, and folded code sections.
+
+## Fold code sections
+
+- After syncing, resolve the Wiki token to its Docx `obj_token` and list the document blocks.
+- Select H6 headings whose combined text begins with `Code change —` or `Code path —`, and confirm each immediately precedes its intended code block.
+- In batches of at most 200, update only those blocks through the Docx block batch-update API with `style.folded=true` and `fields=[3]`. Preserve all text and content; never modify other headings.
+- Re-read the blocks, verify every match is folded, and report matched and folded counts. Use the API, never desktop or browser UI.
 
 ## Protected sections
 
@@ -49,6 +62,7 @@ For an empty remote, create sections selectively; omit Links and Release Checkli
 - Resolve wiki URLs to their document and use the matching `lark-cli` skill before choosing commands.
 - Fetch the outline, then the target section with IDs, and prefer exact `str_replace`.
 - Keep diagrams native. Pipe local Mermaid through stdin to `lark-cli whiteboard +update`; do not create or upload SVG/PNG intermediates.
+- Keep each rendered label line within 40 characters in both local and remote Mermaid. Break at meaningful phrase or syntax boundaries; never split a word arbitrarily.
 - Preserve the title, whiteboard block, and whiteboard token. Replace board contents only after diagram authorization.
 - Represent each node as one native shape containing its label. Attach connector endpoints to source and target object IDs.
 - After update, query with both `--output_as code` and `--output_as raw`. Verify Mermaid syntax, shape text, connector attachments, and unchanged unrelated content.

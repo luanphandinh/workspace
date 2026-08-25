@@ -61,7 +61,9 @@
             nerd-fonts.fira-code
             neovim
             nodejs
-            python3
+            (python3.withPackages (pythonPackages: [
+              pythonPackages.pyyaml
+            ]))
             rust-analyzer
             tree-sitter
           ] ++ [

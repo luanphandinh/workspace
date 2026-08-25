@@ -7,8 +7,12 @@ Build Mermaid from the verified graph produced during code exploration. Keep the
 ## Architecture flowchart
 
 - Show 5-10 primary nodes and the main data flow.
-- Use `flowchart LR` while readable; use `flowchart TB` with concern/phase subgraphs for wide or long flows.
+- Default to `flowchart TB`.
+- Use `flowchart LR` only for one linear path with at most five primary nodes, no branches, merges, or shared stores, short edge labels, and a readable render at normal document width.
+- Use `flowchart TB` for multiple paths, branches, shared stores, or long labels.
+- If a top-down diagram is still too wide, split unrelated flows. Use concern or phase subgraphs only when they improve grouping, never only to control layout.
 - Keep node IDs simple. Put punctuation, paths, operation names, and `(NEW)` inside quoted labels.
+- Keep each rendered label line within 40 characters. Insert Mermaid line breaks at meaningful phrase or syntax boundaries; never split a word arbitrarily.
 - Quote edge labels containing punctuation or paths.
 - Keep one Mermaid statement per line.
 - Put operation detail in sequence diagrams when it makes the overview noisy.
@@ -35,6 +39,9 @@ flowchart TB
 
 ## Review
 
+- Render and visually inspect every changed diagram at normal document width; a successful syntax check is insufficient.
+- Verify every rendered label line is at most 40 characters and each break preserves meaning.
+- If labels require zooming or horizontal scrolling, change the diagram to top-down or split it.
 - Every drawn edge has code or contract evidence.
 - Shared nodes are not duplicated.
 - The requested behavior is visible without explanatory prose.
