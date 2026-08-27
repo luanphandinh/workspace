@@ -41,6 +41,12 @@ Do not add speculative abstractions, compatibility layers, dependencies, configu
 
 Default to no comment. Add one short comment only for a non-obvious invariant, ordering requirement, external constraint, or workaround. Never restate names or control flow.
 
+## Wrapped parameters
+
+- Keep a function or method signature on one line when it fits.
+- Once its parameter list wraps, put every parameter on its own line and the closing delimiter on its own line. Never place multiple parameters on one wrapped line.
+- Preserve separators required by the language and run the repository formatter.
+
 ## Multi-repo workspaces
 
 For work based on a workspace tech design, read [references/workspace.md](references/workspace.md) before editing. Repositories under `_external/` are read-only context.
