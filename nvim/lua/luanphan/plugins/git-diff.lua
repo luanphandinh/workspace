@@ -3,6 +3,7 @@ local recent_paths = require("luanphan.recent_paths")
 local pending_workspace_diff = nil
 local switch_workspace_diff
 local close_workspace_diff
+local handle_workspace_diff_mouse
 
 local function find_diffview_tab()
   local ok, lib = pcall(require, "diffview.lib")
@@ -426,6 +427,12 @@ local function set_diffview_keymaps(view, buf)
   vim.keymap.set("n", "]r", function()
     switch_workspace_diff(view, 1, false, true)
   end, { buffer = buf, desc = "Next diff repository" })
+  vim.keymap.set("n", "<LeftMouse>", function()
+    if handle_workspace_diff_mouse then
+      return handle_workspace_diff_mouse(view)
+    end
+    return "<LeftMouse>"
+  end, { buffer = buf, expr = true, desc = "Select diff repository" })
 end
 
 local function set_diffview_tab_keymaps(view)
@@ -778,6 +785,41 @@ local function repository_at_column(state, column)
   return nil
 end
 
+handle_workspace_diff_mouse = function(view)
+  local mouse = vim.fn.getmousepos()
+  if not mouse or not mouse.winid or not vim.api.nvim_win_is_valid(mouse.winid) then
+    return "<LeftMouse>"
+  end
+
+  local target_buf = vim.api.nvim_win_get_buf(mouse.winid)
+  if not vim.b[target_buf].luanphan_workspace_diff_bar then
+    return "<LeftMouse>"
+  end
+
+  local state
+  state, view = workspace_diff_state(view)
+  local bar_matches = false
+  for _, bar in pairs(state and state.bars or {}) do
+    if bar.win == mouse.winid and bar.buf == target_buf then
+      bar_matches = true
+      break
+    end
+  end
+  if not bar_matches then
+    return "<LeftMouse>"
+  end
+
+  local index = repository_at_column(state, math.max((mouse.column or 1) - 1, 0))
+  if not index then
+    return "<LeftMouse>"
+  end
+
+  vim.schedule(function()
+    switch_workspace_diff(view, index, true, false)
+  end)
+  return "<Ignore>"
+end
+
 local function create_repository_bar(view, state, index, focus)
   if not view.tabpage or not vim.api.nvim_tabpage_is_valid(view.tabpage) then
     return
@@ -826,12 +868,6 @@ local function create_repository_bar(view, state, index, focus)
     vim.api.nvim_set_current_tabpage(view.tabpage)
     view.panel:focus()
   end, { buffer = buf, desc = "Focus diff file tree" })
-  vim.keymap.set("n", "<LeftMouse>", function()
-    local mouse = vim.fn.getmousepos()
-    if mouse.winid == win then
-      switch_workspace_diff(view, repository_at_column(state, math.max(mouse.column - 1, 0)), true, false)
-    end
-  end, { buffer = buf, desc = "Open diff repository" })
   vim.keymap.set("n", "q", function()
     close_workspace_diff(view)
   end, { buffer = buf, silent = true, desc = "Close Diffview" })
@@ -1127,6 +1163,7 @@ return {
           diff_buf_read = function(bufnr)
             vim.opt_local.wrap = false
             vim.opt_local.list = false
+            set_diffview_keymaps(nil, bufnr)
           end,
           view_opened = function(view)
             -- Set simple tab name

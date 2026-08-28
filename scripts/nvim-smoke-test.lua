@@ -3133,6 +3133,26 @@ local function test_git_diff_repository_bar_from_workspace_root()
     assert_true(bar_row <= vim.fn.win_screenpos(win)[1], "repository bar is not the top Diffview window")
   end
 
+  vim.api.nvim_set_current_win(initial_main_win)
+  local mouse_map = vim.fn.maparg("<LeftMouse>", "n", false, true)
+  assert_true(
+    type(mouse_map) == "table" and type(mouse_map.callback) == "function",
+    "diff content does not handle repository bar clicks"
+  )
+  local original_getmousepos = vim.fn.getmousepos
+  vim.fn.getmousepos = function()
+    return { winid = bar_win, column = changed_position }
+  end
+  local click_ok, click_result = pcall(mouse_map.callback)
+  vim.fn.getmousepos = original_getmousepos
+  assert_true(click_ok, "repository bar click failed: " .. tostring(click_result))
+  assert_true(click_result == "<Ignore>", "repository bar click was not consumed")
+  wait_for_diffview_repository(second_repo)
+  local clicked_view = require("diffview.lib").get_current_view()
+  assert_true(clicked_view ~= initial_view, "repository bar click did not switch Diffview")
+  invoke_map("h")
+  wait_for_diffview_repository(first_repo)
+
   wait_until("next diff repository mapping", function()
     vim.api.nvim_set_current_win(bar_win)
     local map = vim.fn.maparg("l", "n", false, true)
@@ -3141,7 +3161,7 @@ local function test_git_diff_repository_bar_from_workspace_root()
   invoke_map("l")
   wait_for_diffview_repository(second_repo)
   local second_view = require("diffview.lib").get_current_view()
-  assert_true(second_view ~= initial_view, "repository browsing did not open the selected Diffview")
+  assert_true(second_view == clicked_view, "repository browsing rebuilt the clicked Diffview")
   _, bar_win, bar_buf = find_workspace_diff_bar()
   assert_true(vim.api.nvim_get_current_buf() == bar_buf, "repository browsing did not focus the selected repository bar")
   assert_true(vim.api.nvim_get_current_win() == bar_win, "repository browsing moved focus into the diff")
