@@ -2626,6 +2626,20 @@ end
 local function test_worktree_switch_hides_foreign_file(repo, worktree)
   local api = worktree_test_api()
   local recent_paths = require("luanphan.recent_paths")
+  local function listed_unnamed_buffers()
+    local count = 0
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_valid(buf)
+        and vim.bo[buf].buflisted
+        and vim.bo[buf].buftype == ""
+        and vim.api.nvim_buf_get_name(buf) == ""
+      then
+        count = count + 1
+      end
+    end
+    return count
+  end
+
   vim.fn.delete(vim.g.luanphan_recent_paths_file)
   local clean_path = repo .. "/switch-clean.go"
   local modified_path = repo .. "/switch-modified.go"
@@ -2654,8 +2668,13 @@ local function test_worktree_switch_hides_foreign_file(repo, worktree)
     end,
   })
 
+  local unnamed_before = listed_unnamed_buffers()
   api.switch_to(worktree, "worktree")
   assert_true(realpath(vim.fn.getcwd()) == realpath(worktree), "worktree switch did not change cwd")
+  assert_true(
+    listed_unnamed_buffers() == unnamed_before,
+    "worktree switch leaked a listed unnamed placeholder buffer"
+  )
   local targets = recent_paths.switch_targets({
     { path = repo },
     { path = worktree },
@@ -3114,6 +3133,26 @@ local function test_git_diff_repository_bar_from_workspace_root()
     assert_true(bar_row <= vim.fn.win_screenpos(win)[1], "repository bar is not the top Diffview window")
   end
 
+  vim.api.nvim_set_current_win(initial_main_win)
+  local mouse_map = vim.fn.maparg("<LeftMouse>", "n", false, true)
+  assert_true(
+    type(mouse_map) == "table" and type(mouse_map.callback) == "function",
+    "diff content does not handle repository bar clicks"
+  )
+  local original_getmousepos = vim.fn.getmousepos
+  vim.fn.getmousepos = function()
+    return { winid = bar_win, column = changed_position }
+  end
+  local click_ok, click_result = pcall(mouse_map.callback)
+  vim.fn.getmousepos = original_getmousepos
+  assert_true(click_ok, "repository bar click failed: " .. tostring(click_result))
+  assert_true(click_result == "<Ignore>", "repository bar click was not consumed")
+  wait_for_diffview_repository(second_repo)
+  local clicked_view = require("diffview.lib").get_current_view()
+  assert_true(clicked_view ~= initial_view, "repository bar click did not switch Diffview")
+  invoke_map("h")
+  wait_for_diffview_repository(first_repo)
+
   wait_until("next diff repository mapping", function()
     vim.api.nvim_set_current_win(bar_win)
     local map = vim.fn.maparg("l", "n", false, true)
@@ -3122,7 +3161,7 @@ local function test_git_diff_repository_bar_from_workspace_root()
   invoke_map("l")
   wait_for_diffview_repository(second_repo)
   local second_view = require("diffview.lib").get_current_view()
-  assert_true(second_view ~= initial_view, "repository browsing did not open the selected Diffview")
+  assert_true(second_view == clicked_view, "repository browsing rebuilt the clicked Diffview")
   _, bar_win, bar_buf = find_workspace_diff_bar()
   assert_true(vim.api.nvim_get_current_buf() == bar_buf, "repository browsing did not focus the selected repository bar")
   assert_true(vim.api.nvim_get_current_win() == bar_win, "repository browsing moved focus into the diff")

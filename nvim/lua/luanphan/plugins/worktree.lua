@@ -553,7 +553,11 @@ local function setup()
           and name ~= ""
           and not path_is_in_dir(name, cwd)
         then
-          replacement = replacement or vim.api.nvim_create_buf(true, false)
+          if not replacement then
+            replacement = vim.api.nvim_create_buf(false, false)
+            vim.bo[replacement].bufhidden = "wipe"
+            vim.bo[replacement].swapfile = false
+          end
           pcall(vim.api.nvim_win_set_buf, win, replacement)
         end
       end
