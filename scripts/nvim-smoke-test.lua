@@ -2626,6 +2626,20 @@ end
 local function test_worktree_switch_hides_foreign_file(repo, worktree)
   local api = worktree_test_api()
   local recent_paths = require("luanphan.recent_paths")
+  local function listed_unnamed_buffers()
+    local count = 0
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_valid(buf)
+        and vim.bo[buf].buflisted
+        and vim.bo[buf].buftype == ""
+        and vim.api.nvim_buf_get_name(buf) == ""
+      then
+        count = count + 1
+      end
+    end
+    return count
+  end
+
   vim.fn.delete(vim.g.luanphan_recent_paths_file)
   local clean_path = repo .. "/switch-clean.go"
   local modified_path = repo .. "/switch-modified.go"
@@ -2654,8 +2668,13 @@ local function test_worktree_switch_hides_foreign_file(repo, worktree)
     end,
   })
 
+  local unnamed_before = listed_unnamed_buffers()
   api.switch_to(worktree, "worktree")
   assert_true(realpath(vim.fn.getcwd()) == realpath(worktree), "worktree switch did not change cwd")
+  assert_true(
+    listed_unnamed_buffers() == unnamed_before,
+    "worktree switch leaked a listed unnamed placeholder buffer"
+  )
   local targets = recent_paths.switch_targets({
     { path = repo },
     { path = worktree },
