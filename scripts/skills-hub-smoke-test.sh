@@ -97,7 +97,7 @@ mkdir -p "$HOME"
 cat > "$INSTALLER" <<'SH'
 #!/bin/sh
 set -eu
-printf '%s\n' "$PWD" >> "$SKILLS_HUB_SMOKE_LOG"
+printf '%s %s\n' "$PWD" "$1" >> "$SKILLS_HUB_SMOKE_LOG"
 mkdir -p ".agents/skills/$1"
 printf '# %s\n' "$1" > ".agents/skills/$1/SKILL.md"
 SH
@@ -121,6 +121,12 @@ assert_exists "$HUB/.agents/skills/example-skill/SKILL.md"
 assert_line_count "$HUB/execute_plugins" 1
 assert_line_count "$LOG" 2
 assert_contains "$HUB/package.json" '"private": true'
+
+SKILLS_HUB_HOME="$HUB" SKILLS_HUB_SMOKE_LOG="$LOG" \
+	python3 "$ROOT/bin/skills-hub" add "$INSTALLER second-skill" >/dev/null
+assert_exists "$HUB/.agents/skills/second-skill/SKILL.md"
+assert_line_count "$HUB/execute_plugins" 2
+assert_line_count "$LOG" 3
 
 mkdir -p "$HUB/.claude/skills/other-skill" "$PROJECT" "$FAKEBIN"
 printf '# other\n' > "$HUB/.claude/skills/other-skill/SKILL.md"
@@ -156,6 +162,28 @@ cat > "$SKILLS_HUB_FZF_INPUT"
 printf '%s\n' "$SKILLS_HUB_FZF_OUTPUT"
 SH
 chmod +x "$FAKEBIN/fzf"
+
+rm -rf "$HUB/.agents/skills/example-skill" "$HUB/.agents/skills/second-skill"
+: > "$LOG"
+: > "$FZF_INPUT"
+: > "$FZF_ARGS"
+(
+	cd "$PROJECT"
+	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_SMOKE_LOG="$LOG" \
+		SKILLS_HUB_FZF_INPUT="$FZF_INPUT" SKILLS_HUB_FZF_ARGS="$FZF_ARGS" \
+		SKILLS_HUB_FZF_OUTPUT="$INSTALLER second-skill
+$INSTALLER example-skill" \
+		python3 "$ROOT/bin/skills-hub" replay >/dev/null
+)
+assert_exists "$HUB/.agents/skills/example-skill/SKILL.md"
+assert_exists "$HUB/.agents/skills/second-skill/SKILL.md"
+test "$(sed -n '1p' "$FZF_INPUT")" = "$INSTALLER example-skill"
+test "$(sed -n '2p' "$FZF_INPUT")" = "$INSTALLER second-skill"
+assert_line "$FZF_ARGS" '--height ~100% --prompt skills-replay>  --multi --bind ctrl-a:select-all,ctrl-d:deselect-all --no-sort --layout=reverse'
+assert_line_count "$LOG" 2
+HUB_REAL=$(CDPATH= cd -- "$HUB" && pwd -P)
+test "$(sed -n '1p' "$LOG")" = "$HUB_REAL example-skill"
+test "$(sed -n '2p' "$LOG")" = "$HUB_REAL second-skill"
 
 (
 	cd "$PROJECT"

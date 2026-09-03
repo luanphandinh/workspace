@@ -55,13 +55,6 @@ assert_line "$HISTORY" 'printf "%s\n" first >> run.log'
 assert_line "$HISTORY" 'printf "%s\n" second >> run.log'
 assert_line_count "$RUN_LOG" 2
 
-(
-	cd "$PROJECT"
-	HOME="$FAKEHOME" python3 "$ROOT/bin/cmds-hub" replay >/dev/null
-)
-assert_line_count "$RUN_LOG" 3
-test "$(tail -n 1 "$RUN_LOG")" = "second"
-
 : > "$RUN_LOG"
 (
 	cd "$PROJECT"
@@ -90,14 +83,30 @@ chmod +x "$FAKEBIN/fzf"
 		HOME="$FAKEHOME" \
 		CMDS_HUB_FZF_INPUT="$FZF_INPUT" \
 		CMDS_HUB_FZF_ARGS="$FZF_ARGS" \
-		CMDS_HUB_FZF_OUTPUT='printf "%s\n" first >> run.log' \
-		python3 "$ROOT/bin/cmds-hub" pick >/dev/null
+		CMDS_HUB_FZF_OUTPUT='printf "%s\n" second >> run.log
+printf "%s\n" first >> run.log' \
+		python3 "$ROOT/bin/cmds-hub" replay >/dev/null
 )
 assert_line "$FZF_INPUT" 'printf "%s\n" first >> run.log'
 assert_line "$FZF_INPUT" 'printf "%s\n" second >> run.log'
-assert_line "$FZF_ARGS" '--height ~100% --prompt cmds-hub> '
-assert_line_count "$RUN_LOG" 1
-test "$(cat "$RUN_LOG")" = "first"
+test "$(sed -n '1p' "$FZF_INPUT")" = 'printf "%s\n" first >> run.log'
+test "$(sed -n '2p' "$FZF_INPUT")" = 'printf "%s\n" second >> run.log'
+assert_line "$FZF_ARGS" '--height ~100% --prompt cmds-replay>  --multi --no-sort --layout=reverse --bind ctrl-a:select-all,ctrl-d:deselect-all'
+assert_line_count "$RUN_LOG" 2
+test "$(sed -n '1p' "$RUN_LOG")" = "first"
+test "$(sed -n '2p' "$RUN_LOG")" = "second"
 assert_line_count "$HISTORY" 2
+
+: > "$RUN_LOG"
+(
+	cd "$PROJECT"
+	PATH="$FAKEBIN:$PATH" \
+		HOME="$FAKEHOME" \
+		CMDS_HUB_FZF_INPUT="$FZF_INPUT" \
+		CMDS_HUB_FZF_OUTPUT='printf "%s\n" second >> run.log' \
+		python3 "$ROOT/bin/cmds-hub" pick >/dev/null
+)
+assert_line_count "$RUN_LOG" 1
+test "$(cat "$RUN_LOG")" = "second"
 
 echo "PASS cmds-hub smoke test"
