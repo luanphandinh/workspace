@@ -88,6 +88,7 @@ local function set_agent_bufnr(bufnr, cwd)
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
     state.bufnrs[cwd] = bufnr
     pcall(function() vim.b[bufnr].luanphan_persist_term = true end)
+    require("luanphan.terminal_references").attach(bufnr, cwd)
   else
     state.bufnrs[cwd] = nil
     state.float_geometry = nil
@@ -486,6 +487,7 @@ local function restore_agent_bufnr()
         apply_agent_scrollback(nr)
         set_float_close_keymaps(nr)
         attach_status_tracking(nr, cwd)
+        require("luanphan.terminal_references").attach(nr, cwd)
       end
     end
   end
