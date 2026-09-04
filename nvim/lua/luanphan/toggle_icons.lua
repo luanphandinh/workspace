@@ -45,6 +45,11 @@ function M.terminal()
   return icon(false)
 end
 
+function M.terminal_reference_links()
+  return icon(vim.g.luanphan_terminal_reference_links_enabled ~= false
+    and vim.g.luanphan_terminal_reference_links_enabled ~= 0)
+end
+
 function M.word_wrap()
   return icon(vim.wo.wrap)
 end

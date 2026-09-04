@@ -2091,17 +2091,60 @@ local function test_terminal_reference_links()
   })
   local namespace = references.attach(buf, root)
   local marks = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+  assert_true(#marks == 0, "hidden terminal references were scanned during attach")
+
+  local previous_buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_win_set_buf(0, buf)
+  marks = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
   assert_true(#marks == 1, "terminal references did not link exactly one existing file")
   assert_true(marks[1][4].url:match("^nvim%-ref://open"), "terminal reference URL has the wrong scheme")
   assert_true(marks[1][4].url:find("example%-repo%%2Fmain.go"), "terminal reference URL omitted the file")
+  vim.api.nvim_win_set_buf(0, previous_buf)
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
     "second example-repo/other.go:1:1",
   })
+  vim.wait(300)
+  local hidden_marks = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+  assert_true(
+    #hidden_marks == 1 and hidden_marks[1][4].url:find("example%-repo%%2Fmain.go") ~= nil,
+    "hidden terminal reference was rescanned"
+  )
+
+  vim.api.nvim_win_set_buf(0, buf)
   wait_until("updated terminal reference link", function()
     local updated = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
     return #updated == 1 and updated[1][4].url:find("example%-repo%%2Fother.go") ~= nil
   end)
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "first example-repo/main.go:1",
+  })
+  wait_until("debounced visible terminal reference link", function()
+    local updated = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+    return #updated == 1 and updated[1][4].url:find("example%-repo%%2Fmain.go") ~= nil
+  end)
+
+  references.set_enabled(false, true)
+  assert_true(
+    #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true }) == 0,
+    "disabling terminal references left hyperlinks behind"
+  )
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "second example-repo/other.go:1:1",
+  })
+  vim.wait(300)
+  assert_true(
+    #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true }) == 0,
+    "disabled terminal references continued scanning"
+  )
+  references.set_enabled(true, true)
+  local enabled_marks = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+  assert_true(
+    #enabled_marks == 1 and enabled_marks[1][4].url:find("example%-repo%%2Fother.go") ~= nil,
+    "enabling terminal references did not rebuild visible links"
+  )
+  vim.api.nvim_win_set_buf(0, previous_buf)
 
   vim.api.nvim_buf_delete(buf, { force = true })
 

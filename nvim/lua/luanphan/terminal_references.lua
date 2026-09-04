@@ -3,6 +3,12 @@ local M = {}
 local namespace = vim.api.nvim_create_namespace("LuanphanTerminalReferences")
 local attached = {}
 local pending = {}
+local dirty = {}
+local tracked = {}
+local update_delay_ms = 250
+local enabled = vim.g.luanphan_terminal_reference_links_enabled ~= false
+  and vim.g.luanphan_terminal_reference_links_enabled ~= 0
+vim.g.luanphan_terminal_reference_links_enabled = enabled
 
 local function encode(value)
   return tostring(value):gsub("([^%w%-._~])", function(char)
@@ -93,6 +99,14 @@ local function refresh(bufnr, first_line, last_line)
 end
 
 local function schedule_refresh(bufnr, first_line, last_line)
+  if not enabled then
+    return
+  end
+  if vim.fn.bufwinid(bufnr) == -1 then
+    dirty[bufnr] = true
+    return
+  end
+
   local range = pending[bufnr]
   if range then
     range.first = math.min(range.first, first_line)
@@ -101,21 +115,33 @@ local function schedule_refresh(bufnr, first_line, last_line)
   end
 
   pending[bufnr] = { first = first_line, last = last_line }
-  vim.schedule(function()
+  vim.defer_fn(function()
     local current = pending[bufnr]
     pending[bufnr] = nil
-    if current then
-      refresh(bufnr, current.first, current.last)
+    if enabled and current then
+      if vim.fn.bufwinid(bufnr) == -1 then
+        dirty[bufnr] = true
+      else
+        refresh(bufnr, current.first, current.last)
+      end
     end
-  end)
+  end, update_delay_ms)
 end
 
 function M.attach(bufnr, cwd)
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
     return nil
   end
-  vim.b[bufnr].luanphan_terminal_reference_cwd = vim.fs.normalize(cwd)
-  refresh(bufnr, 0, vim.api.nvim_buf_line_count(bufnr))
+  cwd = vim.fs.normalize(cwd)
+  tracked[bufnr] = cwd
+  vim.b[bufnr].luanphan_terminal_reference_cwd = cwd
+  if enabled then
+    if vim.fn.bufwinid(bufnr) == -1 then
+      dirty[bufnr] = true
+    else
+      refresh(bufnr, 0, vim.api.nvim_buf_line_count(bufnr))
+    end
+  end
 
   if attached[bufnr] then
     return namespace
@@ -128,10 +154,63 @@ function M.attach(bufnr, cwd)
     on_detach = function(_, detached_bufnr)
       attached[detached_bufnr] = nil
       pending[detached_bufnr] = nil
+      dirty[detached_bufnr] = nil
+      tracked[detached_bufnr] = nil
     end,
   })
   return namespace
 end
+
+function M.activate(bufnr)
+  if not enabled or not dirty[bufnr] or not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+  dirty[bufnr] = nil
+  pending[bufnr] = nil
+  refresh(bufnr, 0, vim.api.nvim_buf_line_count(bufnr))
+end
+
+function M.is_enabled()
+  return enabled
+end
+
+function M.set_enabled(value, silent)
+  enabled = value == true
+  vim.g.luanphan_terminal_reference_links_enabled = enabled
+
+  for bufnr in pairs(tracked) do
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      pending[bufnr] = nil
+      dirty[bufnr] = nil
+      vim.api.nvim_buf_clear_namespace(bufnr, namespace, 0, -1)
+      if enabled then
+        if vim.fn.bufwinid(bufnr) == -1 then
+          dirty[bufnr] = true
+        else
+          refresh(bufnr, 0, vim.api.nvim_buf_line_count(bufnr))
+        end
+      end
+    end
+  end
+
+  if not silent then
+    vim.notify("Terminal reference links " .. (enabled and "enabled" or "disabled"))
+  end
+  return enabled
+end
+
+function M.toggle()
+  return M.set_enabled(not enabled)
+end
+
+vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter" }, {
+  group = vim.api.nvim_create_augroup("LuanphanTerminalReferences", { clear = true }),
+  callback = function(args)
+    if attached[args.buf] then
+      M.activate(args.buf)
+    end
+  end,
+})
 
 local function is_editor_window(win)
   if not vim.api.nvim_win_is_valid(win) then
