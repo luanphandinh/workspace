@@ -73,6 +73,56 @@ local function references_in_line(cwd, text)
   return result
 end
 
+local function wrapped_reference(cwd, first_text, second_text)
+  local first_col, first_end, first_path = first_text:find("([@~%w%._%-%+/]+)$")
+  if not first_path or not first_path:find("/", 1, true) then
+    return nil
+  end
+
+  local _, second_end, second_path, line, column = second_text:find("^%s*([@~%w%._%-%+/]+):(%d+):?(%d*)")
+  if not second_path then
+    return nil
+  end
+
+  local path = resolve_path(cwd, first_path .. second_path)
+  local line_number = tonumber(line)
+  local column_number = tonumber(column) or 1
+  local url = path and line_number and reference_url(path, line_number, column_number) or nil
+  if not url then
+    return nil
+  end
+
+  local second_col = second_text:find(second_path, 1, true)
+  return {
+    first = {
+      first_col = first_col - 1,
+      last_col = first_end,
+      url = url,
+    },
+    second = {
+      first_col = second_col - 1,
+      last_col = second_end,
+      url = url,
+    },
+  }
+end
+
+local function overlaps(reference, ranges)
+  for _, range in ipairs(ranges or {}) do
+    if reference.first_col < range.last_col and reference.last_col > range.first_col then
+      return true
+    end
+  end
+  return false
+end
+
+local function set_reference(bufnr, row, reference)
+  vim.api.nvim_buf_set_extmark(bufnr, namespace, row, reference.first_col, {
+    end_col = reference.last_col,
+    url = reference.url,
+  })
+end
+
 local function refresh(bufnr, first_line, last_line)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return
@@ -85,15 +135,31 @@ local function refresh(bufnr, first_line, last_line)
   local line_count = vim.api.nvim_buf_line_count(bufnr)
   first_line = math.max(0, math.min(first_line or 0, line_count))
   last_line = math.max(first_line, math.min(last_line or line_count, line_count))
+  first_line = math.max(0, first_line - 1)
+  last_line = math.min(line_count, last_line + 1)
   vim.api.nvim_buf_clear_namespace(bufnr, namespace, first_line, last_line)
 
-  for index, text in ipairs(vim.api.nvim_buf_get_lines(bufnr, first_line, last_line, false)) do
+  local lines = vim.api.nvim_buf_get_lines(bufnr, first_line, last_line, false)
+  local wrapped = {}
+  for index = 1, #lines - 1 do
+    local reference = wrapped_reference(cwd, lines[index], lines[index + 1])
+    if reference then
+      wrapped[index] = wrapped[index] or {}
+      wrapped[index + 1] = wrapped[index + 1] or {}
+      wrapped[index][#wrapped[index] + 1] = reference.first
+      wrapped[index + 1][#wrapped[index + 1] + 1] = reference.second
+    end
+  end
+
+  for index, text in ipairs(lines) do
     local row = first_line + index - 1
     for _, reference in ipairs(references_in_line(cwd, text)) do
-      vim.api.nvim_buf_set_extmark(bufnr, namespace, row, reference.first_col, {
-        end_col = reference.last_col,
-        url = reference.url,
-      })
+      if not overlaps(reference, wrapped[index]) then
+        set_reference(bufnr, row, reference)
+      end
+    end
+    for _, reference in ipairs(wrapped[index] or {}) do
+      set_reference(bufnr, row, reference)
     end
   end
 end

@@ -2125,6 +2125,17 @@ local function test_terminal_reference_links()
     return #updated == 1 and updated[1][4].url:find("example%-repo%%2Fmain.go") ~= nil
   end)
 
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "wrapped example-repo/",
+    "  other.go:1:1",
+  })
+  wait_until("wrapped terminal reference link", function()
+    local updated = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+    return #updated == 2
+      and updated[1][4].url:find("example%-repo%%2Fother.go") ~= nil
+      and updated[2][4].url == updated[1][4].url
+  end)
+
   references.set_enabled(false, true)
   assert_true(
     #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true }) == 0,
