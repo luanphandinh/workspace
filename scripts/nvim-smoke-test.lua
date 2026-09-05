@@ -3341,6 +3341,12 @@ local function test_git_diff_separate_commit_and_push_from_workspace_root()
     invoke_map("<leader>gd")
     wait_for_diffview()
     wait_for_diffview_repository(workspaces["example-project-a"])
+    wait_until("next diff repository mapping", function()
+      local map = vim.fn.maparg("]r", "n", false, true)
+      return type(map) == "table"
+        and type(map.callback) == "function"
+        and map.desc == "Next diff repository"
+    end, 10000)
     invoke_map("]r")
     wait_for_diffview_repository(selected_repo)
     focus_file_window_inside_diffview_tab(staged_file)
