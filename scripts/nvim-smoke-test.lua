@@ -2077,6 +2077,106 @@ local function test_agent_cli_commands_available()
   end
 end
 
+local function test_terminal_reference_links()
+  local root = temp_root .. "/terminal-references"
+  local first_path = root .. "/example-repo/main.go"
+  local second_path = root .. "/example-repo/other.go"
+  write(first_path, { "package main" })
+  write(second_path, { "package main" })
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  local references = require("luanphan.terminal_references")
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "first example-repo/main.go:1 and missing.go:2",
+  })
+  local namespace = references.attach(buf, root)
+  local marks = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+  assert_true(#marks == 0, "hidden terminal references were scanned during attach")
+
+  local previous_buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_win_set_buf(0, buf)
+  marks = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+  assert_true(#marks == 1, "terminal references did not link exactly one existing file")
+  assert_true(marks[1][4].url:match("^nvim%-ref://open"), "terminal reference URL has the wrong scheme")
+  assert_true(marks[1][4].url:find("example%-repo%%2Fmain.go"), "terminal reference URL omitted the file")
+  vim.api.nvim_win_set_buf(0, previous_buf)
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "second example-repo/other.go:1:1",
+  })
+  vim.wait(300)
+  local hidden_marks = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+  assert_true(
+    #hidden_marks == 1 and hidden_marks[1][4].url:find("example%-repo%%2Fmain.go") ~= nil,
+    "hidden terminal reference was rescanned"
+  )
+
+  vim.api.nvim_win_set_buf(0, buf)
+  wait_until("updated terminal reference link", function()
+    local updated = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+    return #updated == 1 and updated[1][4].url:find("example%-repo%%2Fother.go") ~= nil
+  end)
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "first example-repo/main.go:1",
+  })
+  wait_until("debounced visible terminal reference link", function()
+    local updated = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+    return #updated == 1 and updated[1][4].url:find("example%-repo%%2Fmain.go") ~= nil
+  end)
+
+  references.set_enabled(false, true)
+  assert_true(
+    #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true }) == 0,
+    "disabling terminal references left hyperlinks behind"
+  )
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "second example-repo/other.go:1:1",
+  })
+  vim.wait(300)
+  assert_true(
+    #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true }) == 0,
+    "disabled terminal references continued scanning"
+  )
+  references.set_enabled(true, true)
+  local enabled_marks = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+  assert_true(
+    #enabled_marks == 1 and enabled_marks[1][4].url:find("example%-repo%%2Fother.go") ~= nil,
+    "enabling terminal references did not rebuild visible links"
+  )
+  vim.api.nvim_win_set_buf(0, previous_buf)
+
+  vim.api.nvim_buf_delete(buf, { force = true })
+
+  vim.cmd("tabnew")
+  vim.cmd("edit " .. vim.fn.fnameescape(first_path))
+  local editor_win = vim.api.nvim_get_current_win()
+  local terminal_buf = vim.api.nvim_create_buf(false, true)
+  local terminal_win = vim.api.nvim_open_win(terminal_buf, true, {
+    relative = "editor",
+    row = 1,
+    col = 1,
+    width = 20,
+    height = 5,
+    style = "minimal",
+  })
+  vim.fn.termopen({ "sh", "-c", "sleep 30" })
+  vim.b[terminal_buf].luanphan_persist_term = true
+
+  assert_true(references.open(second_path, 1, 1), "terminal reference did not open")
+  assert_true(vim.api.nvim_get_current_win() == editor_win, "terminal reference did not focus the editor window")
+  assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(second_path), "terminal reference replaced the wrong buffer")
+  assert_true(not vim.api.nvim_win_is_valid(terminal_win), "terminal reference left its agent float open")
+  assert_true(vim.api.nvim_buf_is_valid(terminal_buf), "terminal reference deleted the persistent agent buffer")
+
+  local job = vim.fn.getbufvar(terminal_buf, "terminal_job_id")
+  if type(job) == "number" and job > 0 then
+    pcall(vim.fn.jobstop, job)
+  end
+  pcall(vim.api.nvim_buf_delete, terminal_buf, { force = true })
+  vim.cmd("tabclose!")
+end
+
 local function test_agent_keys_invoke_cli_commands()
   local shim_dir = temp_root .. "/agent-cli-shims"
   local log = temp_root .. "/agent-cli-invocations.log"
@@ -3608,6 +3708,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("agent cli commands are executable", function()
     test_agent_cli_commands_available()
+  end)
+
+  test("agent terminal paths become editor reference links", function()
+    test_terminal_reference_links()
   end)
 
   test("agent keys invoke cli commands inside nvim", function()

@@ -43,6 +43,7 @@ return {
           return toggle_icons.mapping_exists("<leader>tw")
         end },
         { "<leader>tW", desc = "Word wrap (all windows)", icon = toggle_icons.word_wrap },
+        { "<leader>sl", desc = "Terminal reference links", icon = toggle_icons.terminal_reference_links },
       })
 
       -- Press ? to show all keymaps
