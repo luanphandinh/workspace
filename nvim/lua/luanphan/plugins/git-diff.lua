@@ -422,14 +422,14 @@ local function set_diffview_keymaps(view, buf)
     push_diffview()
   end, { buffer = buf, desc = "Push origin HEAD" })
   vim.keymap.set("n", "[r", function()
-    switch_workspace_diff(view, -1, false, true)
+    switch_workspace_diff(nil, -1, false, true)
   end, { buffer = buf, desc = "Previous diff repository" })
   vim.keymap.set("n", "]r", function()
-    switch_workspace_diff(view, 1, false, true)
+    switch_workspace_diff(nil, 1, false, true)
   end, { buffer = buf, desc = "Next diff repository" })
   vim.keymap.set("n", "<LeftMouse>", function()
     if handle_workspace_diff_mouse then
-      return handle_workspace_diff_mouse(view)
+      return handle_workspace_diff_mouse(nil)
     end
     return "<LeftMouse>"
   end, { buffer = buf, expr = true, desc = "Select diff repository" })
