@@ -144,6 +144,55 @@ local function win_for_buf(bufnr)
   return nil
 end
 
+local function owns_buffer(bufnr)
+  for _, owned in pairs(state.bufnrs) do
+    if owned == bufnr then
+      return true
+    end
+  end
+  return false
+end
+
+local function save_terminal_view(win)
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    return
+  end
+  local bufnr = vim.api.nvim_win_get_buf(win)
+  if not owns_buffer(bufnr) then
+    return
+  end
+  local ok, view = pcall(vim.api.nvim_win_call, win, vim.fn.winsaveview)
+  if not ok then
+    return
+  end
+  vim.b[bufnr].luanphan_terminal_view = {
+    follow = view.lnum >= vim.api.nvim_buf_line_count(bufnr),
+    view = view,
+  }
+end
+
+local function resume_terminal_view(win, bufnr)
+  local saved = vim.b[bufnr].luanphan_terminal_view
+  if type(saved) == "table" and saved.follow == false and type(saved.view) == "table" then
+    vim.schedule(function()
+      if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == bufnr then
+        pcall(vim.api.nvim_win_call, win, function()
+          vim.fn.winrestview(saved.view)
+        end)
+      end
+    end)
+    return
+  end
+
+  vim.defer_fn(function()
+    if vim.api.nvim_win_is_valid(win)
+        and vim.api.nvim_win_get_buf(win) == bufnr
+        and vim.api.nvim_get_current_win() == win then
+      vim.cmd("startinsert")
+    end
+  end, 10)
+end
+
 --- Vertical split with new window on the right (does not change global 'splitright' afterward).
 local function vsplit_right()
   local saved = vim.o.splitright
@@ -520,9 +569,7 @@ local function open_terminal_split()
   set_agent_bufnr(buf, cwd)
   attach_term_close(buf)
   attach_status_tracking(buf, cwd, "idle")
-  vim.defer_fn(function()
-    vim.cmd("startinsert")
-  end, 10)
+  resume_terminal_view(vim.api.nvim_get_current_win(), buf)
 end
 
 local function open_terminal_float()
@@ -553,9 +600,7 @@ local function open_terminal_float()
   attach_term_close(buf)
   set_float_close_keymaps(buf)
   attach_status_tracking(buf, cwd, "idle")
-  vim.defer_fn(function()
-    vim.cmd("startinsert")
-  end, 10)
+  resume_terminal_view(win, buf)
 end
 
 local function open_terminal()
@@ -580,9 +625,7 @@ local function show_terminal_split(bufnr)
   apply_agent_scrollback(cur)
   apply_split_size()
   lock_cursor_window()
-  vim.defer_fn(function()
-    vim.cmd("startinsert")
-  end, 10)
+  resume_terminal_view(vim.api.nvim_get_current_win(), cur)
 end
 
 local function show_terminal_float(bufnr)
@@ -609,9 +652,7 @@ local function show_terminal_float(bufnr)
   }
   apply_agent_scrollback(cur)
   set_float_close_keymaps(cur)
-  vim.defer_fn(function()
-    vim.cmd("startinsert")
-  end, 10)
+  resume_terminal_view(win, cur)
 end
 
 local function show_terminal(bufnr)
@@ -670,9 +711,7 @@ function API.focus(bufnr)
   require("luanphan.terminal_references").activate(cur)
   lock_cursor_window(win)
   vim.api.nvim_set_current_win(win)
-  vim.defer_fn(function()
-    vim.cmd("startinsert")
-  end, 10)
+  resume_terminal_view(win, cur)
   return true
 end
 
@@ -816,6 +855,15 @@ function API.setup(opts)
     config.resize_debounce_ms = 250
   end
   restore_agent_bufnr()
+
+  vim.api.nvim_create_autocmd("WinLeave", {
+    group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "View", { clear = true }),
+    callback = function(args)
+      if owns_buffer(args.buf) then
+        save_terminal_view(win_for_buf(args.buf))
+      end
+    end,
+  })
 
   local resize_ok = config.resize_debounce_ms and config.resize_debounce_ms > 0
   local want_resize = resize_ok and (config.window_mode == "float" or config.lock_split)

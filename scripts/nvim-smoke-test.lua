@@ -2188,6 +2188,58 @@ local function test_terminal_reference_links()
   vim.cmd("tabclose!")
 end
 
+local function test_agent_terminal_reference_restores_view(repo)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  local target_path = repo .. "/terminal-reference-target.txt"
+  write(target_path, { "target" })
+  vim.cmd("edit " .. vim.fn.fnameescape(target_path))
+
+  local agent = require("luanphan.terminal_agent").create({
+    g_bufnr = "terminal_reference_view_agent_bufnr",
+    notify_prefix = "terminal_reference_view_agent",
+    augroup_prefix = "TerminalReferenceViewAgent",
+    hint_open = "<smoke>",
+    defaults = { cmd = "sh" },
+  })
+  agent.setup()
+  agent.toggle()
+  wait_until("agent terminal for reference view", function()
+    return visible_agent_float_count() == 1
+  end, 1000)
+
+  local terminal_buf = vim.api.nvim_get_current_buf()
+  local terminal_win = vim.api.nvim_get_current_win()
+  local job = vim.b[terminal_buf].terminal_job_id
+  vim.fn.chansend(job, "i=1; while [ $i -le 80 ]; do echo line-$i; i=$((i + 1)); done\n")
+  wait_until("agent terminal scrollback", function()
+    return vim.api.nvim_buf_line_count(terminal_buf) > 60
+  end, 1000)
+  vim.wait(30)
+  vim.cmd("stopinsert")
+  vim.api.nvim_win_set_cursor(terminal_win, { 10, 0 })
+  vim.api.nvim_win_call(terminal_win, function()
+    vim.cmd("normal! zt")
+  end)
+  local saved_view = vim.api.nvim_win_call(terminal_win, vim.fn.winsaveview)
+
+  local references = require("luanphan.terminal_references")
+  assert_true(references.open(target_path, 1, 1), "agent terminal reference did not open")
+  assert_true(not vim.api.nvim_win_is_valid(terminal_win), "agent terminal reference left its float open")
+
+  agent.toggle()
+  wait_until("agent terminal reopened with saved view", function()
+    return visible_agent_float_count() == 1
+  end, 1000)
+  vim.wait(30)
+  local reopened_win = vim.api.nvim_get_current_win()
+  local restored_view = vim.api.nvim_win_call(reopened_win, vim.fn.winsaveview)
+  assert_true(restored_view.lnum == saved_view.lnum, "agent terminal cursor returned to the end")
+  assert_true(restored_view.topline == saved_view.topline, "agent terminal viewport returned to the end")
+
+  close_agent_terminals()
+  vim.g.terminal_reference_view_agent_bufnr = nil
+end
+
 local function test_agent_keys_invoke_cli_commands()
   local shim_dir = temp_root .. "/agent-cli-shims"
   local log = temp_root .. "/agent-cli-invocations.log"
@@ -3729,6 +3781,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("agent terminal paths become editor reference links", function()
     test_terminal_reference_links()
+  end)
+
+  test("agent terminal reference restores scrollback view", function()
+    test_agent_terminal_reference_restores_view(repo)
   end)
 
   test("agent keys invoke cli commands inside nvim", function()
