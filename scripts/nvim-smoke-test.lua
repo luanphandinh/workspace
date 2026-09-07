@@ -46,43 +46,6 @@ local function require_command(name, args)
   assert_true(vim.v.shell_error == 0, name .. " is required: " .. table.concat(out, "\n"))
 end
 
-local function ensure_gopls()
-  if vim.fn.executable("gopls") == 1 then
-    return
-  end
-
-  local ok_registry, registry = pcall(require, "mason-registry")
-  assert_true(ok_registry, "gopls is required and mason-registry is not available")
-
-  if not registry.has_package("gopls") then
-    pcall(registry.refresh)
-  end
-
-  local ok_package, package = pcall(registry.get_package, "gopls")
-  assert_true(ok_package, "gopls is required and Mason package gopls is not available")
-
-  if not package:is_installed() and not package:is_installing() then
-    local done = false
-    local success = false
-    local result = nil
-    package:install({}, function(ok, install_result)
-      success = ok
-      result = install_result
-      done = true
-    end)
-    wait_until("gopls install", function()
-      return done
-    end, 120000)
-    assert_true(success, "failed to install gopls: " .. tostring(result))
-  elseif package:is_installing() then
-    wait_until("gopls install", function()
-      return not package:is_installing()
-    end, 120000)
-  end
-
-  assert_true(vim.fn.executable("gopls") == 1, "gopls is installed but not executable")
-end
-
 local function run(args, cwd)
   local cmd = args
   if cwd then
@@ -3778,10 +3741,10 @@ end
 local setup_ok, setup_err = xpcall(function()
   require_command("git", { "git", "--version" })
   require_command("go", { "go", "version" })
+  require_command("gopls", { "gopls", "version" })
   require_command("cargo", { "cargo", "--version" })
   require_command("rustc", { "rustc", "--version" })
   require_command("rust-analyzer", { "rust-analyzer", "--version" })
-  ensure_gopls()
 
   local repo, worktree = make_fixture()
   vim.env.GOWORK = "off"

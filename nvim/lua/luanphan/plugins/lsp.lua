@@ -107,38 +107,6 @@ local function setup_lsp_recovery_autocmd()
 end
 
 return {
-  -- Mason package manager
-  {
-    "williamboman/mason.nvim",
-    cmd = {
-      "Mason",
-      "MasonInstall",
-      "MasonUninstall",
-      "MasonUninstallAll",
-      "MasonLog",
-      "MasonUpdate",
-    },
-    config = function()
-      require("mason").setup()
-    end,
-  },
-
-  -- mason-lspconfig - lazy load with lspconfig
-  {
-    "williamboman/mason-lspconfig.nvim",
-    event = { "BufReadPre", "BufNewFile" },
-    dependencies = { "williamboman/mason.nvim" },
-    config = function()
-      require("mason-lspconfig").setup {
-        ensure_installed = {
-          "gopls",
-          "rust_analyzer",
-        },
-        automatic_enable = false,
-      }
-    end,
-  },
-
   {
     "neovim/nvim-lspconfig",
     event = { "BufReadPre", "BufNewFile" },
@@ -345,7 +313,7 @@ return {
         },
       })
 
-      -- rust-analyzer: Rust LSP. Installed by Mason (package: rust-analyzer).
+      -- rust-analyzer: Rust LSP. Installed by the workspace Nix profile.
       -- Override the binary via RUST_ANALYZER_PATH if you want a system install
       -- or a nightly, same pattern as GOPLS_PATH above.
       local rust_analyzer_cmd = vim.env.RUST_ANALYZER_PATH or "rust-analyzer"
