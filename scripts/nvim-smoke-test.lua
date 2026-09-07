@@ -3380,6 +3380,77 @@ local function test_git_diff_repository_bar_from_workspace_root()
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
 end
 
+local function test_git_diff_repository_bar_spans_conflict_layout()
+  local original_cwd = vim.fn.getcwd()
+  local _, workspaces, station, workspace_name = make_project_scope_fixture()
+  local workspace_root = station .. "/local_workspaces/" .. workspace_name
+  local conflicted_repo = workspaces["example-project-a"]
+  local changed_repo = workspaces["example-project-b-long"]
+  local conflict_path = "conflict.txt"
+  vim.fn.delete(vim.g.luanphan_recent_paths_file)
+
+  write(conflicted_repo .. "/" .. conflict_path, { "base" })
+  run({ "git", "add", conflict_path }, conflicted_repo)
+  run({ "git", "commit", "-m", "conflict base" }, conflicted_repo)
+  run({ "git", "switch", "-c", "incoming" }, conflicted_repo)
+  write(conflicted_repo .. "/" .. conflict_path, { "incoming" })
+  run({ "git", "add", conflict_path }, conflicted_repo)
+  run({ "git", "commit", "-m", "incoming change" }, conflicted_repo)
+  run({ "git", "switch", "feature/a" }, conflicted_repo)
+  write(conflicted_repo .. "/" .. conflict_path, { "local" })
+  run({ "git", "add", conflict_path }, conflicted_repo)
+  run({ "git", "commit", "-m", "local change" }, conflicted_repo)
+  vim.fn.system({ "git", "-C", conflicted_repo, "merge", "incoming" })
+  assert_true(vim.v.shell_error ~= 0, "merge conflict fixture did not conflict")
+  write(changed_repo .. "/changed.txt", { "changed" })
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
+    invoke_map("<leader>gd")
+    wait_for_diffview_repository(conflicted_repo)
+    local tab, bar_win = find_workspace_diff_bar()
+    assert_true(tab ~= nil and bar_win ~= nil, "conflict diff omitted the repository bar")
+    wait_until("three-way conflict windows", function()
+      return #vim.api.nvim_tabpage_list_wins(tab) >= 5
+    end, 5000)
+    wait_until("three-way conflict buffers", function()
+      local count = 0
+      for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+        if win ~= bar_win and vim.wo[win].diff then
+          count = count + 1
+        end
+      end
+      return count >= 3
+    end, 5000)
+    local bar_spans_layout = vim.wait(5000, function()
+      local position = vim.fn.win_screenpos(bar_win)
+      return position[2] == 1 and vim.api.nvim_win_get_width(bar_win) == vim.o.columns
+    end, 50, false)
+    local final_position = vim.fn.win_screenpos(bar_win)
+    assert_true(bar_spans_layout, string.format(
+      "repository bar geometry row=%d col=%d width=%d columns=%d layout=%s",
+      final_position[1],
+      final_position[2],
+      vim.api.nvim_win_get_width(bar_win),
+      vim.o.columns,
+      vim.inspect(vim.fn.winlayout())
+    ))
+
+    local position = vim.fn.win_screenpos(bar_win)
+    assert_true(position[2] == 1, "repository bar shifted into a three-way merge column")
+    assert_true(vim.api.nvim_win_get_width(bar_win) == vim.o.columns, "repository bar did not span the conflict layout")
+  end, debug.traceback)
+
+  if has_visible_diffview() then
+    close_diffview()
+  end
+  vim.fn.system({ "git", "-C", conflicted_repo, "merge", "--abort" })
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  end
+  assert_true(ok, tostring(err))
+end
+
 local function test_git_diff_separate_commit_and_push_from_workspace_root()
   local original_cwd = vim.fn.getcwd()
   local original_input = vim.ui.input
@@ -3885,6 +3956,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("git diff repository bar from workspace root", function()
     test_git_diff_repository_bar_from_workspace_root()
+  end)
+
+  test("git diff repository bar spans three-way conflicts", function()
+    test_git_diff_repository_bar_spans_conflict_layout()
   end)
 
   test("git diff separates commit and push for its selected repository", function()
