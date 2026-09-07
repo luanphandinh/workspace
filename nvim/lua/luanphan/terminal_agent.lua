@@ -24,6 +24,7 @@ local BASE_DEFAULTS = {
   max_send_chars = 256 * 1024,
   defer_send_ms = 200,
   send_mode = "lines_only",
+  detach_on_quit = false,
 }
 
 ---@param profile table
@@ -523,6 +524,31 @@ local function attach_term_close(buf)
   })
 end
 
+local function attach_quit_detach(buf)
+  if not config.detach_on_quit then
+    return
+  end
+  local ag = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Quit_" .. buf, { clear = true })
+  vim.api.nvim_create_autocmd("QuitPre", {
+    group = ag,
+    buffer = buf,
+    once = true,
+    callback = function()
+      local ok, job = pcall(vim.fn.getbufvar, buf, "terminal_job_id")
+      if ok and valid_job_id(job) then
+        pcall(vim.fn.jobstop, job)
+        pcall(vim.fn.jobwait, { job }, 1000)
+      end
+      clear_bufnr_for_buf(buf)
+      vim.schedule(function()
+        if vim.api.nvim_buf_is_valid(buf) then
+          pcall(vim.api.nvim_buf_delete, buf, { force = true })
+        end
+      end)
+    end,
+  })
+end
+
 --- After <leader>rc, reconnect to any surviving agent terminal buffers.
 local function restore_agent_bufnr()
   local stored = vim.g[G_BUFNR]
@@ -533,6 +559,7 @@ local function restore_agent_bufnr()
         state.bufnrs[cwd] = nr
         pcall(function() vim.b[nr].luanphan_persist_term = true end)
         attach_term_close(nr)
+        attach_quit_detach(nr)
         apply_agent_scrollback(nr)
         set_float_close_keymaps(nr)
         attach_status_tracking(nr, cwd)
@@ -568,6 +595,7 @@ local function open_terminal_split()
   apply_agent_scrollback(buf)
   set_agent_bufnr(buf, cwd)
   attach_term_close(buf)
+  attach_quit_detach(buf)
   attach_status_tracking(buf, cwd, "idle")
   resume_terminal_view(vim.api.nvim_get_current_win(), buf)
 end
@@ -598,6 +626,7 @@ local function open_terminal_float()
   apply_agent_scrollback(buf)
   set_agent_bufnr(buf, cwd)
   attach_term_close(buf)
+  attach_quit_detach(buf)
   set_float_close_keymaps(buf)
   attach_status_tracking(buf, cwd, "idle")
   resume_terminal_view(win, buf)

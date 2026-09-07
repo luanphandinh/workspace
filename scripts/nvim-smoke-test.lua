@@ -2957,7 +2957,7 @@ local function test_worktree_switch_hides_toggleterm(repo, worktree)
   assert_true(visible_toggleterm_window_count() == 0, "toggleterm window remained visible after worktree switch")
 end
 
-local function test_toggleterm_hides_agent_terminal(repo)
+local function test_agent_terminal_lifecycle(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   local agent_status = require("luanphan.agent_status")
   local original_status_dir = vim.g.luanphan_agent_status_dir
@@ -2970,13 +2970,24 @@ local function test_toggleterm_hides_agent_terminal(repo)
     notify_prefix = "toggleterm_hide_agent",
     augroup_prefix = "ToggletermHideAgent",
     hint_open = "<smoke>",
-    defaults = { cmd = "sh" },
+    defaults = { cmd = "sh", detach_on_quit = true },
   })
   agent.setup()
   agent.toggle()
 
   wait_until("agent terminal open before toggleterm", function()
     return visible_agent_float_count() == 1
+  end, 1000)
+  local first_buf = vim.api.nvim_get_current_buf()
+  local quit_ok, quit_err = pcall(vim.cmd, "quit")
+  assert_true(quit_ok, "agent terminal :q failed: " .. tostring(quit_err))
+  wait_until("agent terminal client exit", function()
+    return not vim.api.nvim_buf_is_valid(first_buf)
+  end, 3000)
+
+  agent.toggle()
+  wait_until("fresh agent terminal after quit", function()
+    return visible_agent_float_count() == 1 and vim.api.nvim_get_current_buf() ~= first_buf
   end, 1000)
   assert_true(vim.fn.maparg("<C-j>", "t") == "", "agent terminal insert mode captured <C-j>")
   vim.cmd("stopinsert")
@@ -3941,8 +3952,8 @@ local setup_ok, setup_err = xpcall(function()
     test_worktree_switch_hides_toggleterm(repo, worktree)
   end)
 
-  test("toggleterm hides agent terminal", function()
-    test_toggleterm_hides_agent_terminal(repo)
+  test("agent terminal quits or hides without stale buffers", function()
+    test_agent_terminal_lifecycle(repo)
   end)
 
   test("git diff previews", function()
