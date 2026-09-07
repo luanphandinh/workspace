@@ -46,43 +46,6 @@ local function require_command(name, args)
   assert_true(vim.v.shell_error == 0, name .. " is required: " .. table.concat(out, "\n"))
 end
 
-local function ensure_gopls()
-  if vim.fn.executable("gopls") == 1 then
-    return
-  end
-
-  local ok_registry, registry = pcall(require, "mason-registry")
-  assert_true(ok_registry, "gopls is required and mason-registry is not available")
-
-  if not registry.has_package("gopls") then
-    pcall(registry.refresh)
-  end
-
-  local ok_package, package = pcall(registry.get_package, "gopls")
-  assert_true(ok_package, "gopls is required and Mason package gopls is not available")
-
-  if not package:is_installed() and not package:is_installing() then
-    local done = false
-    local success = false
-    local result = nil
-    package:install({}, function(ok, install_result)
-      success = ok
-      result = install_result
-      done = true
-    end)
-    wait_until("gopls install", function()
-      return done
-    end, 120000)
-    assert_true(success, "failed to install gopls: " .. tostring(result))
-  elseif package:is_installing() then
-    wait_until("gopls install", function()
-      return not package:is_installing()
-    end, 120000)
-  end
-
-  assert_true(vim.fn.executable("gopls") == 1, "gopls is installed but not executable")
-end
-
 local function run(args, cwd)
   local cmd = args
   if cwd then
@@ -2188,6 +2151,58 @@ local function test_terminal_reference_links()
   vim.cmd("tabclose!")
 end
 
+local function test_agent_terminal_reference_restores_view(repo)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  local target_path = repo .. "/terminal-reference-target.txt"
+  write(target_path, { "target" })
+  vim.cmd("edit " .. vim.fn.fnameescape(target_path))
+
+  local agent = require("luanphan.terminal_agent").create({
+    g_bufnr = "terminal_reference_view_agent_bufnr",
+    notify_prefix = "terminal_reference_view_agent",
+    augroup_prefix = "TerminalReferenceViewAgent",
+    hint_open = "<smoke>",
+    defaults = { cmd = "sh" },
+  })
+  agent.setup()
+  agent.toggle()
+  wait_until("agent terminal for reference view", function()
+    return visible_agent_float_count() == 1
+  end, 1000)
+
+  local terminal_buf = vim.api.nvim_get_current_buf()
+  local terminal_win = vim.api.nvim_get_current_win()
+  local job = vim.b[terminal_buf].terminal_job_id
+  vim.fn.chansend(job, "i=1; while [ $i -le 80 ]; do echo line-$i; i=$((i + 1)); done\n")
+  wait_until("agent terminal scrollback", function()
+    return vim.api.nvim_buf_line_count(terminal_buf) > 60
+  end, 1000)
+  vim.wait(30)
+  vim.cmd("stopinsert")
+  vim.api.nvim_win_set_cursor(terminal_win, { 10, 0 })
+  vim.api.nvim_win_call(terminal_win, function()
+    vim.cmd("normal! zt")
+  end)
+  local saved_view = vim.api.nvim_win_call(terminal_win, vim.fn.winsaveview)
+
+  local references = require("luanphan.terminal_references")
+  assert_true(references.open(target_path, 1, 1), "agent terminal reference did not open")
+  assert_true(not vim.api.nvim_win_is_valid(terminal_win), "agent terminal reference left its float open")
+
+  agent.toggle()
+  wait_until("agent terminal reopened with saved view", function()
+    return visible_agent_float_count() == 1
+  end, 1000)
+  vim.wait(30)
+  local reopened_win = vim.api.nvim_get_current_win()
+  local restored_view = vim.api.nvim_win_call(reopened_win, vim.fn.winsaveview)
+  assert_true(restored_view.lnum == saved_view.lnum, "agent terminal cursor returned to the end")
+  assert_true(restored_view.topline == saved_view.topline, "agent terminal viewport returned to the end")
+
+  close_agent_terminals()
+  vim.g.terminal_reference_view_agent_bufnr = nil
+end
+
 local function test_agent_keys_invoke_cli_commands()
   local shim_dir = temp_root .. "/agent-cli-shims"
   local log = temp_root .. "/agent-cli-invocations.log"
@@ -2725,13 +2740,42 @@ local function test_lsp_restart_reattaches_all_buffers_for_current_server(repo)
   end
 end
 
-local function test_worktree_switch_keeps_lsp(worktree)
+local function test_worktree_switch_keeps_lsp(repo, worktree)
   worktree_test_api().switch_to(worktree)
   local expected = realpath(worktree)
   wait_until("worktree cwd", function()
     return realpath(vim.fn.getcwd()) == expected
   end, 10000)
   assert_lsp_navigation(worktree .. "/main.go")
+
+  local rust_repo = temp_root .. "/example-rust-repo"
+  vim.fn.mkdir(rust_repo .. "/src", "p")
+  run({ "git", "init", "-b", "main" }, rust_repo)
+  write(rust_repo .. "/Cargo.toml", {
+    "[package]",
+    'name = "example-rust-repo"',
+    'version = "0.1.0"',
+    'edition = "2024"',
+  })
+  write(rust_repo .. "/src/lib.rs", {
+    "pub fn example_value() -> usize {",
+    "    1",
+    "}",
+  })
+
+  local api = worktree_test_api()
+  api.switch_to(rust_repo, "repository")
+  vim.cmd("edit " .. vim.fn.fnameescape(rust_repo .. "/src/lib.rs"))
+  local buf = vim.api.nvim_get_current_buf()
+  wait_until("rust_analyzer after repository switch", function()
+    local client = active_lsp_client(buf, "rust_analyzer")
+    return client and client.initialized
+  end, 30000)
+
+  local client = active_lsp_client(buf, "rust_analyzer")
+  assert_true(realpath(client.config.root_dir) == realpath(rust_repo), "rust_analyzer used the wrong repository root")
+
+  api.switch_to(repo, "repository")
 end
 
 local function test_worktree_switch_hides_foreign_file(repo, worktree)
@@ -2913,7 +2957,7 @@ local function test_worktree_switch_hides_toggleterm(repo, worktree)
   assert_true(visible_toggleterm_window_count() == 0, "toggleterm window remained visible after worktree switch")
 end
 
-local function test_toggleterm_hides_agent_terminal(repo)
+local function test_agent_terminal_lifecycle(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   local agent_status = require("luanphan.agent_status")
   local original_status_dir = vim.g.luanphan_agent_status_dir
@@ -2926,13 +2970,24 @@ local function test_toggleterm_hides_agent_terminal(repo)
     notify_prefix = "toggleterm_hide_agent",
     augroup_prefix = "ToggletermHideAgent",
     hint_open = "<smoke>",
-    defaults = { cmd = "sh" },
+    defaults = { cmd = "sh", detach_on_quit = true },
   })
   agent.setup()
   agent.toggle()
 
   wait_until("agent terminal open before toggleterm", function()
     return visible_agent_float_count() == 1
+  end, 1000)
+  local first_buf = vim.api.nvim_get_current_buf()
+  local quit_ok, quit_err = pcall(vim.cmd, "quit")
+  assert_true(quit_ok, "agent terminal :q failed: " .. tostring(quit_err))
+  wait_until("agent terminal client exit", function()
+    return not vim.api.nvim_buf_is_valid(first_buf)
+  end, 3000)
+
+  agent.toggle()
+  wait_until("fresh agent terminal after quit", function()
+    return visible_agent_float_count() == 1 and vim.api.nvim_get_current_buf() ~= first_buf
   end, 1000)
   assert_true(vim.fn.maparg("<C-j>", "t") == "", "agent terminal insert mode captured <C-j>")
   vim.cmd("stopinsert")
@@ -3328,6 +3383,77 @@ local function test_git_diff_repository_bar_from_workspace_root()
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
 end
 
+local function test_git_diff_repository_bar_spans_conflict_layout()
+  local original_cwd = vim.fn.getcwd()
+  local _, workspaces, station, workspace_name = make_project_scope_fixture()
+  local workspace_root = station .. "/local_workspaces/" .. workspace_name
+  local conflicted_repo = workspaces["example-project-a"]
+  local changed_repo = workspaces["example-project-b-long"]
+  local conflict_path = "conflict.txt"
+  vim.fn.delete(vim.g.luanphan_recent_paths_file)
+
+  write(conflicted_repo .. "/" .. conflict_path, { "base" })
+  run({ "git", "add", conflict_path }, conflicted_repo)
+  run({ "git", "commit", "-m", "conflict base" }, conflicted_repo)
+  run({ "git", "switch", "-c", "incoming" }, conflicted_repo)
+  write(conflicted_repo .. "/" .. conflict_path, { "incoming" })
+  run({ "git", "add", conflict_path }, conflicted_repo)
+  run({ "git", "commit", "-m", "incoming change" }, conflicted_repo)
+  run({ "git", "switch", "feature/a" }, conflicted_repo)
+  write(conflicted_repo .. "/" .. conflict_path, { "local" })
+  run({ "git", "add", conflict_path }, conflicted_repo)
+  run({ "git", "commit", "-m", "local change" }, conflicted_repo)
+  vim.fn.system({ "git", "-C", conflicted_repo, "merge", "incoming" })
+  assert_true(vim.v.shell_error ~= 0, "merge conflict fixture did not conflict")
+  write(changed_repo .. "/changed.txt", { "changed" })
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
+    invoke_map("<leader>gd")
+    wait_for_diffview_repository(conflicted_repo)
+    local tab, bar_win = find_workspace_diff_bar()
+    assert_true(tab ~= nil and bar_win ~= nil, "conflict diff omitted the repository bar")
+    wait_until("three-way conflict windows", function()
+      return #vim.api.nvim_tabpage_list_wins(tab) >= 5
+    end, 5000)
+    wait_until("three-way conflict buffers", function()
+      local count = 0
+      for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+        if win ~= bar_win and vim.wo[win].diff then
+          count = count + 1
+        end
+      end
+      return count >= 3
+    end, 5000)
+    local bar_spans_layout = vim.wait(5000, function()
+      local position = vim.fn.win_screenpos(bar_win)
+      return position[2] == 1 and vim.api.nvim_win_get_width(bar_win) == vim.o.columns
+    end, 50, false)
+    local final_position = vim.fn.win_screenpos(bar_win)
+    assert_true(bar_spans_layout, string.format(
+      "repository bar geometry row=%d col=%d width=%d columns=%d layout=%s",
+      final_position[1],
+      final_position[2],
+      vim.api.nvim_win_get_width(bar_win),
+      vim.o.columns,
+      vim.inspect(vim.fn.winlayout())
+    ))
+
+    local position = vim.fn.win_screenpos(bar_win)
+    assert_true(position[2] == 1, "repository bar shifted into a three-way merge column")
+    assert_true(vim.api.nvim_win_get_width(bar_win) == vim.o.columns, "repository bar did not span the conflict layout")
+  end, debug.traceback)
+
+  if has_visible_diffview() then
+    close_diffview()
+  end
+  vim.fn.system({ "git", "-C", conflicted_repo, "merge", "--abort" })
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  end
+  assert_true(ok, tostring(err))
+end
+
 local function test_git_diff_separate_commit_and_push_from_workspace_root()
   local original_cwd = vim.fn.getcwd()
   local original_input = vim.ui.input
@@ -3626,7 +3752,10 @@ end
 local setup_ok, setup_err = xpcall(function()
   require_command("git", { "git", "--version" })
   require_command("go", { "go", "version" })
-  ensure_gopls()
+  require_command("gopls", { "gopls", "version" })
+  require_command("cargo", { "cargo", "--version" })
+  require_command("rustc", { "rustc", "--version" })
+  require_command("rust-analyzer", { "rust-analyzer", "--version" })
 
   local repo, worktree = make_fixture()
   vim.env.GOWORK = "off"
@@ -3731,6 +3860,10 @@ local setup_ok, setup_err = xpcall(function()
     test_terminal_reference_links()
   end)
 
+  test("agent terminal reference restores scrollback view", function()
+    test_agent_terminal_reference_restores_view(repo)
+  end)
+
   test("agent keys invoke cli commands inside nvim", function()
     test_agent_keys_invoke_cli_commands()
   end)
@@ -3803,8 +3936,8 @@ local setup_ok, setup_err = xpcall(function()
     test_lsp_restart_reattaches_all_buffers_for_current_server(repo)
   end)
 
-  test("worktree switch keeps lsp", function()
-    test_worktree_switch_keeps_lsp(worktree)
+  test("repository switches keep language servers", function()
+    test_worktree_switch_keeps_lsp(repo, worktree)
   end)
 
   test("worktree switch hides files from the previous repository", function()
@@ -3819,8 +3952,8 @@ local setup_ok, setup_err = xpcall(function()
     test_worktree_switch_hides_toggleterm(repo, worktree)
   end)
 
-  test("toggleterm hides agent terminal", function()
-    test_toggleterm_hides_agent_terminal(repo)
+  test("agent terminal quits or hides without stale buffers", function()
+    test_agent_terminal_lifecycle(repo)
   end)
 
   test("git diff previews", function()
@@ -3829,6 +3962,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("git diff repository bar from workspace root", function()
     test_git_diff_repository_bar_from_workspace_root()
+  end)
+
+  test("git diff repository bar spans three-way conflicts", function()
+    test_git_diff_repository_bar_spans_conflict_layout()
   end)
 
   test("git diff separates commit and push for its selected repository", function()

@@ -55,6 +55,7 @@
             yazi
           ];
           codingPackages = with pkgs; [
+            cargo
             gcc
             go_1_25
             gopls
@@ -64,6 +65,7 @@
             (python3.withPackages (pythonPackages: [
               pythonPackages.pyyaml
             ]))
+            rustc
             rust-analyzer
             tree-sitter
           ] ++ [

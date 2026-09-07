@@ -32,7 +32,7 @@ local agent_defs = {
     g_bufnr = "codex_agent_bufnr",
     notify_prefix = "codex_agent",
     augroup_prefix = "CodexAgent",
-    defaults = { cmd = "mcodex" },
+    defaults = { cmd = "mcodex", detach_on_quit = true },
     keys = {
       toggle = { lhs = "<leader>;", mode = "n", desc = "Toggle Codex" },
       focus = { lhs = "<leader>cf", mode = "n", desc = "Focus terminal" },

@@ -785,6 +785,33 @@ local function repository_at_column(state, column)
   return nil
 end
 
+local function position_repository_bar(view)
+  local state = view and view._luanphan_workspace_diff or nil
+  local index = view and view._luanphan_workspace_diff_index or nil
+  local bar = state and index and state.bars[index] or nil
+  if not bar or not vim.api.nvim_win_is_valid(bar.win) then
+    return
+  end
+
+  local position = vim.fn.win_screenpos(bar.win)
+  if position[2] == 1 and vim.api.nvim_win_get_width(bar.win) == vim.o.columns then
+    return
+  end
+
+  local previous_tab = vim.api.nvim_get_current_tabpage()
+  local previous_win = vim.api.nvim_get_current_win()
+  vim.api.nvim_set_current_tabpage(view.tabpage)
+  vim.api.nvim_set_current_win(bar.win)
+  vim.cmd("wincmd K")
+  vim.api.nvim_win_set_height(bar.win, 1)
+  if vim.api.nvim_tabpage_is_valid(previous_tab) then
+    vim.api.nvim_set_current_tabpage(previous_tab)
+    if vim.api.nvim_win_is_valid(previous_win) then
+      vim.api.nvim_set_current_win(previous_win)
+    end
+  end
+end
+
 handle_workspace_diff_mouse = function(view)
   local mouse = vim.fn.getmousepos()
   if not mouse or not mouse.winid or not vim.api.nvim_win_is_valid(mouse.winid) then
@@ -851,6 +878,7 @@ local function create_repository_bar(view, state, index, focus)
 
   state.bars[index] = { buf = buf, win = win }
   render_repository_bar(state, buf, win)
+  position_repository_bar(view)
 
   vim.keymap.set("n", "h", function()
     switch_workspace_diff(view, -1, false, false)
@@ -1164,6 +1192,14 @@ return {
             vim.opt_local.wrap = false
             vim.opt_local.list = false
             set_diffview_keymaps(nil, bufnr)
+          end,
+          diff_buf_win_enter = function()
+            local view = current_diffview()
+            if view and view._luanphan_workspace_diff then
+              vim.defer_fn(function()
+                position_repository_bar(view)
+              end, 10)
+            end
           end,
           view_opened = function(view)
             -- Set simple tab name
