@@ -2777,13 +2777,42 @@ local function test_lsp_restart_reattaches_all_buffers_for_current_server(repo)
   end
 end
 
-local function test_worktree_switch_keeps_lsp(worktree)
+local function test_worktree_switch_keeps_lsp(repo, worktree)
   worktree_test_api().switch_to(worktree)
   local expected = realpath(worktree)
   wait_until("worktree cwd", function()
     return realpath(vim.fn.getcwd()) == expected
   end, 10000)
   assert_lsp_navigation(worktree .. "/main.go")
+
+  local rust_repo = temp_root .. "/example-rust-repo"
+  vim.fn.mkdir(rust_repo .. "/src", "p")
+  run({ "git", "init", "-b", "main" }, rust_repo)
+  write(rust_repo .. "/Cargo.toml", {
+    "[package]",
+    'name = "example-rust-repo"',
+    'version = "0.1.0"',
+    'edition = "2024"',
+  })
+  write(rust_repo .. "/src/lib.rs", {
+    "pub fn example_value() -> usize {",
+    "    1",
+    "}",
+  })
+
+  local api = worktree_test_api()
+  api.switch_to(rust_repo, "repository")
+  vim.cmd("edit " .. vim.fn.fnameescape(rust_repo .. "/src/lib.rs"))
+  local buf = vim.api.nvim_get_current_buf()
+  wait_until("rust_analyzer after repository switch", function()
+    local client = active_lsp_client(buf, "rust_analyzer")
+    return client and client.initialized
+  end, 30000)
+
+  local client = active_lsp_client(buf, "rust_analyzer")
+  assert_true(realpath(client.config.root_dir) == realpath(rust_repo), "rust_analyzer used the wrong repository root")
+
+  api.switch_to(repo, "repository")
 end
 
 local function test_worktree_switch_hides_foreign_file(repo, worktree)
@@ -3749,6 +3778,9 @@ end
 local setup_ok, setup_err = xpcall(function()
   require_command("git", { "git", "--version" })
   require_command("go", { "go", "version" })
+  require_command("cargo", { "cargo", "--version" })
+  require_command("rustc", { "rustc", "--version" })
+  require_command("rust-analyzer", { "rust-analyzer", "--version" })
   ensure_gopls()
 
   local repo, worktree = make_fixture()
@@ -3930,8 +3962,8 @@ local setup_ok, setup_err = xpcall(function()
     test_lsp_restart_reattaches_all_buffers_for_current_server(repo)
   end)
 
-  test("worktree switch keeps lsp", function()
-    test_worktree_switch_keeps_lsp(worktree)
+  test("repository switches keep language servers", function()
+    test_worktree_switch_keeps_lsp(repo, worktree)
   end)
 
   test("worktree switch hides files from the previous repository", function()
