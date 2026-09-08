@@ -991,6 +991,21 @@ local function visible_toggleterm_window_count()
   return count
 end
 
+local function close_toggleterm_terminals()
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(buf) and vim.b[buf].luanphan_toggleterm then
+      for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+        pcall(vim.api.nvim_win_close, win, true)
+      end
+      local job = vim.b[buf].terminal_job_id
+      if type(job) == "number" and job > 0 then
+        pcall(vim.fn.jobstop, job)
+      end
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+end
+
 local function visible_agent_float_count()
   local count = 0
   for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -1033,26 +1048,45 @@ local function invoke_map(lhs, mode)
   map.callback()
 end
 
-local function agent_bufnr(global_name)
+local function registered_agent_bufnrs(global_name, cwd)
   local stored = vim.g[global_name]
-  if type(stored) == "number" then
-    return stored
-  end
-  if type(stored) ~= "table" then
-    return nil
-  end
-
-  local cwd_bufnr = stored[vim.fn.getcwd()]
-  if type(cwd_bufnr) == "number" then
-    return cwd_bufnr
-  end
-
-  for _, bufnr in pairs(stored) do
-    if type(bufnr) == "number" then
-      return bufnr
+  local result = {}
+  local function append(value)
+    if type(value) == "number" then
+      result[#result + 1] = value
+    elseif type(value) == "table" then
+      for _, nested in pairs(value) do
+        append(nested)
+      end
     end
   end
-  return nil
+
+  if type(stored) == "table" and cwd and stored[cwd] ~= nil then
+    append(stored[cwd])
+  else
+    append(stored)
+  end
+  return result
+end
+
+local function agent_bufnr(global_name)
+  local candidates = registered_agent_bufnrs(global_name, vim.fn.getcwd())
+  if #candidates == 0 then
+    candidates = registered_agent_bufnrs(global_name)
+  end
+
+  local selected = nil
+  local selected_sequence = -1
+  for _, bufnr in ipairs(candidates) do
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      local sequence = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0
+      if sequence > selected_sequence then
+        selected = bufnr
+        selected_sequence = sequence
+      end
+    end
+  end
+  return selected
 end
 
 local function feed_normal(keys)
@@ -1820,39 +1854,54 @@ local function test_active_agent_discovery(repo, worktree)
   end
 
   local ok, err = xpcall(function()
-    local codex_buf = start_terminal(repo)
-    local cursor_buf = start_terminal(worktree)
-    vim.g.codex_agent_bufnr = { [repo] = codex_buf }
-    vim.g.cursor_agent_bufnr = { [worktree] = cursor_buf }
+    local repo_codex_buf = start_terminal(repo)
+    local worktree_codex_buf = start_terminal(worktree)
+    local worktree_cursor_buf = start_terminal(worktree)
+    vim.b[repo_codex_buf].luanphan_agent_last_used = 3
+    vim.b[worktree_codex_buf].luanphan_agent_last_used = 2
+    vim.b[worktree_cursor_buf].luanphan_agent_last_used = 1
+    vim.g.codex_agent_bufnr = { [repo] = repo_codex_buf, [worktree] = worktree_codex_buf }
+    vim.g.cursor_agent_bufnr = { [worktree] = worktree_cursor_buf }
     vim.g.claude_agent_bufnr = { [repo] = 999999 }
     assert_true(agent_status.write("codex", repo, "running"), "failed to record first agent state")
     assert_true(agent_status.write("cursor", worktree, "idle"), "failed to record second agent state")
 
-    local recent_paths = require("luanphan.recent_paths")
-    recent_paths.touch(worktree)
     local instances = api.list_active_agents()
-    assert_true(#instances == 2, "active agent discovery returned an unexpected instance count")
-    assert_true(instances[1].agent == "cursor", "agent picker did not promote the latest project")
-    recent_paths.touch(repo)
+    assert_true(#instances == 3, "active agent discovery returned an unexpected instance count")
+    assert_true(instances[1].bufnr == repo_codex_buf, "active agent was not first in recency order")
+    local switch_targets = api.agent_switch_targets(instances)
+    assert_true(#switch_targets == 3, "agent switch targets discarded an active agent")
+    assert_true(switch_targets[1].bufnr == worktree_codex_buf, "previous agent was not the first suggestion")
+    assert_true(switch_targets[2].bufnr == repo_codex_buf, "current agent was not retained after the suggestion")
+    assert_true(switch_targets[3].bufnr == worktree_cursor_buf, "older agent was not retained")
+
+    vim.b[worktree_codex_buf].luanphan_agent_last_used = 4
     instances = api.list_active_agents()
-    assert_true(instances[1].agent == "codex", "agent picker did not move a revisited project to the front")
-    local switch_targets = api.agent_switch_targets(instances, repo)
-    assert_true(#switch_targets == 2, "agent switch targets discarded an active agent")
-    assert_true(switch_targets[1].agent == "cursor", "agent switch targets did not promote the previous agent")
-    assert_true(switch_targets[2].agent == "codex", "agent switch targets did not retain the current agent")
-    local by_agent = {}
+    switch_targets = api.agent_switch_targets(instances)
+    assert_true(switch_targets[1].bufnr == repo_codex_buf, "previous agent was not promoted after a switch")
+
+    vim.b[worktree_cursor_buf].luanphan_agent_last_used = 5
+    instances = api.list_active_agents()
+    switch_targets = api.agent_switch_targets(instances)
+    assert_true(switch_targets[1].bufnr == worktree_codex_buf, "flat agent history was not preserved across projects")
+    assert_true(switch_targets[2].bufnr == worktree_cursor_buf, "current agent was not retained in flat history")
+    assert_true(switch_targets[3].bufnr == repo_codex_buf, "older cross-project agent was not retained")
+
+    local by_key = {}
     for _, instance in ipairs(instances) do
-      by_agent[instance.agent] = instance
+      by_key[instance.agent .. "\0" .. instance.path] = instance
     end
-    assert_true(realpath(by_agent.codex.path) == realpath(repo), "Codex agent path was not discovered")
-    assert_true(realpath(by_agent.cursor.path) == realpath(worktree), "Cursor agent path was not discovered")
-    assert_true(by_agent.claude == nil, "stale agent terminal survived discovery")
-    assert_true(by_agent.codex.status == "running", "running agent state was not discovered")
-    assert_true(by_agent.cursor.status == "idle", "idle agent state was not discovered")
-    assert_true(by_agent.codex.display:find("%[running%]") ~= nil, "agent display omitted running state")
-    assert_true(by_agent.cursor.display:find("%[idle%s+%]") ~= nil, "agent display omitted idle state")
-    assert_true(by_agent.codex.display:find("example%-repo") ~= nil, "agent display omitted repository context")
-    assert_true(by_agent.cursor.display:find("%[feature%]") ~= nil, "agent display omitted branch context")
+    local codex = by_key["codex\0" .. repo]
+    local cursor = by_key["cursor\0" .. worktree]
+    assert_true(codex ~= nil, "Codex agent path was not discovered")
+    assert_true(cursor ~= nil, "Cursor agent path was not discovered")
+    assert_true(by_key["claude\0" .. repo] == nil, "stale agent terminal survived discovery")
+    assert_true(codex.status == "running", "running agent state was not discovered")
+    assert_true(cursor.status == "idle", "idle agent state was not discovered")
+    assert_true(codex.display:find("%[running%]") ~= nil, "agent display omitted running state")
+    assert_true(cursor.display:find("%[idle%s+%]") ~= nil, "agent display omitted idle state")
+    assert_true(codex.display:find("example%-repo") ~= nil, "agent display omitted repository context")
+    assert_true(cursor.display:find("%[feature%]") ~= nil, "agent display omitted branch context")
     assert_true(vim.fn.exists(":AgentSwitch") == 2, "AgentSwitch command is missing")
 
     agents_module = require("luanphan.plugins.agents")
@@ -2146,6 +2195,7 @@ local function test_terminal_reference_links()
   local job = vim.fn.getbufvar(terminal_buf, "terminal_job_id")
   if type(job) == "number" and job > 0 then
     pcall(vim.fn.jobstop, job)
+    pcall(vim.fn.jobwait, { job }, 1000)
   end
   pcall(vim.api.nvim_buf_delete, terminal_buf, { force = true })
   vim.cmd("tabclose!")
@@ -2199,7 +2249,12 @@ local function test_agent_terminal_reference_restores_view(repo)
   assert_true(restored_view.lnum == saved_view.lnum, "agent terminal cursor returned to the end")
   assert_true(restored_view.topline == saved_view.topline, "agent terminal viewport returned to the end")
 
+  vim.cmd("stopinsert")
   close_agent_terminals()
+  local target_buf = vim.fn.bufnr(target_path)
+  if target_buf >= 0 and vim.api.nvim_buf_is_valid(target_buf) then
+    pcall(vim.api.nvim_buf_delete, target_buf, { force = true })
+  end
   vim.g.terminal_reference_view_agent_bufnr = nil
 end
 
@@ -2239,9 +2294,10 @@ local function test_agent_keys_invoke_cli_commands()
   assert_true(ok, tostring(err))
 end
 
-local function test_codex_leader_semicolon_sends_visual_selection()
+local function test_leader_semicolon_sends_visual_selection_to_active_agent()
   local shim_dir = temp_root .. "/codex-send-shim"
   local invoke_log = temp_root .. "/codex-send-invocations.log"
+  local file = temp_root .. "/codex-send-buffer.txt"
   vim.fn.mkdir(shim_dir, "p")
   write(invoke_log, {})
   write_executable(shim_dir .. "/mcodex", {
@@ -2258,7 +2314,6 @@ local function test_codex_leader_semicolon_sends_visual_selection()
 
   local ok, err = xpcall(function()
     vim.cmd("cd " .. vim.fn.fnameescape(temp_root))
-    local file = temp_root .. "/codex-send-buffer.txt"
     write(file, {
       "selected payload line",
       "unselected payload line",
@@ -2268,9 +2323,9 @@ local function test_codex_leader_semicolon_sends_visual_selection()
     local normal_map = vim.fn.maparg("<leader>;", "n", false, true)
     local visual_map = vim.fn.maparg("<leader>;", "x", false, true)
     local select_map = vim.fn.maparg("<leader>;", "s", false, true)
-    assert_true(type(normal_map) == "table" and normal_map.desc == "Toggle Codex", "<leader>; normal should toggle Codex")
-    assert_true(type(visual_map) == "table" and visual_map.desc == "Send to Codex", "<leader>; visual should send to Codex")
-    assert_true(type(select_map) == "table" and select_map.desc == "Send to Codex", "<leader>; select should send to Codex")
+    assert_true(type(normal_map) == "table" and normal_map.desc == "Toggle agents", "<leader>; normal should toggle agents")
+    assert_true(type(visual_map) == "table" and visual_map.desc == "Send to active agent", "<leader>; visual should send to the active agent")
+    assert_true(type(select_map) == "table" and select_map.desc == "Send to active agent", "<leader>; select should send to the active agent")
     assert_true(vim.fn.maparg("<leader>cc", "n") == "", "<leader>cc should be removed")
     assert_true(vim.fn.maparg("<leader>cs", "x") == "", "<leader>cs should be removed")
 
@@ -2297,6 +2352,280 @@ local function test_codex_leader_semicolon_sends_visual_selection()
   vim.env.NVIM_AGENT_SMOKE_LOG = old_log
   pcall(vim.cmd, "cd " .. vim.fn.fnameescape(old_cwd))
   close_agent_terminals()
+  local file_buf = vim.fn.bufnr(file)
+  if file_buf >= 0 and vim.api.nvim_buf_is_valid(file_buf) then
+    pcall(vim.api.nvim_buf_delete, file_buf, { force = true })
+  end
+  assert_true(ok, tostring(err))
+end
+
+local function test_agent_view_container(repo)
+  local shim_dir = temp_root .. "/agent-view-shims"
+  local invoke_log = temp_root .. "/agent-view-invocations.log"
+  local input_log = temp_root .. "/agent-view-input"
+  local source = repo .. "/agent-view.txt"
+  vim.fn.mkdir(shim_dir, "p")
+  write(invoke_log, {})
+  for _, item in ipairs(agent_cli_commands) do
+    write_executable(shim_dir .. "/" .. item.command, {
+      "#!/bin/sh",
+      "printf '%s|%s|%s\\n' \"$(basename \"$0\")\" \"$PWD\" \"$*\" >> \"$NVIM_AGENT_SMOKE_LOG\"",
+      "stty -icanon min 1 time 0",
+      "input_path=\"$NVIM_AGENT_SMOKE_INPUT.$(basename \"$0\")\"",
+      "exec tee -a \"$input_path\"",
+    })
+  end
+
+  local old_cwd = vim.fn.getcwd()
+  local old_path = vim.env.PATH
+  local old_log = vim.env.NVIM_AGENT_SMOKE_LOG
+  local old_input = vim.env.NVIM_AGENT_SMOKE_INPUT
+  vim.env.PATH = shim_dir .. ":" .. old_path
+  vim.env.NVIM_AGENT_SMOKE_LOG = invoke_log
+  vim.env.NVIM_AGENT_SMOKE_INPUT = input_log
+  close_agent_terminals()
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(repo))
+    write(source, { "send this path" })
+    vim.cmd("edit " .. vim.fn.fnameescape(source))
+
+    local agents = require("luanphan.plugins.agents")
+    assert_true(agents.open("codex"), "could not open the first terminal agent")
+    wait_until("first agent tab", function()
+      return visible_agent_float_count() == 1
+        and agent_bufnr("codex_agent_bufnr") ~= nil
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+    local codex_buf = agent_bufnr("codex_agent_bufnr")
+
+    assert_true(agents.open("cursor"), "could not open the second terminal agent")
+    wait_until("second agent tab", function()
+      return visible_agent_float_count() == 1
+        and agent_bufnr("cursor_agent_bufnr") ~= nil
+        and vim.api.nvim_get_current_buf() == agent_bufnr("cursor_agent_bufnr")
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+    local cursor_buf = agent_bufnr("cursor_agent_bufnr")
+    assert_true(vim.api.nvim_buf_is_valid(codex_buf), "opening another tab deleted the first terminal")
+    local winbar = vim.api.nvim_get_option_value("winbar", { win = vim.api.nvim_get_current_win() })
+    assert_true(winbar:find("codex", 1, true) ~= nil, "agent tab bar omitted the first terminal")
+    assert_true(winbar:find("[cursor]", 1, true) ~= nil, "agent tab bar did not select the current terminal")
+
+    vim.cmd("stopinsert")
+    local next_map = vim.fn.maparg("<Tab>", "n", false, true)
+    local new_map = vim.fn.maparg("<leader>fn", "n", false, true)
+    assert_true(type(next_map) == "table" and type(next_map.callback) == "function", "agent view mode is missing tab cycling")
+    assert_true(type(new_map) == "table" and type(new_map.callback) == "function" and new_map.desc == "New terminal agent", "agent view mode is missing the new-tab picker")
+    next_map.callback()
+    wait_until("cycled agent tab", function()
+      return visible_agent_float_count() == 1
+        and vim.api.nvim_get_current_buf() == codex_buf
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+    assert_true(vim.api.nvim_buf_is_valid(cursor_buf), "cycling tabs deleted the hidden terminal")
+
+    vim.cmd("stopinsert")
+    new_map = vim.fn.maparg("<leader>fn", "n", false, true)
+    new_map.callback()
+    local prompt_buf = nil
+    wait_until("agent tab picker", function()
+      for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(bufnr) and vim.bo[bufnr].filetype == "TelescopePrompt" then
+          prompt_buf = bufnr
+          return true
+        end
+      end
+      return false
+    end, 3000)
+    local action_state = require("telescope.actions.state")
+    local picker = action_state.get_current_picker(prompt_buf)
+    wait_until("registered agent choices", function()
+      return picker.manager and picker.manager:num_results() == 3
+    end, 3000)
+    local selected = nil
+    for _ = 1, 3 do
+      selected = action_state.get_selected_entry()
+      if selected and selected.value and selected.value.id == "codex" then
+        break
+      end
+      picker:move_selection(1)
+    end
+    assert_true(selected and selected.value.id == "codex", "new-tab picker omitted an already-open agent type")
+    require("telescope.actions").select_default(prompt_buf)
+    wait_until("second codex tab", function()
+      return visible_agent_float_count() == 1
+        and #registered_agent_bufnrs("codex_agent_bufnr", repo) == 2
+        and vim.api.nvim_get_current_buf() == agent_bufnr("codex_agent_bufnr")
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+    local second_codex_buf = agent_bufnr("codex_agent_bufnr")
+    assert_true(second_codex_buf ~= codex_buf, "new-tab picker reused the existing Codex terminal")
+
+    assert_true(agents.new("cursor"), "could not create a second Cursor terminal")
+    wait_until("second cursor tab", function()
+      return #registered_agent_bufnrs("cursor_agent_bufnr", repo) == 2
+        and vim.api.nvim_get_current_buf() == agent_bufnr("cursor_agent_bufnr")
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+    local second_cursor_buf = agent_bufnr("cursor_agent_bufnr")
+    assert_true(second_cursor_buf ~= cursor_buf, "new Cursor tab reused the existing terminal")
+    cursor_buf = second_cursor_buf
+
+    assert_true(agents.new("claude"), "could not create the first Claude terminal")
+    assert_true(agents.new("claude"), "could not create the second Claude terminal")
+    wait_until("duplicate agent tabs", function()
+      return #registered_agent_bufnrs("claude_agent_bufnr", repo) == 2
+        and vim.api.nvim_get_current_buf() == agent_bufnr("claude_agent_bufnr")
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+
+    winbar = vim.api.nvim_get_option_value("winbar", { win = vim.api.nvim_get_current_win() })
+    for _, label in ipairs({ "codex 1", "codex 2", "cursor 1", "cursor 2", "claude 1", "claude 2" }) do
+      assert_true(winbar:find(label, 1, true) ~= nil, "agent tab bar omitted " .. label)
+    end
+
+    local active_instances = worktree_test_api().list_active_agents()
+    local repo_instances = 0
+    for _, instance in ipairs(active_instances) do
+      if realpath(instance.path) == realpath(repo) then
+        repo_instances = repo_instances + 1
+      end
+    end
+    assert_true(repo_instances == 6, "active-agent picker did not retain every terminal instance")
+
+    assert_true(agents.open("cursor"), "could not reactivate the selected terminal agent")
+    wait_until("active agent before send", function()
+      return vim.api.nvim_get_current_buf() == cursor_buf
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+    agents.toggle()
+    assert_true(visible_agent_float_count() == 0, "agent container did not hide")
+
+    vim.cmd("edit " .. vim.fn.fnameescape(source))
+    vim.cmd("normal! ggV")
+    invoke_map("<leader>;", "x")
+    local cursor_input = input_log .. ".cursor-agent"
+    local codex_input = input_log .. ".mcodex"
+    wait_until("active agent path delivery", function()
+      return table.concat(read_log(cursor_input), ""):find("agent-view.txt:1-1", 1, true) ~= nil
+    end, 3000)
+    assert_true(table.concat(read_log(codex_input), ""):find("agent-view.txt:1-1", 1, true) == nil, "path was sent to the wrong agent tab")
+
+    agents.toggle()
+    assert_true(visible_agent_float_count() == 0, "shared toggle did not hide the active terminal")
+    agents.toggle()
+    wait_until("shared toggle restores active tab", function()
+      return visible_agent_float_count() == 1
+        and vim.api.nvim_get_current_buf() == cursor_buf
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+  end, debug.traceback)
+
+  vim.env.PATH = old_path
+  vim.env.NVIM_AGENT_SMOKE_LOG = old_log
+  vim.env.NVIM_AGENT_SMOKE_INPUT = old_input
+  close_agent_terminals()
+  local source_buf = vim.fn.bufnr(source)
+  if source_buf >= 0 and vim.api.nvim_buf_is_valid(source_buf) then
+    pcall(vim.api.nvim_buf_delete, source_buf, { force = true })
+  end
+  if vim.fn.isdirectory(old_cwd) == 1 then
+    pcall(vim.cmd, "cd " .. vim.fn.fnameescape(old_cwd))
+  end
+  assert_true(ok, tostring(err))
+end
+
+local function test_terminal_view_container(repo)
+  local old_cwd = vim.fn.getcwd()
+  close_toggleterm_terminals()
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(repo))
+    invoke_lazy_map("<leader>tt", "toggleterm.nvim")
+    wait_until("first terminal tab", function()
+      return visible_toggleterm_window_count() == 1
+        and vim.b[vim.api.nvim_get_current_buf()].luanphan_toggleterm
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+
+    local first_buf = vim.api.nvim_get_current_buf()
+    local first_job = vim.b[first_buf].terminal_job_id
+    vim.fn.chansend(first_job, "i=1; while [ \"$i\" -le 100 ]; do printf 'first-%03d\\n' \"$i\"; i=$((i+1)); done\n")
+    wait_until("first terminal scrollback", function()
+      return vim.api.nvim_buf_line_count(first_buf) >= 80
+    end, 3000)
+    vim.cmd("stopinsert")
+    local first_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_cursor(first_win, { 10, 0 })
+    vim.api.nvim_win_call(first_win, function()
+      vim.cmd("normal! zt")
+    end)
+    local first_view = vim.api.nvim_win_call(first_win, vim.fn.winsaveview)
+
+    local new_map = vim.fn.maparg("<leader>fn", "n", false, true)
+    assert_true(type(new_map) == "table" and type(new_map.callback) == "function", "terminal view mode is missing new-tab creation")
+    new_map.callback()
+    wait_until("second terminal tab", function()
+      return visible_toggleterm_window_count() == 1
+        and vim.b[vim.api.nvim_get_current_buf()].luanphan_toggleterm
+        and vim.api.nvim_get_current_buf() ~= first_buf
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+
+    local second_buf = vim.api.nvim_get_current_buf()
+    local second_job = vim.b[second_buf].terminal_job_id
+    local winbar = vim.api.nvim_get_option_value("winbar", { win = vim.api.nvim_get_current_win() })
+    assert_true(winbar:find("terminal 1", 1, true) ~= nil, "terminal tab bar omitted the first terminal")
+    assert_true(winbar:find("[terminal 2]", 1, true) ~= nil, "terminal tab bar did not select the new terminal")
+
+    vim.fn.chansend(second_job, "i=1; while [ \"$i\" -le 100 ]; do printf 'second-%03d\\n' \"$i\"; i=$((i+1)); done\n")
+    wait_until("second terminal scrollback", function()
+      return vim.api.nvim_buf_line_count(second_buf) >= 80
+    end, 3000)
+    vim.cmd("stopinsert")
+    local second_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_cursor(second_win, { 20, 0 })
+    vim.api.nvim_win_call(second_win, function()
+      vim.cmd("normal! zt")
+    end)
+    local second_view = vim.api.nvim_win_call(second_win, vim.fn.winsaveview)
+
+    invoke_map("<leader>tt")
+    assert_true(visible_toggleterm_window_count() == 0, "terminal toggle did not hide the container")
+    assert_true(vim.fn.jobwait({ first_job, second_job }, 0)[1] == -1, "hiding the terminal container stopped the first shell")
+    assert_true(vim.fn.jobwait({ first_job, second_job }, 0)[2] == -1, "hiding the terminal container stopped the second shell")
+
+    invoke_map("<leader>tt")
+    wait_until("last terminal tab restored", function()
+      if vim.api.nvim_get_current_buf() ~= second_buf then
+        return false
+      end
+      local view = vim.api.nvim_win_call(vim.api.nvim_get_current_win(), vim.fn.winsaveview)
+      return view.lnum == second_view.lnum
+        and view.topline == second_view.topline
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+
+    vim.cmd("stopinsert")
+    local next_map = vim.fn.maparg("<Tab>", "n", false, true)
+    assert_true(type(next_map) == "table" and type(next_map.callback) == "function", "terminal view mode is missing tab cycling")
+    next_map.callback()
+    wait_until("first terminal view restored", function()
+      if vim.api.nvim_get_current_buf() ~= first_buf then
+        return false
+      end
+      local view = vim.api.nvim_win_call(vim.api.nvim_get_current_win(), vim.fn.winsaveview)
+      return view.lnum == first_view.lnum
+        and view.topline == first_view.topline
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+  end, debug.traceback)
+
+  close_toggleterm_terminals()
+  if vim.fn.isdirectory(old_cwd) == 1 then
+    pcall(vim.cmd, "cd " .. vim.fn.fnameescape(old_cwd))
+  end
   assert_true(ok, tostring(err))
 end
 
@@ -2942,9 +3271,10 @@ local function test_worktree_switch_restores_repository_jumplist(repo, worktree)
 end
 
 local function test_worktree_switch_hides_toggleterm(repo, worktree)
+  test_terminal_view_container(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
 
-  feed_normal((vim.g.mapleader or "\\") .. "tt")
+  invoke_map("<leader>tt")
   wait_until("toggleterm open", function()
     return visible_toggleterm_window_count() > 0
   end, 3000)
@@ -2979,6 +3309,8 @@ local function test_agent_terminal_lifecycle(repo)
     return visible_agent_float_count() == 1
   end, 1000)
   local first_buf = vim.api.nvim_get_current_buf()
+  local first_used = tonumber(vim.b[first_buf].luanphan_agent_last_used) or 0
+  assert_true(first_used > 0, "new agent terminal did not record its use order")
   local quit_ok, quit_err = pcall(vim.cmd, "quit")
   assert_true(quit_ok, "agent terminal :q failed: " .. tostring(quit_err))
   wait_until("agent terminal client exit", function()
@@ -2989,6 +3321,9 @@ local function test_agent_terminal_lifecycle(repo)
   wait_until("fresh agent terminal after quit", function()
     return visible_agent_float_count() == 1 and vim.api.nvim_get_current_buf() ~= first_buf
   end, 1000)
+  local second_buf = vim.api.nvim_get_current_buf()
+  local second_used = tonumber(vim.b[second_buf].luanphan_agent_last_used) or 0
+  assert_true(second_used > first_used, "replacement agent terminal did not advance its use order")
   assert_true(vim.fn.maparg("<C-j>", "t") == "", "agent terminal insert mode captured <C-j>")
   vim.cmd("stopinsert")
   local view_down_map = vim.fn.maparg("<C-j>", "n", false, true)
@@ -3002,6 +3337,10 @@ local function test_agent_terminal_lifecycle(repo)
   wait_until("agent terminal reopened after view navigation", function()
     return visible_agent_float_count() == 1
   end, 1000)
+  assert_true(
+    (tonumber(vim.b[second_buf].luanphan_agent_last_used) or 0) > second_used,
+    "refocused agent terminal did not advance its use order"
+  )
   assert_true(agent_status.read("example-agent", repo) == "idle", "new agent terminal did not start idle")
   local submit_map = vim.fn.maparg("<CR>", "t", false, true)
   assert_true(type(submit_map) == "table" and type(submit_map.callback) == "function", "agent submit tracking is missing")
@@ -3064,7 +3403,8 @@ local function test_worktree_switch_restores_agent_terminal(repo, worktree)
   local buffers = vim.g.smoke_agent_bufnr
   local repo_buf = nil
   local worktree_buf = nil
-  for path, bufnr in pairs(buffers) do
+  for path, value in pairs(buffers) do
+    local bufnr = type(value) == "table" and value[1] or value
     if realpath(path) == realpath(repo) then
       repo_buf = bufnr
     elseif realpath(path) == realpath(worktree) then
@@ -3868,8 +4208,12 @@ local setup_ok, setup_err = xpcall(function()
     test_agent_keys_invoke_cli_commands()
   end)
 
-  test("codex leader semicolon sends visual selection", function()
-    test_codex_leader_semicolon_sends_visual_selection()
+  test("leader semicolon sends visual selection to active agent", function()
+    test_leader_semicolon_sends_visual_selection_to_active_agent()
+  end)
+
+  test("agent terminals share a tabbed view container", function()
+    test_agent_view_container(repo)
   end)
 
   test("deleted startup workspace falls back to master worktree", function()
@@ -3948,7 +4292,7 @@ local setup_ok, setup_err = xpcall(function()
     test_worktree_switch_restores_repository_jumplist(repo, worktree)
   end)
 
-  test("worktree switch hides toggleterm", function()
+  test("shell terminal tabs and worktree hiding", function()
     test_worktree_switch_hides_toggleterm(repo, worktree)
   end)
 
@@ -4001,6 +4345,21 @@ for _, item in ipairs(tests) do
     io.stdout:write("PASS " .. item.name .. "\n")
   else
     failed[#failed + 1] = "FAIL " .. item.name .. "\n" .. tostring(err)
+  end
+end
+
+vim.cmd("stopinsert")
+close_agent_terminals()
+for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+  if vim.api.nvim_buf_is_valid(buf) then
+    if vim.bo[buf].buftype == "terminal" then
+      local job = vim.b[buf].terminal_job_id
+      if type(job) == "number" and job > 0 then
+        pcall(vim.fn.jobstop, job)
+        pcall(vim.fn.jobwait, { job }, 1000)
+      end
+    end
+    pcall(vim.api.nvim_buf_delete, buf, { force = true })
   end
 end
 

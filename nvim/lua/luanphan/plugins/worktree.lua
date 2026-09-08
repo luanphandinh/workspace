@@ -33,6 +33,10 @@ local function setup()
   local BUFSTORE_KEY = "luanphan_workspace_buffers"
   local WS_CONTAINER = "local_workspaces"
   local AGENT_BUFFER_KEYS = require("luanphan.plugins.agents").agent_buffer_keys()
+  local AGENT_ORDER = {}
+  for index, agent in ipairs(AGENT_BUFFER_KEYS) do
+    AGENT_ORDER[agent.name] = index
+  end
   local recent_paths = require("luanphan.recent_paths")
 
   -- Transient map of "apply this cursor when the file is first BufReadPost'd
@@ -1052,49 +1056,69 @@ local function setup()
     return ok and status[1] == -1
   end
 
+  local function registered_agent_buffers(value)
+    if type(value) == "number" then
+      return { value }
+    end
+    return type(value) == "table" and value or {}
+  end
+
+  local function agent_before(a, b)
+    if a.last_used ~= b.last_used then
+      return a.last_used > b.last_used
+    end
+    if a.context ~= b.context then
+      return a.context < b.context
+    end
+    local a_order = AGENT_ORDER[a.agent] or math.huge
+    local b_order = AGENT_ORDER[b.agent] or math.huge
+    if a_order ~= b_order then
+      return a_order < b_order
+    end
+    return a.bufnr < b.bufnr
+  end
+
   local function list_active_agents()
     local agent_status = require("luanphan.agent_status")
     local instances = {}
     for _, agent in ipairs(AGENT_BUFFER_KEYS) do
       local buffers = vim.g[agent.key]
       if type(buffers) == "table" then
-        for cwd, bufnr in pairs(buffers) do
-          if type(cwd) == "string" and dir_exists(cwd) and terminal_job_running(bufnr) then
-            local root = git_root(cwd) or cwd
-            local context = vim.fn.fnamemodify(root, ":t")
-            local marker = "/" .. WS_CONTAINER .. "/"
-            local marker_start = root:find(marker, 1, true)
-            if marker_start then
-              local workspace = root:sub(marker_start + #marker):match("^([^/]+)")
-              if workspace then
-                context = workspace .. "/" .. context
+        for cwd, value in pairs(buffers) do
+          local bufnrs = registered_agent_buffers(value)
+          for index, bufnr in ipairs(bufnrs) do
+            if type(cwd) == "string" and dir_exists(cwd) and terminal_job_running(bufnr) then
+              local root = git_root(cwd) or cwd
+              local context = vim.fn.fnamemodify(root, ":t")
+              local marker = "/" .. WS_CONTAINER .. "/"
+              local marker_start = root:find(marker, 1, true)
+              if marker_start then
+                local workspace = root:sub(marker_start + #marker):match("^([^/]+)")
+                if workspace then
+                  context = workspace .. "/" .. context
+                end
               end
+              if cwd ~= root and path_is_in_dir(cwd, root) then
+                context = context .. "/" .. cwd:sub(#root + 2)
+              end
+              instances[#instances + 1] = {
+                agent = agent.name,
+                agent_label = #bufnrs > 1 and (agent.name .. " " .. index) or agent.name,
+                branch = project_branch(root),
+                bufnr = bufnr,
+                context = context,
+                destination = root,
+                path = cwd,
+                status = agent_status.read(agent.name, cwd),
+                last_used = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0,
+              }
             end
-            if cwd ~= root and path_is_in_dir(cwd, root) then
-              context = context .. "/" .. cwd:sub(#root + 2)
-            end
-            instances[#instances + 1] = {
-              agent = agent.name,
-              branch = project_branch(root),
-              bufnr = bufnr,
-              context = context,
-              destination = root,
-              path = cwd,
-              status = agent_status.read(agent.name, cwd),
-            }
           end
         end
       end
     end
 
-    recent_paths.sort(instances, function(instance)
-      return instance.path
-    end, function(a, b)
-      if a.context == b.context then
-        return a.agent < b.agent
-      end
-      return a.context < b.context
-    end)
+    table.sort(instances, agent_before)
 
     local agent_width = 0
     local status_width = 0
@@ -1102,7 +1126,7 @@ local function setup()
     local current = safe_getcwd()
     local current_destination = git_root(current) or workspace_root_for_path(current) or current
     for _, instance in ipairs(instances) do
-      agent_width = math.max(agent_width, #instance.agent)
+      agent_width = math.max(agent_width, #instance.agent_label)
       status_width = math.max(status_width, #instance.status)
       context_width = math.max(context_width, #instance.context)
     end
@@ -1111,7 +1135,7 @@ local function setup()
       instance.display = string.format(
         "%s%-" .. agent_width .. "s  [%-" .. status_width .. "s]  %-" .. context_width .. "s  [%s]",
         marker,
-        instance.agent,
+        instance.agent_label,
         instance.status,
         instance.context,
         instance.branch
@@ -1576,10 +1600,17 @@ local function setup()
     end
   end
 
-  local function agent_switch_targets(instances, current_path)
-    return recent_paths.switch_targets(instances, function(instance)
-      return instance.destination or instance.path
-    end, current_path)
+  local function agent_switch_targets(instances)
+    table.sort(instances, agent_before)
+    if #instances < 2 then
+      return instances
+    end
+
+    local ordered = { instances[2], instances[1] }
+    for index = 3, #instances do
+      ordered[#ordered + 1] = instances[index]
+    end
+    return ordered
   end
 
   local function pick_agent()
@@ -1588,9 +1619,7 @@ local function setup()
     end
 
     local instances = list_active_agents()
-    local current = safe_getcwd()
-    local current_destination = git_root(current) or workspace_root_for_path(current) or current
-    instances = agent_switch_targets(instances, current_destination)
+    instances = agent_switch_targets(instances)
     if #instances == 0 then
       vim.notify("no active agent terminals found", vim.log.levels.WARN)
       return
