@@ -1820,40 +1820,38 @@ local function test_active_agent_discovery(repo, worktree)
   end
 
   local ok, err = xpcall(function()
-    local codex_buf = start_terminal(repo)
-    local repo_cursor_buf = start_terminal(repo)
+    local repo_codex_buf = start_terminal(repo)
+    local worktree_codex_buf = start_terminal(worktree)
     local worktree_cursor_buf = start_terminal(worktree)
-    vim.b[codex_buf].luanphan_agent_last_used = 1
-    vim.b[repo_cursor_buf].luanphan_agent_last_used = 2
-    vim.b[worktree_cursor_buf].luanphan_agent_last_used = 3
-    vim.g.codex_agent_bufnr = { [repo] = codex_buf }
-    vim.g.cursor_agent_bufnr = { [repo] = repo_cursor_buf, [worktree] = worktree_cursor_buf }
+    vim.b[repo_codex_buf].luanphan_agent_last_used = 3
+    vim.b[worktree_codex_buf].luanphan_agent_last_used = 2
+    vim.b[worktree_cursor_buf].luanphan_agent_last_used = 1
+    vim.g.codex_agent_bufnr = { [repo] = repo_codex_buf, [worktree] = worktree_codex_buf }
+    vim.g.cursor_agent_bufnr = { [worktree] = worktree_cursor_buf }
     vim.g.claude_agent_bufnr = { [repo] = 999999 }
     assert_true(agent_status.write("codex", repo, "running"), "failed to record first agent state")
     assert_true(agent_status.write("cursor", worktree, "idle"), "failed to record second agent state")
 
-    local recent_paths = require("luanphan.recent_paths")
-    recent_paths.touch(worktree)
     local instances = api.list_active_agents()
     assert_true(#instances == 3, "active agent discovery returned an unexpected instance count")
-    assert_true(instances[1].path == worktree, "agent picker did not promote the latest project")
-    recent_paths.touch(repo)
-    instances = api.list_active_agents()
-    assert_true(instances[1].path == repo, "agent picker did not move a revisited project to the front")
-    assert_true(instances[1].agent == "cursor", "agent picker did not promote the last-used agent within its project")
-    assert_true(instances[2].path == repo, "agent picker split agents from the same project")
-    local switch_targets = api.agent_switch_targets(instances, repo)
+    assert_true(instances[1].bufnr == repo_codex_buf, "active agent was not first in recency order")
+    local switch_targets = api.agent_switch_targets(instances)
     assert_true(#switch_targets == 3, "agent switch targets discarded an active agent")
-    assert_true(switch_targets[1].path == worktree, "agent switch targets did not promote the previous project")
-    assert_true(switch_targets[2].agent == "cursor", "agent switch targets changed the current project's agent order")
-    assert_true(switch_targets[3].agent == "codex", "agent switch targets split the current project")
+    assert_true(switch_targets[1].bufnr == worktree_codex_buf, "previous agent was not the first suggestion")
+    assert_true(switch_targets[2].bufnr == repo_codex_buf, "current agent was not retained after the suggestion")
+    assert_true(switch_targets[3].bufnr == worktree_cursor_buf, "older agent was not retained")
 
-    vim.b[codex_buf].luanphan_agent_last_used = 4
+    vim.b[worktree_codex_buf].luanphan_agent_last_used = 4
     instances = api.list_active_agents()
-    switch_targets = api.agent_switch_targets(instances, worktree)
-    assert_true(switch_targets[1].agent == "codex", "newly used agent was not promoted within the previous project")
-    assert_true(switch_targets[2].agent == "cursor", "same-project agents were not kept together")
-    assert_true(switch_targets[3].path == worktree, "current project was not kept after the previous project group")
+    switch_targets = api.agent_switch_targets(instances)
+    assert_true(switch_targets[1].bufnr == repo_codex_buf, "previous agent was not promoted after a switch")
+
+    vim.b[worktree_cursor_buf].luanphan_agent_last_used = 5
+    instances = api.list_active_agents()
+    switch_targets = api.agent_switch_targets(instances)
+    assert_true(switch_targets[1].bufnr == worktree_codex_buf, "flat agent history was not preserved across projects")
+    assert_true(switch_targets[2].bufnr == worktree_cursor_buf, "current agent was not retained in flat history")
+    assert_true(switch_targets[3].bufnr == repo_codex_buf, "older cross-project agent was not retained")
 
     local by_key = {}
     for _, instance in ipairs(instances) do

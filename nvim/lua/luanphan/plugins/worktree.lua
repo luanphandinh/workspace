@@ -1056,6 +1056,16 @@ local function setup()
     return ok and status[1] == -1
   end
 
+  local function agent_before(a, b)
+    if a.last_used ~= b.last_used then
+      return a.last_used > b.last_used
+    end
+    if a.context ~= b.context then
+      return a.context < b.context
+    end
+    return (AGENT_ORDER[a.agent] or math.huge) < (AGENT_ORDER[b.agent] or math.huge)
+  end
+
   local function list_active_agents()
     local agent_status = require("luanphan.agent_status")
     local instances = {}
@@ -1092,17 +1102,7 @@ local function setup()
       end
     end
 
-    recent_paths.sort(instances, function(instance)
-      return instance.path
-    end, function(a, b)
-      if a.path == b.path then
-        if a.last_used ~= b.last_used then
-          return a.last_used > b.last_used
-        end
-        return (AGENT_ORDER[a.agent] or math.huge) < (AGENT_ORDER[b.agent] or math.huge)
-      end
-      return a.context < b.context
-    end)
+    table.sort(instances, agent_before)
 
     local agent_width = 0
     local status_width = 0
@@ -1584,15 +1584,17 @@ local function setup()
     end
   end
 
-  local function agent_switch_targets(instances, current_path)
-    return recent_paths.grouped_switch_targets(instances, function(instance)
-      return instance.path
-    end, current_path, function(a, b)
-      if a.last_used ~= b.last_used then
-        return a.last_used > b.last_used
-      end
-      return (AGENT_ORDER[a.agent] or math.huge) < (AGENT_ORDER[b.agent] or math.huge)
-    end)
+  local function agent_switch_targets(instances)
+    table.sort(instances, agent_before)
+    if #instances < 2 then
+      return instances
+    end
+
+    local ordered = { instances[2], instances[1] }
+    for index = 3, #instances do
+      ordered[#ordered + 1] = instances[index]
+    end
+    return ordered
   end
 
   local function pick_agent()
@@ -1601,8 +1603,7 @@ local function setup()
     end
 
     local instances = list_active_agents()
-    local current = safe_getcwd()
-    instances = agent_switch_targets(instances, current)
+    instances = agent_switch_targets(instances)
     if #instances == 0 then
       vim.notify("no active agent terminals found", vim.log.levels.WARN)
       return
