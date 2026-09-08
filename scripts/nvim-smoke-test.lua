@@ -2138,6 +2138,23 @@ local function test_terminal_reference_links()
   end)
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "second example-repo/other.go:1:1",
+  })
+  vim.wait(180)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "output still changing",
+  })
+  vim.wait(120)
+  local unsettled = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+  assert_true(
+    #unsettled == 1 and unsettled[1][4].url:find("example%-repo%%2Fmain.go") ~= nil,
+    "terminal references scanned before output settled"
+  )
+  wait_until("terminal reference scan after output settles", function()
+    return #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true }) == 0
+  end)
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
     "wrapped example-repo/",
     "  other.go:1:1",
   })

@@ -164,6 +164,15 @@ local function refresh(bufnr, first_line, last_line)
   end
 end
 
+local function close_pending(bufnr)
+  local range = pending[bufnr]
+  pending[bufnr] = nil
+  if range and range.timer and not range.timer:is_closing() then
+    range.timer:stop()
+    range.timer:close()
+  end
+end
+
 local function schedule_refresh(bufnr, first_line, last_line)
   if not enabled then
     return
@@ -177,21 +186,33 @@ local function schedule_refresh(bufnr, first_line, last_line)
   if range then
     range.first = math.min(range.first, first_line)
     range.last = math.max(range.last, last_line)
-    return
+  else
+    range = {
+      first = first_line,
+      last = last_line,
+      timer = assert(vim.uv.new_timer()),
+    }
+    pending[bufnr] = range
   end
 
-  pending[bufnr] = { first = first_line, last = last_line }
-  vim.defer_fn(function()
-    local current = pending[bufnr]
-    pending[bufnr] = nil
-    if enabled and current then
-      if vim.fn.bufwinid(bufnr) == -1 then
-        dirty[bufnr] = true
-      else
-        refresh(bufnr, current.first, current.last)
-      end
+  range.generation = (range.generation or 0) + 1
+  local generation = range.generation
+  range.timer:stop()
+  range.timer:start(update_delay_ms, 0, vim.schedule_wrap(function()
+    if pending[bufnr] ~= range or range.generation ~= generation then
+      return
     end
-  end, update_delay_ms)
+    pending[bufnr] = nil
+    range.timer:close()
+    if not enabled then
+      return
+    end
+    if vim.fn.bufwinid(bufnr) == -1 then
+      dirty[bufnr] = true
+    else
+      refresh(bufnr, range.first, range.last)
+    end
+  end))
 end
 
 function M.attach(bufnr, cwd)
@@ -219,7 +240,7 @@ function M.attach(bufnr, cwd)
     end,
     on_detach = function(_, detached_bufnr)
       attached[detached_bufnr] = nil
-      pending[detached_bufnr] = nil
+      close_pending(detached_bufnr)
       dirty[detached_bufnr] = nil
       tracked[detached_bufnr] = nil
     end,
@@ -232,7 +253,7 @@ function M.activate(bufnr)
     return
   end
   dirty[bufnr] = nil
-  pending[bufnr] = nil
+  close_pending(bufnr)
   refresh(bufnr, 0, vim.api.nvim_buf_line_count(bufnr))
 end
 
@@ -246,7 +267,7 @@ function M.set_enabled(value, silent)
 
   for bufnr in pairs(tracked) do
     if vim.api.nvim_buf_is_valid(bufnr) then
-      pending[bufnr] = nil
+      close_pending(bufnr)
       dirty[bufnr] = nil
       vim.api.nvim_buf_clear_namespace(bufnr, namespace, 0, -1)
       if enabled then
