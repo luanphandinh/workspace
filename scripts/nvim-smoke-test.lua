@@ -2533,7 +2533,9 @@ local function test_terminal_view_container(repo)
     vim.cmd("cd " .. vim.fn.fnameescape(repo))
     invoke_lazy_map("<leader>tt", "toggleterm.nvim")
     wait_until("first terminal tab", function()
-      return visible_toggleterm_window_count() == 1 and vim.b[vim.api.nvim_get_current_buf()].luanphan_toggleterm
+      return visible_toggleterm_window_count() == 1
+        and vim.b[vim.api.nvim_get_current_buf()].luanphan_toggleterm
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
 
     local first_buf = vim.api.nvim_get_current_buf()
@@ -2557,6 +2559,7 @@ local function test_terminal_view_container(repo)
       return visible_toggleterm_window_count() == 1
         and vim.b[vim.api.nvim_get_current_buf()].luanphan_toggleterm
         and vim.api.nvim_get_current_buf() ~= first_buf
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
 
     local second_buf = vim.api.nvim_get_current_buf()
@@ -2588,7 +2591,9 @@ local function test_terminal_view_container(repo)
         return false
       end
       local view = vim.api.nvim_win_call(vim.api.nvim_get_current_win(), vim.fn.winsaveview)
-      return view.lnum == second_view.lnum and view.topline == second_view.topline
+      return view.lnum == second_view.lnum
+        and view.topline == second_view.topline
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
 
     vim.cmd("stopinsert")
@@ -2600,7 +2605,9 @@ local function test_terminal_view_container(repo)
         return false
       end
       local view = vim.api.nvim_win_call(vim.api.nvim_get_current_win(), vim.fn.winsaveview)
-      return view.lnum == first_view.lnum and view.topline == first_view.topline
+      return view.lnum == first_view.lnum
+        and view.topline == first_view.topline
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
   end, debug.traceback)
 

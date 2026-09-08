@@ -45,22 +45,18 @@ end
 
 local function restore_terminal_view(term)
   local saved = vim.b[term.bufnr].luanphan_terminal_view
-  if type(saved) == "table" and saved.follow == false and type(saved.view) == "table" then
-    vim.schedule(function()
-      if term.window and vim.api.nvim_win_is_valid(term.window) and vim.api.nvim_win_get_buf(term.window) == term.bufnr then
+  vim.schedule(function()
+    if term.window and vim.api.nvim_win_is_valid(term.window) and vim.api.nvim_win_get_buf(term.window) == term.bufnr then
+      if vim.api.nvim_get_current_win() == term.window then
+        vim.cmd("stopinsert")
+      end
+      if type(saved) == "table" and saved.follow == false and type(saved.view) == "table" then
         pcall(vim.api.nvim_win_call, term.window, function()
           vim.fn.winrestview(saved.view)
         end)
       end
-    end)
-    return
-  end
-
-  vim.defer_fn(function()
-    if term.window and vim.api.nvim_win_is_valid(term.window) and vim.api.nvim_get_current_win() == term.window then
-      vim.cmd("startinsert")
     end
-  end, 10)
+  end)
 end
 
 local function close_open_terms(cwd, except)
@@ -170,7 +166,9 @@ local function setup_terminal_autocmds()
     callback = function(ev)
       vim.keymap.set("t", "<esc>", [[<c-\><c-n>]], { buffer = ev.buf })
       vim.defer_fn(function()
-        if vim.api.nvim_get_current_buf() == ev.buf and vim.bo[ev.buf].buftype == "terminal" then
+        if vim.api.nvim_get_current_buf() == ev.buf
+            and vim.bo[ev.buf].buftype == "terminal"
+            and not vim.b[ev.buf].luanphan_toggleterm then
           vim.cmd("startinsert")
         end
       end, 10)
@@ -193,6 +191,7 @@ return {
         size = 100,
         direction = "vertical", -- opens on the right
         shade_terminals = false,
+        start_in_insert = false,
         persist_size = true,
         persist_mode = false,
         -- Keep the pane after the shell job exits so output stays visible (scroll with Esc then j/k).
