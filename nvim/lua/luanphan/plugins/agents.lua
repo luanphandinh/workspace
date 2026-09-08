@@ -218,26 +218,26 @@ function M.set_float_position(pos)
   end
 end
 
-function M.focus(name, bufnr)
+function M.focus(name, bufnr, opts)
   if not agent_defs[name] then
     return false
   end
   local target = bufnr or agent_buffer(name, vim.fn.getcwd())
   if not target then
-    return setup_agent(name).focus(bufnr)
+    return setup_agent(name).focus(bufnr, opts)
   end
   close_visible_agents(target)
-  return setup_agent(name).focus(target)
+  return setup_agent(name).focus(target, opts)
 end
 
-function M.open(name, bufnr)
+function M.open(name, bufnr, opts)
   if not agent_defs[name] then
     return false
   end
   local target = bufnr or agent_buffer(name, vim.fn.getcwd())
   close_visible_agents(target)
   if target then
-    return setup_agent(name).focus(target)
+    return setup_agent(name).focus(target, opts)
   end
   setup_agent(name).toggle()
   return true
@@ -313,8 +313,8 @@ agent_container = require("luanphan.view_container").create({
   context = vim.fn.getcwd,
   tabs = open_tabs,
   choices = agent_choices,
-  activate = function(tab)
-    M.open(tab.agent, tab.bufnr)
+  activate = function(tab, opts)
+    M.open(tab.agent, tab.bufnr, opts)
   end,
   create = function(choice)
     M.new(choice.id)

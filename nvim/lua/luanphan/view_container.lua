@@ -121,7 +121,7 @@ function Container:cycle(context)
 			break
 		end
 	end
-	self.opts.activate(tabs[(index % #tabs) + 1])
+	self.opts.activate(tabs[(index % #tabs) + 1], { view_mode = true })
 end
 
 function Container:pick(context)

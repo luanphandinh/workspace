@@ -2395,7 +2395,6 @@ local function test_agent_view_container(repo)
     wait_until("first agent tab", function()
       return visible_agent_float_count() == 1
         and agent_bufnr("codex_agent_bufnr") ~= nil
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
     local codex_buf = agent_bufnr("codex_agent_bufnr")
 
@@ -2404,7 +2403,6 @@ local function test_agent_view_container(repo)
       return visible_agent_float_count() == 1
         and agent_bufnr("cursor_agent_bufnr") ~= nil
         and vim.api.nvim_get_current_buf() == agent_bufnr("cursor_agent_bufnr")
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
     local cursor_buf = agent_bufnr("cursor_agent_bufnr")
     assert_true(vim.api.nvim_buf_is_valid(codex_buf), "opening another tab deleted the first terminal")
@@ -2425,7 +2423,14 @@ local function test_agent_view_container(repo)
     end, 3000)
     assert_true(vim.api.nvim_buf_is_valid(cursor_buf), "cycling tabs deleted the hidden terminal")
 
-    vim.cmd("stopinsert")
+    next_map = vim.fn.maparg("<Tab>", "n", false, true)
+    next_map.callback()
+    wait_until("cycled mixed agent tab again", function()
+      return visible_agent_float_count() == 1
+        and vim.api.nvim_get_current_buf() == cursor_buf
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+
     new_map = vim.fn.maparg("<leader>fn", "n", false, true)
     new_map.callback()
     local prompt_buf = nil
@@ -2457,7 +2462,6 @@ local function test_agent_view_container(repo)
       return visible_agent_float_count() == 1
         and #registered_agent_bufnrs("codex_agent_bufnr", repo) == 2
         and vim.api.nvim_get_current_buf() == agent_bufnr("codex_agent_bufnr")
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
     local second_codex_buf = agent_bufnr("codex_agent_bufnr")
     assert_true(second_codex_buf ~= codex_buf, "new-tab picker reused the existing Codex terminal")
@@ -2466,7 +2470,6 @@ local function test_agent_view_container(repo)
     wait_until("second cursor tab", function()
       return #registered_agent_bufnrs("cursor_agent_bufnr", repo) == 2
         and vim.api.nvim_get_current_buf() == agent_bufnr("cursor_agent_bufnr")
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
     local second_cursor_buf = agent_bufnr("cursor_agent_bufnr")
     assert_true(second_cursor_buf ~= cursor_buf, "new Cursor tab reused the existing terminal")
@@ -2477,7 +2480,6 @@ local function test_agent_view_container(repo)
     wait_until("duplicate agent tabs", function()
       return #registered_agent_bufnrs("claude_agent_bufnr", repo) == 2
         and vim.api.nvim_get_current_buf() == agent_bufnr("claude_agent_bufnr")
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
 
     winbar = vim.api.nvim_get_option_value("winbar", { win = vim.api.nvim_get_current_win() })
@@ -2497,7 +2499,6 @@ local function test_agent_view_container(repo)
     assert_true(agents.open("cursor"), "could not reactivate the selected terminal agent")
     wait_until("active agent before send", function()
       return vim.api.nvim_get_current_buf() == cursor_buf
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
     agents.toggle()
     assert_true(visible_agent_float_count() == 0, "agent container did not hide")
@@ -2518,7 +2519,6 @@ local function test_agent_view_container(repo)
     wait_until("shared toggle restores active tab", function()
       return visible_agent_float_count() == 1
         and vim.api.nvim_get_current_buf() == cursor_buf
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
   end, debug.traceback)
 

@@ -245,24 +245,36 @@ local function save_terminal_view(win)
   }
 end
 
-local function resume_terminal_view(win, bufnr)
+local function resume_terminal_view(win, bufnr, opts)
   mark_terminal_used(bufnr)
   if profile.on_show then
     pcall(profile.on_show, bufnr, win, vim.b[bufnr].luanphan_agent_cwd or cwd_key())
   end
   local saved = vim.b[bufnr].luanphan_terminal_view
-  vim.schedule(function()
-    if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == bufnr then
-      if vim.api.nvim_get_current_win() == win then
-        vim.cmd("stopinsert")
+  local restore_saved = type(saved) == "table" and saved.follow == false and type(saved.view) == "table"
+  if (opts and opts.view_mode) or restore_saved then
+    vim.schedule(function()
+      if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == bufnr then
+        if opts and opts.view_mode and vim.api.nvim_get_current_win() == win then
+          vim.cmd("stopinsert")
+        end
+        if restore_saved then
+          pcall(vim.api.nvim_win_call, win, function()
+            vim.fn.winrestview(saved.view)
+          end)
+        end
       end
-      if type(saved) == "table" and saved.follow == false and type(saved.view) == "table" then
-        pcall(vim.api.nvim_win_call, win, function()
-          vim.fn.winrestview(saved.view)
-        end)
-      end
+    end)
+    return
+  end
+
+  vim.defer_fn(function()
+    if vim.api.nvim_win_is_valid(win)
+        and vim.api.nvim_win_get_buf(win) == bufnr
+        and vim.api.nvim_get_current_win() == win then
+      vim.cmd("startinsert")
     end
-  end)
+  end, 10)
 end
 
 --- Vertical split with new window on the right (does not change global 'splitright' afterward).
@@ -723,7 +735,7 @@ local function open_terminal()
   return open_terminal_split()
 end
 
-local function show_terminal_split(bufnr)
+local function show_terminal_split(bufnr, opts)
   local cur = bufnr or current_bufnr()
   if not cur then return end
   if config.split == "vertical" then
@@ -737,10 +749,10 @@ local function show_terminal_split(bufnr)
   apply_agent_scrollback(cur)
   apply_split_size()
   lock_cursor_window()
-  resume_terminal_view(vim.api.nvim_get_current_win(), cur)
+  resume_terminal_view(vim.api.nvim_get_current_win(), cur, opts)
 end
 
-local function show_terminal_float(bufnr)
+local function show_terminal_float(bufnr, opts)
   local cur = bufnr or current_bufnr()
   if not cur then return end
   local g = get_float_geometry()
@@ -764,14 +776,14 @@ local function show_terminal_float(bufnr)
   }
   apply_agent_scrollback(cur)
   set_float_close_keymaps(cur)
-  resume_terminal_view(win, cur)
+  resume_terminal_view(win, cur, opts)
 end
 
-local function show_terminal(bufnr)
+local function show_terminal(bufnr, opts)
   if config.window_mode == "float" then
-    show_terminal_float(bufnr)
+    show_terminal_float(bufnr, opts)
   else
-    show_terminal_split(bufnr)
+    show_terminal_split(bufnr, opts)
   end
 end
 
@@ -812,7 +824,7 @@ function API.set_float_position(pos)
 end
 
 --- Focus an agent terminal, showing its buffer when hidden.
-function API.focus(bufnr)
+function API.focus(bufnr, opts)
   local cur = bufnr or current_bufnr()
   if not cur or not term_buffer_alive(cur) then
     nx("no agent terminal — use " .. profile.hint_open .. " to open", vim.log.levels.INFO)
@@ -820,14 +832,14 @@ function API.focus(bufnr)
   end
   local win = win_for_buf(cur)
   if not win then
-    show_terminal(cur)
+    show_terminal(cur, opts)
     return true
   end
   configure_terminal_window(win)
   require("luanphan.terminal_references").activate(cur)
   lock_cursor_window(win)
   vim.api.nvim_set_current_win(win)
-  resume_terminal_view(win, cur)
+  resume_terminal_view(win, cur, opts)
   return true
 end
 
