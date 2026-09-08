@@ -228,6 +228,40 @@ local function mark_terminal_used(bufnr)
   vim.b[bufnr].luanphan_agent_last_used = sequence
 end
 
+local function valid_job_id(job)
+  return type(job) == "number" and job > 0
+end
+
+local function refresh_terminal_grid(win, bufnr)
+  if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= bufnr then
+    return
+  end
+  local job = vim.b[bufnr].terminal_job_id
+  if not valid_job_id(job) then
+    return
+  end
+
+  local width = vim.api.nvim_win_get_width(win)
+  local height = vim.api.nvim_win_get_height(win)
+  if vim.api.nvim_get_option_value("winbar", { win = win }) ~= "" then
+    height = height - 1
+  end
+  width = math.max(1, width)
+  height = math.max(1, height)
+  local temporary_width = width
+  local temporary_height = height
+  if height > 1 then
+    temporary_height = height - 1
+  elseif width > 1 then
+    temporary_width = width - 1
+  else
+    return
+  end
+
+  pcall(vim.fn.jobresize, job, temporary_width, temporary_height)
+  pcall(vim.fn.jobresize, job, width, height)
+end
+
 local function save_terminal_view(win)
   if not win or not vim.api.nvim_win_is_valid(win) then
     return
@@ -251,6 +285,7 @@ local function resume_terminal_view(win, bufnr, opts)
   if profile.on_show then
     pcall(profile.on_show, bufnr, win, vim.b[bufnr].luanphan_agent_cwd or cwd_key())
   end
+  refresh_terminal_grid(win, bufnr)
   local saved = vim.b[bufnr].luanphan_terminal_view
   local restore_saved = type(saved) == "table" and saved.follow == false and type(saved.view) == "table"
   if (opts and opts.view_mode) or restore_saved then
@@ -447,10 +482,6 @@ local function lock_cursor_window(win)
     vim.wo[win].winfixheight = true
     vim.wo[win].winfixwidth = false
   end
-end
-
-local function valid_job_id(job)
-  return type(job) == "number" and job > 0
 end
 
 local function term_buffer_alive(bufnr)
