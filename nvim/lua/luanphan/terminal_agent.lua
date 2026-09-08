@@ -34,6 +34,7 @@ local BASE_DEFAULTS = {
 ---@field augroup_prefix string prefix for autocmd groups (CursorAgent / ClaudeAgent)
 ---@field hint_open string hint when no terminal (e.g. "<leader>;")
 ---@field defaults? table merged into BASE_DEFAULTS (cmd, args, …)
+---@field on_prepare? fun(win: integer)
 ---@field on_show? fun(bufnr: integer, win: integer, cwd: string)
 ---@field on_close? fun(bufnr: integer, cwd: string)
 function M.create(profile)
@@ -428,6 +429,12 @@ local function configure_terminal_window(win)
   end
 end
 
+local function prepare_terminal_window(win)
+  if profile.on_prepare then
+    pcall(profile.on_prepare, win)
+  end
+end
+
 local function lock_cursor_window(win)
   if config.window_mode == "float" or not config.lock_split then
     return
@@ -663,6 +670,7 @@ local function restore_agent_bufnr()
   if cur then
     local rwin = win_for_buf(cur)
     if rwin then
+      prepare_terminal_window(rwin)
       configure_terminal_window(rwin)
       lock_cursor_window(rwin)
       if profile.on_show then
@@ -672,14 +680,16 @@ local function restore_agent_bufnr()
   end
 end
 
-local function open_terminal_split()
+local function open_terminal_split(opts)
   if config.split == "vertical" then
     vsplit_right()
   else
     vim.cmd("split")
   end
-  configure_terminal_window(vim.api.nvim_get_current_win())
   vim.cmd("enew")
+  local win = vim.api.nvim_get_current_win()
+  prepare_terminal_window(win)
+  configure_terminal_window(win)
   apply_split_size()
   lock_cursor_window()
   local buf = vim.api.nvim_get_current_buf()
@@ -691,29 +701,39 @@ local function open_terminal_split()
   attach_term_close(buf)
   attach_quit_detach(buf)
   attach_status_tracking(buf, cwd, "idle")
-  resume_terminal_view(vim.api.nvim_get_current_win(), buf)
+  resume_terminal_view(win, buf, opts)
   return buf
 end
 
-local function open_terminal_float()
+local function open_terminal_float(opts)
   local buf = vim.api.nvim_create_buf(false, true)
-  local g = get_float_geometry()
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = "editor",
-    row = g.row,
-    col = g.col,
-    width = g.width,
-    height = g.height,
-    style = "minimal",
-    border = config.float_border or "single",
-  })
+  local reuse_win = opts and opts.reuse_win
+  local win
+  if reuse_win and vim.api.nvim_win_is_valid(reuse_win) then
+    win = reuse_win
+    vim.api.nvim_win_set_buf(win, buf)
+    vim.api.nvim_set_current_win(win)
+  else
+    local g = get_float_geometry()
+    win = vim.api.nvim_open_win(buf, true, {
+      relative = "editor",
+      row = g.row,
+      col = g.col,
+      width = g.width,
+      height = g.height,
+      style = "minimal",
+      border = config.float_border or "single",
+    })
+  end
+  prepare_terminal_window(win)
   configure_terminal_window(win)
+  local win_config = vim.api.nvim_win_get_config(win)
   state.float_geometry = {
-    relative = "editor",
-    row = g.row,
-    col = g.col,
-    width = g.width,
-    height = g.height,
+    relative = win_config.relative,
+    row = win_config.row,
+    col = win_config.col,
+    width = win_config.width,
+    height = win_config.height,
   }
   local cwd = cwd_key()
   vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
@@ -724,15 +744,15 @@ local function open_terminal_float()
   attach_quit_detach(buf)
   set_float_close_keymaps(buf)
   attach_status_tracking(buf, cwd, "idle")
-  resume_terminal_view(win, buf)
+  resume_terminal_view(win, buf, opts)
   return buf
 end
 
-local function open_terminal()
+local function open_terminal(opts)
   if config.window_mode == "float" then
-    return open_terminal_float()
+    return open_terminal_float(opts)
   end
-  return open_terminal_split()
+  return open_terminal_split(opts)
 end
 
 local function show_terminal_split(bufnr, opts)
@@ -743,6 +763,7 @@ local function show_terminal_split(bufnr, opts)
   else
     vim.cmd("split")
   end
+  prepare_terminal_window(vim.api.nvim_get_current_win())
   configure_terminal_window(vim.api.nvim_get_current_win())
   vim.api.nvim_win_set_buf(0, cur)
   require("luanphan.terminal_references").activate(cur)
@@ -755,24 +776,38 @@ end
 local function show_terminal_float(bufnr, opts)
   local cur = bufnr or current_bufnr()
   if not cur then return end
-  local g = get_float_geometry()
-  local win = vim.api.nvim_open_win(cur, true, {
-    relative = "editor",
-    row = g.row,
-    col = g.col,
-    width = g.width,
-    height = g.height,
-    style = "minimal",
-    border = config.float_border or "single",
-  })
+  local reuse_win = opts and opts.reuse_win
+  local win
+  if reuse_win and vim.api.nvim_win_is_valid(reuse_win) then
+    win = reuse_win
+    prepare_terminal_window(win)
+    vim.api.nvim_win_set_buf(win, cur)
+    vim.api.nvim_set_current_win(win)
+  else
+    local placeholder = vim.api.nvim_create_buf(false, true)
+    local g = get_float_geometry()
+    win = vim.api.nvim_open_win(placeholder, true, {
+      relative = "editor",
+      row = g.row,
+      col = g.col,
+      width = g.width,
+      height = g.height,
+      style = "minimal",
+      border = config.float_border or "single",
+    })
+    prepare_terminal_window(win)
+    vim.api.nvim_win_set_buf(win, cur)
+    pcall(vim.api.nvim_buf_delete, placeholder, { force = true })
+  end
   configure_terminal_window(win)
   require("luanphan.terminal_references").activate(cur)
+  local win_config = vim.api.nvim_win_get_config(win)
   state.float_geometry = {
-    relative = "editor",
-    row = g.row,
-    col = g.col,
-    width = g.width,
-    height = g.height,
+    relative = win_config.relative,
+    row = win_config.row,
+    col = win_config.col,
+    width = win_config.width,
+    height = win_config.height,
   }
   apply_agent_scrollback(cur)
   set_float_close_keymaps(cur)
@@ -805,8 +840,8 @@ function API.toggle()
   open_terminal()
 end
 
-function API.new()
-  return open_terminal()
+function API.new(opts)
+  return open_terminal(opts)
 end
 
 --- Change the float placement for this agent. Valid values: "full", "left",
@@ -841,6 +876,10 @@ function API.focus(bufnr, opts)
   vim.api.nvim_set_current_win(win)
   resume_terminal_view(win, cur, opts)
   return true
+end
+
+function API.save_view(win)
+  save_terminal_view(win)
 end
 
 local function get_job_id(bufnr)
@@ -879,7 +918,7 @@ local function exit_visual_to_normal()
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
 end
 
-function API.send_selection(target_bufnr)
+function API.send_selection(target_bufnr, opts)
   local bufnr = vim.api.nvim_get_current_buf()
   if vim.bo[bufnr].buftype ~= "" then
     nx("not supported in this buffer", vim.log.levels.WARN)
@@ -946,7 +985,7 @@ function API.send_selection(target_bufnr)
 
     local win = win_for_buf(cur)
     if not win then
-      show_terminal(cur)
+      show_terminal(cur, opts)
     end
 
     local job = get_job_id(cur)
@@ -974,7 +1013,7 @@ function API.send_selection(target_bufnr)
   local cur = target_terminal()
   if not cur or not term_buffer_alive(cur) then
     set_agent_bufnr(nil)
-    open_terminal()
+    open_terminal(opts)
     vim.defer_fn(function()
       deliver(1)
     end, config.defer_send_ms)

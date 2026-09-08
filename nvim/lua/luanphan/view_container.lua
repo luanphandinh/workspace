@@ -83,16 +83,19 @@ function Container:active(context)
 	return tabs[1]
 end
 
+function Container:reserve(win)
+	if not win or not vim.api.nvim_win_is_valid(win) then
+		return
+	end
+	vim.api.nvim_set_option_value("winbar", "%#TabLineFill# ", { win = win, scope = "local" })
+end
+
 function Container:render(win, context)
 	if not win or not vim.api.nvim_win_is_valid(win) then
 		return
 	end
 	context = context or self:context()
 	local tabs = self:tabs(context)
-	if #tabs < 2 then
-		vim.api.nvim_set_option_value("winbar", "", { win = win, scope = "local" })
-		return
-	end
 
 	local active = self:active(context)
 	local parts = {}

@@ -2397,6 +2397,13 @@ local function test_agent_view_container(repo)
         and agent_bufnr("codex_agent_bufnr") ~= nil
     end, 3000)
     local codex_buf = agent_bufnr("codex_agent_bufnr")
+    local agent_win = vim.api.nvim_get_current_win()
+    local agent_height = vim.api.nvim_win_get_height(agent_win)
+    local winbar = vim.api.nvim_get_option_value("winbar", { win = agent_win })
+    assert_true(
+      winbar:find("[codex]", 1, true) ~= nil,
+      "single agent did not reserve its tab bar: " .. vim.inspect(winbar)
+    )
 
     assert_true(agents.open("cursor"), "could not open the second terminal agent")
     wait_until("second agent tab", function()
@@ -2406,7 +2413,9 @@ local function test_agent_view_container(repo)
     end, 3000)
     local cursor_buf = agent_bufnr("cursor_agent_bufnr")
     assert_true(vim.api.nvim_buf_is_valid(codex_buf), "opening another tab deleted the first terminal")
-    local winbar = vim.api.nvim_get_option_value("winbar", { win = vim.api.nvim_get_current_win() })
+    assert_true(vim.api.nvim_get_current_win() == agent_win, "opening another agent replaced the container window")
+    assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "opening another agent resized the container")
+    winbar = vim.api.nvim_get_option_value("winbar", { win = agent_win })
     assert_true(winbar:find("codex", 1, true) ~= nil, "agent tab bar omitted the first terminal")
     assert_true(winbar:find("[cursor]", 1, true) ~= nil, "agent tab bar did not select the current terminal")
 
@@ -2422,6 +2431,8 @@ local function test_agent_view_container(repo)
         and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
     assert_true(vim.api.nvim_buf_is_valid(cursor_buf), "cycling tabs deleted the hidden terminal")
+    assert_true(vim.api.nvim_get_current_win() == agent_win, "cycling agents replaced the container window")
+    assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "cycling agents resized the container")
 
     next_map = vim.fn.maparg("<Tab>", "n", false, true)
     next_map.callback()
@@ -2430,6 +2441,8 @@ local function test_agent_view_container(repo)
         and vim.api.nvim_get_current_buf() == cursor_buf
         and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
+    assert_true(vim.api.nvim_get_current_win() == agent_win, "cycling mixed agents replaced the container window")
+    assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "cycling mixed agents resized the container")
 
     new_map = vim.fn.maparg("<leader>fn", "n", false, true)
     new_map.callback()
@@ -2465,6 +2478,20 @@ local function test_agent_view_container(repo)
     end, 3000)
     local second_codex_buf = agent_bufnr("codex_agent_bufnr")
     assert_true(second_codex_buf ~= codex_buf, "new-tab picker reused the existing Codex terminal")
+    assert_true(vim.api.nvim_get_current_win() == agent_win, "new agent tab replaced the container window")
+    assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "new agent tab resized the container")
+
+    assert_true(agents.open("codex", codex_buf, { view_mode = true }), "could not switch to the first Codex tab")
+    wait_until("same-agent tab cycle", function()
+      return vim.api.nvim_get_current_buf() == codex_buf
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+    assert_true(vim.api.nvim_get_current_win() == agent_win, "same-agent cycle replaced the container window")
+    assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "same-agent cycle resized the container")
+    assert_true(agents.open("codex", second_codex_buf, { view_mode = true }), "could not restore the second Codex tab")
+    wait_until("same-agent tab restore", function()
+      return vim.api.nvim_get_current_buf() == second_codex_buf
+    end, 3000)
 
     assert_true(agents.new("cursor"), "could not create a second Cursor terminal")
     wait_until("second cursor tab", function()
@@ -2520,6 +2547,10 @@ local function test_agent_view_container(repo)
       return visible_agent_float_count() == 1
         and vim.api.nvim_get_current_buf() == cursor_buf
     end, 3000)
+    local reopened_win = vim.api.nvim_get_current_win()
+    assert_true(vim.api.nvim_win_get_height(reopened_win) == agent_height, "reopened agent container changed height")
+    winbar = vim.api.nvim_get_option_value("winbar", { win = reopened_win })
+    assert_true(winbar:find("[cursor", 1, true) ~= nil, "reopened agent container did not reserve its tab bar")
   end, debug.traceback)
 
   vim.env.PATH = old_path

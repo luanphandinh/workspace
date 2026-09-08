@@ -189,6 +189,9 @@ local function get_agent(name)
     augroup_prefix = def.augroup_prefix,
     hint_open = def.keys.toggle.lhs,
     defaults = resolve_defaults(def.defaults),
+    on_prepare = function(win)
+      agent_container:reserve(win)
+    end,
     on_show = function(bufnr, win, cwd)
       agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
     end,
@@ -235,21 +238,32 @@ function M.open(name, bufnr, opts)
     return false
   end
   local target = bufnr or agent_buffer(name, vim.fn.getcwd())
-  close_visible_agents(target)
+  local visible = visible_agent()
+  if visible and visible.bufnr ~= target then
+    setup_agent(visible.name).save_view(visible.win)
+    close_visible_agents(visible.bufnr)
+    opts = vim.tbl_extend("force", opts or {}, { reuse_win = visible.win })
+  else
+    close_visible_agents(target)
+  end
   if target then
     return setup_agent(name).focus(target, opts)
   end
-  setup_agent(name).toggle()
-  return true
+  return setup_agent(name).new(opts)
 end
 
 function M.new(name)
   if not agent_defs[name] then
     return false
   end
-  close_visible_agents()
-  setup_agent(name).new()
-  return true
+  local visible = visible_agent()
+  local opts
+  if visible then
+    setup_agent(visible.name).save_view(visible.win)
+    close_visible_agents(visible.bufnr)
+    opts = { reuse_win = visible.win }
+  end
+  return setup_agent(name).new(opts)
 end
 
 function M.toggle_agent(name)
@@ -282,8 +296,16 @@ function M.send_selection(name)
     return false
   end
   local target = agent_buffer(name, vim.fn.getcwd())
-  close_visible_agents(target)
-  setup_agent(name).send_selection(target)
+  local visible = visible_agent()
+  local opts
+  if visible and visible.bufnr ~= target then
+    setup_agent(visible.name).save_view(visible.win)
+    close_visible_agents(visible.bufnr)
+    opts = { reuse_win = visible.win }
+  else
+    close_visible_agents(target)
+  end
+  setup_agent(name).send_selection(target, opts)
   return true
 end
 
