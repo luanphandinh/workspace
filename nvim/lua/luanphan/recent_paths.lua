@@ -134,4 +134,36 @@ function M.switch_targets(items, path_of, current_path, fallback)
   return ordered
 end
 
+function M.grouped_switch_targets(items, group_of, current_group, item_before, group_before)
+  local groups = {}
+  local by_key = {}
+  for index, item in ipairs(items) do
+    local path = group_of(item)
+    local key = normalize(path) or ("invalid:" .. index)
+    local group = by_key[key]
+    if not group then
+      group = { path = path, items = {} }
+      by_key[key] = group
+      groups[#groups + 1] = group
+    end
+    group.items[#group.items + 1] = item
+  end
+
+  if item_before then
+    for _, group in ipairs(groups) do
+      table.sort(group.items, item_before)
+    end
+  end
+
+  groups = M.switch_targets(groups, function(group)
+    return group.path
+  end, current_group, group_before)
+
+  local ordered = {}
+  for _, group in ipairs(groups) do
+    vim.list_extend(ordered, group.items)
+  end
+  return ordered
+end
+
 return M

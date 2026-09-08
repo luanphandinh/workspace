@@ -33,6 +33,10 @@ local function setup()
   local BUFSTORE_KEY = "luanphan_workspace_buffers"
   local WS_CONTAINER = "local_workspaces"
   local AGENT_BUFFER_KEYS = require("luanphan.plugins.agents").agent_buffer_keys()
+  local AGENT_ORDER = {}
+  for index, agent in ipairs(AGENT_BUFFER_KEYS) do
+    AGENT_ORDER[agent.name] = index
+  end
   local recent_paths = require("luanphan.recent_paths")
 
   -- Transient map of "apply this cursor when the file is first BufReadPost'd
@@ -1081,6 +1085,7 @@ local function setup()
               destination = root,
               path = cwd,
               status = agent_status.read(agent.name, cwd),
+              last_used = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0,
             }
           end
         end
@@ -1090,8 +1095,11 @@ local function setup()
     recent_paths.sort(instances, function(instance)
       return instance.path
     end, function(a, b)
-      if a.context == b.context then
-        return a.agent < b.agent
+      if a.path == b.path then
+        if a.last_used ~= b.last_used then
+          return a.last_used > b.last_used
+        end
+        return (AGENT_ORDER[a.agent] or math.huge) < (AGENT_ORDER[b.agent] or math.huge)
       end
       return a.context < b.context
     end)
@@ -1577,9 +1585,14 @@ local function setup()
   end
 
   local function agent_switch_targets(instances, current_path)
-    return recent_paths.switch_targets(instances, function(instance)
-      return instance.destination or instance.path
-    end, current_path)
+    return recent_paths.grouped_switch_targets(instances, function(instance)
+      return instance.path
+    end, current_path, function(a, b)
+      if a.last_used ~= b.last_used then
+        return a.last_used > b.last_used
+      end
+      return (AGENT_ORDER[a.agent] or math.huge) < (AGENT_ORDER[b.agent] or math.huge)
+    end)
   end
 
   local function pick_agent()
@@ -1589,8 +1602,7 @@ local function setup()
 
     local instances = list_active_agents()
     local current = safe_getcwd()
-    local current_destination = git_root(current) or workspace_root_for_path(current) or current
-    instances = agent_switch_targets(instances, current_destination)
+    instances = agent_switch_targets(instances, current)
     if #instances == 0 then
       vim.notify("no active agent terminals found", vim.log.levels.WARN)
       return

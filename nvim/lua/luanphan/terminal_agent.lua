@@ -154,6 +154,12 @@ local function owns_buffer(bufnr)
   return false
 end
 
+local function mark_terminal_used(bufnr)
+  local sequence = (tonumber(vim.g.luanphan_agent_use_sequence) or 0) + 1
+  vim.g.luanphan_agent_use_sequence = sequence
+  vim.b[bufnr].luanphan_agent_last_used = sequence
+end
+
 local function save_terminal_view(win)
   if not win or not vim.api.nvim_win_is_valid(win) then
     return
@@ -173,6 +179,7 @@ local function save_terminal_view(win)
 end
 
 local function resume_terminal_view(win, bufnr)
+  mark_terminal_used(bufnr)
   local saved = vim.b[bufnr].luanphan_terminal_view
   if type(saved) == "table" and saved.follow == false and type(saved.view) == "table" then
     vim.schedule(function()

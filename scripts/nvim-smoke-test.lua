@@ -1821,9 +1821,13 @@ local function test_active_agent_discovery(repo, worktree)
 
   local ok, err = xpcall(function()
     local codex_buf = start_terminal(repo)
-    local cursor_buf = start_terminal(worktree)
+    local repo_cursor_buf = start_terminal(repo)
+    local worktree_cursor_buf = start_terminal(worktree)
+    vim.b[codex_buf].luanphan_agent_last_used = 1
+    vim.b[repo_cursor_buf].luanphan_agent_last_used = 2
+    vim.b[worktree_cursor_buf].luanphan_agent_last_used = 3
     vim.g.codex_agent_bufnr = { [repo] = codex_buf }
-    vim.g.cursor_agent_bufnr = { [worktree] = cursor_buf }
+    vim.g.cursor_agent_bufnr = { [repo] = repo_cursor_buf, [worktree] = worktree_cursor_buf }
     vim.g.claude_agent_bufnr = { [repo] = 999999 }
     assert_true(agent_status.write("codex", repo, "running"), "failed to record first agent state")
     assert_true(agent_status.write("cursor", worktree, "idle"), "failed to record second agent state")
@@ -1831,28 +1835,41 @@ local function test_active_agent_discovery(repo, worktree)
     local recent_paths = require("luanphan.recent_paths")
     recent_paths.touch(worktree)
     local instances = api.list_active_agents()
-    assert_true(#instances == 2, "active agent discovery returned an unexpected instance count")
-    assert_true(instances[1].agent == "cursor", "agent picker did not promote the latest project")
+    assert_true(#instances == 3, "active agent discovery returned an unexpected instance count")
+    assert_true(instances[1].path == worktree, "agent picker did not promote the latest project")
     recent_paths.touch(repo)
     instances = api.list_active_agents()
-    assert_true(instances[1].agent == "codex", "agent picker did not move a revisited project to the front")
+    assert_true(instances[1].path == repo, "agent picker did not move a revisited project to the front")
+    assert_true(instances[1].agent == "cursor", "agent picker did not promote the last-used agent within its project")
+    assert_true(instances[2].path == repo, "agent picker split agents from the same project")
     local switch_targets = api.agent_switch_targets(instances, repo)
-    assert_true(#switch_targets == 2, "agent switch targets discarded an active agent")
-    assert_true(switch_targets[1].agent == "cursor", "agent switch targets did not promote the previous agent")
-    assert_true(switch_targets[2].agent == "codex", "agent switch targets did not retain the current agent")
-    local by_agent = {}
+    assert_true(#switch_targets == 3, "agent switch targets discarded an active agent")
+    assert_true(switch_targets[1].path == worktree, "agent switch targets did not promote the previous project")
+    assert_true(switch_targets[2].agent == "cursor", "agent switch targets changed the current project's agent order")
+    assert_true(switch_targets[3].agent == "codex", "agent switch targets split the current project")
+
+    vim.b[codex_buf].luanphan_agent_last_used = 4
+    instances = api.list_active_agents()
+    switch_targets = api.agent_switch_targets(instances, worktree)
+    assert_true(switch_targets[1].agent == "codex", "newly used agent was not promoted within the previous project")
+    assert_true(switch_targets[2].agent == "cursor", "same-project agents were not kept together")
+    assert_true(switch_targets[3].path == worktree, "current project was not kept after the previous project group")
+
+    local by_key = {}
     for _, instance in ipairs(instances) do
-      by_agent[instance.agent] = instance
+      by_key[instance.agent .. "\0" .. instance.path] = instance
     end
-    assert_true(realpath(by_agent.codex.path) == realpath(repo), "Codex agent path was not discovered")
-    assert_true(realpath(by_agent.cursor.path) == realpath(worktree), "Cursor agent path was not discovered")
-    assert_true(by_agent.claude == nil, "stale agent terminal survived discovery")
-    assert_true(by_agent.codex.status == "running", "running agent state was not discovered")
-    assert_true(by_agent.cursor.status == "idle", "idle agent state was not discovered")
-    assert_true(by_agent.codex.display:find("%[running%]") ~= nil, "agent display omitted running state")
-    assert_true(by_agent.cursor.display:find("%[idle%s+%]") ~= nil, "agent display omitted idle state")
-    assert_true(by_agent.codex.display:find("example%-repo") ~= nil, "agent display omitted repository context")
-    assert_true(by_agent.cursor.display:find("%[feature%]") ~= nil, "agent display omitted branch context")
+    local codex = by_key["codex\0" .. repo]
+    local cursor = by_key["cursor\0" .. worktree]
+    assert_true(codex ~= nil, "Codex agent path was not discovered")
+    assert_true(cursor ~= nil, "Cursor agent path was not discovered")
+    assert_true(by_key["claude\0" .. repo] == nil, "stale agent terminal survived discovery")
+    assert_true(codex.status == "running", "running agent state was not discovered")
+    assert_true(cursor.status == "idle", "idle agent state was not discovered")
+    assert_true(codex.display:find("%[running%]") ~= nil, "agent display omitted running state")
+    assert_true(cursor.display:find("%[idle%s+%]") ~= nil, "agent display omitted idle state")
+    assert_true(codex.display:find("example%-repo") ~= nil, "agent display omitted repository context")
+    assert_true(cursor.display:find("%[feature%]") ~= nil, "agent display omitted branch context")
     assert_true(vim.fn.exists(":AgentSwitch") == 2, "AgentSwitch command is missing")
 
     agents_module = require("luanphan.plugins.agents")
@@ -2979,6 +2996,8 @@ local function test_agent_terminal_lifecycle(repo)
     return visible_agent_float_count() == 1
   end, 1000)
   local first_buf = vim.api.nvim_get_current_buf()
+  local first_used = tonumber(vim.b[first_buf].luanphan_agent_last_used) or 0
+  assert_true(first_used > 0, "new agent terminal did not record its use order")
   local quit_ok, quit_err = pcall(vim.cmd, "quit")
   assert_true(quit_ok, "agent terminal :q failed: " .. tostring(quit_err))
   wait_until("agent terminal client exit", function()
@@ -2989,6 +3008,9 @@ local function test_agent_terminal_lifecycle(repo)
   wait_until("fresh agent terminal after quit", function()
     return visible_agent_float_count() == 1 and vim.api.nvim_get_current_buf() ~= first_buf
   end, 1000)
+  local second_buf = vim.api.nvim_get_current_buf()
+  local second_used = tonumber(vim.b[second_buf].luanphan_agent_last_used) or 0
+  assert_true(second_used > first_used, "replacement agent terminal did not advance its use order")
   assert_true(vim.fn.maparg("<C-j>", "t") == "", "agent terminal insert mode captured <C-j>")
   vim.cmd("stopinsert")
   local view_down_map = vim.fn.maparg("<C-j>", "n", false, true)
@@ -3002,6 +3024,10 @@ local function test_agent_terminal_lifecycle(repo)
   wait_until("agent terminal reopened after view navigation", function()
     return visible_agent_float_count() == 1
   end, 1000)
+  assert_true(
+    (tonumber(vim.b[second_buf].luanphan_agent_last_used) or 0) > second_used,
+    "refocused agent terminal did not advance its use order"
+  )
   assert_true(agent_status.read("example-agent", repo) == "idle", "new agent terminal did not start idle")
   local submit_map = vim.fn.maparg("<CR>", "t", false, true)
   assert_true(type(submit_map) == "table" and type(submit_map.callback) == "function", "agent submit tracking is missing")
