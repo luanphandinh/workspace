@@ -58,7 +58,14 @@ ifeq ($(UNAME),Darwin)
 		echo "apps: Homebrew is required on macOS" >&2; \
 		exit 1; \
 	fi
-	@for app in maccy alfred arc; do brew install --cask "$$app" || true; done
+	@for app in maccy alfred arc stats; do brew install --cask "$$app" || true; done
+	@pkill -x Stats >/dev/null 2>&1 || true
+	@sleep 1
+	@defaults write eu.exelban.Stats version -string "$$(plutil -extract CFBundleShortVersionString raw -o - /Applications/Stats.app/Contents/Info.plist)"
+	@for module in CPU RAM Network; do defaults write eu.exelban.Stats "$${module}_state" -bool true; done
+	@for module in GPU Disk Sensors Battery Bluetooth Clock Remote; do defaults write eu.exelban.Stats "$${module}_state" -bool false; done
+	@defaults write eu.exelban.Stats setupProcess -bool true
+	@open -g /Applications/Stats.app
 else
 	@echo "apps: skipped; macOS-only"
 endif
