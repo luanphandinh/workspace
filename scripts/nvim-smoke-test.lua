@@ -991,6 +991,21 @@ local function visible_toggleterm_window_count()
   return count
 end
 
+local function close_toggleterm_terminals()
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(buf) and vim.b[buf].luanphan_toggleterm then
+      for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+        pcall(vim.api.nvim_win_close, win, true)
+      end
+      local job = vim.b[buf].terminal_job_id
+      if type(job) == "number" and job > 0 then
+        pcall(vim.fn.jobstop, job)
+      end
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+end
+
 local function visible_agent_float_count()
   local count = 0
   for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -2510,6 +2525,92 @@ local function test_agent_view_container(repo)
   assert_true(ok, tostring(err))
 end
 
+local function test_terminal_view_container(repo)
+  local old_cwd = vim.fn.getcwd()
+  close_toggleterm_terminals()
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(repo))
+    invoke_lazy_map("<leader>tt", "toggleterm.nvim")
+    wait_until("first terminal tab", function()
+      return visible_toggleterm_window_count() == 1 and vim.b[vim.api.nvim_get_current_buf()].luanphan_toggleterm
+    end, 3000)
+
+    local first_buf = vim.api.nvim_get_current_buf()
+    local first_job = vim.b[first_buf].terminal_job_id
+    vim.fn.chansend(first_job, "i=1; while [ \"$i\" -le 100 ]; do printf 'first-%03d\\n' \"$i\"; i=$((i+1)); done\n")
+    wait_until("first terminal scrollback", function()
+      return vim.api.nvim_buf_line_count(first_buf) >= 80
+    end, 3000)
+    vim.cmd("stopinsert")
+    local first_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_cursor(first_win, { 10, 0 })
+    vim.api.nvim_win_call(first_win, function()
+      vim.cmd("normal! zt")
+    end)
+    local first_view = vim.api.nvim_win_call(first_win, vim.fn.winsaveview)
+
+    local new_map = vim.fn.maparg("<leader>fn", "n", false, true)
+    assert_true(type(new_map) == "table" and type(new_map.callback) == "function", "terminal view mode is missing new-tab creation")
+    new_map.callback()
+    wait_until("second terminal tab", function()
+      return visible_toggleterm_window_count() == 1
+        and vim.b[vim.api.nvim_get_current_buf()].luanphan_toggleterm
+        and vim.api.nvim_get_current_buf() ~= first_buf
+    end, 3000)
+
+    local second_buf = vim.api.nvim_get_current_buf()
+    local second_job = vim.b[second_buf].terminal_job_id
+    local winbar = vim.api.nvim_get_option_value("winbar", { win = vim.api.nvim_get_current_win() })
+    assert_true(winbar:find("terminal 1", 1, true) ~= nil, "terminal tab bar omitted the first terminal")
+    assert_true(winbar:find("[terminal 2]", 1, true) ~= nil, "terminal tab bar did not select the new terminal")
+
+    vim.fn.chansend(second_job, "i=1; while [ \"$i\" -le 100 ]; do printf 'second-%03d\\n' \"$i\"; i=$((i+1)); done\n")
+    wait_until("second terminal scrollback", function()
+      return vim.api.nvim_buf_line_count(second_buf) >= 80
+    end, 3000)
+    vim.cmd("stopinsert")
+    local second_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_cursor(second_win, { 20, 0 })
+    vim.api.nvim_win_call(second_win, function()
+      vim.cmd("normal! zt")
+    end)
+    local second_view = vim.api.nvim_win_call(second_win, vim.fn.winsaveview)
+
+    invoke_map("<leader>tt")
+    assert_true(visible_toggleterm_window_count() == 0, "terminal toggle did not hide the container")
+    assert_true(vim.fn.jobwait({ first_job, second_job }, 0)[1] == -1, "hiding the terminal container stopped the first shell")
+    assert_true(vim.fn.jobwait({ first_job, second_job }, 0)[2] == -1, "hiding the terminal container stopped the second shell")
+
+    invoke_map("<leader>tt")
+    wait_until("last terminal tab restored", function()
+      if vim.api.nvim_get_current_buf() ~= second_buf then
+        return false
+      end
+      local view = vim.api.nvim_win_call(vim.api.nvim_get_current_win(), vim.fn.winsaveview)
+      return view.lnum == second_view.lnum and view.topline == second_view.topline
+    end, 3000)
+
+    vim.cmd("stopinsert")
+    local next_map = vim.fn.maparg("<Tab>", "n", false, true)
+    assert_true(type(next_map) == "table" and type(next_map.callback) == "function", "terminal view mode is missing tab cycling")
+    next_map.callback()
+    wait_until("first terminal view restored", function()
+      if vim.api.nvim_get_current_buf() ~= first_buf then
+        return false
+      end
+      local view = vim.api.nvim_win_call(vim.api.nvim_get_current_win(), vim.fn.winsaveview)
+      return view.lnum == first_view.lnum and view.topline == first_view.topline
+    end, 3000)
+  end, debug.traceback)
+
+  close_toggleterm_terminals()
+  if vim.fn.isdirectory(old_cwd) == 1 then
+    pcall(vim.cmd, "cd " .. vim.fn.fnameescape(old_cwd))
+  end
+  assert_true(ok, tostring(err))
+end
+
 local function test_lsp_definition_and_references(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   assert_lsp_navigation(repo .. "/main.go")
@@ -3152,9 +3253,10 @@ local function test_worktree_switch_restores_repository_jumplist(repo, worktree)
 end
 
 local function test_worktree_switch_hides_toggleterm(repo, worktree)
+  test_terminal_view_container(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
 
-  feed_normal((vim.g.mapleader or "\\") .. "tt")
+  invoke_map("<leader>tt")
   wait_until("toggleterm open", function()
     return visible_toggleterm_window_count() > 0
   end, 3000)
@@ -4172,7 +4274,7 @@ local setup_ok, setup_err = xpcall(function()
     test_worktree_switch_restores_repository_jumplist(repo, worktree)
   end)
 
-  test("worktree switch hides toggleterm", function()
+  test("shell terminal tabs and worktree hiding", function()
     test_worktree_switch_hides_toggleterm(repo, worktree)
   end)
 

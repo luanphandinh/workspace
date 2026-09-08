@@ -136,6 +136,15 @@ function Container:pick(context)
 	end)
 end
 
+function Container:create(context)
+	context = context or self:context()
+	if self.opts.new then
+		self.opts.new(context)
+		return
+	end
+	self:pick(context)
+end
+
 function Container:attach(win, bufnr, id, context)
 	if not win or not vim.api.nvim_win_is_valid(win) or not vim.api.nvim_buf_is_valid(bufnr) then
 		return
@@ -148,7 +157,7 @@ function Container:attach(win, bufnr, id, context)
 		self:cycle(context)
 	end, vim.tbl_extend("force", opts, { desc = self.opts.cycle_desc or "Next view" }))
 	vim.keymap.set("n", "<leader>fn", function()
-		self:pick(context)
+		self:create(context)
 	end, vim.tbl_extend("force", opts, { desc = self.opts.new_desc or "New view" }))
 
 	self:render(win, context)
@@ -166,7 +175,7 @@ function M.create(opts)
 	assert(type(opts) == "table", "view container options are required")
 	assert(type(opts.context) == "function", "view container context callback is required")
 	assert(type(opts.tabs) == "function", "view container tabs callback is required")
-	assert(type(opts.choices) == "function", "view container choices callback is required")
+	assert(type(opts.choices) == "function" or type(opts.new) == "function", "view container picker or new callback is required")
 	assert(type(opts.activate) == "function", "view container activate callback is required")
 	return setmetatable({
 		opts = opts,
