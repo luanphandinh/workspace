@@ -168,6 +168,7 @@ local function setup_terminal_autocmds()
       vim.defer_fn(function()
         if vim.api.nvim_get_current_buf() == ev.buf
             and vim.bo[ev.buf].buftype == "terminal"
+            and not vim.b[ev.buf].luanphan_persist_term
             and not vim.b[ev.buf].luanphan_toggleterm then
           vim.cmd("startinsert")
         end

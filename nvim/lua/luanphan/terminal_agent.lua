@@ -251,24 +251,18 @@ local function resume_terminal_view(win, bufnr)
     pcall(profile.on_show, bufnr, win, vim.b[bufnr].luanphan_agent_cwd or cwd_key())
   end
   local saved = vim.b[bufnr].luanphan_terminal_view
-  if type(saved) == "table" and saved.follow == false and type(saved.view) == "table" then
-    vim.schedule(function()
-      if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == bufnr then
+  vim.schedule(function()
+    if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == bufnr then
+      if vim.api.nvim_get_current_win() == win then
+        vim.cmd("stopinsert")
+      end
+      if type(saved) == "table" and saved.follow == false and type(saved.view) == "table" then
         pcall(vim.api.nvim_win_call, win, function()
           vim.fn.winrestview(saved.view)
         end)
       end
-    end)
-    return
-  end
-
-  vim.defer_fn(function()
-    if vim.api.nvim_win_is_valid(win)
-        and vim.api.nvim_win_get_buf(win) == bufnr
-        and vim.api.nvim_get_current_win() == win then
-      vim.cmd("startinsert")
     end
-  end, 10)
+  end)
 end
 
 --- Vertical split with new window on the right (does not change global 'splitright' afterward).
