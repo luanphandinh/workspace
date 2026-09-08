@@ -34,6 +34,8 @@ local BASE_DEFAULTS = {
 ---@field augroup_prefix string prefix for autocmd groups (CursorAgent / ClaudeAgent)
 ---@field hint_open string hint when no terminal (e.g. "<leader>;")
 ---@field defaults? table merged into BASE_DEFAULTS (cmd, args, …)
+---@field on_show? fun(bufnr: integer, win: integer, cwd: string)
+---@field on_close? fun(bufnr: integer, cwd: string)
 function M.create(profile)
   profile = vim.tbl_extend("force", {
     g_bufnr = "terminal_agent_bufnr",
@@ -89,6 +91,8 @@ local function set_agent_bufnr(bufnr, cwd)
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
     state.bufnrs[cwd] = bufnr
     pcall(function() vim.b[bufnr].luanphan_persist_term = true end)
+    pcall(function() vim.b[bufnr].luanphan_agent_name = profile.status_name end)
+    pcall(function() vim.b[bufnr].luanphan_agent_cwd = cwd end)
     require("luanphan.terminal_references").attach(bufnr, cwd)
   else
     state.bufnrs[cwd] = nil
@@ -102,6 +106,9 @@ local function clear_bufnr_for_buf(bufnr)
     if b == bufnr then
       state.bufnrs[cwd] = nil
       persist_map()
+      if profile.on_close then
+        pcall(profile.on_close, bufnr, cwd)
+      end
       return cwd
     end
   end
@@ -180,6 +187,9 @@ end
 
 local function resume_terminal_view(win, bufnr)
   mark_terminal_used(bufnr)
+  if profile.on_show then
+    pcall(profile.on_show, bufnr, win, vim.b[bufnr].luanphan_agent_cwd or cwd_key())
+  end
   local saved = vim.b[bufnr].luanphan_terminal_view
   if type(saved) == "table" and saved.follow == false and type(saved.view) == "table" then
     vim.schedule(function()
@@ -565,6 +575,8 @@ local function restore_agent_bufnr()
       if type(cwd) == "string" and type(nr) == "number" and term_buffer_alive(nr) then
         state.bufnrs[cwd] = nr
         pcall(function() vim.b[nr].luanphan_persist_term = true end)
+        pcall(function() vim.b[nr].luanphan_agent_name = profile.status_name end)
+        pcall(function() vim.b[nr].luanphan_agent_cwd = cwd end)
         attach_term_close(nr)
         attach_quit_detach(nr)
         apply_agent_scrollback(nr)
@@ -581,6 +593,9 @@ local function restore_agent_bufnr()
     if rwin then
       configure_terminal_window(rwin)
       lock_cursor_window(rwin)
+      if profile.on_show then
+        pcall(profile.on_show, cur, rwin, vim.b[cur].luanphan_agent_cwd or cwd_key())
+      end
     end
   end
 end
@@ -787,7 +802,7 @@ local function exit_visual_to_normal()
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
 end
 
-function API.send_selection()
+function API.send_selection(target_bufnr)
   local bufnr = vim.api.nvim_get_current_buf()
   if vim.bo[bufnr].buftype ~= "" then
     nx("not supported in this buffer", vim.log.levels.WARN)
@@ -821,8 +836,15 @@ function API.send_selection()
     return
   end
 
+  local function target_terminal()
+    if target_bufnr and term_buffer_alive(target_bufnr) then
+      return target_bufnr
+    end
+    return current_bufnr()
+  end
+
   local function focus_term_win()
-    local cur = current_bufnr()
+    local cur = target_terminal()
     if not cur then return end
     local w = win_for_buf(cur)
     if w then
@@ -833,7 +855,7 @@ function API.send_selection()
 
   local function deliver(attempt)
     attempt = attempt or 1
-    local cur = current_bufnr()
+    local cur = target_terminal()
     if not cur or not term_buffer_alive(cur) then
       if attempt < 3 then
         vim.defer_fn(function()
@@ -847,7 +869,7 @@ function API.send_selection()
 
     local win = win_for_buf(cur)
     if not win then
-      show_terminal()
+      show_terminal(cur)
     end
 
     local job = get_job_id(cur)
@@ -872,7 +894,7 @@ function API.send_selection()
     focus_term_win()
   end
 
-  local cur = current_bufnr()
+  local cur = target_terminal()
   if not cur or not term_buffer_alive(cur) then
     set_agent_bufnr(nil)
     open_terminal()
