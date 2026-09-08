@@ -132,7 +132,7 @@ function Container:pick(context)
 		return
 	end
 	select_item(self.opts.picker_title or "Views", choices, function(choice)
-		self.opts.activate(choice)
+		(self.opts.create or self.opts.activate)(choice)
 	end)
 end
 

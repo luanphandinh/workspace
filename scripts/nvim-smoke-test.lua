@@ -1033,26 +1033,45 @@ local function invoke_map(lhs, mode)
   map.callback()
 end
 
-local function agent_bufnr(global_name)
+local function registered_agent_bufnrs(global_name, cwd)
   local stored = vim.g[global_name]
-  if type(stored) == "number" then
-    return stored
-  end
-  if type(stored) ~= "table" then
-    return nil
-  end
-
-  local cwd_bufnr = stored[vim.fn.getcwd()]
-  if type(cwd_bufnr) == "number" then
-    return cwd_bufnr
-  end
-
-  for _, bufnr in pairs(stored) do
-    if type(bufnr) == "number" then
-      return bufnr
+  local result = {}
+  local function append(value)
+    if type(value) == "number" then
+      result[#result + 1] = value
+    elseif type(value) == "table" then
+      for _, nested in pairs(value) do
+        append(nested)
+      end
     end
   end
-  return nil
+
+  if type(stored) == "table" and cwd and stored[cwd] ~= nil then
+    append(stored[cwd])
+  else
+    append(stored)
+  end
+  return result
+end
+
+local function agent_bufnr(global_name)
+  local candidates = registered_agent_bufnrs(global_name, vim.fn.getcwd())
+  if #candidates == 0 then
+    candidates = registered_agent_bufnrs(global_name)
+  end
+
+  local selected = nil
+  local selected_sequence = -1
+  for _, bufnr in ipairs(candidates) do
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      local sequence = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0
+      if sequence > selected_sequence then
+        selected = bufnr
+        selected_sequence = sequence
+      end
+    end
+  end
+  return selected
 end
 
 local function feed_normal(keys)
@@ -2407,18 +2426,50 @@ local function test_agent_view_container(repo)
     local selected = nil
     for _ = 1, 3 do
       selected = action_state.get_selected_entry()
-      if selected and selected.value and selected.value.id == "claude" then
+      if selected and selected.value and selected.value.id == "codex" then
         break
       end
       picker:move_selection(1)
     end
-    assert_true(selected and selected.value.id == "claude", "new-tab picker omitted a registered agent")
+    assert_true(selected and selected.value.id == "codex", "new-tab picker omitted an already-open agent type")
     require("telescope.actions").select_default(prompt_buf)
-    wait_until("third agent tab", function()
+    wait_until("second codex tab", function()
       return visible_agent_float_count() == 1
-        and agent_bufnr("claude_agent_bufnr") ~= nil
+        and #registered_agent_bufnrs("codex_agent_bufnr", repo) == 2
+        and vim.api.nvim_get_current_buf() == agent_bufnr("codex_agent_bufnr")
+    end, 3000)
+    local second_codex_buf = agent_bufnr("codex_agent_bufnr")
+    assert_true(second_codex_buf ~= codex_buf, "new-tab picker reused the existing Codex terminal")
+
+    assert_true(agents.new("cursor"), "could not create a second Cursor terminal")
+    wait_until("second cursor tab", function()
+      return #registered_agent_bufnrs("cursor_agent_bufnr", repo) == 2
+        and vim.api.nvim_get_current_buf() == agent_bufnr("cursor_agent_bufnr")
+    end, 3000)
+    local second_cursor_buf = agent_bufnr("cursor_agent_bufnr")
+    assert_true(second_cursor_buf ~= cursor_buf, "new Cursor tab reused the existing terminal")
+    cursor_buf = second_cursor_buf
+
+    assert_true(agents.new("claude"), "could not create the first Claude terminal")
+    assert_true(agents.new("claude"), "could not create the second Claude terminal")
+    wait_until("duplicate agent tabs", function()
+      return #registered_agent_bufnrs("claude_agent_bufnr", repo) == 2
         and vim.api.nvim_get_current_buf() == agent_bufnr("claude_agent_bufnr")
     end, 3000)
+
+    winbar = vim.api.nvim_get_option_value("winbar", { win = vim.api.nvim_get_current_win() })
+    for _, label in ipairs({ "codex 1", "codex 2", "cursor 1", "cursor 2", "claude 1", "claude 2" }) do
+      assert_true(winbar:find(label, 1, true) ~= nil, "agent tab bar omitted " .. label)
+    end
+
+    local active_instances = worktree_test_api().list_active_agents()
+    local repo_instances = 0
+    for _, instance in ipairs(active_instances) do
+      if realpath(instance.path) == realpath(repo) then
+        repo_instances = repo_instances + 1
+      end
+    end
+    assert_true(repo_instances == 6, "active-agent picker did not retain every terminal instance")
 
     assert_true(agents.open("cursor"), "could not reactivate the selected terminal agent")
     wait_until("active agent before send", function()
@@ -3232,7 +3283,8 @@ local function test_worktree_switch_restores_agent_terminal(repo, worktree)
   local buffers = vim.g.smoke_agent_bufnr
   local repo_buf = nil
   local worktree_buf = nil
-  for path, bufnr in pairs(buffers) do
+  for path, value in pairs(buffers) do
+    local bufnr = type(value) == "table" and value[1] or value
     if realpath(path) == realpath(repo) then
       repo_buf = bufnr
     elseif realpath(path) == realpath(worktree) then

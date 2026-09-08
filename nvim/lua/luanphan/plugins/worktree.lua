@@ -1056,6 +1056,13 @@ local function setup()
     return ok and status[1] == -1
   end
 
+  local function registered_agent_buffers(value)
+    if type(value) == "number" then
+      return { value }
+    end
+    return type(value) == "table" and value or {}
+  end
+
   local function agent_before(a, b)
     if a.last_used ~= b.last_used then
       return a.last_used > b.last_used
@@ -1063,7 +1070,12 @@ local function setup()
     if a.context ~= b.context then
       return a.context < b.context
     end
-    return (AGENT_ORDER[a.agent] or math.huge) < (AGENT_ORDER[b.agent] or math.huge)
+    local a_order = AGENT_ORDER[a.agent] or math.huge
+    local b_order = AGENT_ORDER[b.agent] or math.huge
+    if a_order ~= b_order then
+      return a_order < b_order
+    end
+    return a.bufnr < b.bufnr
   end
 
   local function list_active_agents()
@@ -1072,31 +1084,35 @@ local function setup()
     for _, agent in ipairs(AGENT_BUFFER_KEYS) do
       local buffers = vim.g[agent.key]
       if type(buffers) == "table" then
-        for cwd, bufnr in pairs(buffers) do
-          if type(cwd) == "string" and dir_exists(cwd) and terminal_job_running(bufnr) then
-            local root = git_root(cwd) or cwd
-            local context = vim.fn.fnamemodify(root, ":t")
-            local marker = "/" .. WS_CONTAINER .. "/"
-            local marker_start = root:find(marker, 1, true)
-            if marker_start then
-              local workspace = root:sub(marker_start + #marker):match("^([^/]+)")
-              if workspace then
-                context = workspace .. "/" .. context
+        for cwd, value in pairs(buffers) do
+          local bufnrs = registered_agent_buffers(value)
+          for index, bufnr in ipairs(bufnrs) do
+            if type(cwd) == "string" and dir_exists(cwd) and terminal_job_running(bufnr) then
+              local root = git_root(cwd) or cwd
+              local context = vim.fn.fnamemodify(root, ":t")
+              local marker = "/" .. WS_CONTAINER .. "/"
+              local marker_start = root:find(marker, 1, true)
+              if marker_start then
+                local workspace = root:sub(marker_start + #marker):match("^([^/]+)")
+                if workspace then
+                  context = workspace .. "/" .. context
+                end
               end
+              if cwd ~= root and path_is_in_dir(cwd, root) then
+                context = context .. "/" .. cwd:sub(#root + 2)
+              end
+              instances[#instances + 1] = {
+                agent = agent.name,
+                agent_label = #bufnrs > 1 and (agent.name .. " " .. index) or agent.name,
+                branch = project_branch(root),
+                bufnr = bufnr,
+                context = context,
+                destination = root,
+                path = cwd,
+                status = agent_status.read(agent.name, cwd),
+                last_used = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0,
+              }
             end
-            if cwd ~= root and path_is_in_dir(cwd, root) then
-              context = context .. "/" .. cwd:sub(#root + 2)
-            end
-            instances[#instances + 1] = {
-              agent = agent.name,
-              branch = project_branch(root),
-              bufnr = bufnr,
-              context = context,
-              destination = root,
-              path = cwd,
-              status = agent_status.read(agent.name, cwd),
-              last_used = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0,
-            }
           end
         end
       end
@@ -1110,7 +1126,7 @@ local function setup()
     local current = safe_getcwd()
     local current_destination = git_root(current) or workspace_root_for_path(current) or current
     for _, instance in ipairs(instances) do
-      agent_width = math.max(agent_width, #instance.agent)
+      agent_width = math.max(agent_width, #instance.agent_label)
       status_width = math.max(status_width, #instance.status)
       context_width = math.max(context_width, #instance.context)
     end
@@ -1119,7 +1135,7 @@ local function setup()
       instance.display = string.format(
         "%s%-" .. agent_width .. "s  [%-" .. status_width .. "s]  %-" .. context_width .. "s  [%s]",
         marker,
-        instance.agent,
+        instance.agent_label,
         instance.status,
         instance.context,
         instance.branch

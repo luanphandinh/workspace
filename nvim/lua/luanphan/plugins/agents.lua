@@ -34,9 +34,9 @@ local agent_defs = {
     augroup_prefix = "CodexAgent",
     defaults = { cmd = "mcodex", detach_on_quit = true },
     keys = {
-      toggle = { lhs = "<leader>;", mode = "n", desc = "Toggle agents", shared = true },
+      toggle = { lhs = "<leader>;", mode = "n", desc = "Toggle agents" },
       focus = { lhs = "<leader>cf", mode = "n", desc = "Focus terminal" },
-      send = { lhs = "<leader>;", mode = { "x", "s" }, desc = "Send to active agent", shared = true },
+      send = { lhs = "<leader>;", mode = { "x", "s" }, desc = "Send to active agent" },
     },
   },
 }
@@ -61,19 +61,50 @@ local function terminal_running(bufnr)
   return ok and status[1] == -1
 end
 
-local function agent_buffer(name, cwd)
+local function normalize_bufnrs(value)
+  if type(value) == "number" then
+    return { value }
+  end
+  return type(value) == "table" and value or {}
+end
+
+local function agent_buffers(name, cwd)
   local def = agent_defs[name]
   local buffers = def and vim.g[def.g_bufnr] or nil
-  local bufnr = type(buffers) == "table" and buffers[cwd] or nil
-  return terminal_running(bufnr) and bufnr or nil
+  local result = {}
+  local stored = type(buffers) == "table" and buffers[cwd] or nil
+  for _, bufnr in ipairs(normalize_bufnrs(stored)) do
+    if terminal_running(bufnr) then
+      result[#result + 1] = bufnr
+    end
+  end
+  return result
+end
+
+local function agent_buffer(name, cwd)
+  local selected = nil
+  local selected_sequence = -1
+  for _, bufnr in ipairs(agent_buffers(name, cwd)) do
+    local sequence = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0
+    if sequence > selected_sequence then
+      selected = bufnr
+      selected_sequence = sequence
+    end
+  end
+  return selected
 end
 
 local function open_tabs(cwd)
   local tabs = {}
   for _, name in ipairs(agent_order) do
-    local bufnr = agent_buffer(name, cwd)
-    if bufnr then
-      tabs[#tabs + 1] = { id = name, label = name, bufnr = bufnr }
+    local bufnrs = agent_buffers(name, cwd)
+    for index, bufnr in ipairs(bufnrs) do
+      tabs[#tabs + 1] = {
+        id = name .. ":" .. bufnr,
+        label = #bufnrs > 1 and (name .. " " .. index) or name,
+        agent = name,
+        bufnr = bufnr,
+      }
     end
   end
   return tabs
@@ -92,15 +123,13 @@ local function most_recent_tab(cwd)
   return selected
 end
 
-local function agent_choices(cwd)
+local function agent_choices()
   local choices = {}
   for _, name in ipairs(agent_order) do
-    local bufnr = agent_buffer(name, cwd)
     choices[#choices + 1] = {
       id = name,
       label = name,
-      bufnr = bufnr,
-      display = name .. (bufnr and " [open]" or ""),
+      display = name,
       ordinal = name,
     }
   end
@@ -161,10 +190,10 @@ local function get_agent(name)
     hint_open = def.keys.toggle.lhs,
     defaults = resolve_defaults(def.defaults),
     on_show = function(bufnr, win, cwd)
-      agent_container:attach(win, bufnr, name, cwd)
+      agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
     end,
     on_close = function(bufnr, cwd)
-      agent_container:forget(name, bufnr, cwd)
+      agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
     end,
   })
   return apis[name]
@@ -214,6 +243,15 @@ function M.open(name, bufnr)
   return true
 end
 
+function M.new(name)
+  if not agent_defs[name] then
+    return false
+  end
+  close_visible_agents()
+  setup_agent(name).new()
+  return true
+end
+
 function M.toggle_agent(name)
   if not agent_defs[name] then
     return false
@@ -233,13 +271,13 @@ function M.toggle()
     return
   end
   local active = most_recent_tab(vim.fn.getcwd())
-  M.open(active and active.id or "codex", active and active.bufnr or nil)
+  M.open(active and active.agent or "codex", active and active.bufnr or nil)
 end
 
 function M.send_selection(name)
   local visible = visible_agent()
   local active = most_recent_tab(vim.fn.getcwd())
-  name = name or (visible and visible.name) or (active and active.id) or "codex"
+  name = name or (visible and visible.name) or (active and active.agent) or "codex"
   if not agent_defs[name] then
     return false
   end
@@ -254,9 +292,9 @@ local function key_spec(name, action)
   return {
     key.lhs,
     function()
-      if key.shared and action == "toggle" then
+      if name == "codex" and action == "toggle" then
         M.toggle()
-      elseif key.shared and action == "send" then
+      elseif name == "codex" and action == "send" then
         M.send_selection()
       elseif action == "toggle" then
         M.toggle_agent(name)
@@ -276,7 +314,10 @@ agent_container = require("luanphan.view_container").create({
   tabs = open_tabs,
   choices = agent_choices,
   activate = function(tab)
-    M.open(tab.id, tab.bufnr)
+    M.open(tab.agent, tab.bufnr)
+  end,
+  create = function(choice)
+    M.new(choice.id)
   end,
   picker_title = "Terminal Agents",
   empty_message = "no terminal agents registered",
