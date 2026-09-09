@@ -342,6 +342,10 @@ agent_container = require("luanphan.view_container").create({
     M.new(choice.id)
   end,
   picker_title = "Terminal Agents",
+  picker_opts = {
+    layout_strategy = "center",
+    layout_config = { width = 0.3, height = 0.25 },
+  },
   empty_message = "no terminal agents registered",
   cycle_desc = "Next terminal agent",
   new_desc = "New terminal agent",

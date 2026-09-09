@@ -1474,6 +1474,16 @@ local function test_flow_line_navigation()
     assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(second_file), "comment selection did not close Flow")
     assert_true(read_lines(storage)[1] == "// updated operation", "Flow did not save menu edits")
 
+    local editor_win = vim.api.nvim_get_current_win()
+    flow.toggle_menu()
+    local flow_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_buf_set_lines(0, 0, 1, false, { "// saved after focus leaves" })
+    vim.api.nvim_set_current_win(editor_win)
+    wait_until("Flow menu closes after focus leaves", function()
+      return not vim.api.nvim_win_is_valid(flow_win)
+    end, 1000)
+    assert_true(read_lines(storage)[1] == "// saved after focus leaves", "Flow lost edits when focus left the menu")
+
     flow.toggle_menu()
     vim.api.nvim_win_set_cursor(0, { 4, 0 })
     invoke_map("<CR>")
@@ -2545,6 +2555,18 @@ local function test_agent_view_container(repo)
     wait_until("registered agent choices", function()
       return picker.manager and picker.manager:num_results() == 3
     end, 3000)
+    local prompt_win = vim.fn.bufwinid(prompt_buf)
+    local results_win = -1
+    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_valid(bufnr) and vim.bo[bufnr].filetype == "TelescopeResults" then
+        results_win = vim.fn.bufwinid(bufnr)
+        if results_win ~= -1 then
+          break
+        end
+      end
+    end
+    assert_true(prompt_win ~= -1 and vim.api.nvim_win_get_width(prompt_win) < vim.o.columns * 0.4, "agent picker is too wide")
+    assert_true(results_win ~= -1 and vim.api.nvim_win_get_height(results_win) < vim.o.lines * 0.4, "agent picker is too tall")
     local selected = action_state.get_selected_entry()
     assert_true(selected and selected.value.id == "codex", "new-tab picker did not prioritize Codex")
     require("telescope.actions").select_default(prompt_buf)

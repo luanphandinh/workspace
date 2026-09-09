@@ -7,7 +7,7 @@ local function escape_statusline(value)
 	return tostring(value):gsub("%%", "%%%%")
 end
 
-local function select_item(title, items, on_select)
+local function select_item(title, items, on_select, picker_opts)
 	local ok_pickers, pickers = pcall(require, "telescope.pickers")
 	local ok_finders, finders = pcall(require, "telescope.finders")
 	local ok_config, telescope_config = pcall(require, "telescope.config")
@@ -24,7 +24,7 @@ local function select_item(title, items, on_select)
 	end
 
 	pickers
-		.new({}, {
+		.new({}, vim.tbl_extend("force", {
 			prompt_title = title,
 			finder = finders.new_table({
 				results = items,
@@ -50,7 +50,7 @@ local function select_item(title, items, on_select)
 				end)
 				return true
 			end,
-		})
+		}, picker_opts or {}))
 		:find()
 end
 
@@ -136,7 +136,7 @@ function Container:pick(context)
 	end
 	select_item(self.opts.picker_title or "Views", choices, function(choice)
 		(self.opts.create or self.opts.activate)(choice)
-	end)
+	end, self.opts.picker_opts)
 end
 
 function Container:create(context)

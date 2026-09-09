@@ -3,6 +3,7 @@ local M = {}
 local uv = vim.uv or vim.loop
 local menu = {}
 local indices = {}
+local autocmd_group = vim.api.nvim_create_augroup("LuanphanFlow", { clear = true })
 
 local function normalize(path)
   path = vim.fs.normalize(path)
@@ -218,6 +219,17 @@ function M.toggle_menu()
 
   vim.keymap.set("n", "q", save_and_close, { buffer = buf, silent = true })
   vim.keymap.set("n", "<Esc>", save_and_close, { buffer = buf, silent = true })
+  vim.api.nvim_create_autocmd("WinLeave", {
+    group = autocmd_group,
+    buffer = buf,
+    callback = function()
+      vim.schedule(function()
+        if menu.buf == buf and menu.win == win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_get_current_win() ~= win then
+          close_menu(true)
+        end
+      end)
+    end,
+  })
   vim.keymap.set("n", "<CR>", function()
     local source_line = vim.api.nvim_win_get_cursor(win)[1]
     local text = vim.api.nvim_buf_get_lines(buf, source_line - 1, source_line, false)[1]
