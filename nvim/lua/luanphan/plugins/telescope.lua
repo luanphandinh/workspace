@@ -6,6 +6,16 @@ local function live_grep()
   require("luanphan.telescope_grep_opts").live_grep()
 end
 
+local function live_grep_selection()
+  local visual_mode = vim.fn.mode()
+  if visual_mode ~= "v" and visual_mode ~= "V" and visual_mode ~= "\22" then
+    visual_mode = vim.fn.visualmode()
+  end
+  local lines = vim.fn.getregion(vim.fn.getpos("v"), vim.fn.getpos("."), { type = visual_mode })
+  local selection = vim.trim(table.concat(lines, " "):gsub("%s+", " "))
+  require("luanphan.telescope_grep_opts").live_grep(selection ~= "" and selection or nil)
+end
+
 local function search_settings()
   require("luanphan.search_priority").open_editor()
 end
@@ -66,6 +76,7 @@ return {
       { "<leader>ff", find_files, desc = "Find files" },
       { "<leader>p", find_files, desc = "Telescope: find files" },
       { "g/", live_grep, desc = "Telescope: live grep" },
+      { "g/", live_grep_selection, mode = "x", desc = "Telescope: live grep selection" },
       { "<leader>ss", search_settings, desc = "Search priority" },
       { "<leader>fl", buffers, desc = "List open files" },
       { "gs", document_symbols, desc = "Telescope: document symbols" },
