@@ -24,7 +24,7 @@ return {
         { "<leader>e", desc = "Focus NvimTree", icon = { icon = "󰙅 ", color = "green" } },
         { "<leader>f", group = "Files" },
         { "<leader>g", group = "Git" },
-        { "<leader>h", group = "Harpoon", icon = { icon = "󰛢 ", color = "azure" } },
+        { "<leader>h", group = "Flow", icon = { icon = "󰛢 ", color = "azure" } },
         { "<leader>k", group = "Editor" },
         { "<leader>r", group = "Restart", icon = { icon = " ", color = "cyan" } },
         { "<leader>s", group = "Settings", icon = { icon = " ", color = "yellow" } },

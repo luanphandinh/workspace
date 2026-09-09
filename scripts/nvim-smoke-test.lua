@@ -1428,6 +1428,73 @@ local function test_live_grep_highlights_content_only()
   end
 end
 
+local function test_flow_line_navigation()
+  local flow = require("luanphan.flow")
+  local original_data_dir = vim.g.luanphan_flow_data_dir
+  local original_cwd = vim.fn.getcwd()
+  local workspace = temp_root .. "/flow-workspace"
+  local other_workspace = temp_root .. "/other-flow-workspace"
+  local first_file = workspace .. "/example-repo-a/main.go"
+  local second_file = workspace .. "/example-repo-b/worker.go"
+  vim.fn.mkdir(other_workspace, "p")
+  write(first_file, { "package main", "", "func main() {}" })
+  write(second_file, { "package worker", "", "func Run() {}", "", "var Value = true" })
+  vim.g.luanphan_flow_data_dir = temp_root .. "/flow"
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(workspace))
+    vim.cmd("edit " .. vim.fn.fnameescape(first_file))
+    vim.api.nvim_win_set_cursor(0, { 3, 0 })
+    flow.add()
+
+    local storage = flow.storage_path()
+    assert_true(vim.fn.filereadable(storage) == 1, "Flow did not create workspace storage")
+    assert_true(read_lines(storage)[1] == "example-repo-a/main.go:3", "Flow did not append the current file and line")
+
+    vim.cmd("edit " .. vim.fn.fnameescape(second_file))
+    vim.api.nvim_win_set_cursor(0, { 5, 0 })
+    flow.add()
+    assert_true(read_lines(storage)[2] == "example-repo-b/worker.go:5", "Flow did not include a second repository")
+    assert_true(flow.storage_path(other_workspace) ~= storage, "Flow reused storage across workspaces")
+
+    write(storage, {
+      "// first operation",
+      "example-repo-a/main.go:3 // first target",
+      "missing.go:4 // ignored target",
+      "example-repo-b/worker.go:5 // second target",
+    })
+    assert_true(flow.parse_entry("example-repo-b/worker.go:5 // second target").line == 5, "Flow rejected an entry suffix")
+    assert_true(flow.parse_entry("// explanation only") == nil, "Flow parsed a comment as an entry")
+
+    flow.toggle_menu()
+    assert_true(vim.bo.filetype == "flow", "Flow did not open its editable menu")
+    vim.api.nvim_buf_set_lines(0, 0, 1, false, { "// updated operation" })
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    invoke_map("<CR>")
+    assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(second_file), "comment selection did not close Flow")
+    assert_true(read_lines(storage)[1] == "// updated operation", "Flow did not save menu edits")
+
+    flow.toggle_menu()
+    vim.api.nvim_win_set_cursor(0, { 4, 0 })
+    invoke_map("<CR>")
+    assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(second_file), "Flow did not jump across repositories")
+    assert_true(vim.api.nvim_win_get_cursor(0)[1] == 5, "Flow did not jump to the selected line")
+    flow.previous()
+    assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(first_file), "Flow previous did not change repositories")
+    assert_true(vim.api.nvim_win_get_cursor(0)[1] == 3, "Flow previous did not skip non-navigable rows")
+    flow.next()
+    assert_true(vim.api.nvim_win_get_cursor(0)[1] == 5, "Flow next did not return to the next entry")
+    flow.next()
+    assert_true(vim.api.nvim_win_get_cursor(0)[1] == 3, "Flow next did not wrap")
+  end, debug.traceback)
+
+  vim.g.luanphan_flow_data_dir = original_data_dir
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  end
+  assert_true(ok, tostring(err))
+end
+
 local function test_adjacent_project_discovery(repo, worktree)
   local api = worktree_test_api()
   local original_cwd = vim.fn.getcwd()
@@ -4137,6 +4204,12 @@ local function test(name, fn)
   tests[#tests + 1] = { name = name, fn = fn }
 end
 
+local search_and_navigation_tests = {
+  flow = test_flow_line_navigation,
+  live_grep_highlights = test_live_grep_highlights_content_only,
+  search_priority = test_search_priority_ordering,
+}
+
 local setup_ok, setup_err = xpcall(function()
   require_command("git", { "git", "--version" })
   require_command("go", { "go", "version" })
@@ -4161,11 +4234,15 @@ local setup_ok, setup_err = xpcall(function()
   end)
 
   test("live grep deprioritizes configured patterns", function()
-    test_search_priority_ordering()
+    search_and_navigation_tests.search_priority()
   end)
 
   test("live grep highlights content only", function()
-    test_live_grep_highlights_content_only()
+    search_and_navigation_tests.live_grep_highlights()
+  end)
+
+  test("Flow stores editable line marks per workspace", function()
+    search_and_navigation_tests.flow()
   end)
 
   test("toggle icons reflect state", function()
