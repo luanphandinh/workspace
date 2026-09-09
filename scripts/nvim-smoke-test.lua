@@ -2545,15 +2545,8 @@ local function test_agent_view_container(repo)
     wait_until("registered agent choices", function()
       return picker.manager and picker.manager:num_results() == 3
     end, 3000)
-    local selected = nil
-    for _ = 1, 3 do
-      selected = action_state.get_selected_entry()
-      if selected and selected.value and selected.value.id == "codex" then
-        break
-      end
-      picker:move_selection(1)
-    end
-    assert_true(selected and selected.value.id == "codex", "new-tab picker omitted an already-open agent type")
+    local selected = action_state.get_selected_entry()
+    assert_true(selected and selected.value.id == "codex", "new-tab picker did not prioritize Codex")
     require("telescope.actions").select_default(prompt_buf)
     wait_until("second codex tab", function()
       return visible_agent_float_count() == 1

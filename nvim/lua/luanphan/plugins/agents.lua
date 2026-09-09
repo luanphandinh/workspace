@@ -1,6 +1,6 @@
 local M = {}
 
-local agent_order = { "cursor", "claude", "codex" }
+local agent_order = { "codex", "cursor", "claude" }
 
 local agent_defs = {
   cursor = {
