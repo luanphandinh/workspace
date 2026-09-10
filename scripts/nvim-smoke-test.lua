@@ -3824,6 +3824,14 @@ local function test_git_diff_repository_bar_from_workspace_root()
     "replacement line two",
   })
   write(second_repo .. "/second-change.txt", { "second repository change" })
+
+  vim.cmd("cd " .. vim.fn.fnameescape(first_repo))
+  local source_tab = vim.api.nvim_get_current_tabpage()
+  invoke_map("<leader>gd")
+  wait_for_diffview()
+  wait_for_diffview_repository(first_repo)
+  assert_true(find_workspace_diff_bar() == nil, "single-repository setup unexpectedly created a repository bar")
+  vim.api.nvim_set_current_tabpage(source_tab)
   vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
 
   invoke_map("<leader>gd")

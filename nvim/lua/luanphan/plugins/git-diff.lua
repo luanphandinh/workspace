@@ -4,6 +4,7 @@ local pending_workspace_diff = nil
 local switch_workspace_diff
 local close_workspace_diff
 local handle_workspace_diff_mouse
+local same_real_path
 
 local function find_diffview_tab()
   local ok, lib = pcall(require, "diffview.lib")
@@ -13,9 +14,9 @@ local function find_diffview_tab()
         local state = view._luanphan_workspace_diff
         local active = state and state.views and state.views[state.active] or nil
         if active and active.tabpage and vim.api.nvim_tabpage_is_valid(active.tabpage) then
-          return active.tabpage
+          return active.tabpage, active
         end
-        return view.tabpage
+        return view.tabpage, view
       end
     end
   end
@@ -32,8 +33,8 @@ local function find_diffview_tab()
   return nil
 end
 
-local function close_or_focus_existing_diffview()
-  local existing_tab = find_diffview_tab()
+local function close_or_focus_existing_diffview(scope)
+  local existing_tab, existing_view = find_diffview_tab()
   if not existing_tab then
     return false
   end
@@ -46,8 +47,20 @@ local function close_or_focus_existing_diffview()
     else
       vim.cmd("DiffviewClose")
     end
-  else
+  elseif not scope or scope.matches(existing_view) then
     vim.api.nvim_set_current_tabpage(existing_tab)
+  else
+    local current_tab = vim.api.nvim_get_current_tabpage()
+    vim.api.nvim_set_current_tabpage(existing_tab)
+    if existing_view and existing_view._luanphan_workspace_diff and close_workspace_diff then
+      close_workspace_diff(existing_view)
+    else
+      vim.cmd("DiffviewClose")
+    end
+    if vim.api.nvim_tabpage_is_valid(current_tab) then
+      vim.api.nvim_set_current_tabpage(current_tab)
+    end
+    return false
   end
 
   return true
@@ -223,7 +236,7 @@ local function refire_current_file_runtime(buf)
   end)
 end
 
-local function same_real_path(lhs, rhs)
+same_real_path = function(lhs, rhs)
   if not lhs or not rhs or lhs == "" or rhs == "" then
     return false
   end
@@ -1050,20 +1063,45 @@ local function close_current_diffview()
   end
 end
 
+local function diff_scope(cwd, root, repositories)
+  return {
+    matches = function(view)
+      if not view then
+        return false
+      end
+
+      local state = view._luanphan_workspace_diff
+      if root then
+        local view_root = view.adapter and view.adapter.ctx and view.adapter.ctx.toplevel
+        return not state and same_real_path(view_root, root)
+      end
+      if state then
+        return same_real_path(state.parent, cwd)
+      end
+      if #repositories == 1 then
+        local view_root = view.adapter and view.adapter.ctx and view.adapter.ctx.toplevel
+        return same_real_path(view_root, repositories[1].path)
+      end
+      return false
+    end,
+  }
+end
+
 local function with_diff_repository(action, has_diff)
   return function()
-    if close_or_focus_existing_diffview() then
+    local cwd = vim.fn.getcwd()
+    local root = git_root(cwd)
+    local repositories = root and {} or list_child_git_repositories(cwd, has_diff)
+    if close_or_focus_existing_diffview(diff_scope(cwd, root, repositories)) then
       return
     end
 
-    local cwd = vim.fn.getcwd()
-    local root = git_root(cwd)
     if root then
       recent_paths.touch(root)
       action(root)
       return
     end
-    open_workspace_diff(cwd, list_child_git_repositories(cwd, has_diff), action)
+    open_workspace_diff(cwd, repositories, action)
   end
 end
 
