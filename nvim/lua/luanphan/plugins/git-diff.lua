@@ -1089,6 +1089,11 @@ end
 
 local function with_diff_repository(action, has_diff)
   return function()
+    if current_diffview() then
+      close_current_diffview()
+      return
+    end
+
     local cwd = vim.fn.getcwd()
     local root = git_root(cwd)
     local repositories = root and {} or list_child_git_repositories(cwd, has_diff)

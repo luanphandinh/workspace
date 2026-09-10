@@ -3945,7 +3945,13 @@ local function test_git_diff_repository_bar_from_workspace_root()
   assert_true(active_view.cur_entry.path == "first-change.txt", "repository switch lost the selected diff file")
   assert_true(vim.api.nvim_win_get_cursor(main_win)[1] == saved_line, "repository switch lost the diff cursor line")
   assert_true(realpath(vim.fn.getcwd()) == realpath(workspace_root), "repository switching changed the workspace cwd")
-  invoke_map("<leader>gd")
+  local original_systemlist = vim.fn.systemlist
+  vim.fn.systemlist = function()
+    error("closing Diffview must not run synchronous repository discovery", 0)
+  end
+  local close_ok, close_error = pcall(invoke_map, "<leader>gd")
+  vim.fn.systemlist = original_systemlist
+  assert_true(close_ok, tostring(close_error))
   wait_until("workspace diff group closes", function()
     return not has_visible_diffview()
   end, 5000)
