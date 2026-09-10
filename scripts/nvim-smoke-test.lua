@@ -3850,6 +3850,20 @@ local function test_git_diff_repository_bar_from_workspace_root()
   local initial_main_win = initial_view.cur_layout:get_main_win().id
   local saved_line = math.min(2, vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(initial_main_win)))
   vim.api.nvim_win_set_cursor(initial_main_win, { saved_line, 0 })
+  vim.api.nvim_set_current_win(initial_main_win)
+  invoke_map("<leader>gf")
+  assert_true(
+    realpath(vim.api.nvim_buf_get_name(0)) == realpath(first_repo .. "/first-change.txt"),
+    "original file did not open"
+  )
+  local original_systemlist = vim.fn.systemlist
+  vim.fn.systemlist = function()
+    error("focusing an existing Diffview must not run synchronous repository discovery", 0)
+  end
+  local focus_ok, focus_error = pcall(invoke_map, "<leader>gd")
+  vim.fn.systemlist = original_systemlist
+  assert_true(focus_ok, tostring(focus_error))
+  assert_true(vim.api.nvim_get_current_tabpage() == initial_view.tabpage, "existing Diffview was not focused")
   local line = vim.api.nvim_buf_get_lines(bar_buf, 0, 1, false)[1] or ""
   assert_true(
     line:find("[example-project-a +5 -1]", 1, true) ~= nil,
@@ -3945,7 +3959,7 @@ local function test_git_diff_repository_bar_from_workspace_root()
   assert_true(active_view.cur_entry.path == "first-change.txt", "repository switch lost the selected diff file")
   assert_true(vim.api.nvim_win_get_cursor(main_win)[1] == saved_line, "repository switch lost the diff cursor line")
   assert_true(realpath(vim.fn.getcwd()) == realpath(workspace_root), "repository switching changed the workspace cwd")
-  local original_systemlist = vim.fn.systemlist
+  original_systemlist = vim.fn.systemlist
   vim.fn.systemlist = function()
     error("closing Diffview must not run synchronous repository discovery", 0)
   end
