@@ -292,7 +292,7 @@ local function current_original_line(path, view)
   return vim.api.nvim_win_get_cursor(main_win.id)[1]
 end
 
-local function open_original_file(path, line, lib)
+local function open_original_file(path, line, lib, layout)
   if not path then
     vim.notify("No original file found for current diff", vim.log.levels.WARN)
     return
@@ -304,7 +304,10 @@ local function open_original_file(path, line, lib)
   else
     vim.cmd("tabnew")
   end
-  vim.cmd("edit " .. vim.fn.fnameescape(path))
+  if layout and type(layout.restore_winopts) == "function" then
+    pcall(layout.restore_winopts, layout)
+  end
+  vim.cmd("keepalt edit " .. vim.fn.fnameescape(path))
   if line and line > 0 then
     local last = vim.api.nvim_buf_line_count(0)
     vim.api.nvim_win_set_cursor(0, { math.min(line, last), 0 })
@@ -318,7 +321,7 @@ local function jump_to_original_file(view)
     view = lib.get_current_view() or view
   end
   local path = current_diffview_file_path(view) or normal_buffer_path()
-  open_original_file(path, current_original_line(path, view), ok and lib or nil)
+  open_original_file(path, current_original_line(path, view), ok and lib or nil, view and view.cur_layout)
 end
 
 local function diffview_repository()

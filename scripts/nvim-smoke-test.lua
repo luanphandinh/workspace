@@ -4308,6 +4308,12 @@ local function test_git_diff_original_file_jump_starts_go_runtime(worktree)
     "    return false",
     "  end, 30000)",
     "end",
+    "local function wait_for_normal_editor_options()",
+    "  wait_until('normal editor window options', function()",
+    "    return not vim.wo.diff and vim.wo.number and vim.wo.relativenumber",
+    "      and vim.wo.foldenable and vim.wo.winhighlight == ''",
+    "  end, 5000)",
+    "end",
     "vim.env.GOWORK = 'off'",
     "vim.cmd('cd ' .. vim.fn.fnameescape(worktree))",
     "invoke_map('<leader>gd')",
@@ -4326,6 +4332,7 @@ local function test_git_diff_original_file_jump_starts_go_runtime(worktree)
     "assert_true(vim.bo[buf].filetype == 'go', 'jumped buffer filetype is ' .. vim.bo[buf].filetype)",
     "wait_until('go treesitter after diff jump', function() return vim.treesitter.highlighter.active[buf] ~= nil end, 5000)",
     "wait_for_lsp(buf)",
+    "wait_for_normal_editor_options()",
     "vim.api.nvim_set_current_tabpage(find_diffview_tab())",
     "vim.cmd('DiffviewClose')",
     "wait_until('working diffview closes', function() return not has_visible_diffview() end, 5000)",
@@ -4342,6 +4349,7 @@ local function test_git_diff_original_file_jump_starts_go_runtime(worktree)
     "assert_true(has_visible_diffview(), 'committed diffview should remain open after original jump')",
     "local actual_line = vim.api.nvim_win_get_cursor(0)[1]",
     "assert_true(actual_line == expected_line, 'committed jump cursor line ' .. actual_line .. ' should match focused diff line ' .. expected_line)",
+    "wait_for_normal_editor_options()",
   })
 
   local cmd = child_nvim_luafile_command(worktree, script)
