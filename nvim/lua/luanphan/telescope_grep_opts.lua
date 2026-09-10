@@ -19,7 +19,7 @@ end
 --- Open project live grep with ripgrep flags from |g:| toggles.
 --- Telescope does not merge |telescope.setup| `{ pickers = { live_grep = … } }` into
 --- |:Telescope live_grep|; you must call this (or pass opts in Lua) for |additional_args| to run.
-function M.live_grep()
+function M.live_grep(default_text)
   local actions = require("telescope.actions")
   local finders = require("telescope.finders")
   local make_entry = require("telescope.make_entry")
@@ -30,6 +30,7 @@ function M.live_grep()
   local opts = vim.deepcopy(tconf.pickers.live_grep or {})
   opts.additional_args = M.additional_args
   opts.cwd = opts.cwd or vim.uv.cwd()
+  opts.default_text = default_text or opts.default_text
 
   local args = vim.deepcopy(opts.vimgrep_arguments or conf.vimgrep_arguments)
   vim.list_extend(args, opts.additional_args(opts))

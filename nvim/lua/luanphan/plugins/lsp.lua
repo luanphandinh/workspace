@@ -184,20 +184,25 @@ return {
             end
           end
 
-          local function telescope_lsp(method)
+          local function telescope_lsp(method, prioritize_paths)
             return function(source_win)
-              require("telescope.builtin")[method]({
+              local picker_opts = {
                 bufnr = bufnr,
                 winnr = source_win,
                 initial_mode = "normal",
                 layout_strategy = "vertical",
-              })
+              }
+              if prioritize_paths then
+                local base = require("telescope.config").values.generic_sorter(picker_opts)
+                picker_opts.sorter = require("luanphan.search_priority").wrap_sorter(base)
+              end
+              require("telescope.builtin")[method](picker_opts)
             end
           end
 
           vim.keymap.set("n", "gd", with_lsp(telescope_lsp("lsp_definitions")), opts)
-          vim.keymap.set("n", "gi", with_lsp(telescope_lsp("lsp_implementations")), opts)
-          vim.keymap.set("n", "gr", with_lsp(telescope_lsp("lsp_references")), opts)
+          vim.keymap.set("n", "gi", with_lsp(telescope_lsp("lsp_implementations", true)), opts)
+          vim.keymap.set("n", "gr", with_lsp(telescope_lsp("lsp_references", true)), opts)
           vim.keymap.set("n", "gR", with_lsp(require("luanphan.incoming_call_graph").open), vim.tbl_extend(
             "force",
             opts,

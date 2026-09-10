@@ -1018,6 +1018,35 @@ local function visible_agent_float_count()
   return count
 end
 
+local function terminal_grid_size(bufnr)
+  local job = vim.b[bufnr].terminal_job_id
+  if type(job) ~= "number" or job <= 0 then
+    return nil, nil
+  end
+  local pid = vim.fn.jobpid(job)
+  local ps = vim.system({ "ps", "-o", "tty=", "-p", tostring(pid) }, { text = true }):wait()
+  local tty = vim.trim(ps.stdout or "")
+  if ps.code ~= 0 or tty == "" or tty == "?" then
+    return nil, nil
+  end
+
+  local device = vim.startswith(tty, "/") and tty or ("/dev/" .. tty)
+  local flag = vim.fn.has("macunix") == 1 and "-f" or "-F"
+  local result = vim.system({ "stty", flag, device, "size" }, { text = true }):wait()
+  if result.code ~= 0 then
+    return nil, nil
+  end
+  local rows, columns = (result.stdout or ""):match("(%d+)%s+(%d+)")
+  return tonumber(rows), tonumber(columns)
+end
+
+local function assert_terminal_grid_matches(bufnr, win, label)
+  wait_until(label .. " terminal grid", function()
+    local rows, columns = terminal_grid_size(bufnr)
+    return rows == vim.api.nvim_win_get_height(win) and columns == vim.api.nvim_win_get_width(win)
+  end, 3000)
+end
+
 local function close_agent_terminals()
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local buf = vim.api.nvim_win_get_buf(win)
@@ -1416,6 +1445,32 @@ local function test_search_priority_ordering()
   assert_true(tests < generated, "configured pattern order was not preserved")
 end
 
+local function test_search_priority_editor_closes_on_focus_loss()
+  local priority = require("luanphan.search_priority")
+  local original_path = vim.g.luanphan_search_deprioritize_path
+  local path = temp_root .. "/search-priority/editor-patterns"
+  write(path, { "*.md" })
+  vim.g.luanphan_search_deprioritize_path = path
+
+  local source_win = vim.api.nvim_get_current_win()
+  local ok, err = xpcall(function()
+    priority.open_editor()
+    local popup_win = vim.api.nvim_get_current_win()
+    local buf = vim.api.nvim_get_current_buf()
+    assert_true(popup_win ~= source_win, "search priority editor did not open a popup")
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "*_test.go" })
+
+    vim.api.nvim_set_current_win(source_win)
+    wait_until("search priority editor closes after focus loss", function()
+      return not vim.api.nvim_win_is_valid(popup_win)
+    end, 3000)
+    assert_true(read_lines(path)[1] == "*_test.go", "search priority editor did not save before closing")
+  end, debug.traceback)
+
+  vim.g.luanphan_search_deprioritize_path = original_path
+  assert_true(ok, tostring(err))
+end
+
 local function test_live_grep_highlights_content_only()
   local grep = require("luanphan.telescope_grep_opts")
   local display = "example/path_handler.go:12:8:func ExampleHandler()"
@@ -1426,6 +1481,83 @@ local function test_live_grep_highlights_content_only()
   for _, position in ipairs(highlights) do
     assert_true(position > coordinates_end, "live grep highlighted the filename")
   end
+end
+
+local function test_flow_line_navigation()
+  local flow = require("luanphan.flow")
+  local original_data_dir = vim.g.luanphan_flow_data_dir
+  local original_cwd = vim.fn.getcwd()
+  local workspace = temp_root .. "/flow-workspace"
+  local other_workspace = temp_root .. "/other-flow-workspace"
+  local first_file = workspace .. "/example-repo-a/main.go"
+  local second_file = workspace .. "/example-repo-b/worker.go"
+  vim.fn.mkdir(other_workspace, "p")
+  write(first_file, { "package main", "", "func main() {}" })
+  write(second_file, { "package worker", "", "func Run() {}", "", "var Value = true" })
+  vim.g.luanphan_flow_data_dir = temp_root .. "/flow"
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(workspace))
+    vim.cmd("edit " .. vim.fn.fnameescape(first_file))
+    vim.api.nvim_win_set_cursor(0, { 3, 0 })
+    flow.add()
+
+    local storage = flow.storage_path()
+    assert_true(vim.fn.filereadable(storage) == 1, "Flow did not create workspace storage")
+    assert_true(read_lines(storage)[1] == "example-repo-a/main.go:3", "Flow did not append the current file and line")
+
+    vim.cmd("edit " .. vim.fn.fnameescape(second_file))
+    vim.api.nvim_win_set_cursor(0, { 5, 0 })
+    flow.add()
+    assert_true(read_lines(storage)[2] == "example-repo-b/worker.go:5", "Flow did not include a second repository")
+    assert_true(flow.storage_path(other_workspace) ~= storage, "Flow reused storage across workspaces")
+
+    write(storage, {
+      "// first operation",
+      "example-repo-a/main.go:3 // first target",
+      "missing.go:4 // ignored target",
+      "example-repo-b/worker.go:5 // second target",
+    })
+    assert_true(flow.parse_entry("example-repo-b/worker.go:5 // second target").line == 5, "Flow rejected an entry suffix")
+    assert_true(flow.parse_entry("// explanation only") == nil, "Flow parsed a comment as an entry")
+
+    flow.toggle_menu()
+    assert_true(vim.bo.filetype == "flow", "Flow did not open its editable menu")
+    vim.api.nvim_buf_set_lines(0, 0, 1, false, { "// updated operation" })
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    invoke_map("<CR>")
+    assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(second_file), "comment selection did not close Flow")
+    assert_true(read_lines(storage)[1] == "// updated operation", "Flow did not save menu edits")
+
+    local editor_win = vim.api.nvim_get_current_win()
+    flow.toggle_menu()
+    local flow_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_buf_set_lines(0, 0, 1, false, { "// saved after focus leaves" })
+    vim.api.nvim_set_current_win(editor_win)
+    wait_until("Flow menu closes after focus leaves", function()
+      return not vim.api.nvim_win_is_valid(flow_win)
+    end, 1000)
+    assert_true(read_lines(storage)[1] == "// saved after focus leaves", "Flow lost edits when focus left the menu")
+
+    flow.toggle_menu()
+    vim.api.nvim_win_set_cursor(0, { 4, 0 })
+    invoke_map("<CR>")
+    assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(second_file), "Flow did not jump across repositories")
+    assert_true(vim.api.nvim_win_get_cursor(0)[1] == 5, "Flow did not jump to the selected line")
+    flow.previous()
+    assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(first_file), "Flow previous did not change repositories")
+    assert_true(vim.api.nvim_win_get_cursor(0)[1] == 3, "Flow previous did not skip non-navigable rows")
+    flow.next()
+    assert_true(vim.api.nvim_win_get_cursor(0)[1] == 5, "Flow next did not return to the next entry")
+    flow.next()
+    assert_true(vim.api.nvim_win_get_cursor(0)[1] == 3, "Flow next did not wrap")
+  end, debug.traceback)
+
+  vim.g.luanphan_flow_data_dir = original_data_dir
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  end
+  assert_true(ok, tostring(err))
 end
 
 local function test_adjacent_project_discovery(repo, worktree)
@@ -2138,6 +2270,23 @@ local function test_terminal_reference_links()
   end)
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "second example-repo/other.go:1:1",
+  })
+  vim.wait(180)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "output still changing",
+  })
+  vim.wait(120)
+  local unsettled = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+  assert_true(
+    #unsettled == 1 and unsettled[1][4].url:find("example%-repo%%2Fmain.go") ~= nil,
+    "terminal references scanned before output settled"
+  )
+  wait_until("terminal reference scan after output settles", function()
+    return #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true }) == 0
+  end)
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
     "wrapped example-repo/",
     "  other.go:1:1",
   })
@@ -2395,20 +2544,29 @@ local function test_agent_view_container(repo)
     wait_until("first agent tab", function()
       return visible_agent_float_count() == 1
         and agent_bufnr("codex_agent_bufnr") ~= nil
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
     local codex_buf = agent_bufnr("codex_agent_bufnr")
+    local agent_win = vim.api.nvim_get_current_win()
+    local agent_height = vim.api.nvim_win_get_height(agent_win)
+    local winbar = vim.api.nvim_get_option_value("winbar", { win = agent_win })
+    assert_true(
+      winbar:find("[codex]", 1, true) ~= nil,
+      "single agent did not reserve its tab bar: " .. vim.inspect(winbar)
+    )
+    assert_terminal_grid_matches(codex_buf, agent_win, "first agent")
 
     assert_true(agents.open("cursor"), "could not open the second terminal agent")
     wait_until("second agent tab", function()
       return visible_agent_float_count() == 1
         and agent_bufnr("cursor_agent_bufnr") ~= nil
         and vim.api.nvim_get_current_buf() == agent_bufnr("cursor_agent_bufnr")
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
     local cursor_buf = agent_bufnr("cursor_agent_bufnr")
     assert_true(vim.api.nvim_buf_is_valid(codex_buf), "opening another tab deleted the first terminal")
-    local winbar = vim.api.nvim_get_option_value("winbar", { win = vim.api.nvim_get_current_win() })
+    assert_true(vim.api.nvim_get_current_win() == agent_win, "opening another agent replaced the container window")
+    assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "opening another agent resized the container")
+    assert_terminal_grid_matches(cursor_buf, agent_win, "second agent")
+    winbar = vim.api.nvim_get_option_value("winbar", { win = agent_win })
     assert_true(winbar:find("codex", 1, true) ~= nil, "agent tab bar omitted the first terminal")
     assert_true(winbar:find("[cursor]", 1, true) ~= nil, "agent tab bar did not select the current terminal")
 
@@ -2424,8 +2582,20 @@ local function test_agent_view_container(repo)
         and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
     assert_true(vim.api.nvim_buf_is_valid(cursor_buf), "cycling tabs deleted the hidden terminal")
+    assert_true(vim.api.nvim_get_current_win() == agent_win, "cycling agents replaced the container window")
+    assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "cycling agents resized the container")
+    assert_terminal_grid_matches(codex_buf, agent_win, "cycled agent")
 
-    vim.cmd("stopinsert")
+    next_map = vim.fn.maparg("<Tab>", "n", false, true)
+    next_map.callback()
+    wait_until("cycled mixed agent tab again", function()
+      return visible_agent_float_count() == 1
+        and vim.api.nvim_get_current_buf() == cursor_buf
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+    assert_true(vim.api.nvim_get_current_win() == agent_win, "cycling mixed agents replaced the container window")
+    assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "cycling mixed agents resized the container")
+
     new_map = vim.fn.maparg("<leader>fn", "n", false, true)
     new_map.callback()
     local prompt_buf = nil
@@ -2443,30 +2613,47 @@ local function test_agent_view_container(repo)
     wait_until("registered agent choices", function()
       return picker.manager and picker.manager:num_results() == 3
     end, 3000)
-    local selected = nil
-    for _ = 1, 3 do
-      selected = action_state.get_selected_entry()
-      if selected and selected.value and selected.value.id == "codex" then
-        break
+    local prompt_win = vim.fn.bufwinid(prompt_buf)
+    local results_win = -1
+    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_valid(bufnr) and vim.bo[bufnr].filetype == "TelescopeResults" then
+        results_win = vim.fn.bufwinid(bufnr)
+        if results_win ~= -1 then
+          break
+        end
       end
-      picker:move_selection(1)
     end
-    assert_true(selected and selected.value.id == "codex", "new-tab picker omitted an already-open agent type")
+    assert_true(prompt_win ~= -1 and vim.api.nvim_win_get_width(prompt_win) < vim.o.columns * 0.4, "agent picker is too wide")
+    assert_true(results_win ~= -1 and vim.api.nvim_win_get_height(results_win) < vim.o.lines * 0.4, "agent picker is too tall")
+    local selected = action_state.get_selected_entry()
+    assert_true(selected and selected.value.id == "codex", "new-tab picker did not prioritize Codex")
     require("telescope.actions").select_default(prompt_buf)
     wait_until("second codex tab", function()
       return visible_agent_float_count() == 1
         and #registered_agent_bufnrs("codex_agent_bufnr", repo) == 2
         and vim.api.nvim_get_current_buf() == agent_bufnr("codex_agent_bufnr")
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
     local second_codex_buf = agent_bufnr("codex_agent_bufnr")
     assert_true(second_codex_buf ~= codex_buf, "new-tab picker reused the existing Codex terminal")
+    assert_true(vim.api.nvim_get_current_win() == agent_win, "new agent tab replaced the container window")
+    assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "new agent tab resized the container")
+
+    assert_true(agents.open("codex", codex_buf, { view_mode = true }), "could not switch to the first Codex tab")
+    wait_until("same-agent tab cycle", function()
+      return vim.api.nvim_get_current_buf() == codex_buf
+        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+    end, 3000)
+    assert_true(vim.api.nvim_get_current_win() == agent_win, "same-agent cycle replaced the container window")
+    assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "same-agent cycle resized the container")
+    assert_true(agents.open("codex", second_codex_buf, { view_mode = true }), "could not restore the second Codex tab")
+    wait_until("same-agent tab restore", function()
+      return vim.api.nvim_get_current_buf() == second_codex_buf
+    end, 3000)
 
     assert_true(agents.new("cursor"), "could not create a second Cursor terminal")
     wait_until("second cursor tab", function()
       return #registered_agent_bufnrs("cursor_agent_bufnr", repo) == 2
         and vim.api.nvim_get_current_buf() == agent_bufnr("cursor_agent_bufnr")
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
     local second_cursor_buf = agent_bufnr("cursor_agent_bufnr")
     assert_true(second_cursor_buf ~= cursor_buf, "new Cursor tab reused the existing terminal")
@@ -2477,7 +2664,6 @@ local function test_agent_view_container(repo)
     wait_until("duplicate agent tabs", function()
       return #registered_agent_bufnrs("claude_agent_bufnr", repo) == 2
         and vim.api.nvim_get_current_buf() == agent_bufnr("claude_agent_bufnr")
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
 
     winbar = vim.api.nvim_get_option_value("winbar", { win = vim.api.nvim_get_current_win() })
@@ -2497,7 +2683,6 @@ local function test_agent_view_container(repo)
     assert_true(agents.open("cursor"), "could not reactivate the selected terminal agent")
     wait_until("active agent before send", function()
       return vim.api.nvim_get_current_buf() == cursor_buf
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
     agents.toggle()
     assert_true(visible_agent_float_count() == 0, "agent container did not hide")
@@ -2518,8 +2703,11 @@ local function test_agent_view_container(repo)
     wait_until("shared toggle restores active tab", function()
       return visible_agent_float_count() == 1
         and vim.api.nvim_get_current_buf() == cursor_buf
-        and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
+    local reopened_win = vim.api.nvim_get_current_win()
+    assert_true(vim.api.nvim_win_get_height(reopened_win) == agent_height, "reopened agent container changed height")
+    winbar = vim.api.nvim_get_option_value("winbar", { win = reopened_win })
+    assert_true(winbar:find("[cursor", 1, true) ~= nil, "reopened agent container did not reserve its tab bar")
   end, debug.traceback)
 
   vim.env.PATH = old_path
@@ -2633,6 +2821,54 @@ local function test_lsp_definition_and_references(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   assert_lsp_navigation(repo .. "/main.go")
   assert_lsp_code_action_keymaps()
+end
+
+local function test_lsp_pickers_use_search_priority(repo)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  local buf = open_go_file(repo .. "/main.go")
+  local builtin = require("telescope.builtin")
+  local original_references = builtin.lsp_references
+  local original_implementations = builtin.lsp_implementations
+  local original_path = vim.g.luanphan_search_deprioritize_path
+  local captured = {}
+  local path = temp_root .. "/lsp-search-priority/patterns"
+  write(path, { "*_test.go" })
+  vim.g.luanphan_search_deprioritize_path = path
+
+  local ok, err = xpcall(function()
+    builtin.lsp_references = function(opts)
+      captured.references = opts
+    end
+    builtin.lsp_implementations = function(opts)
+      captured.implementations = opts
+    end
+
+    local function invoke(lhs)
+      local map = vim.fn.maparg(lhs, "n", false, true)
+      assert_true(type(map) == "table" and type(map.callback) == "function", lhs .. " is not an LSP callback mapping")
+      map.callback()
+    end
+
+    invoke("gr")
+    invoke("gi")
+    wait_until("prioritized LSP picker options", function()
+      return captured.references ~= nil and captured.implementations ~= nil
+    end, 3000)
+
+    for name, opts in pairs(captured) do
+      assert_true(type(opts.sorter) == "table", name .. " picker has no search-priority sorter")
+      local code = { filename = "service/handler.go", ordinal = "target" }
+      local test = { filename = "service/handler_test.go", ordinal = "target" }
+      local code_score = opts.sorter.scoring_function(opts.sorter, "", "target", code)
+      local test_score = opts.sorter.scoring_function(opts.sorter, "", "target", test)
+      assert_true(code_score < test_score, name .. " picker did not rank code above Go tests")
+    end
+  end, debug.traceback)
+
+  builtin.lsp_references = original_references
+  builtin.lsp_implementations = original_implementations
+  vim.g.luanphan_search_deprioritize_path = original_path
+  assert_true(ok, tostring(err))
 end
 
 local function test_lsp_survives_duplicate_split_close(repo)
@@ -4089,6 +4325,14 @@ local function test(name, fn)
   tests[#tests + 1] = { name = name, fn = fn }
 end
 
+local search_and_navigation_tests = {
+  flow = test_flow_line_navigation,
+  lsp_search_priority = test_lsp_pickers_use_search_priority,
+  live_grep_highlights = test_live_grep_highlights_content_only,
+  search_priority = test_search_priority_ordering,
+  search_priority_editor = test_search_priority_editor_closes_on_focus_loss,
+}
+
 local setup_ok, setup_err = xpcall(function()
   require_command("git", { "git", "--version" })
   require_command("go", { "go", "version" })
@@ -4113,11 +4357,19 @@ local setup_ok, setup_err = xpcall(function()
   end)
 
   test("live grep deprioritizes configured patterns", function()
-    test_search_priority_ordering()
+    search_and_navigation_tests.search_priority()
+  end)
+
+  test("search priority editor saves and closes on focus loss", function()
+    search_and_navigation_tests.search_priority_editor()
   end)
 
   test("live grep highlights content only", function()
-    test_live_grep_highlights_content_only()
+    search_and_navigation_tests.live_grep_highlights()
+  end)
+
+  test("Flow stores editable line marks per workspace", function()
+    search_and_navigation_tests.flow()
   end)
 
   test("toggle icons reflect state", function()
@@ -4258,6 +4510,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("lsp definition and references", function()
     test_lsp_definition_and_references(repo)
+  end)
+
+  test("lsp references and implementations use search priority", function()
+    search_and_navigation_tests.lsp_search_priority(repo)
   end)
 
   test("lsp survives duplicate split close", function()

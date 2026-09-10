@@ -115,21 +115,48 @@ function M.open_editor()
   })
 
   vim.bo[buf].buflisted = false
+  vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = "gitignore"
   vim.wo[win].number = true
   vim.wo[win].signcolumn = "no"
   vim.wo[win].wrap = false
 
-  vim.keymap.set("n", "q", function()
-    if vim.bo[buf].modified then
-      vim.notify("Save the search priority file before closing", vim.log.levels.WARN)
+  local closing = false
+  local function save_and_close()
+    if closing then
       return
     end
-    local current = vim.fn.bufwinid(buf)
-    if current ~= -1 then
-      vim.api.nvim_win_close(current, true)
+
+    if vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].modified then
+      local ok, err = pcall(vim.api.nvim_buf_call, buf, function()
+        vim.cmd("silent write")
+      end)
+      if not ok then
+        vim.notify("Could not save search priority file: " .. tostring(err), vim.log.levels.ERROR)
+        return
+      end
     end
-  end, { buffer = buf, silent = true })
+
+    closing = true
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end
+
+  vim.keymap.set("n", "q", save_and_close, { buffer = buf, silent = true })
+  vim.keymap.set("n", "<Esc>", save_and_close, { buffer = buf, silent = true })
+  vim.api.nvim_create_autocmd("WinLeave", {
+    group = vim.api.nvim_create_augroup("LuanphanSearchPriorityEditor", { clear = false }),
+    buffer = buf,
+    once = true,
+    callback = function()
+      vim.schedule(function()
+        if not closing and vim.api.nvim_win_is_valid(win) and vim.api.nvim_get_current_win() ~= win then
+          save_and_close()
+        end
+      end)
+    end,
+  })
 end
 
 return M

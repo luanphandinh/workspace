@@ -34,6 +34,7 @@ local BASE_DEFAULTS = {
 ---@field augroup_prefix string prefix for autocmd groups (CursorAgent / ClaudeAgent)
 ---@field hint_open string hint when no terminal (e.g. "<leader>;")
 ---@field defaults? table merged into BASE_DEFAULTS (cmd, args, …)
+---@field on_prepare? fun(win: integer)
 ---@field on_show? fun(bufnr: integer, win: integer, cwd: string)
 ---@field on_close? fun(bufnr: integer, cwd: string)
 function M.create(profile)
@@ -227,6 +228,34 @@ local function mark_terminal_used(bufnr)
   vim.b[bufnr].luanphan_agent_last_used = sequence
 end
 
+local function valid_job_id(job)
+  return type(job) == "number" and job > 0
+end
+
+local function sync_terminal_grid(win, bufnr)
+  if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= bufnr then
+    return
+  end
+  local job = vim.b[bufnr].terminal_job_id
+  if not valid_job_id(job) then
+    return
+  end
+
+  local width = vim.api.nvim_win_get_width(win)
+  local height = vim.api.nvim_win_get_height(win)
+  width = math.max(1, width)
+  height = math.max(1, height)
+
+  local previous = vim.b[bufnr].luanphan_terminal_grid
+  if type(previous) == "table" and previous.width == width and previous.height == height then
+    return
+  end
+
+  if pcall(vim.fn.jobresize, job, width, height) then
+    vim.b[bufnr].luanphan_terminal_grid = { width = width, height = height }
+  end
+end
+
 local function save_terminal_view(win)
   if not win or not vim.api.nvim_win_is_valid(win) then
     return
@@ -245,24 +274,37 @@ local function save_terminal_view(win)
   }
 end
 
-local function resume_terminal_view(win, bufnr)
+local function resume_terminal_view(win, bufnr, opts)
   mark_terminal_used(bufnr)
   if profile.on_show then
     pcall(profile.on_show, bufnr, win, vim.b[bufnr].luanphan_agent_cwd or cwd_key())
   end
+  sync_terminal_grid(win, bufnr)
   local saved = vim.b[bufnr].luanphan_terminal_view
-  vim.schedule(function()
-    if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == bufnr then
-      if vim.api.nvim_get_current_win() == win then
-        vim.cmd("stopinsert")
+  local restore_saved = type(saved) == "table" and saved.follow == false and type(saved.view) == "table"
+  if (opts and opts.view_mode) or restore_saved then
+    vim.schedule(function()
+      if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == bufnr then
+        if opts and opts.view_mode and vim.api.nvim_get_current_win() == win then
+          vim.cmd("stopinsert")
+        end
+        if restore_saved then
+          pcall(vim.api.nvim_win_call, win, function()
+            vim.fn.winrestview(saved.view)
+          end)
+        end
       end
-      if type(saved) == "table" and saved.follow == false and type(saved.view) == "table" then
-        pcall(vim.api.nvim_win_call, win, function()
-          vim.fn.winrestview(saved.view)
-        end)
-      end
+    end)
+    return
+  end
+
+  vim.defer_fn(function()
+    if vim.api.nvim_win_is_valid(win)
+        and vim.api.nvim_win_get_buf(win) == bufnr
+        and vim.api.nvim_get_current_win() == win then
+      vim.cmd("startinsert")
     end
-  end)
+  end, 10)
 end
 
 --- Vertical split with new window on the right (does not change global 'splitright' afterward).
@@ -416,6 +458,12 @@ local function configure_terminal_window(win)
   end
 end
 
+local function prepare_terminal_window(win)
+  if profile.on_prepare then
+    pcall(profile.on_prepare, win)
+  end
+end
+
 local function lock_cursor_window(win)
   if config.window_mode == "float" or not config.lock_split then
     return
@@ -428,10 +476,6 @@ local function lock_cursor_window(win)
     vim.wo[win].winfixheight = true
     vim.wo[win].winfixwidth = false
   end
-end
-
-local function valid_job_id(job)
-  return type(job) == "number" and job > 0
 end
 
 local function term_buffer_alive(bufnr)
@@ -464,6 +508,7 @@ local function sync_float_after_resize()
   }
   vim.api.nvim_win_set_config(win, cfg)
   state.float_geometry = cfg
+  sync_terminal_grid(win, cur)
 end
 
 --- After outer resize: re-apply ratio only if the agent window size drifted; always refresh winfix*.
@@ -494,6 +539,7 @@ local function sync_agent_split_after_resize()
   end
   if vim.api.nvim_win_is_valid(win) then
     lock_cursor_window(win)
+    sync_terminal_grid(win, cur)
   end
 end
 
@@ -651,23 +697,27 @@ local function restore_agent_bufnr()
   if cur then
     local rwin = win_for_buf(cur)
     if rwin then
+      prepare_terminal_window(rwin)
       configure_terminal_window(rwin)
       lock_cursor_window(rwin)
       if profile.on_show then
         pcall(profile.on_show, cur, rwin, vim.b[cur].luanphan_agent_cwd or cwd_key())
       end
+      sync_terminal_grid(rwin, cur)
     end
   end
 end
 
-local function open_terminal_split()
+local function open_terminal_split(opts)
   if config.split == "vertical" then
     vsplit_right()
   else
     vim.cmd("split")
   end
-  configure_terminal_window(vim.api.nvim_get_current_win())
   vim.cmd("enew")
+  local win = vim.api.nvim_get_current_win()
+  prepare_terminal_window(win)
+  configure_terminal_window(win)
   apply_split_size()
   lock_cursor_window()
   local buf = vim.api.nvim_get_current_buf()
@@ -679,29 +729,39 @@ local function open_terminal_split()
   attach_term_close(buf)
   attach_quit_detach(buf)
   attach_status_tracking(buf, cwd, "idle")
-  resume_terminal_view(vim.api.nvim_get_current_win(), buf)
+  resume_terminal_view(win, buf, opts)
   return buf
 end
 
-local function open_terminal_float()
+local function open_terminal_float(opts)
   local buf = vim.api.nvim_create_buf(false, true)
-  local g = get_float_geometry()
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = "editor",
-    row = g.row,
-    col = g.col,
-    width = g.width,
-    height = g.height,
-    style = "minimal",
-    border = config.float_border or "single",
-  })
+  local reuse_win = opts and opts.reuse_win
+  local win
+  if reuse_win and vim.api.nvim_win_is_valid(reuse_win) then
+    win = reuse_win
+    vim.api.nvim_win_set_buf(win, buf)
+    vim.api.nvim_set_current_win(win)
+  else
+    local g = get_float_geometry()
+    win = vim.api.nvim_open_win(buf, true, {
+      relative = "editor",
+      row = g.row,
+      col = g.col,
+      width = g.width,
+      height = g.height,
+      style = "minimal",
+      border = config.float_border or "single",
+    })
+  end
+  prepare_terminal_window(win)
   configure_terminal_window(win)
+  local win_config = vim.api.nvim_win_get_config(win)
   state.float_geometry = {
-    relative = "editor",
-    row = g.row,
-    col = g.col,
-    width = g.width,
-    height = g.height,
+    relative = win_config.relative,
+    row = win_config.row,
+    col = win_config.col,
+    width = win_config.width,
+    height = win_config.height,
   }
   local cwd = cwd_key()
   vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
@@ -712,18 +772,18 @@ local function open_terminal_float()
   attach_quit_detach(buf)
   set_float_close_keymaps(buf)
   attach_status_tracking(buf, cwd, "idle")
-  resume_terminal_view(win, buf)
+  resume_terminal_view(win, buf, opts)
   return buf
 end
 
-local function open_terminal()
+local function open_terminal(opts)
   if config.window_mode == "float" then
-    return open_terminal_float()
+    return open_terminal_float(opts)
   end
-  return open_terminal_split()
+  return open_terminal_split(opts)
 end
 
-local function show_terminal_split(bufnr)
+local function show_terminal_split(bufnr, opts)
   local cur = bufnr or current_bufnr()
   if not cur then return end
   if config.split == "vertical" then
@@ -731,47 +791,62 @@ local function show_terminal_split(bufnr)
   else
     vim.cmd("split")
   end
+  prepare_terminal_window(vim.api.nvim_get_current_win())
   configure_terminal_window(vim.api.nvim_get_current_win())
   vim.api.nvim_win_set_buf(0, cur)
   require("luanphan.terminal_references").activate(cur)
   apply_agent_scrollback(cur)
   apply_split_size()
   lock_cursor_window()
-  resume_terminal_view(vim.api.nvim_get_current_win(), cur)
+  resume_terminal_view(vim.api.nvim_get_current_win(), cur, opts)
 end
 
-local function show_terminal_float(bufnr)
+local function show_terminal_float(bufnr, opts)
   local cur = bufnr or current_bufnr()
   if not cur then return end
-  local g = get_float_geometry()
-  local win = vim.api.nvim_open_win(cur, true, {
-    relative = "editor",
-    row = g.row,
-    col = g.col,
-    width = g.width,
-    height = g.height,
-    style = "minimal",
-    border = config.float_border or "single",
-  })
+  local reuse_win = opts and opts.reuse_win
+  local win
+  if reuse_win and vim.api.nvim_win_is_valid(reuse_win) then
+    win = reuse_win
+    prepare_terminal_window(win)
+    vim.api.nvim_win_set_buf(win, cur)
+    vim.api.nvim_set_current_win(win)
+  else
+    local placeholder = vim.api.nvim_create_buf(false, true)
+    local g = get_float_geometry()
+    win = vim.api.nvim_open_win(placeholder, true, {
+      relative = "editor",
+      row = g.row,
+      col = g.col,
+      width = g.width,
+      height = g.height,
+      style = "minimal",
+      border = config.float_border or "single",
+    })
+    prepare_terminal_window(win)
+    vim.api.nvim_win_set_buf(win, cur)
+    pcall(vim.api.nvim_buf_delete, placeholder, { force = true })
+  end
   configure_terminal_window(win)
   require("luanphan.terminal_references").activate(cur)
+  local win_config = vim.api.nvim_win_get_config(win)
   state.float_geometry = {
-    relative = "editor",
-    row = g.row,
-    col = g.col,
-    width = g.width,
-    height = g.height,
+    relative = win_config.relative,
+    row = win_config.row,
+    col = win_config.col,
+    width = win_config.width,
+    height = win_config.height,
   }
   apply_agent_scrollback(cur)
   set_float_close_keymaps(cur)
-  resume_terminal_view(win, cur)
+  resume_terminal_view(win, cur, opts)
 end
 
-local function show_terminal(bufnr)
+local function show_terminal(bufnr, opts)
   if config.window_mode == "float" then
-    show_terminal_float(bufnr)
+    show_terminal_float(bufnr, opts)
   else
-    show_terminal_split(bufnr)
+    show_terminal_split(bufnr, opts)
   end
 end
 
@@ -793,8 +868,8 @@ function API.toggle()
   open_terminal()
 end
 
-function API.new()
-  return open_terminal()
+function API.new(opts)
+  return open_terminal(opts)
 end
 
 --- Change the float placement for this agent. Valid values: "full", "left",
@@ -812,7 +887,7 @@ function API.set_float_position(pos)
 end
 
 --- Focus an agent terminal, showing its buffer when hidden.
-function API.focus(bufnr)
+function API.focus(bufnr, opts)
   local cur = bufnr or current_bufnr()
   if not cur or not term_buffer_alive(cur) then
     nx("no agent terminal — use " .. profile.hint_open .. " to open", vim.log.levels.INFO)
@@ -820,15 +895,19 @@ function API.focus(bufnr)
   end
   local win = win_for_buf(cur)
   if not win then
-    show_terminal(cur)
+    show_terminal(cur, opts)
     return true
   end
   configure_terminal_window(win)
   require("luanphan.terminal_references").activate(cur)
   lock_cursor_window(win)
   vim.api.nvim_set_current_win(win)
-  resume_terminal_view(win, cur)
+  resume_terminal_view(win, cur, opts)
   return true
+end
+
+function API.save_view(win)
+  save_terminal_view(win)
 end
 
 local function get_job_id(bufnr)
@@ -867,7 +946,7 @@ local function exit_visual_to_normal()
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
 end
 
-function API.send_selection(target_bufnr)
+function API.send_selection(target_bufnr, opts)
   local bufnr = vim.api.nvim_get_current_buf()
   if vim.bo[bufnr].buftype ~= "" then
     nx("not supported in this buffer", vim.log.levels.WARN)
@@ -934,7 +1013,7 @@ function API.send_selection(target_bufnr)
 
     local win = win_for_buf(cur)
     if not win then
-      show_terminal(cur)
+      show_terminal(cur, opts)
     end
 
     local job = get_job_id(cur)
@@ -962,7 +1041,7 @@ function API.send_selection(target_bufnr)
   local cur = target_terminal()
   if not cur or not term_buffer_alive(cur) then
     set_agent_bufnr(nil)
-    open_terminal()
+    open_terminal(opts)
     vim.defer_fn(function()
       deliver(1)
     end, config.defer_send_ms)

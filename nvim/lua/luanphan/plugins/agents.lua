@@ -1,6 +1,6 @@
 local M = {}
 
-local agent_order = { "cursor", "claude", "codex" }
+local agent_order = { "codex", "cursor", "claude" }
 
 local agent_defs = {
   cursor = {
@@ -189,6 +189,9 @@ local function get_agent(name)
     augroup_prefix = def.augroup_prefix,
     hint_open = def.keys.toggle.lhs,
     defaults = resolve_defaults(def.defaults),
+    on_prepare = function(win)
+      agent_container:reserve(win)
+    end,
     on_show = function(bufnr, win, cwd)
       agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
     end,
@@ -218,38 +221,49 @@ function M.set_float_position(pos)
   end
 end
 
-function M.focus(name, bufnr)
+function M.focus(name, bufnr, opts)
   if not agent_defs[name] then
     return false
   end
   local target = bufnr or agent_buffer(name, vim.fn.getcwd())
   if not target then
-    return setup_agent(name).focus(bufnr)
+    return setup_agent(name).focus(bufnr, opts)
   end
   close_visible_agents(target)
-  return setup_agent(name).focus(target)
+  return setup_agent(name).focus(target, opts)
 end
 
-function M.open(name, bufnr)
+function M.open(name, bufnr, opts)
   if not agent_defs[name] then
     return false
   end
   local target = bufnr or agent_buffer(name, vim.fn.getcwd())
-  close_visible_agents(target)
-  if target then
-    return setup_agent(name).focus(target)
+  local visible = visible_agent()
+  if visible and visible.bufnr ~= target then
+    setup_agent(visible.name).save_view(visible.win)
+    close_visible_agents(visible.bufnr)
+    opts = vim.tbl_extend("force", opts or {}, { reuse_win = visible.win })
+  else
+    close_visible_agents(target)
   end
-  setup_agent(name).toggle()
-  return true
+  if target then
+    return setup_agent(name).focus(target, opts)
+  end
+  return setup_agent(name).new(opts)
 end
 
 function M.new(name)
   if not agent_defs[name] then
     return false
   end
-  close_visible_agents()
-  setup_agent(name).new()
-  return true
+  local visible = visible_agent()
+  local opts
+  if visible then
+    setup_agent(visible.name).save_view(visible.win)
+    close_visible_agents(visible.bufnr)
+    opts = { reuse_win = visible.win }
+  end
+  return setup_agent(name).new(opts)
 end
 
 function M.toggle_agent(name)
@@ -282,8 +296,16 @@ function M.send_selection(name)
     return false
   end
   local target = agent_buffer(name, vim.fn.getcwd())
-  close_visible_agents(target)
-  setup_agent(name).send_selection(target)
+  local visible = visible_agent()
+  local opts
+  if visible and visible.bufnr ~= target then
+    setup_agent(visible.name).save_view(visible.win)
+    close_visible_agents(visible.bufnr)
+    opts = { reuse_win = visible.win }
+  else
+    close_visible_agents(target)
+  end
+  setup_agent(name).send_selection(target, opts)
   return true
 end
 
@@ -313,13 +335,17 @@ agent_container = require("luanphan.view_container").create({
   context = vim.fn.getcwd,
   tabs = open_tabs,
   choices = agent_choices,
-  activate = function(tab)
-    M.open(tab.agent, tab.bufnr)
+  activate = function(tab, opts)
+    M.open(tab.agent, tab.bufnr, opts)
   end,
   create = function(choice)
     M.new(choice.id)
   end,
   picker_title = "Terminal Agents",
+  picker_opts = {
+    layout_strategy = "center",
+    layout_config = { width = 0.3, height = 0.25 },
+  },
   empty_message = "no terminal agents registered",
   cycle_desc = "Next terminal agent",
   new_desc = "New terminal agent",
