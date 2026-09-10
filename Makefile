@@ -58,7 +58,11 @@ ifeq ($(UNAME),Darwin)
 		echo "apps: Homebrew is required on macOS" >&2; \
 		exit 1; \
 	fi
-	@for app in maccy alfred arc stats; do brew install --cask "$$app" || true; done
+	@for app in maccy alfred arc stats codexbar; do brew install --cask "$$app" || true; done
+	@if command -v codexbar >/dev/null 2>&1; then \
+		codexbar config enable --provider codex; \
+		codexbar config enable --provider cursor; \
+	fi
 	@pkill -x Stats >/dev/null 2>&1 || true
 	@sleep 1
 	@defaults write eu.exelban.Stats version -string "$$(plutil -extract CFBundleShortVersionString raw -o - /Applications/Stats.app/Contents/Info.plist)"
@@ -66,6 +70,7 @@ ifeq ($(UNAME),Darwin)
 	@for module in GPU Disk Sensors Battery Bluetooth Clock Remote; do defaults write eu.exelban.Stats "$${module}_state" -bool false; done
 	@defaults write eu.exelban.Stats setupProcess -bool true
 	@open -g /Applications/Stats.app
+	@open -g /Applications/CodexBar.app
 else
 	@echo "apps: skipped; macOS-only"
 endif
