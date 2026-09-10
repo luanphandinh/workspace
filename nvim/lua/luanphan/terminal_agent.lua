@@ -232,7 +232,7 @@ local function valid_job_id(job)
   return type(job) == "number" and job > 0
 end
 
-local function refresh_terminal_grid(win, bufnr)
+local function sync_terminal_grid(win, bufnr)
   if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= bufnr then
     return
   end
@@ -243,23 +243,17 @@ local function refresh_terminal_grid(win, bufnr)
 
   local width = vim.api.nvim_win_get_width(win)
   local height = vim.api.nvim_win_get_height(win)
-  if vim.api.nvim_get_option_value("winbar", { win = win }) ~= "" then
-    height = height - 1
-  end
   width = math.max(1, width)
   height = math.max(1, height)
-  local temporary_width = width
-  local temporary_height = height
-  if height > 1 then
-    temporary_height = height - 1
-  elseif width > 1 then
-    temporary_width = width - 1
-  else
+
+  local previous = vim.b[bufnr].luanphan_terminal_grid
+  if type(previous) == "table" and previous.width == width and previous.height == height then
     return
   end
 
-  pcall(vim.fn.jobresize, job, temporary_width, temporary_height)
-  pcall(vim.fn.jobresize, job, width, height)
+  if pcall(vim.fn.jobresize, job, width, height) then
+    vim.b[bufnr].luanphan_terminal_grid = { width = width, height = height }
+  end
 end
 
 local function save_terminal_view(win)
@@ -285,7 +279,7 @@ local function resume_terminal_view(win, bufnr, opts)
   if profile.on_show then
     pcall(profile.on_show, bufnr, win, vim.b[bufnr].luanphan_agent_cwd or cwd_key())
   end
-  refresh_terminal_grid(win, bufnr)
+  sync_terminal_grid(win, bufnr)
   local saved = vim.b[bufnr].luanphan_terminal_view
   local restore_saved = type(saved) == "table" and saved.follow == false and type(saved.view) == "table"
   if (opts and opts.view_mode) or restore_saved then
@@ -514,6 +508,7 @@ local function sync_float_after_resize()
   }
   vim.api.nvim_win_set_config(win, cfg)
   state.float_geometry = cfg
+  sync_terminal_grid(win, cur)
 end
 
 --- After outer resize: re-apply ratio only if the agent window size drifted; always refresh winfix*.
@@ -544,6 +539,7 @@ local function sync_agent_split_after_resize()
   end
   if vim.api.nvim_win_is_valid(win) then
     lock_cursor_window(win)
+    sync_terminal_grid(win, cur)
   end
 end
 
@@ -707,6 +703,7 @@ local function restore_agent_bufnr()
       if profile.on_show then
         pcall(profile.on_show, cur, rwin, vim.b[cur].luanphan_agent_cwd or cwd_key())
       end
+      sync_terminal_grid(rwin, cur)
     end
   end
 end

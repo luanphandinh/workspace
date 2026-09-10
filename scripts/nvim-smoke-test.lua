@@ -1018,6 +1018,35 @@ local function visible_agent_float_count()
   return count
 end
 
+local function terminal_grid_size(bufnr)
+  local job = vim.b[bufnr].terminal_job_id
+  if type(job) ~= "number" or job <= 0 then
+    return nil, nil
+  end
+  local pid = vim.fn.jobpid(job)
+  local ps = vim.system({ "ps", "-o", "tty=", "-p", tostring(pid) }, { text = true }):wait()
+  local tty = vim.trim(ps.stdout or "")
+  if ps.code ~= 0 or tty == "" or tty == "?" then
+    return nil, nil
+  end
+
+  local device = vim.startswith(tty, "/") and tty or ("/dev/" .. tty)
+  local flag = vim.fn.has("macunix") == 1 and "-f" or "-F"
+  local result = vim.system({ "stty", flag, device, "size" }, { text = true }):wait()
+  if result.code ~= 0 then
+    return nil, nil
+  end
+  local rows, columns = (result.stdout or ""):match("(%d+)%s+(%d+)")
+  return tonumber(rows), tonumber(columns)
+end
+
+local function assert_terminal_grid_matches(bufnr, win, label)
+  wait_until(label .. " terminal grid", function()
+    local rows, columns = terminal_grid_size(bufnr)
+    return rows == vim.api.nvim_win_get_height(win) and columns == vim.api.nvim_win_get_width(win)
+  end, 3000)
+end
+
 local function close_agent_terminals()
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local buf = vim.api.nvim_win_get_buf(win)
@@ -1414,6 +1443,32 @@ local function test_search_priority_ordering()
   assert_true(code < docs, "code did not rank above documentation")
   assert_true(docs < tests, "documentation did not rank above tests")
   assert_true(tests < generated, "configured pattern order was not preserved")
+end
+
+local function test_search_priority_editor_closes_on_focus_loss()
+  local priority = require("luanphan.search_priority")
+  local original_path = vim.g.luanphan_search_deprioritize_path
+  local path = temp_root .. "/search-priority/editor-patterns"
+  write(path, { "*.md" })
+  vim.g.luanphan_search_deprioritize_path = path
+
+  local source_win = vim.api.nvim_get_current_win()
+  local ok, err = xpcall(function()
+    priority.open_editor()
+    local popup_win = vim.api.nvim_get_current_win()
+    local buf = vim.api.nvim_get_current_buf()
+    assert_true(popup_win ~= source_win, "search priority editor did not open a popup")
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "*_test.go" })
+
+    vim.api.nvim_set_current_win(source_win)
+    wait_until("search priority editor closes after focus loss", function()
+      return not vim.api.nvim_win_is_valid(popup_win)
+    end, 3000)
+    assert_true(read_lines(path)[1] == "*_test.go", "search priority editor did not save before closing")
+  end, debug.traceback)
+
+  vim.g.luanphan_search_deprioritize_path = original_path
+  assert_true(ok, tostring(err))
 end
 
 local function test_live_grep_highlights_content_only()
@@ -2498,6 +2553,7 @@ local function test_agent_view_container(repo)
       winbar:find("[codex]", 1, true) ~= nil,
       "single agent did not reserve its tab bar: " .. vim.inspect(winbar)
     )
+    assert_terminal_grid_matches(codex_buf, agent_win, "first agent")
 
     assert_true(agents.open("cursor"), "could not open the second terminal agent")
     wait_until("second agent tab", function()
@@ -2509,6 +2565,7 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_buf_is_valid(codex_buf), "opening another tab deleted the first terminal")
     assert_true(vim.api.nvim_get_current_win() == agent_win, "opening another agent replaced the container window")
     assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "opening another agent resized the container")
+    assert_terminal_grid_matches(cursor_buf, agent_win, "second agent")
     winbar = vim.api.nvim_get_option_value("winbar", { win = agent_win })
     assert_true(winbar:find("codex", 1, true) ~= nil, "agent tab bar omitted the first terminal")
     assert_true(winbar:find("[cursor]", 1, true) ~= nil, "agent tab bar did not select the current terminal")
@@ -2527,6 +2584,7 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_buf_is_valid(cursor_buf), "cycling tabs deleted the hidden terminal")
     assert_true(vim.api.nvim_get_current_win() == agent_win, "cycling agents replaced the container window")
     assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "cycling agents resized the container")
+    assert_terminal_grid_matches(codex_buf, agent_win, "cycled agent")
 
     next_map = vim.fn.maparg("<Tab>", "n", false, true)
     next_map.callback()
@@ -2763,6 +2821,54 @@ local function test_lsp_definition_and_references(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   assert_lsp_navigation(repo .. "/main.go")
   assert_lsp_code_action_keymaps()
+end
+
+local function test_lsp_pickers_use_search_priority(repo)
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  local buf = open_go_file(repo .. "/main.go")
+  local builtin = require("telescope.builtin")
+  local original_references = builtin.lsp_references
+  local original_implementations = builtin.lsp_implementations
+  local original_path = vim.g.luanphan_search_deprioritize_path
+  local captured = {}
+  local path = temp_root .. "/lsp-search-priority/patterns"
+  write(path, { "*_test.go" })
+  vim.g.luanphan_search_deprioritize_path = path
+
+  local ok, err = xpcall(function()
+    builtin.lsp_references = function(opts)
+      captured.references = opts
+    end
+    builtin.lsp_implementations = function(opts)
+      captured.implementations = opts
+    end
+
+    local function invoke(lhs)
+      local map = vim.fn.maparg(lhs, "n", false, true)
+      assert_true(type(map) == "table" and type(map.callback) == "function", lhs .. " is not an LSP callback mapping")
+      map.callback()
+    end
+
+    invoke("gr")
+    invoke("gi")
+    wait_until("prioritized LSP picker options", function()
+      return captured.references ~= nil and captured.implementations ~= nil
+    end, 3000)
+
+    for name, opts in pairs(captured) do
+      assert_true(type(opts.sorter) == "table", name .. " picker has no search-priority sorter")
+      local code = { filename = "service/handler.go", ordinal = "target" }
+      local test = { filename = "service/handler_test.go", ordinal = "target" }
+      local code_score = opts.sorter.scoring_function(opts.sorter, "", "target", code)
+      local test_score = opts.sorter.scoring_function(opts.sorter, "", "target", test)
+      assert_true(code_score < test_score, name .. " picker did not rank code above Go tests")
+    end
+  end, debug.traceback)
+
+  builtin.lsp_references = original_references
+  builtin.lsp_implementations = original_implementations
+  vim.g.luanphan_search_deprioritize_path = original_path
+  assert_true(ok, tostring(err))
 end
 
 local function test_lsp_survives_duplicate_split_close(repo)
@@ -4221,8 +4327,10 @@ end
 
 local search_and_navigation_tests = {
   flow = test_flow_line_navigation,
+  lsp_search_priority = test_lsp_pickers_use_search_priority,
   live_grep_highlights = test_live_grep_highlights_content_only,
   search_priority = test_search_priority_ordering,
+  search_priority_editor = test_search_priority_editor_closes_on_focus_loss,
 }
 
 local setup_ok, setup_err = xpcall(function()
@@ -4250,6 +4358,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("live grep deprioritizes configured patterns", function()
     search_and_navigation_tests.search_priority()
+  end)
+
+  test("search priority editor saves and closes on focus loss", function()
+    search_and_navigation_tests.search_priority_editor()
   end)
 
   test("live grep highlights content only", function()
@@ -4398,6 +4510,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("lsp definition and references", function()
     test_lsp_definition_and_references(repo)
+  end)
+
+  test("lsp references and implementations use search priority", function()
+    search_and_navigation_tests.lsp_search_priority(repo)
   end)
 
   test("lsp survives duplicate split close", function()
