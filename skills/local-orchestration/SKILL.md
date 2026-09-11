@@ -74,3 +74,5 @@ mcursor resume <cursor-chat-id-or-name>
 ```
 
 `agent-session` resumes orchestrated Cursor ACP sessions. `mcursor list` and `mcursor resume` manage interactive native persistent sessions.
+
+Bare `mcursor` opens a workspace-first persistent-session picker. Left/Right switches Workspace and All, Up/Down selects a session, Enter attaches, and Esc or an empty list starts Cursor's native persistent-session UI.

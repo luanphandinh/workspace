@@ -24,11 +24,14 @@ $ROOT/bin/mcursor start --cwd "$TMP/workspace" --mode read --model example-model
 grep -q 'native start' "$TMP/start.out"
 grep -q '"tmux": null' "$TMP/cursor.log"
 grep -q '"persist", "example"' "$TMP/cursor.log"
-$ROOT/bin/mcursor > "$TMP/bare.out"
-grep -q 'native start' "$TMP/bare.out"
-grep -q '"persist"' "$TMP/cursor.log"
 $ROOT/bin/mcursor start --cwd "$TMP/workspace" > "$TMP/start-empty.out"
 grep -q 'native start' "$TMP/start-empty.out"
+(
+  cd "$TMP/workspace"
+  "$ROOT/bin/mcursor" > "$TMP/picker-new.out"
+)
+grep -q 'native start' "$TMP/picker-new.out"
+grep -q '"persist"' "$TMP/cursor.log"
 $ROOT/bin/mcursor attach native-session > "$TMP/attach.out"
 grep -q 'native attach native-session' "$TMP/attach.out"
 $ROOT/bin/mcursor resume cursor-chat-id > "$TMP/resume.out"
@@ -38,6 +41,31 @@ $ROOT/bin/mcursor stop native-session > "$TMP/stop.out"
 grep -q 'native stop native-session' "$TMP/stop.out"
 $ROOT/bin/mcursor list > "$TMP/list.out"
 grep -q 'No Cursor-managed persistent sessions' "$TMP/list.out"
+python3 - "$ROOT/bin/mcursor" <<'PY'
+import importlib.machinery
+import importlib.util
+import sys
+
+loader = importlib.machinery.SourceFileLoader("mcursor", sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+module = importlib.util.module_from_spec(spec)
+loader.exec_module(module)
+sessions = module.parse_persistent_sessions("""2 persistent sessions:
+
+Task: First task
+  Status: Detached
+  Session: first-session
+  Workspace: /example/a
+
+Task: Second task
+  Status: Attached (1 client)
+  Session: second-session
+  Chat ID: example-chat
+  Workspace: /example/b
+""")
+assert [session["session"] for session in sessions] == ["first-session", "second-session"]
+assert sessions[1]["chat_id"] == "example-chat"
+PY
 if $ROOT/bin/mcursor status native-session >/dev/null 2>&1; then exit 1; fi
 if $ROOT/bin/mcursor start --name ignored --prompt example >/dev/null 2>&1; then exit 1; fi
 echo "PASS mcursor native persist smoke test"

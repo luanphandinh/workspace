@@ -2,6 +2,7 @@
 """Small wrapper around Cursor's native persistent-session client."""
 
 import argparse
+import curses
 import os
 import sys
 from pathlib import Path
@@ -21,26 +22,144 @@ def exec_native(arguments):
     os.execvpe(cursor_command(), [cursor_command(), *arguments], native_env())
 
 
-def start(args):
-    command = []
-    if args.cwd:
-        command += ["--workspace", str(Path(args.cwd).expanduser().resolve())]
-    command += ["--trust"]
-    if args.model:
-        command += ["--model", args.model]
-    if args.mode == "read":
+def list_persistent_sessions():
+    import subprocess
+
+    completed = subprocess.run(
+        [cursor_command(), "persist", "list"],
+        capture_output=True,
+        env=native_env(),
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip()
+        raise RuntimeError(f"Cursor session list failed{': ' + detail if detail else ''}")
+    return parse_persistent_sessions(completed.stdout)
+
+
+def parse_persistent_sessions(output):
+    sessions = []
+    current = None
+    labels = {"Task", "Status", "Session", "Chat ID", "Workspace"}
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if ":" not in line:
+            continue
+        label, value = (part.strip() for part in line.split(":", 1))
+        if label not in labels:
+            continue
+        if label == "Task":
+            if current and current.get("session"):
+                sessions.append(current)
+            current = {"task": value}
+            continue
+        if current is None:
+            current = {}
+        current[label.lower().replace(" ", "_")] = value
+    if current and current.get("session"):
+        sessions.append(current)
+    return sessions
+
+
+def current_workspace_sessions(sessions):
+    cwd = str(Path.cwd().resolve())
+    return [session for session in sessions if session.get("workspace") == cwd]
+
+
+def add_line(screen, row, text, width, selected=False):
+    try:
+        screen.addnstr(row, 0, text, max(0, width - 1), curses.A_REVERSE if selected else 0)
+    except curses.error:
+        pass
+
+
+def pick_session(sessions):
+    workspace_sessions = current_workspace_sessions(sessions)
+    if not sessions:
+        return None
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise RuntimeError("an interactive terminal is required; use mcursor attach <session> or mcursor start")
+
+    def choose(screen):
+        curses.curs_set(0)
+        screen.keypad(True)
+        view = 0
+        selected = 0
+        while True:
+            visible = workspace_sessions if view == 0 else sessions
+            selected = min(selected, max(0, len(visible) - 1))
+            height, width = screen.getmaxyx()
+            screen.erase()
+            tabs = f"[Workspace ({len(workspace_sessions)})]  All ({len(sessions)})"
+            if view == 1:
+                tabs = f"Workspace ({len(workspace_sessions)})  [All ({len(sessions)})]"
+            add_line(screen, 0, "Cursor persistent sessions", width)
+            add_line(screen, 1, tabs, width)
+            add_line(screen, 2, "Left/Right: scope  Up/Down: session  Enter: attach  Esc: new session", width)
+
+            row = 4
+            previous_workspace = None
+            if not visible:
+                add_line(screen, row, "No session in this workspace.", width)
+            for index, session in enumerate(visible):
+                workspace = session.get("workspace", "<unknown workspace>")
+                if view == 1 and workspace != previous_workspace:
+                    if row < height:
+                        add_line(screen, row, workspace, width)
+                    row += 1
+                    previous_workspace = workspace
+                task = session.get("task") or "Cursor Agent"
+                status = session.get("status") or "Unknown"
+                session_id = session["session"]
+                label = f"  {task}  {status}  {session_id}"
+                if row < height:
+                    add_line(screen, row, label, width, index == selected)
+                row += 1
+            screen.refresh()
+
+            key = screen.getch()
+            if key == 27:
+                return None
+            if key in (curses.KEY_LEFT, ord("h")):
+                view = 0
+                selected = 0
+            elif key in (curses.KEY_RIGHT, ord("l")):
+                view = 1
+                selected = 0
+            elif key in (curses.KEY_UP, ord("k")) and visible:
+                selected = (selected - 1) % len(visible)
+            elif key in (curses.KEY_DOWN, ord("j")) and visible:
+                selected = (selected + 1) % len(visible)
+            elif key in (10, 13, curses.KEY_ENTER) and visible:
+                return visible[selected]["session"]
+
+    return curses.wrapper(choose)
+
+
+def start_new_session(cwd, model=None, mode=None, prompt=None):
+    command = [
+        "--workspace",
+        str(Path(cwd).expanduser().resolve()),
+        "--trust",
+    ]
+    if model:
+        command += ["--model", model]
+    if mode == "read":
         command += ["--mode", "ask"]
+    command += ["persist"]
+    if prompt is not None:
+        command.append(prompt)
+    exec_native(command)
+
+
+def start(args):
     if args.session:
         if args.prompt is not None:
             raise RuntimeError("--prompt cannot be used with --session; use mcursor resume and enter it in the native Cursor client")
-        command += ["persist", "attach", args.session]
-    else:
-        command += ["persist"]
-        if args.prompt is not None:
-            if not args.prompt.strip():
-                raise RuntimeError("--prompt must not be empty")
-            command.append(args.prompt)
-    exec_native(command)
+        exec_native(["persist", "attach", args.session])
+    if args.prompt is not None and not args.prompt.strip():
+        raise RuntimeError("--prompt must not be empty")
+    return start_new_session(args.cwd, args.model, args.mode, args.prompt)
 
 
 def attach(args):
@@ -81,6 +200,9 @@ def parser():
 
 def main():
     if len(sys.argv) == 1:
+        session = pick_session(list_persistent_sessions())
+        if session:
+            exec_native(["persist", "attach", session])
         exec_native(["persist"])
     if sys.argv[1].startswith("-") or sys.argv[1] == "persist":
         exec_native(sys.argv[1:])
