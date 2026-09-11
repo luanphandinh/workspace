@@ -66,6 +66,20 @@ def current_workspace_sessions(sessions):
     return [session for session in sessions if session.get("workspace") == cwd]
 
 
+def stop_persistent_session(session):
+    import subprocess
+
+    completed = subprocess.run(
+        [cursor_command(), "persist", "stop", session],
+        capture_output=True,
+        env=native_env(),
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip()
+        raise RuntimeError(f"Cursor session stop failed{': ' + detail if detail else ''}")
+
+
 def add_line(screen, row, text, width, selected=False):
     try:
         screen.addnstr(row, 0, text, max(0, width - 1), curses.A_REVERSE if selected else 0)
@@ -95,7 +109,7 @@ def pick_session(sessions):
                 tabs = f"Workspace ({len(workspace_sessions)})  [All ({len(sessions)})]"
             add_line(screen, 0, "Cursor persistent sessions", width)
             add_line(screen, 1, tabs, width)
-            add_line(screen, 2, "Left/Right: scope  Up/Down: session  Enter: attach  Esc: new session", width)
+            add_line(screen, 2, "Left/Right: scope  Up/Down: session  Enter: attach  x: stop  Esc: new session", width)
 
             row = 4
             previous_workspace = None
@@ -131,7 +145,9 @@ def pick_session(sessions):
             elif key in (curses.KEY_DOWN, ord("j")) and visible:
                 selected = (selected + 1) % len(visible)
             elif key in (10, 13, curses.KEY_ENTER) and visible:
-                return visible[selected]["session"]
+                return "attach", visible[selected]["session"]
+            elif key in (ord("x"), ord("X")) and visible:
+                return "stop", visible[selected]["session"]
 
     return curses.wrapper(choose)
 
@@ -200,10 +216,17 @@ def parser():
 
 def main():
     if len(sys.argv) == 1:
-        session = pick_session(list_persistent_sessions())
-        if session:
-            exec_native(["persist", "attach", session])
-        exec_native(["persist"])
+        while True:
+            sessions = list_persistent_sessions()
+            selection = pick_session(sessions)
+            if selection is None:
+                exec_native(["persist"])
+            action, session = selection
+            if action == "attach":
+                exec_native(["persist", "attach", session])
+            stop_persistent_session(session)
+            if not current_workspace_sessions(list_persistent_sessions()):
+                return
     if sys.argv[1].startswith("-") or sys.argv[1] == "persist":
         exec_native(sys.argv[1:])
     try:
