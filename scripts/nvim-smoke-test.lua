@@ -6,7 +6,7 @@ local cleanup_fixture_id = 0
 local project_scope_fixture_id = 0
 
 local agent_cli_commands = {
-  { command = "mcursor", lhs = "<leader>ac", plugin = "luanphan-cursor-agent", g_bufnr = "cursor_agent_bufnr" },
+  { command = "cursor-agent", lhs = "<leader>ac", plugin = "luanphan-cursor-agent", g_bufnr = "cursor_agent_bufnr" },
   { command = "claude", lhs = "<leader>xc", plugin = "luanphan-claude-agent", g_bufnr = "claude_agent_bufnr" },
   {
     command = "mcodex",
@@ -2439,14 +2439,14 @@ local function test_agent_keys_invoke_cli_commands()
       assert_true(plugin_loaded(item.plugin), item.plugin .. " did not lazy-load")
       close_agent_terminals()
     end
-    local cursor_persist = false
+    local cursor_regular = false
     for _, line in ipairs(read_log(log)) do
       local command, _, args = line:match("^([^|]+)|([^|]*)|(.*)$")
-      if command == "mcursor" and args == "" then
-        cursor_persist = true
+      if command == "cursor-agent" and args == "" then
+        cursor_regular = true
       end
     end
-    assert_true(cursor_persist, "Cursor agent did not request a persistent native session")
+    assert_true(cursor_regular, "Cursor agent did not start the regular native TUI")
   end, debug.traceback)
 
   vim.env.PATH = old_path
@@ -2703,7 +2703,7 @@ local function test_agent_view_container(repo)
     vim.cmd("edit " .. vim.fn.fnameescape(source))
     vim.cmd("normal! ggV")
     invoke_map("<leader>;", "x")
-    local cursor_input = input_log .. ".mcursor"
+    local cursor_input = input_log .. ".cursor-agent"
     local codex_input = input_log .. ".mcodex"
     wait_until("active agent path delivery", function()
       return table.concat(read_log(cursor_input), ""):find("agent-view.txt:1-1", 1, true) ~= nil
@@ -2727,7 +2727,7 @@ local function test_agent_view_container(repo)
       return visible_agent_float_count() == 1
         and vim.api.nvim_get_current_buf() ~= cursor_buf
     end, 3000)
-    assert_true(not vim.api.nvim_buf_is_valid(cursor_buf), "agent terminal :q did not detach its client")
+    assert_true(not vim.api.nvim_buf_is_valid(cursor_buf), "agent terminal :q did not close its TUI")
   end, debug.traceback)
 
   vim.env.PATH = old_path
