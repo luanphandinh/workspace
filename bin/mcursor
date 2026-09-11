@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Small wrapper around Cursor's native persistent-session client."""
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+
+def cursor_command():
+    return os.environ.get("MCURSOR_CURSOR", "cursor-agent")
+
+
+def native_env():
+    environment = os.environ.copy()
+    environment.pop("TMUX", None)
+    return environment
+
+
+def exec_native(arguments):
+    os.execvpe(cursor_command(), [cursor_command(), *arguments], native_env())
+
+
+def start(args):
+    command = []
+    if args.cwd:
+        command += ["--workspace", str(Path(args.cwd).expanduser().resolve())]
+    command += ["--trust"]
+    if args.model:
+        command += ["--model", args.model]
+    if args.mode == "read":
+        command += ["--mode", "ask"]
+    if args.session:
+        if args.prompt is not None:
+            raise RuntimeError("--prompt cannot be used with --session; use mcursor resume and enter it in the native Cursor client")
+        command += ["persist", "attach", args.session]
+    else:
+        command += ["persist"]
+        if args.prompt is not None:
+            if not args.prompt.strip():
+                raise RuntimeError("--prompt must not be empty")
+            command.append(args.prompt)
+    exec_native(command)
+
+
+def attach(args):
+    exec_native(["persist", "attach", args.session])
+
+
+def resume(args):
+    exec_native(["persist", "attach", args.session])
+
+
+def stop(args):
+    exec_native(["persist", "stop", args.session])
+
+
+def list_sessions(args):
+    exec_native(["persist", "list"])
+
+
+def parser():
+    value = argparse.ArgumentParser(description="Manage Cursor native persistent sessions.")
+    sub = value.add_subparsers(dest="command", required=True)
+    command = sub.add_parser("start")
+    command.add_argument("--session")
+    command.add_argument("--model")
+    command.add_argument("--mode", choices=("read", "write"))
+    command.add_argument("--cwd", default=os.getcwd())
+    command.add_argument("--prompt")
+    command.set_defaults(handler=start)
+    for name, handler in (("attach", attach), ("resume", resume), ("stop", stop)):
+        command = sub.add_parser(name)
+        command.add_argument("session")
+        command.set_defaults(handler=handler)
+    command = sub.add_parser("list")
+    command.add_argument("--json", action="store_true")
+    command.set_defaults(handler=list_sessions)
+    return value
+
+
+def main():
+    if len(sys.argv) == 1:
+        exec_native(["persist"])
+    if sys.argv[1].startswith("-") or sys.argv[1] == "persist":
+        exec_native(sys.argv[1:])
+    try:
+        args = parser().parse_args()
+        return args.handler(args)
+    except (OSError, RuntimeError) as error:
+        print(f"mcursor: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

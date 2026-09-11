@@ -1,0 +1,609 @@
+#!/usr/bin/env python3
+"""Run a durable Codex or Cursor worker session and return its final result."""
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import signal
+import struct
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from agent_registry import registry_path, upsert
+
+
+def fail(message):
+    raise RuntimeError(message)
+
+
+class CodexRpc:
+    def __init__(self):
+        command = os.environ.get("AGENT_SESSION_CODEX", "codex")
+        self.stderr = tempfile.TemporaryFile(mode="w+t")
+        started = subprocess.run(
+            [command, "remote-control", "start", "--json"],
+            stdout=self.stderr,
+            stderr=self.stderr,
+            text=True,
+        )
+        if started.returncode != 0:
+            self.stderr.seek(0)
+            detail = self.stderr.read().strip()
+            suffix = f": {detail}" if detail else ""
+            raise RuntimeError(f"Codex remote-control start failed{suffix}")
+        self.process = subprocess.Popen(
+            [command, "app-server", "proxy"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=self.stderr,
+            bufsize=0,
+        )
+        self.request_id = 0
+        self.pending = []
+        self.fragments = bytearray()
+        self.handshake()
+
+    def read_exact(self, size):
+        if self.process.stdout is None:
+            fail("Codex app-server proxy stdout is unavailable")
+        value = bytearray()
+        while len(value) < size:
+            chunk = self.process.stdout.read(size - len(value))
+            if not chunk:
+                self.proxy_failed()
+            value.extend(chunk)
+        return bytes(value)
+
+    def proxy_failed(self):
+        self.stderr.seek(0)
+        detail = self.stderr.read().strip()
+        suffix = f": {detail}" if detail else ""
+        fail(f"Codex app-server proxy exited unexpectedly{suffix}")
+
+    def handshake(self):
+        if self.process.stdin is None or self.process.stdout is None:
+            fail("Codex app-server proxy streams are unavailable")
+        key = base64.b64encode(os.urandom(16)).decode()
+        request = (
+            "GET / HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n\r\n"
+        )
+        self.process.stdin.write(request.encode())
+        self.process.stdin.flush()
+        response = bytearray()
+        while b"\r\n\r\n" not in response:
+            response.extend(self.read_exact(1))
+            if len(response) > 16384:
+                fail("Codex app-server proxy returned an oversized handshake")
+        lines = bytes(response).decode("latin1").split("\r\n")
+        status = lines[0].split()
+        headers = {
+            name.strip().lower(): value.strip()
+            for line in lines[1:]
+            if ":" in line
+            for name, value in (line.split(":", 1),)
+        }
+        expected_accept = base64.b64encode(
+            hashlib.sha1(
+                (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()
+            ).digest()
+        ).decode()
+        connection = {
+            value.strip().lower()
+            for value in headers.get("connection", "").split(",")
+        }
+        if (
+            len(status) < 2
+            or status[1] != "101"
+            or headers.get("upgrade", "").lower() != "websocket"
+            or "upgrade" not in connection
+            or headers.get("sec-websocket-accept") != expected_accept
+        ):
+            fail(f"Codex app-server WebSocket handshake failed: {lines[0]}")
+
+    def send_frame(self, payload, opcode=1):
+        if self.process.stdin is None:
+            fail("Codex app-server proxy stdin is unavailable")
+        payload = payload if isinstance(payload, bytes) else payload.encode()
+        size = len(payload)
+        header = bytearray([0x80 | opcode])
+        if size < 126:
+            header.append(0x80 | size)
+        elif size < 65536:
+            header.append(0x80 | 126)
+            header.extend(struct.pack("!H", size))
+        else:
+            header.append(0x80 | 127)
+            header.extend(struct.pack("!Q", size))
+        mask = os.urandom(4)
+        masked = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+        self.process.stdin.write(bytes(header) + mask + masked)
+        self.process.stdin.flush()
+
+    def read_frame(self):
+        first, second = self.read_exact(2)
+        finished = bool(first & 0x80)
+        opcode = first & 0x0F
+        masked = bool(second & 0x80)
+        size = second & 0x7F
+        if size == 126:
+            size = struct.unpack("!H", self.read_exact(2))[0]
+        elif size == 127:
+            size = struct.unpack("!Q", self.read_exact(8))[0]
+        mask = self.read_exact(4) if masked else None
+        payload = self.read_exact(size)
+        if mask:
+            payload = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+        return finished, opcode, payload
+
+    def send(self, message):
+        message.pop("jsonrpc", None)
+        self.send_frame(json.dumps(message, separators=(",", ":")))
+
+    def read(self):
+        while True:
+            finished, opcode, payload = self.read_frame()
+            if opcode == 8:
+                self.proxy_failed()
+            if opcode == 9:
+                self.send_frame(payload, opcode=10)
+                continue
+            if opcode == 10:
+                continue
+            if opcode == 1:
+                self.fragments = bytearray(payload)
+            elif opcode == 0:
+                self.fragments.extend(payload)
+            else:
+                continue
+            if not finished:
+                continue
+            try:
+                return json.loads(self.fragments.decode())
+            except json.JSONDecodeError as error:
+                fail(f"invalid Codex app-server response: {error}")
+
+    def request(self, method, params):
+        self.request_id += 1
+        request_id = self.request_id
+        self.send(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method,
+                "params": params,
+            }
+        )
+        while True:
+            message = self.read()
+            if message.get("id") == request_id and "method" not in message:
+                if "error" in message:
+                    fail(f"{method} failed: {message['error']}")
+                return message.get("result", {})
+            if "id" in message and "method" in message:
+                fail(f"worker requested interactive input through {message['method']}")
+            self.pending.append(message)
+
+    def notification(self, method):
+        self.send({"jsonrpc": "2.0", "method": method})
+
+    def next_event(self):
+        if self.pending:
+            return self.pending.pop(0)
+        message = self.read()
+        if "id" in message and "method" in message:
+            fail(f"worker requested interactive input through {message['method']}")
+        return message
+
+    def close(self):
+        if self.process.stdin is not None:
+            try:
+                self.process.stdin.close()
+            except BrokenPipeError:
+                pass
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+        self.stderr.close()
+
+
+def last_agent_message(turn):
+    messages = [
+        item.get("text", "")
+        for item in turn.get("items", [])
+        if item.get("type") == "agentMessage"
+    ]
+    return messages[-1] if messages else ""
+
+
+def record_running(args, agent, session_id, name):
+    result = {
+        "agent": agent,
+        "session_id": session_id,
+        "name": name,
+        "status": "running",
+        "model": args.model,
+        "mode": args.mode,
+        "cwd": args.cwd,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        upsert(args.cwd, args.config, result, args)
+    except ValueError as error:
+        args.registry_error = str(error)
+
+
+def run_codex(args, prompt):
+    rpc = None
+    thread_id = args.session
+    name = args.name
+    result_text = ""
+    try:
+        rpc = CodexRpc()
+        rpc.request(
+            "initialize",
+            {
+                "clientInfo": {
+                    "name": "workspace-agent-session",
+                    "title": "Workspace agent session",
+                    "version": "1",
+                }
+            },
+        )
+        rpc.notification("initialized")
+
+        thread_params = {"approvalPolicy": "never"}
+        if args.cwd:
+            thread_params["cwd"] = args.cwd
+        if args.model:
+            thread_params["model"] = args.model
+        mode = args.mode or "write"
+        if mode == "read":
+            thread_params["sandbox"] = "read-only"
+
+        if thread_id:
+            exact_names = []
+            cursor = None
+            while True:
+                list_params = {"searchTerm": thread_id, "limit": 100}
+                if cursor:
+                    list_params["cursor"] = cursor
+                listed = rpc.request("thread/list", list_params)
+                exact_names.extend(
+                    thread
+                    for thread in listed.get("data", [])
+                    if thread.get("name") == thread_id
+                )
+                cursor = listed.get("nextCursor")
+                if not cursor:
+                    break
+            if len(exact_names) > 1:
+                fail(f"Codex session name is ambiguous: {thread_id}")
+            if exact_names:
+                thread_id = exact_names[0]["id"]
+                name = exact_names[0]["name"]
+            thread_params["threadId"] = thread_id
+            response = rpc.request("thread/resume", thread_params)
+        else:
+            thread_params["ephemeral"] = False
+            thread_params["threadSource"] = "orchestration"
+            response = rpc.request("thread/start", thread_params)
+        thread = response.get("thread", {})
+        thread_id = thread.get("id")
+        if not thread_id:
+            fail("Codex did not return a thread id")
+        name = args.name or thread.get("name") or name
+
+        if args.name:
+            rpc.request(
+                "thread/name/set",
+                {"threadId": thread_id, "name": args.name},
+            )
+
+        record_running(args, "codex", thread_id, name)
+        turn_params = {
+            "threadId": thread_id,
+            "input": [{"type": "text", "text": prompt}],
+        }
+        if args.model:
+            turn_params["model"] = args.model
+        if args.effort:
+            turn_params["effort"] = args.effort
+        rpc.request("turn/start", turn_params)
+
+        status = "failed"
+        error = None
+        while True:
+            event = rpc.next_event()
+            params = event.get("params", {})
+            if params.get("threadId") != thread_id:
+                continue
+            if event.get("method") == "item/completed":
+                item = params.get("item", {})
+                if item.get("type") == "agentMessage":
+                    result_text = item.get("text", "")
+            if event.get("method") == "turn/completed":
+                turn = params.get("turn", {})
+                status = turn.get("status", "failed")
+                error = turn.get("error")
+                result_text = last_agent_message(turn) or result_text
+                break
+
+        try:
+            rpc.request("thread/unsubscribe", {"threadId": thread_id})
+        except RuntimeError:
+            pass
+        return {
+            "agent": "codex",
+            "session_id": thread_id,
+            "name": name,
+            "status": status,
+            "result": result_text,
+            "error": error,
+        }
+    except KeyboardInterrupt:
+        if not thread_id:
+            raise
+        return {
+            "agent": "codex",
+            "session_id": thread_id,
+            "name": name,
+            "status": "interrupted",
+            "result": result_text,
+            "error": "wait interrupted; Codex session remains resumable",
+        }
+    except (OSError, RuntimeError) as error:
+        if not thread_id:
+            raise
+        return {
+            "agent": "codex",
+            "session_id": thread_id,
+            "name": name,
+            "status": "failed",
+            "result": result_text,
+            "error": str(error),
+        }
+    finally:
+        if rpc is not None:
+            rpc.close()
+
+
+def parse_session_result(stdout):
+    candidates = [stdout.strip()] + list(reversed(stdout.splitlines()))
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and value.get("session_id"):
+            return value
+    fail("worker did not return a JSON result with a session id")
+
+
+def run_mcursor(command, arguments):
+    completed = subprocess.run(
+        [command, *arguments],
+        capture_output=True,
+        text=True,
+    )
+    value = None
+    if completed.stdout.strip():
+        try:
+            value = parse_session_result(completed.stdout)
+        except RuntimeError:
+            value = None
+    return completed, value
+
+
+class CursorAcp:
+    def __init__(self, args):
+        command = os.environ.get("AGENT_SESSION_CURSOR", "cursor-agent")
+        self.process = subprocess.Popen([command, "acp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+        self.request_id = 0
+        self.result = ""
+        self.permission_choices = []
+        self.args = args
+
+    def send(self, value):
+        if self.process.stdin is None:
+            fail("Cursor ACP stdin is unavailable")
+        self.process.stdin.write(json.dumps(value, separators=(",", ":")) + "\n")
+        self.process.stdin.flush()
+
+    def notification(self, method):
+        self.send({"jsonrpc": "2.0", "method": method})
+
+    def handle(self, message):
+        method = message.get("method")
+        if method == "session/update":
+            update = message.get("params", {}).get("update", {})
+            content = update.get("content", {})
+            if update.get("sessionUpdate") == "agent_message_chunk" and content.get("type") == "text":
+                self.result += content.get("text", "")
+        elif method == "session/request_permission":
+            options = message.get("params", {}).get("options", [])
+            wanted = "reject" if self.args.mode == "read" else "allow"
+            selected = next((option for option in options if wanted in (option.get("kind", "") + option.get("optionId", "")).lower()), None)
+            if selected is None:
+                fail(f"Cursor ACP did not advertise a {wanted} permission option")
+            self.permission_choices.append(selected["optionId"])
+            self.send({"jsonrpc": "2.0", "id": message.get("id"), "result": {"outcome": {"outcome": "selected", "optionId": selected["optionId"]}}})
+
+    def read(self):
+        if self.process.stdout is None:
+            fail("Cursor ACP stdout is unavailable")
+        line = self.process.stdout.readline()
+        if not line:
+            detail = self.process.stderr.read().strip() if self.process.stderr else ""
+            fail(f"Cursor ACP exited unexpectedly{': ' + detail if detail else ''}")
+        return json.loads(line)
+
+    def request(self, method, params):
+        self.request_id += 1
+        request_id = self.request_id
+        self.send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+        while True:
+            message = self.read()
+            if message.get("id") == request_id and "method" not in message:
+                if "error" in message:
+                    fail(f"{method} failed: {message['error']}")
+                return message.get("result", {})
+            self.handle(message)
+
+    def set_config(self, session_id, response, args):
+        options = response.get("configOptions", [])
+        requested = {"mode": "plan" if args.mode == "read" else "agent", "model": args.model}
+        for config_id, value in requested.items():
+            if value is None:
+                continue
+            option = next((item for item in options if item.get("id") == config_id), None)
+            allowed = [item.get("value") for item in (option or {}).get("options", [])]
+            if option is None or value not in allowed:
+                fail(f"Cursor ACP does not advertise {config_id}={value}")
+            response = self.request("session/set_config_option", {"sessionId": session_id, "configId": config_id, "value": value})
+            options = response.get("configOptions", options)
+            effective = next((item.get("currentValue") for item in options if item.get("id") == config_id), None)
+            if effective is not None and effective != value:
+                fail(f"Cursor ACP did not apply {config_id}={value}")
+
+    def close(self):
+        if self.process.stdin:
+            self.process.stdin.close()
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+        if self.process.stderr:
+            self.process.stderr.close()
+
+
+def run_cursor(args, prompt):
+    rpc = CursorAcp(args)
+    session_id = args.session
+    try:
+        rpc.request("initialize", {"protocolVersion": 1, "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False}, "terminal": False}, "clientInfo": {"name": "workspace-agent-session", "version": "1"}})
+        rpc.notification("initialized")
+        rpc.request("authenticate", {"methodId": "cursor_login"})
+        params = {"cwd": args.cwd, "mcpServers": []}
+        if session_id:
+            response = rpc.request("session/load", {**params, "sessionId": session_id})
+        else:
+            response = rpc.request("session/new", params)
+            session_id = response.get("sessionId")
+        if not session_id:
+            fail("Cursor ACP did not return a session id")
+        rpc.set_config(session_id, response, args)
+        record_running(args, "cursor", session_id, args.name)
+        prompt_response = rpc.request("session/prompt", {"sessionId": session_id, "prompt": [{"type": "text", "text": prompt}]})
+        status = "failed" if prompt_response.get("stopReason") in {"refusal", "cancelled", "error"} else "completed"
+        return {"agent": "cursor", "session_id": session_id, "name": args.name, "status": status, "result": rpc.result, "error": None, "model": args.model, "mode": args.mode, "cwd": args.cwd, "stop_reason": prompt_response.get("stopReason"), "permission_choices": rpc.permission_choices}
+    except KeyboardInterrupt:
+        return {"agent": "cursor", "session_id": session_id, "name": args.name, "status": "interrupted", "result": rpc.result, "error": "agent-session interrupted; Cursor ACP turn was disconnected"}
+    except (OSError, RuntimeError) as error:
+        if not session_id:
+            raise
+        return {"agent": "cursor", "session_id": session_id, "name": args.name, "status": "failed", "result": rpc.result, "error": str(error), "model": args.model, "mode": args.mode, "cwd": args.cwd}
+    finally:
+        rpc.close()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Run and wait for a durable Codex or Cursor worker session."
+    )
+    parser.add_argument("--agent", choices=("codex", "cursor"), required=True)
+    parser.add_argument("--session", help="Resume this existing session id or name")
+    parser.add_argument("--model", help="Worker model override")
+    parser.add_argument("--effort", help="Codex reasoning effort override")
+    parser.add_argument("--mode", choices=("read", "write"))
+    parser.add_argument("--name", help="Stable worker session name")
+    parser.add_argument("--config", default="agents", help="Workspace agent registry name")
+    parser.add_argument(
+        "--main-agent-id",
+        default=os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID"),
+        help="Owning main-agent session id; defaults to the current Codex thread",
+    )
+    parser.add_argument(
+        "--main-agent-type",
+        choices=("codex", "cursor", "claude"),
+        help="Owning main-agent runtime",
+    )
+    parser.add_argument("--main-agent-name", help="Owning main-agent display name")
+    parser.add_argument("--cwd", default=os.getcwd(), help="Worker directory")
+    parser.add_argument("--prompt", help="Prompt; stdin is used when omitted")
+    args = parser.parse_args()
+    args.cwd = str(Path(args.cwd).expanduser().resolve())
+    registry_path(args.cwd, args.config)
+    prompt = args.prompt if args.prompt is not None else sys.stdin.read()
+    if not prompt.strip():
+        parser.error("a non-empty prompt is required")
+    if args.agent == "cursor" and args.effort:
+        parser.error("--effort is Codex-only; select a Cursor model variant instead")
+    if args.agent == "codex" and args.session and not args.mode:
+        parser.error("--mode is required when resuming a Codex session")
+    return args, prompt
+
+
+def main():
+    args, prompt = parse_args()
+
+    def interrupt_wait(_signum, _frame):
+        raise KeyboardInterrupt
+
+    for signum in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, interrupt_wait)
+    try:
+        result = run_codex(args, prompt) if args.agent == "codex" else run_cursor(args, prompt)
+    except KeyboardInterrupt:
+        result = {
+            "agent": args.agent,
+            "session_id": args.session,
+            "name": args.name,
+            "status": "interrupted",
+            "result": "",
+            "error": "agent-session interrupted before worker state was available",
+        }
+    except (OSError, RuntimeError) as error:
+        print(f"agent-session: {error}", file=sys.stderr)
+        return 1
+    result.update({
+        "model": result.get("model") or args.model,
+        "mode": result.get("mode") or args.mode,
+        "cwd": result.get("cwd") or args.cwd,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "main_agent_id": args.main_agent_id,
+    })
+    registry_error = getattr(args, "registry_error", None)
+    if registry_error is None:
+        try:
+            upsert(args.cwd, args.config, result, args)
+        except ValueError as error:
+            registry_error = str(error)
+    if registry_error:
+        print(f"agent-session: {registry_error}", file=sys.stderr)
+        result["registry_error"] = registry_error
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if result["status"] == "completed" and registry_error is None else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
