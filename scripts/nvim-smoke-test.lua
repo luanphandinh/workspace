@@ -1043,7 +1043,11 @@ end
 local function assert_terminal_grid_matches(bufnr, win, label)
   wait_until(label .. " terminal grid", function()
     local rows, columns = terminal_grid_size(bufnr)
-    return rows == vim.api.nvim_win_get_height(win) and columns == vim.api.nvim_win_get_width(win)
+    local expected_rows = vim.api.nvim_win_get_height(win)
+    if vim.api.nvim_get_option_value("winbar", { win = win }) ~= "" then
+      expected_rows = expected_rows - 1
+    end
+    return rows == expected_rows and columns == vim.api.nvim_win_get_width(win)
   end, 3000)
 end
 
@@ -2438,7 +2442,7 @@ local function test_agent_keys_invoke_cli_commands()
     local cursor_persist = false
     for _, line in ipairs(read_log(log)) do
       local command, _, args = line:match("^([^|]+)|([^|]*)|(.*)$")
-      if command == "mcursor" and args == "persist" then
+      if command == "mcursor" and args == "" then
         cursor_persist = true
       end
     end
@@ -2692,6 +2696,7 @@ local function test_agent_view_container(repo)
     wait_until("active agent before send", function()
       return vim.api.nvim_get_current_buf() == cursor_buf
     end, 3000)
+
     agents.toggle()
     assert_true(visible_agent_float_count() == 0, "agent container did not hide")
 
@@ -2716,6 +2721,13 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_win_get_height(reopened_win) == agent_height, "reopened agent container changed height")
     winbar = vim.api.nvim_get_option_value("winbar", { win = reopened_win })
     assert_true(winbar:find("[cursor", 1, true) ~= nil, "reopened agent container did not reserve its tab bar")
+
+    vim.cmd("quit")
+    wait_until("agent close focuses another tab", function()
+      return visible_agent_float_count() == 1
+        and vim.api.nvim_get_current_buf() ~= cursor_buf
+    end, 3000)
+    assert_true(not vim.api.nvim_buf_is_valid(cursor_buf), "agent terminal :q did not detach its client")
   end, debug.traceback)
 
   vim.env.PATH = old_path

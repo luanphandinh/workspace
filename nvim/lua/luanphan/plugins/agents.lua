@@ -8,7 +8,7 @@ local agent_defs = {
     g_bufnr = "cursor_agent_bufnr",
     notify_prefix = "cursor_agent",
     augroup_prefix = "CursorAgent",
-    defaults = { cmd = "mcursor", args = { "persist" } },
+    defaults = { cmd = "mcursor", detach_on_quit = true },
     keys = {
       toggle = { lhs = "<leader>ac", mode = "n", desc = "Toggle terminal" },
       focus = { lhs = "<leader>af", mode = "n", desc = "Focus terminal" },
@@ -197,6 +197,15 @@ local function get_agent(name)
     end,
     on_close = function(bufnr, cwd)
       agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
+    end,
+    on_quit = function(bufnr, cwd)
+      agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
+      vim.schedule(function()
+        local next_tab = most_recent_tab(cwd)
+        if next_tab then
+          M.open(next_tab.agent, next_tab.bufnr, { view_mode = true })
+        end
+      end)
     end,
   })
   return apis[name]

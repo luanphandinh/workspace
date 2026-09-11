@@ -37,6 +37,7 @@ local BASE_DEFAULTS = {
 ---@field on_prepare? fun(win: integer)
 ---@field on_show? fun(bufnr: integer, win: integer, cwd: string)
 ---@field on_close? fun(bufnr: integer, cwd: string)
+---@field on_quit? fun(bufnr: integer, cwd: string)
 function M.create(profile)
   profile = vim.tbl_extend("force", {
     g_bufnr = "terminal_agent_bufnr",
@@ -243,6 +244,9 @@ local function sync_terminal_grid(win, bufnr)
 
   local width = vim.api.nvim_win_get_width(win)
   local height = vim.api.nvim_win_get_height(win)
+  if vim.api.nvim_get_option_value("winbar", { win = win }) ~= "" then
+    height = height - 1
+  end
   width = math.max(1, width)
   height = math.max(1, height)
 
@@ -651,12 +655,16 @@ local function attach_quit_detach(buf)
     buffer = buf,
     once = true,
     callback = function()
+      local cwd = vim.b[buf].luanphan_agent_cwd
       local ok, job = pcall(vim.fn.getbufvar, buf, "terminal_job_id")
       if ok and valid_job_id(job) then
         pcall(vim.fn.jobstop, job)
         pcall(vim.fn.jobwait, { job }, 1000)
       end
-      clear_bufnr_for_buf(buf)
+      cwd = clear_bufnr_for_buf(buf) or cwd
+      if cwd and profile.on_quit then
+        pcall(profile.on_quit, buf, cwd)
+      end
       vim.schedule(function()
         if vim.api.nvim_buf_is_valid(buf) then
           pcall(vim.api.nvim_buf_delete, buf, { force = true })

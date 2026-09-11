@@ -24,14 +24,11 @@ $ROOT/bin/mcursor start --cwd "$TMP/workspace" --mode read --model example-model
 grep -q 'native start' "$TMP/start.out"
 grep -q '"tmux": null' "$TMP/cursor.log"
 grep -q '"persist", "example"' "$TMP/cursor.log"
+$ROOT/bin/mcursor > "$TMP/bare.out"
+grep -q 'native start' "$TMP/bare.out"
+grep -q '"persist"' "$TMP/cursor.log"
 $ROOT/bin/mcursor start --cwd "$TMP/workspace" > "$TMP/start-empty.out"
 grep -q 'native start' "$TMP/start-empty.out"
-(
-  cd "$TMP/workspace"
-  "$ROOT/bin/mcursor" > "$TMP/picker-new.out"
-)
-grep -q 'native start' "$TMP/picker-new.out"
-grep -q '"persist"' "$TMP/cursor.log"
 $ROOT/bin/mcursor attach native-session > "$TMP/attach.out"
 grep -q 'native attach native-session' "$TMP/attach.out"
 $ROOT/bin/mcursor resume cursor-chat-id > "$TMP/resume.out"
