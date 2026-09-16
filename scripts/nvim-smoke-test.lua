@@ -3876,6 +3876,16 @@ local function test_git_diff_repository_bar_from_workspace_root()
     realpath(vim.api.nvim_buf_get_name(0)) == realpath(first_repo .. "/first-change.txt"),
     "original file did not open"
   )
+  assert_true(vim.api.nvim_get_current_tabpage() == source_tab, "original file did not open in the code tab")
+  assert_true(not vim.wo.diff, "original file retained Diffview diff mode")
+  assert_true(not vim.wo.scrollbind, "original file retained Diffview scroll binding")
+  assert_true(not vim.wo.cursorbind, "original file retained Diffview cursor binding")
+  assert_true(vim.wo.number, "original file did not restore line numbers")
+  assert_true(vim.wo.relativenumber, "original file did not restore relative line numbers")
+  assert_true(vim.wo.cursorline, "original file did not restore the cursor line")
+  assert_true(vim.wo.signcolumn == "yes", "original file did not restore the sign column")
+  assert_true(not vim.wo.winfixheight, "original file retained the repository bar fixed height")
+  assert_true(vim.wo.winhighlight == "", "repository bar highlight leaked into the original file")
   local original_systemlist = vim.fn.systemlist
   vim.fn.systemlist = function()
     error("focusing an existing Diffview must not run synchronous repository discovery", 0)

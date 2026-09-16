@@ -244,22 +244,6 @@ local function current_diffview_file_path(view)
   return nil
 end
 
-local function refire_current_file_runtime(buf)
-  vim.schedule(function()
-    if not vim.api.nvim_buf_is_loaded(buf) or vim.bo[buf].buftype ~= "" then
-      return
-    end
-    if vim.bo[buf].filetype == "" then
-      vim.api.nvim_buf_call(buf, function()
-        vim.cmd("filetype detect")
-      end)
-    end
-    pcall(vim.api.nvim_buf_call, buf, function()
-      vim.api.nvim_exec_autocmds("FileType", { buffer = buf, modeline = false })
-    end)
-  end)
-end
-
 local function current_original_line(path, view)
   local bufname = vim.api.nvim_buf_get_name(0)
   if same_real_path(bufname, path) then
@@ -292,27 +276,23 @@ local function current_original_line(path, view)
   return vim.api.nvim_win_get_cursor(main_win.id)[1]
 end
 
-local function open_original_file(path, line, lib, layout)
+local function open_original_file(path, line, lib)
   if not path then
     vim.notify("No original file found for current diff", vim.log.levels.WARN)
     return
   end
 
   local target_tab = lib and lib.get_prev_non_view_tabpage() or nil
-  if target_tab then
-    vim.api.nvim_set_current_tabpage(target_tab)
-  else
-    vim.cmd("tabnew")
+  if not target_tab then
+    vim.notify("No code tab found for current diff", vim.log.levels.WARN)
+    return
   end
-  if layout and type(layout.restore_winopts) == "function" then
-    pcall(layout.restore_winopts, layout)
-  end
+  vim.api.nvim_set_current_tabpage(target_tab)
   vim.cmd("keepalt edit " .. vim.fn.fnameescape(path))
   if line and line > 0 then
     local last = vim.api.nvim_buf_line_count(0)
     vim.api.nvim_win_set_cursor(0, { math.min(line, last), 0 })
   end
-  refire_current_file_runtime(vim.api.nvim_get_current_buf())
 end
 
 local function jump_to_original_file(view)
@@ -321,7 +301,7 @@ local function jump_to_original_file(view)
     view = lib.get_current_view() or view
   end
   local path = current_diffview_file_path(view) or normal_buffer_path()
-  open_original_file(path, current_original_line(path, view), ok and lib or nil, view and view.cur_layout)
+  open_original_file(path, current_original_line(path, view), ok and lib or nil)
 end
 
 local function diffview_repository()
