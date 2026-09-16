@@ -7,6 +7,27 @@ local handle_workspace_diff_mouse
 local code_window_state = {}
 local editor_option_template
 
+local editor_window_options = {
+  "colorcolumn",
+  "cursorbind",
+  "cursorcolumn",
+  "cursorline",
+  "cursorlineopt",
+  "diff",
+  "list",
+  "number",
+  "numberwidth",
+  "relativenumber",
+  "scrollbind",
+  "signcolumn",
+  "spell",
+  "statuscolumn",
+  "winfixheight",
+  "winfixwidth",
+  "winhighlight",
+  "wrap",
+}
+
 local function real_path(path)
   if not path or path == "" then
     return nil
@@ -238,12 +259,10 @@ end
 
 local function snapshot_window_options(win)
   local values = {}
-  for name, info in pairs(vim.api.nvim_get_all_options_info()) do
-    if info.scope == "win" then
-      local ok, value = pcall(vim.api.nvim_get_option_value, name, { win = win })
-      if ok then
-        values[name] = value
-      end
+  for _, name in ipairs(editor_window_options) do
+    local ok, value = pcall(vim.api.nvim_get_option_value, name, { win = win })
+    if ok then
+      values[name] = value
     end
   end
   return values
@@ -254,7 +273,17 @@ local function restore_window_options(win, values)
     return
   end
   for name, value in pairs(values or {}) do
-    pcall(vim.api.nvim_set_option_value, name, value, { win = win })
+    if not vim.api.nvim_win_is_valid(win) then
+      return
+    end
+    local buf = vim.api.nvim_win_get_buf(win)
+    if not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_buf_is_loaded(buf) then
+      return
+    end
+    local ok, current = pcall(vim.api.nvim_get_option_value, name, { win = win })
+    if ok and current ~= value then
+      pcall(vim.api.nvim_set_option_value, name, value, { win = win })
+    end
   end
 end
 
