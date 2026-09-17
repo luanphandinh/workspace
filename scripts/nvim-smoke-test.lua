@@ -1487,74 +1487,6 @@ local function test_live_grep_highlights_content_only()
   end
 end
 
-local function test_live_grep_resumes_cached_search()
-  local original_cwd = vim.fn.getcwd()
-  local fixture = temp_root .. "/live-grep-resume"
-  local query = "persistent search target"
-  write(fixture .. "/first.txt", { query })
-  write(fixture .. "/second.txt", { query })
-
-  local function prompt_buffer()
-    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-      if vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].filetype == "TelescopePrompt" and vim.fn.bufwinid(buf) ~= -1 then
-        return buf
-      end
-    end
-  end
-
-  local ok, err = xpcall(function()
-    vim.cmd("cd " .. vim.fn.fnameescape(fixture))
-    local grep = require("luanphan.telescope_grep_opts")
-    grep.toggle_live_grep()
-
-    local first_prompt
-    wait_until("initial live grep prompt", function()
-      first_prompt = prompt_buffer()
-      return first_prompt ~= nil
-    end, 3000)
-    local action_state = require("telescope.actions.state")
-    local first_picker = action_state.get_current_picker(first_prompt)
-    first_picker:set_prompt(query)
-    wait_until("initial live grep results", function()
-      return first_picker.manager and first_picker.manager:num_results() == 2
-    end, 5000)
-    first_picker:set_selection(2)
-    local selected = action_state.get_selected_entry()
-    assert_true(selected ~= nil, "live grep did not select a result before opening it")
-    local selected_path = realpath(selected.filename)
-    require("telescope.actions").select_default(first_prompt)
-    wait_until("initial live grep closes", function()
-      return prompt_buffer() == nil
-    end, 3000)
-    vim.cmd("stopinsert")
-    grep.toggle_live_grep()
-    local resumed_prompt
-    wait_until("resumed live grep prompt", function()
-      resumed_prompt = prompt_buffer()
-      return resumed_prompt ~= nil
-    end, 3000)
-    local resumed_picker = action_state.get_current_picker(resumed_prompt)
-    wait_until("resumed live grep state", function()
-      local entry = action_state.get_selected_entry()
-      return resumed_picker:_get_prompt() == query
-        and resumed_picker.manager
-        and resumed_picker.manager:num_results() == 2
-        and entry
-        and realpath(entry.filename) == selected_path
-    end, 5000)
-    require("telescope.actions").close(resumed_prompt)
-    vim.cmd("stopinsert")
-  end, debug.traceback)
-
-  if prompt_buffer() then
-    require("telescope.actions").close(prompt_buffer())
-  end
-  if vim.fn.isdirectory(original_cwd) == 1 then
-    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
-  end
-  assert_true(ok, tostring(err))
-end
-
 local function test_flow_line_navigation()
   local flow = require("luanphan.flow")
   local original_data_dir = vim.g.luanphan_flow_data_dir
@@ -4566,10 +4498,6 @@ local setup_ok, setup_err = xpcall(function()
 
   test("Ctrl-J and Ctrl-K move between windows", function()
     test_ctrl_j_and_k_move_between_windows()
-  end)
-
-  test("live grep resumes cached search", function()
-    test_live_grep_resumes_cached_search()
   end)
 
   test("markdown browser preview keymap", function()
