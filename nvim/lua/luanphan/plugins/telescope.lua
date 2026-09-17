@@ -3,7 +3,7 @@ local function find_files()
 end
 
 local function live_grep()
-  require("luanphan.telescope_grep_opts").live_grep()
+  require("luanphan.telescope_grep_opts").toggle_live_grep()
 end
 
 local function live_grep_selection()

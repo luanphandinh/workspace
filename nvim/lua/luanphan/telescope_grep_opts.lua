@@ -2,6 +2,34 @@
 -- Default: ignore-case on (-i), fixed-string on (-F). <leader>t1 = strict case, t2 = regex.
 
 local M = {}
+local last_live_grep
+
+local function live_grep_context(default_text)
+  local tconf = require("telescope.config")
+  local opts = vim.deepcopy(tconf.pickers.live_grep or {})
+  opts.additional_args = M.additional_args
+  opts.cwd = opts.cwd or vim.uv.cwd()
+  opts.default_text = default_text or opts.default_text
+  opts.cache_picker = vim.tbl_deep_extend("force", opts.cache_picker or {}, {
+    limit_entries = -1,
+  })
+
+  local args = vim.deepcopy(opts.vimgrep_arguments or tconf.values.vimgrep_arguments)
+  vim.list_extend(args, opts.additional_args(opts))
+  local search_dirs = vim.tbl_map(vim.fn.expand, opts.search_dirs or {})
+  local cwd = vim.uv.fs_realpath(opts.cwd) or vim.fs.normalize(opts.cwd)
+  local identity = table.concat(vim.list_extend({ cwd }, vim.deepcopy(args)), "\0")
+  return opts, args, search_dirs, identity
+end
+
+local function cached_picker_index(picker)
+  local cached = require("telescope.state").get_global_key("cached_pickers") or {}
+  for index, candidate in ipairs(cached) do
+    if candidate == picker then
+      return index
+    end
+  end
+end
 
 function M.content_highlights(prompt, display)
   local _, coordinates_end = display:find(":%d+:%d+:")
@@ -21,20 +49,13 @@ end
 --- |:Telescope live_grep|; you must call this (or pass opts in Lua) for |additional_args| to run.
 function M.live_grep(default_text)
   local actions = require("telescope.actions")
+  local action_state = require("telescope.actions.state")
   local finders = require("telescope.finders")
   local make_entry = require("telescope.make_entry")
   local pickers = require("telescope.pickers")
   local sorters = require("telescope.sorters")
-  local tconf = require("telescope.config")
-  local conf = tconf.values
-  local opts = vim.deepcopy(tconf.pickers.live_grep or {})
-  opts.additional_args = M.additional_args
-  opts.cwd = opts.cwd or vim.uv.cwd()
-  opts.default_text = default_text or opts.default_text
-
-  local args = vim.deepcopy(opts.vimgrep_arguments or conf.vimgrep_arguments)
-  vim.list_extend(args, opts.additional_args(opts))
-  local search_dirs = vim.tbl_map(vim.fn.expand, opts.search_dirs or {})
+  local conf = require("telescope.config").values
+  local opts, args, search_dirs, identity = live_grep_context(default_text)
 
   local finder = finders.new_job(function(prompt)
     if not prompt or prompt == "" then
@@ -48,17 +69,35 @@ function M.live_grep(default_text)
     return M.content_highlights(prompt, display)
   end
 
-  pickers.new(opts, {
+  local picker = pickers.new(opts, {
     prompt_title = "Live Grep",
     finder = finder,
     previewer = conf.grep_previewer(opts),
     sorter = require("luanphan.search_priority").wrap_sorter(grep_sorter),
-    attach_mappings = function(_, map)
+    attach_mappings = function(prompt_bufnr, map)
+      last_live_grep = {
+        picker = action_state.get_current_picker(prompt_bufnr),
+        identity = identity,
+      }
       map("i", "<C-Space>", actions.to_fuzzy_refine)
       return true
     end,
     push_cursor_on_edit = true,
-  }):find()
+  })
+  last_live_grep = { picker = picker, identity = identity }
+  picker:find()
+end
+
+function M.toggle_live_grep()
+  local _, _, _, identity = live_grep_context()
+  if last_live_grep and last_live_grep.identity == identity then
+    local index = cached_picker_index(last_live_grep.picker)
+    if index then
+      require("telescope.builtin").resume({ cache_index = index })
+      return
+    end
+  end
+  M.live_grep()
 end
 
 --- Extra ripgrep args for |telescope.builtin.live_grep|.
