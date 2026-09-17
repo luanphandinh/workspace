@@ -1,6 +1,4 @@
 local M = {}
-local divider_namespace = vim.api.nvim_create_namespace("luanphan-search-priority-divider")
-local divider_label = " DEPRIORITIZED RESULTS "
 
 local defaults = {
   "*.md",
@@ -83,100 +81,9 @@ function M.wrap_sorter(base, patterns)
       if score == nil or score < 0 then
         return score
       end
-      local rank = M.rank_path(entry_path(entry, line), patterns)
-      entry.__luanphan_search_priority_rank = rank
-      return rank * 10 + score
+      return M.rank_path(entry_path(entry, line), patterns) * 10 + score
     end,
   })
-end
-
-function M.render_divider(picker)
-  local buf = picker and picker.results_bufnr
-  local win = picker and picker.results_win
-  if not buf or not vim.api.nvim_buf_is_valid(buf) or not win or not vim.api.nvim_win_is_valid(win) then
-    return
-  end
-  vim.api.nvim_buf_clear_namespace(buf, divider_namespace, 0, -1)
-  if not picker.manager then
-    return
-  end
-
-  local saw_normal = false
-  for index = 1, picker.manager:num_results() do
-    local entry = picker.manager:get_entry(index)
-    local rank = entry and entry.__luanphan_search_priority_rank or 0
-    if rank == 0 then
-      saw_normal = true
-    elseif saw_normal then
-      local row = picker:get_row(index)
-      if row < 0 or row >= vim.api.nvim_buf_line_count(buf) then
-        return
-      end
-      local width = math.max(#divider_label + 4, vim.api.nvim_win_get_width(win) - 2)
-      local left = math.floor((width - #divider_label) / 2)
-      local right = width - #divider_label - left
-      vim.api.nvim_buf_set_extmark(buf, divider_namespace, row, 0, {
-        virt_lines = { {
-          { string.rep("-", left), "TelescopeResultsComment" },
-          { divider_label, "WarningMsg" },
-          { string.rep("-", right), "TelescopeResultsComment" },
-        } },
-        virt_lines_above = true,
-      })
-      return
-    end
-  end
-end
-
-function M.capture_results_view(prompt_bufnr)
-  local picker = require("telescope.actions.state").get_current_picker(prompt_bufnr)
-  local win = picker and picker.results_win
-  if win and vim.api.nvim_win_is_valid(win) and type(picker.cache_picker) == "table" then
-    picker.cache_picker.__luanphan_search_priority_view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
-  end
-end
-
-local function restore_results_view(picker)
-  local win = picker and picker.results_win
-  local view = picker
-    and type(picker.cache_picker) == "table"
-    and picker.cache_picker.__luanphan_search_priority_view
-  if win and vim.api.nvim_win_is_valid(win) and view then
-    vim.api.nvim_win_call(win, function()
-      vim.fn.winrestview(view)
-    end)
-  end
-end
-
-local function attach_divider(prompt_bufnr)
-  local picker = require("telescope.actions.state").get_current_picker(prompt_bufnr)
-  if not picker.cache_picker or picker.cache_picker.is_cached ~= true then
-    return
-  end
-  vim.api.nvim_create_autocmd("User", {
-    pattern = "TelescopeResumePost",
-    once = true,
-    callback = function()
-      vim.schedule(function()
-        M.render_divider(picker)
-        restore_results_view(picker)
-      end)
-    end,
-  })
-end
-
-function M.decorate_picker(opts, base, patterns)
-  opts.sorter = M.wrap_sorter(base, patterns)
-  local attach_mappings = opts.attach_mappings
-  opts.attach_mappings = function(prompt_bufnr, map)
-    attach_divider(prompt_bufnr)
-    if attach_mappings then
-      return attach_mappings(prompt_bufnr, map)
-    end
-    return true
-  end
-  opts.on_complete = vim.list_extend(opts.on_complete or {}, { M.render_divider })
-  return opts
 end
 
 function M.open_editor()
