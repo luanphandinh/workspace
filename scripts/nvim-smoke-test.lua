@@ -1492,8 +1492,12 @@ local function test_live_grep_resumes_cached_search()
   local original_priority_path = vim.g.luanphan_search_deprioritize_path
   local fixture = temp_root .. "/live-grep-resume"
   local query = "persistent search target"
-  write(fixture .. "/first.go", { query })
-  write(fixture .. "/second_test.go", { query })
+  for index = 1, 30 do
+    write(string.format("%s/source-%02d.go", fixture, index), { query })
+  end
+  for index = 1, 10 do
+    write(string.format("%s/source-%02d_test.go", fixture, index), { query })
+  end
   local priority_path = fixture .. "/deprioritize"
   write(priority_path, { "*_test.go" })
   vim.g.luanphan_search_deprioritize_path = priority_path
@@ -1520,7 +1524,7 @@ local function test_live_grep_resumes_cached_search()
     local first_picker = action_state.get_current_picker(first_prompt)
     first_picker:set_prompt(query)
     wait_until("initial live grep results", function()
-      return first_picker.manager and first_picker.manager:num_results() == 2
+      return first_picker.manager and first_picker.manager:num_results() == 40
     end, 5000)
     local divider_namespace = vim.api.nvim_get_namespaces()["luanphan-search-priority-divider"]
     local divider_marks
@@ -1539,17 +1543,25 @@ local function test_live_grep_resumes_cached_search()
     for _, chunk in ipairs(divider[4].virt_lines[1]) do
       divider_text = divider_text .. chunk[1]
     end
-    assert_true(divider[2] == first_picker:get_row(2), "divider was not above the first deprioritized result")
+    assert_true(divider[2] == first_picker:get_row(31), "divider was not above the first deprioritized result")
     assert_true(divider_text:find("DEPRIORITIZED RESULTS", 1, true) ~= nil, "divider label was not visible")
     assert_true(
-      vim.api.nvim_buf_line_count(first_picker.results_bufnr) == 2,
+      vim.api.nvim_buf_line_count(first_picker.results_bufnr) == 40,
       "divider added a selectable result row"
     )
-    first_picker:set_selection(2)
+    first_picker:set_selection(12)
+    vim.api.nvim_win_call(first_picker.results_win, function()
+      vim.fn.winrestview({ topline = 1 })
+    end)
+    local initial_view = vim.api.nvim_win_call(first_picker.results_win, vim.fn.winsaveview)
     local selected = action_state.get_selected_entry()
     assert_true(selected ~= nil, "live grep did not select a result before opening it")
     local selected_path = realpath(selected.filename)
-    require("telescope.actions").select_default(first_prompt)
+    local select_mapping = vim.api.nvim_buf_call(first_prompt, function()
+      return vim.fn.maparg("<CR>", "i", false, true)
+    end)
+    assert_true(type(select_mapping.callback) == "function", "live grep did not map Enter through viewport capture")
+    select_mapping.callback()
     wait_until("initial live grep closes", function()
       return prompt_buffer() == nil
     end, 3000)
@@ -1565,7 +1577,7 @@ local function test_live_grep_resumes_cached_search()
       local entry = action_state.get_selected_entry()
       return resumed_picker:_get_prompt() == query
         and resumed_picker.manager
-        and resumed_picker.manager:num_results() == 2
+        and resumed_picker.manager:num_results() == 40
         and entry
         and realpath(entry.filename) == selected_path
     end, 5000)
@@ -1578,7 +1590,8 @@ local function test_live_grep_resumes_cached_search()
         -1,
         { details = true }
       )
-      return #resumed_divider_marks == 1
+      local view = vim.api.nvim_win_call(resumed_picker.results_win, vim.fn.winsaveview)
+      return #resumed_divider_marks == 1 and view.topline == initial_view.topline
     end, 5000)
     local resumed_divider = resumed_divider_marks[1]
     local resumed_divider_text = ""
@@ -1586,12 +1599,21 @@ local function test_live_grep_resumes_cached_search()
       resumed_divider_text = resumed_divider_text .. chunk[1]
     end
     assert_true(
-      resumed_divider[2] == resumed_picker:get_row(2),
+      resumed_divider[2] == resumed_picker:get_row(31),
       "resumed divider was not above the first deprioritized result"
     )
     assert_true(
       resumed_divider_text:find("DEPRIORITIZED RESULTS", 1, true) ~= nil,
       "resumed divider label was not visible"
+    )
+    local resumed_view = vim.api.nvim_win_call(resumed_picker.results_win, vim.fn.winsaveview)
+    assert_true(
+      resumed_view.topline == initial_view.topline,
+      string.format(
+        "live grep viewport mismatch: expected topline %d, got %d",
+        initial_view.topline,
+        resumed_view.topline
+      )
     )
     require("telescope.actions").close(resumed_prompt)
     vim.cmd("stopinsert")

@@ -128,6 +128,26 @@ function M.render_divider(picker)
   end
 end
 
+function M.capture_results_view(prompt_bufnr)
+  local picker = require("telescope.actions.state").get_current_picker(prompt_bufnr)
+  local win = picker and picker.results_win
+  if win and vim.api.nvim_win_is_valid(win) and type(picker.cache_picker) == "table" then
+    picker.cache_picker.__luanphan_search_priority_view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
+  end
+end
+
+local function restore_results_view(picker)
+  local win = picker and picker.results_win
+  local view = picker
+    and type(picker.cache_picker) == "table"
+    and picker.cache_picker.__luanphan_search_priority_view
+  if win and vim.api.nvim_win_is_valid(win) and view then
+    vim.api.nvim_win_call(win, function()
+      vim.fn.winrestview(view)
+    end)
+  end
+end
+
 local function attach_divider(prompt_bufnr)
   local picker = require("telescope.actions.state").get_current_picker(prompt_bufnr)
   if not picker.cache_picker or picker.cache_picker.is_cached ~= true then
@@ -137,7 +157,10 @@ local function attach_divider(prompt_bufnr)
     pattern = "TelescopeResumePost",
     once = true,
     callback = function()
-      M.render_divider(picker)
+      vim.schedule(function()
+        M.render_divider(picker)
+        restore_results_view(picker)
+      end)
     end,
   })
 end

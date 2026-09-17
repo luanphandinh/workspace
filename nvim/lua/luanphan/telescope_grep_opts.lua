@@ -80,6 +80,12 @@ function M.live_grep(default_text)
         identity = identity,
       }
       map("i", "<C-Space>", actions.to_fuzzy_refine)
+      local function select_default()
+        priority.capture_results_view(prompt_bufnr)
+        actions.select_default(prompt_bufnr)
+      end
+      map("i", "<CR>", select_default)
+      map("n", "<CR>", select_default)
       return true
     end,
     push_cursor_on_edit = true,
