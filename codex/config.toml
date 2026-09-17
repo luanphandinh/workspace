@@ -1,5 +1,8 @@
 sandbox_mode = "danger-full-access"
 approval_policy = "never"
 
+[tui]
+auto_recap = false
+
 [features]
 multi_agent = true

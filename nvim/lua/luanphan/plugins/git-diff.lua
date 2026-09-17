@@ -4,6 +4,49 @@ local pending_workspace_diff = nil
 local switch_workspace_diff
 local close_workspace_diff
 local handle_workspace_diff_mouse
+local code_window_state = {}
+local editor_option_template
+
+local editor_window_options = {
+  "colorcolumn",
+  "cursorbind",
+  "cursorcolumn",
+  "cursorline",
+  "cursorlineopt",
+  "diff",
+  "list",
+  "number",
+  "numberwidth",
+  "relativenumber",
+  "scrollbind",
+  "signcolumn",
+  "spell",
+  "statuscolumn",
+  "winfixheight",
+  "winfixwidth",
+  "winhighlight",
+  "wrap",
+}
+
+local function real_path(path)
+  if not path or path == "" then
+    return nil
+  end
+  local uv = vim.uv or vim.loop
+  return (uv.fs_realpath(path) or vim.fn.fnamemodify(path, ":p")):gsub("/+$", "")
+end
+
+local function same_real_path(lhs, rhs)
+  lhs = real_path(lhs)
+  rhs = real_path(rhs)
+  return lhs ~= nil and rhs ~= nil and lhs == rhs
+end
+
+local function path_is_within(path, root)
+  path = real_path(path)
+  root = real_path(root)
+  return path ~= nil and root ~= nil and (path == root or path:sub(1, #root + 1) == root .. "/")
+end
 
 local function find_diffview_tab()
   local ok, lib = pcall(require, "diffview.lib")
@@ -13,9 +56,9 @@ local function find_diffview_tab()
         local state = view._luanphan_workspace_diff
         local active = state and state.views and state.views[state.active] or nil
         if active and active.tabpage and vim.api.nvim_tabpage_is_valid(active.tabpage) then
-          return active.tabpage
+          return active.tabpage, active
         end
-        return view.tabpage
+        return view.tabpage, view
       end
     end
   end
@@ -32,8 +75,8 @@ local function find_diffview_tab()
   return nil
 end
 
-local function close_or_focus_existing_diffview()
-  local existing_tab = find_diffview_tab()
+local function close_or_focus_existing_diffview(cwd)
+  local existing_tab, existing_view = find_diffview_tab()
   if not existing_tab then
     return false
   end
@@ -46,8 +89,25 @@ local function close_or_focus_existing_diffview()
     else
       vim.cmd("DiffviewClose")
     end
-  else
+  elseif not cwd
+    or (existing_view and existing_view._luanphan_workspace_diff
+      and same_real_path(existing_view._luanphan_workspace_diff.parent, cwd))
+    or (existing_view and existing_view.adapter and existing_view.adapter.ctx
+      and path_is_within(cwd, existing_view.adapter.ctx.toplevel))
+  then
     vim.api.nvim_set_current_tabpage(existing_tab)
+  else
+    local current_tab = vim.api.nvim_get_current_tabpage()
+    vim.api.nvim_set_current_tabpage(existing_tab)
+    if existing_view and existing_view._luanphan_workspace_diff and close_workspace_diff then
+      close_workspace_diff(existing_view)
+    else
+      vim.cmd("DiffviewClose")
+    end
+    if vim.api.nvim_tabpage_is_valid(current_tab) then
+      vim.api.nvim_set_current_tabpage(current_tab)
+    end
+    return false
   end
 
   return true
@@ -78,220 +138,6 @@ local function toggle_all_file_history()
   end
 
   vim.cmd("DiffviewFileHistory")
-end
-
-local function normal_buffer_path()
-  local path = vim.api.nvim_buf_get_name(0)
-  if path == "" or path:match("^diffview://") or vim.bo.buftype ~= "" then
-    return nil
-  end
-  return path
-end
-
-local function absolute_diffview_path(path, view)
-  if not path or path == "" then
-    return nil
-  end
-  if vim.fn.isabsolutepath(path) == 1 then
-    return path
-  end
-
-  local root = view and view.adapter and view.adapter.ctx and view.adapter.ctx.toplevel
-  if root and root ~= "" then
-    return root .. "/" .. path
-  end
-  return vim.fn.fnamemodify(path, ":p")
-end
-
-local function diffview_entry_path(entry, view)
-  if not entry then
-    return nil
-  end
-  if entry.absolute_path then
-    return entry.absolute_path
-  end
-  if entry.right and entry.right.path then
-    return absolute_diffview_path(entry.right.path, view)
-  end
-  if entry.left and entry.left.path then
-    return absolute_diffview_path(entry.left.path, view)
-  end
-  return absolute_diffview_path(entry.path, view)
-end
-
-local function current_diffview_file_path(view)
-  if not view then
-    return nil
-  end
-
-  if type(view.infer_cur_file) == "function" then
-    local ok, entry = pcall(function()
-      return view:infer_cur_file(false)
-    end)
-    local path = ok and diffview_entry_path(entry, view) or nil
-    if path then
-      return path
-    end
-  end
-
-  if view.panel and type(view.panel.get_item_at_cursor) == "function" then
-    local ok, entry = pcall(function()
-      return view.panel:get_item_at_cursor()
-    end)
-    local path = ok and diffview_entry_path(entry, view) or nil
-    if path then
-      return path
-    end
-  end
-
-  local path = diffview_entry_path(view.cur_file or view.cur_entry, view)
-  if path then
-    return path
-  end
-
-  if view.panel and type(view.panel.ordered_file_list) == "function" then
-    local ok, files = pcall(function()
-      return view.panel:ordered_file_list()
-    end)
-    if ok and type(files) == "table" then
-      for _, entry in ipairs(files) do
-        path = diffview_entry_path(entry, view)
-        if path then
-          return path
-        end
-      end
-    end
-  end
-
-  if view.panel and type(view.panel.list_files) == "function" then
-    local ok, files = pcall(function()
-      return view.panel:list_files()
-    end)
-    if ok and type(files) == "table" then
-      for _, entry in ipairs(files) do
-        path = diffview_entry_path(entry, view)
-        if path then
-          return path
-        end
-      end
-    end
-  end
-
-  if view.files and type(view.files.iter) == "function" then
-    local ok, iter = pcall(function()
-      return view.files:iter()
-    end)
-    if ok then
-      for _, entry in iter do
-        path = diffview_entry_path(entry, view)
-        if path then
-          return path
-        end
-      end
-    end
-  end
-
-  if type(view.files) == "table" then
-    for _, group in pairs(view.files) do
-      if type(group) == "table" then
-        for _, entry in ipairs(group) do
-          path = diffview_entry_path(entry, view)
-          if path then
-            return path
-          end
-        end
-      end
-    end
-  end
-
-  return nil
-end
-
-local function refire_current_file_runtime(buf)
-  vim.schedule(function()
-    if not vim.api.nvim_buf_is_loaded(buf) or vim.bo[buf].buftype ~= "" then
-      return
-    end
-    if vim.bo[buf].filetype == "" then
-      vim.api.nvim_buf_call(buf, function()
-        vim.cmd("filetype detect")
-      end)
-    end
-    pcall(vim.api.nvim_buf_call, buf, function()
-      vim.api.nvim_exec_autocmds("FileType", { buffer = buf, modeline = false })
-    end)
-  end)
-end
-
-local function same_real_path(lhs, rhs)
-  if not lhs or not rhs or lhs == "" or rhs == "" then
-    return false
-  end
-  local uv = vim.uv or vim.loop
-  lhs = uv.fs_realpath(lhs) or vim.fn.fnamemodify(lhs, ":p")
-  rhs = uv.fs_realpath(rhs) or vim.fn.fnamemodify(rhs, ":p")
-  return lhs == rhs
-end
-
-local function current_original_line(path, view)
-  local bufname = vim.api.nvim_buf_get_name(0)
-  if same_real_path(bufname, path) then
-    return vim.api.nvim_win_get_cursor(0)[1]
-  end
-
-  local layout = view and view.cur_layout
-  if not layout or type(layout.get_main_win) ~= "function" then
-    return nil
-  end
-
-  local current_win = vim.api.nvim_get_current_win()
-  local in_layout = false
-  for _, win in ipairs(layout.windows or {}) do
-    if win.id == current_win then
-      in_layout = true
-      break
-    end
-  end
-  if not in_layout then
-    return nil
-  end
-
-  local ok, main_win = pcall(function()
-    return layout:get_main_win()
-  end)
-  if not ok or not main_win or not main_win.id or not vim.api.nvim_win_is_valid(main_win.id) then
-    return nil
-  end
-  return vim.api.nvim_win_get_cursor(main_win.id)[1]
-end
-
-local function open_original_file(path, line, lib)
-  if not path then
-    vim.notify("No original file found for current diff", vim.log.levels.WARN)
-    return
-  end
-
-  local target_tab = lib and lib.get_prev_non_view_tabpage() or nil
-  if target_tab then
-    vim.api.nvim_set_current_tabpage(target_tab)
-  else
-    vim.cmd("tabnew")
-  end
-  vim.cmd("edit " .. vim.fn.fnameescape(path))
-  if line and line > 0 then
-    local last = vim.api.nvim_buf_line_count(0)
-    vim.api.nvim_win_set_cursor(0, { math.min(line, last), 0 })
-  end
-  refire_current_file_runtime(vim.api.nvim_get_current_buf())
-end
-
-local function jump_to_original_file(view)
-  local ok, lib = pcall(require, "diffview.lib")
-  if ok then
-    view = lib.get_current_view() or view
-  end
-  local path = current_diffview_file_path(view) or normal_buffer_path()
-  open_original_file(path, current_original_line(path, view), ok and lib or nil)
 end
 
 local function diffview_repository()
@@ -411,10 +257,130 @@ local function push_diffview()
   end
 end
 
-local function set_diffview_keymaps(view, buf)
-  vim.keymap.set("n", "<leader>gf", function()
-    jump_to_original_file(view)
-  end, { buffer = buf, desc = "Jump to original file" })
+local function snapshot_window_options(win)
+  local values = {}
+  for _, name in ipairs(editor_window_options) do
+    local ok, value = pcall(vim.api.nvim_get_option_value, name, { win = win })
+    if ok then
+      values[name] = value
+    end
+  end
+  return values
+end
+
+local function restore_window_options(win, values)
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    return
+  end
+  for name, value in pairs(values or {}) do
+    if not vim.api.nvim_win_is_valid(win) then
+      return
+    end
+    local buf = vim.api.nvim_win_get_buf(win)
+    if not vim.api.nvim_buf_is_valid(buf) or not vim.api.nvim_buf_is_loaded(buf) then
+      return
+    end
+    local ok, current = pcall(vim.api.nvim_get_option_value, name, { win = win })
+    if ok and current ~= value then
+      pcall(vim.api.nvim_set_option_value, name, value, { win = win })
+    end
+  end
+end
+
+local function is_editor_window(win)
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    return false
+  end
+  local buf = vim.api.nvim_win_get_buf(win)
+  local name = vim.api.nvim_buf_get_name(buf)
+  return vim.bo[buf].buftype == ""
+    and vim.bo[buf].filetype ~= "NvimTree"
+    and not name:match("^diffview://")
+    and not name:match("^workspace%-diff://")
+end
+
+local function find_editor_window(tab)
+  if not tab or not vim.api.nvim_tabpage_is_valid(tab) then
+    return nil
+  end
+  local current = vim.api.nvim_tabpage_get_win(tab)
+  if is_editor_window(current) then
+    return current
+  end
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+    if is_editor_window(win) then
+      return win
+    end
+  end
+  return nil
+end
+
+local function create_editor_window(tab)
+  if not tab or not vim.api.nvim_tabpage_is_valid(tab) then
+    return nil
+  end
+  local previous_tab = vim.api.nvim_get_current_tabpage()
+  if previous_tab ~= tab then
+    vim.api.nvim_set_current_tabpage(tab)
+  end
+
+  vim.cmd("botright vnew")
+  local win = vim.api.nvim_get_current_win()
+  local buf = vim.api.nvim_get_current_buf()
+  vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].buflisted = false
+  local remembered = code_window_state[tab]
+  restore_window_options(win, remembered and remembered.options or editor_option_template)
+
+  if previous_tab ~= tab and vim.api.nvim_tabpage_is_valid(previous_tab) then
+    vim.api.nvim_set_current_tabpage(previous_tab)
+  end
+  return win
+end
+
+local function ensure_editor_window(tab)
+  return find_editor_window(tab) or create_editor_window(tab)
+end
+
+local function remember_code_window(tab)
+  local win = ensure_editor_window(tab)
+  if win then
+    local options = snapshot_window_options(win)
+    code_window_state[tab] = {
+      win = win,
+      options = options,
+    }
+    editor_option_template = vim.deepcopy(options)
+  end
+end
+
+local function goto_file_edit()
+  local lib = require("diffview.lib")
+  local target_tab = lib.get_prev_non_view_tabpage()
+  local remembered = target_tab and code_window_state[target_tab] or nil
+  local target_win = remembered and is_editor_window(remembered.win) and remembered.win
+    or ensure_editor_window(target_tab)
+  local window_options = remembered and target_win == remembered.win and remembered.options
+    or (target_win and snapshot_window_options(target_win) or nil)
+
+  if target_tab and target_win then
+    vim.api.nvim_tabpage_set_win(target_tab, target_win)
+  end
+
+  require("diffview.actions").goto_file_edit()
+  if target_win and vim.api.nvim_win_is_valid(target_win) then
+    local target_buf = vim.api.nvim_win_get_buf(target_win)
+    if vim.api.nvim_buf_is_valid(target_buf) and vim.bo[target_buf].filetype == "" then
+      vim.api.nvim_win_call(target_win, function()
+        vim.cmd("filetype detect")
+      end)
+    end
+  end
+  restore_window_options(target_win, window_options)
+end
+
+local function set_diffview_keymaps(buf)
+  vim.keymap.set("n", "<leader>gf", goto_file_edit, { buffer = buf, desc = "Jump to original file" })
   vim.keymap.set("n", "<leader>gc", function()
     commit_diffview()
   end, { buffer = buf, desc = "Commit staged changes" })
@@ -442,7 +408,7 @@ local function set_diffview_tab_keymaps(view)
   end
 
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
-    set_diffview_keymaps(view, vim.api.nvim_win_get_buf(win))
+    set_diffview_keymaps(vim.api.nvim_win_get_buf(win))
   end
 end
 
@@ -899,7 +865,7 @@ local function create_repository_bar(view, state, index, focus)
   vim.keymap.set("n", "q", function()
     close_workspace_diff(view)
   end, { buffer = buf, silent = true, desc = "Close Diffview" })
-  set_diffview_keymaps(view, buf)
+  set_diffview_keymaps(buf)
 
   if focus == "diff" then
     focus_diff_content(view)
@@ -1052,18 +1018,22 @@ end
 
 local function with_diff_repository(action, has_diff)
   return function()
-    if close_or_focus_existing_diffview() then
+    local cwd = vim.fn.getcwd()
+    if not current_tab_has_diffview() then
+      remember_code_window(vim.api.nvim_get_current_tabpage())
+    end
+    if close_or_focus_existing_diffview(cwd) then
       return
     end
 
-    local cwd = vim.fn.getcwd()
     local root = git_root(cwd)
+    local repositories = root and {} or list_child_git_repositories(cwd, has_diff)
     if root then
       recent_paths.touch(root)
       action(root)
       return
     end
-    open_workspace_diff(cwd, list_child_git_repositories(cwd, has_diff), action)
+    open_workspace_diff(cwd, repositories, action)
   end
 end
 
@@ -1136,6 +1106,15 @@ local function with_diffview(fn)
 end
 
 local function setup_diffview_keymaps()
+  vim.api.nvim_create_autocmd("VimEnter", {
+    once = true,
+    callback = function()
+      local startup_win = find_editor_window(vim.api.nvim_get_current_tabpage())
+      if startup_win then
+        editor_option_template = snapshot_window_options(startup_win)
+      end
+    end,
+  })
   vim.keymap.set("n", "<leader>gd", with_diffview(with_diff_repository(function(repo)
     open_diffview(repo)
   end, repository_worktree_stats)), { desc = "Diff current changes" })
@@ -1191,7 +1170,7 @@ return {
           diff_buf_read = function(bufnr)
             vim.opt_local.wrap = false
             vim.opt_local.list = false
-            set_diffview_keymaps(nil, bufnr)
+            set_diffview_keymaps(bufnr)
           end,
           diff_buf_win_enter = function()
             local view = current_diffview()
@@ -1207,7 +1186,7 @@ return {
             vim.cmd("filetype detect")
 
             set_diffview_tab_keymaps(view)
-            set_diffview_keymaps(view, 0)
+            set_diffview_keymaps(0)
             preserve_diffview_folds(view)
             attach_workspace_diff(view)
             vim.schedule(function()
@@ -1234,7 +1213,7 @@ return {
             vim.keymap.set("n", "q", close_current_diffview, { buffer = true, silent = true })
           end
           if current_tab_has_diffview() then
-            set_diffview_keymaps(nil, 0)
+            set_diffview_keymaps(0)
           end
         end,
       })

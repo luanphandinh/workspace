@@ -20,7 +20,7 @@ endif
 
 lazy_command ?= restore
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps default-shell fonts-install newsboat-config nvim nvim-config nvim-lock agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -58,7 +58,11 @@ ifeq ($(UNAME),Darwin)
 		echo "apps: Homebrew is required on macOS" >&2; \
 		exit 1; \
 	fi
-	@for app in maccy alfred arc stats; do brew install --cask "$$app" || true; done
+	@for app in maccy alfred arc stats codexbar; do brew install --cask "$$app" || true; done
+	@if command -v codexbar >/dev/null 2>&1; then \
+		codexbar config enable --provider codex; \
+		codexbar config enable --provider cursor; \
+	fi
 	@pkill -x Stats >/dev/null 2>&1 || true
 	@sleep 1
 	@defaults write eu.exelban.Stats version -string "$$(plutil -extract CFBundleShortVersionString raw -o - /Applications/Stats.app/Contents/Info.plist)"
@@ -66,6 +70,7 @@ ifeq ($(UNAME),Darwin)
 	@for module in GPU Disk Sensors Battery Bluetooth Clock Remote; do defaults write eu.exelban.Stats "$${module}_state" -bool false; done
 	@defaults write eu.exelban.Stats setupProcess -bool true
 	@open -g /Applications/Stats.app
+	@open -g /Applications/CodexBar.app
 else
 	@echo "apps: skipped; macOS-only"
 endif
@@ -98,6 +103,9 @@ nvim-lock: ## Refresh nvim/lazy-lock.json from the installed Neovim config.
 
 nvim-test: verify-agent-clis ## Run headless Neovim smoke tests
 	GOWORK=off nvim --headless "+luafile scripts/nvim-smoke-test.lua" +qa
+
+nvim-test-linux: ## Run the Ubuntu Neovim pipeline in a native container
+	./scripts/nvim-test-linux-container.sh
 
 agent-clis: ## Install terminal agent CLIs used by Neovim
 	chmod +x ./scripts/install-agent-clis.sh
@@ -154,7 +162,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test nix-test tmux-sidebar-test ## Run smoke tests
+test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test agent-session-test mcursor-persist-test nvim-reference-test nix-test tmux-sidebar-test ## Run smoke tests
 
 mkws-test: ## Run mkws/meta-hub smoke tests
 	sh ./scripts/mkws-smoke-test.sh
@@ -170,6 +178,15 @@ codex-config-test: ## Run Codex config smoke tests
 
 agent-notification-hooks-test: ## Run agent notification hook smoke tests
 	sh ./scripts/agent-notification-hooks-smoke-test.sh
+
+agent-session-test: ## Run durable agent-session bridge smoke tests
+	sh ./scripts/agent-session-smoke-test.sh
+
+mcursor-persist-test: ## Run native Cursor persist wrapper smoke tests
+	sh ./scripts/mcursor-persist-smoke-test.sh
+
+nvim-reference-test: ## Run terminal reference URL handler smoke tests
+	sh ./scripts/nvim-reference-smoke-test.sh
 
 workspace-shell-test: ## Run workspace shell smoke tests
 	sh ./scripts/workspace-shell-smoke-test.sh

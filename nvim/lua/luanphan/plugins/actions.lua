@@ -11,6 +11,13 @@ return {
         end,
         desc = "Show commands",
       },
+      {
+        "<leader>tg",
+        function()
+          require("luanphan.actions").toggle_gitignore()
+        end,
+        desc = "Toggle Gitignore",
+      },
     },
   },
 }

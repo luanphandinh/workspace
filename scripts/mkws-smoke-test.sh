@@ -311,6 +311,30 @@ for line in Path(__import__("sys").argv[1]).read_text().splitlines():
 PY
 )"
 
+	for repo in repo-a repo-b repo-c; do
+		printf 'modified\n' > "$workspace/$repo/README.md"
+	done
+	(
+		cd "$workspace/repo-a"
+		mkws run 'git checkout -- .' > "$TMP/mkws-run.out"
+	)
+	for repo in repo-a repo-b repo-c; do
+		assert_eq "content" "$(cat "$workspace/$repo/README.md")"
+		assert_eq "" "$(git -C "$workspace/$repo" status --porcelain)"
+	done
+	assert_contains "$TMP/mkws-run.out" "succeeded: 3"
+	(
+		cd "$workspace"
+		mkws run 'printf generated > run-output.txt' >/dev/null
+	)
+	for repo in repo-a repo-b repo-c; do
+		assert_eq "generated" "$(cat "$workspace/$repo/run-output.txt")"
+	done
+	(
+		cd "$workspace"
+		mkws run 'rm run-output.txt' >/dev/null
+	)
+
 	mkdir -p "$workspace/skills/shared-skill"
 	cat > "$workspace/skills/shared-skill/SKILL.md" <<EOF
 ---

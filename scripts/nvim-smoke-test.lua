@@ -1043,7 +1043,11 @@ end
 local function assert_terminal_grid_matches(bufnr, win, label)
   wait_until(label .. " terminal grid", function()
     local rows, columns = terminal_grid_size(bufnr)
-    return rows == vim.api.nvim_win_get_height(win) and columns == vim.api.nvim_win_get_width(win)
+    local expected_rows = vim.api.nvim_win_get_height(win)
+    if vim.api.nvim_get_option_value("winbar", { win = win }) ~= "" then
+      expected_rows = expected_rows - 1
+    end
+    return rows == expected_rows and columns == vim.api.nvim_win_get_width(win)
   end, 3000)
 end
 
@@ -1481,6 +1485,74 @@ local function test_live_grep_highlights_content_only()
   for _, position in ipairs(highlights) do
     assert_true(position > coordinates_end, "live grep highlighted the filename")
   end
+end
+
+local function test_live_grep_resumes_cached_search()
+  local original_cwd = vim.fn.getcwd()
+  local fixture = temp_root .. "/live-grep-resume"
+  local query = "persistent search target"
+  write(fixture .. "/first.txt", { query })
+  write(fixture .. "/second.txt", { query })
+
+  local function prompt_buffer()
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].filetype == "TelescopePrompt" and vim.fn.bufwinid(buf) ~= -1 then
+        return buf
+      end
+    end
+  end
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(fixture))
+    local grep = require("luanphan.telescope_grep_opts")
+    grep.toggle_live_grep()
+
+    local first_prompt
+    wait_until("initial live grep prompt", function()
+      first_prompt = prompt_buffer()
+      return first_prompt ~= nil
+    end, 3000)
+    local action_state = require("telescope.actions.state")
+    local first_picker = action_state.get_current_picker(first_prompt)
+    first_picker:set_prompt(query)
+    wait_until("initial live grep results", function()
+      return first_picker.manager and first_picker.manager:num_results() == 2
+    end, 5000)
+    first_picker:set_selection(2)
+    local selected = action_state.get_selected_entry()
+    assert_true(selected ~= nil, "live grep did not select a result before opening it")
+    local selected_path = realpath(selected.filename)
+    require("telescope.actions").select_default(first_prompt)
+    wait_until("initial live grep closes", function()
+      return prompt_buffer() == nil
+    end, 3000)
+    vim.cmd("stopinsert")
+    grep.toggle_live_grep()
+    local resumed_prompt
+    wait_until("resumed live grep prompt", function()
+      resumed_prompt = prompt_buffer()
+      return resumed_prompt ~= nil
+    end, 3000)
+    local resumed_picker = action_state.get_current_picker(resumed_prompt)
+    wait_until("resumed live grep state", function()
+      local entry = action_state.get_selected_entry()
+      return resumed_picker:_get_prompt() == query
+        and resumed_picker.manager
+        and resumed_picker.manager:num_results() == 2
+        and entry
+        and realpath(entry.filename) == selected_path
+    end, 5000)
+    require("telescope.actions").close(resumed_prompt)
+    vim.cmd("stopinsert")
+  end, debug.traceback)
+
+  if prompt_buffer() then
+    require("telescope.actions").close(prompt_buffer())
+  end
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  end
+  assert_true(ok, tostring(err))
 end
 
 local function test_flow_line_navigation()
@@ -2435,6 +2507,14 @@ local function test_agent_keys_invoke_cli_commands()
       assert_true(plugin_loaded(item.plugin), item.plugin .. " did not lazy-load")
       close_agent_terminals()
     end
+    local cursor_regular = false
+    for _, line in ipairs(read_log(log)) do
+      local command, _, args = line:match("^([^|]+)|([^|]*)|(.*)$")
+      if command == "cursor-agent" and args == "" then
+        cursor_regular = true
+      end
+    end
+    assert_true(cursor_regular, "Cursor agent did not start the regular native TUI")
   end, debug.traceback)
 
   vim.env.PATH = old_path
@@ -2684,6 +2764,7 @@ local function test_agent_view_container(repo)
     wait_until("active agent before send", function()
       return vim.api.nvim_get_current_buf() == cursor_buf
     end, 3000)
+
     agents.toggle()
     assert_true(visible_agent_float_count() == 0, "agent container did not hide")
 
@@ -2708,6 +2789,13 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_win_get_height(reopened_win) == agent_height, "reopened agent container changed height")
     winbar = vim.api.nvim_get_option_value("winbar", { win = reopened_win })
     assert_true(winbar:find("[cursor", 1, true) ~= nil, "reopened agent container did not reserve its tab bar")
+
+    vim.cmd("quit")
+    wait_until("agent close focuses another tab", function()
+      return visible_agent_float_count() == 1
+        and vim.api.nvim_get_current_buf() ~= cursor_buf
+    end, 3000)
+    assert_true(not vim.api.nvim_buf_is_valid(cursor_buf), "agent terminal :q did not close its TUI")
   end, debug.traceback)
 
   vim.env.PATH = old_path
@@ -3824,6 +3912,14 @@ local function test_git_diff_repository_bar_from_workspace_root()
     "replacement line two",
   })
   write(second_repo .. "/second-change.txt", { "second repository change" })
+
+  vim.cmd("cd " .. vim.fn.fnameescape(first_repo))
+  local source_tab = vim.api.nvim_get_current_tabpage()
+  invoke_map("<leader>gd")
+  wait_for_diffview()
+  wait_for_diffview_repository(first_repo)
+  assert_true(find_workspace_diff_bar() == nil, "single-repository setup unexpectedly created a repository bar")
+  vim.api.nvim_set_current_tabpage(source_tab)
   vim.cmd("cd " .. vim.fn.fnameescape(workspace_root))
 
   invoke_map("<leader>gd")
@@ -3842,6 +3938,30 @@ local function test_git_diff_repository_bar_from_workspace_root()
   local initial_main_win = initial_view.cur_layout:get_main_win().id
   local saved_line = math.min(2, vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(initial_main_win)))
   vim.api.nvim_win_set_cursor(initial_main_win, { saved_line, 0 })
+  vim.api.nvim_set_current_win(initial_main_win)
+  invoke_map("<leader>gf")
+  assert_true(
+    realpath(vim.api.nvim_buf_get_name(0)) == realpath(first_repo .. "/first-change.txt"),
+    "original file did not open"
+  )
+  assert_true(vim.api.nvim_get_current_tabpage() == source_tab, "original file did not open in the code tab")
+  assert_true(not vim.wo.diff, "original file retained Diffview diff mode")
+  assert_true(not vim.wo.scrollbind, "original file retained Diffview scroll binding")
+  assert_true(not vim.wo.cursorbind, "original file retained Diffview cursor binding")
+  assert_true(vim.wo.number, "original file did not restore line numbers")
+  assert_true(vim.wo.relativenumber, "original file did not restore relative line numbers")
+  assert_true(vim.wo.cursorline, "original file did not restore the cursor line")
+  assert_true(vim.wo.signcolumn == "yes", "original file did not restore the sign column")
+  assert_true(not vim.wo.winfixheight, "original file retained the repository bar fixed height")
+  assert_true(vim.wo.winhighlight == "", "repository bar highlight leaked into the original file")
+  local original_systemlist = vim.fn.systemlist
+  vim.fn.systemlist = function()
+    error("focusing an existing Diffview must not run synchronous repository discovery", 0)
+  end
+  local focus_ok, focus_error = pcall(invoke_map, "<leader>gd")
+  vim.fn.systemlist = original_systemlist
+  assert_true(focus_ok, tostring(focus_error))
+  assert_true(vim.api.nvim_get_current_tabpage() == initial_view.tabpage, "existing Diffview was not focused")
   local line = vim.api.nvim_buf_get_lines(bar_buf, 0, 1, false)[1] or ""
   assert_true(
     line:find("[example-project-a +5 -1]", 1, true) ~= nil,
@@ -3937,7 +4057,13 @@ local function test_git_diff_repository_bar_from_workspace_root()
   assert_true(active_view.cur_entry.path == "first-change.txt", "repository switch lost the selected diff file")
   assert_true(vim.api.nvim_win_get_cursor(main_win)[1] == saved_line, "repository switch lost the diff cursor line")
   assert_true(realpath(vim.fn.getcwd()) == realpath(workspace_root), "repository switching changed the workspace cwd")
-  invoke_map("<leader>gd")
+  original_systemlist = vim.fn.systemlist
+  vim.fn.systemlist = function()
+    error("closing Diffview must not run synchronous repository discovery", 0)
+  end
+  local close_ok, close_error = pcall(invoke_map, "<leader>gd")
+  vim.fn.systemlist = original_systemlist
+  assert_true(close_ok, tostring(close_error))
   wait_until("workspace diff group closes", function()
     return not has_visible_diffview()
   end, 5000)
@@ -4280,8 +4406,20 @@ local function test_git_diff_original_file_jump_starts_go_runtime(worktree)
     "    return false",
     "  end, 30000)",
     "end",
+    "local function wait_for_normal_editor_options()",
+    "  wait_until('normal editor window options', function()",
+    "    return not vim.wo.diff and vim.wo.number and vim.wo.relativenumber",
+    "      and vim.wo.foldenable and vim.wo.winhighlight == ''",
+    "  end, 5000)",
+    "end",
     "vim.env.GOWORK = 'off'",
     "vim.cmd('cd ' .. vim.fn.fnameescape(worktree))",
+    "vim.cmd('edit ' .. vim.fn.fnameescape(worktree .. '/go.mod'))",
+    "vim.wo.colorcolumn = '73'",
+    "vim.wo.cursorline = true",
+    "local code_win = vim.api.nvim_get_current_win()",
+    "require('nvim-tree.api').tree.open({ focus = true })",
+    "assert_true(vim.bo.filetype == 'NvimTree', 'nvim-tree did not receive focus before diff jump test')",
     "invoke_map('<leader>gd')",
     "wait_until('diffview', has_visible_diffview, 10000)",
     "wait_until('diffview files', function() return diffview_file_count() > 0 end, 10000)",
@@ -4290,17 +4428,62 @@ local function test_git_diff_original_file_jump_starts_go_runtime(worktree)
     "focus_diff_line(needle)",
     "local expected_line = line_number_for_content(file, needle)",
     "assert_true(expected_line ~= nil, 'fixture changed line missing from original file')",
+    "vim.bo.filetype = ''",
+    "local foldminlines_changes = 0",
+    "local fold_group = vim.api.nvim_create_augroup('DiffJumpFoldOptions', { clear = true })",
+    "vim.api.nvim_create_autocmd('OptionSet', {",
+    "  group = fold_group,",
+    "  pattern = 'foldminlines',",
+    "  callback = function() foldminlines_changes = foldminlines_changes + 1 end,",
+    "})",
     "invoke_map('<leader>gf')",
+    "vim.api.nvim_del_augroup_by_id(fold_group)",
+    "assert_true(foldminlines_changes == 0, 'diff jump rewrote foldminlines')",
     "wait_until('original file buffer', function() return realpath(vim.api.nvim_buf_get_name(0)) == realpath(file) end, 5000)",
+    "assert_true(vim.api.nvim_get_current_win() == code_win, 'diff jump did not use the existing code window')",
     "assert_true(has_visible_diffview(), 'diffview should remain open after original jump')",
     "assert_true(vim.api.nvim_win_get_cursor(0)[1] == expected_line, 'jumped cursor line should match focused diff line')",
     "local buf = vim.api.nvim_get_current_buf()",
     "assert_true(vim.bo[buf].filetype == 'go', 'jumped buffer filetype is ' .. vim.bo[buf].filetype)",
     "wait_until('go treesitter after diff jump', function() return vim.treesitter.highlighter.active[buf] ~= nil end, 5000)",
     "wait_for_lsp(buf)",
-    "vim.api.nvim_set_current_tabpage(find_diffview_tab())",
+    "wait_for_normal_editor_options()",
+    "assert_true(vim.wo.colorcolumn == '73', 'diff jump did not preserve the code window colorcolumn')",
+    "assert_true(vim.wo.cursorline, 'diff jump did not preserve the code window cursorline')",
+    "local working_diff_tab = find_diffview_tab()",
+    "vim.api.nvim_buf_delete(buf, { force = true })",
+    "vim.api.nvim_set_current_tabpage(working_diff_tab)",
+    "wait_until('Diffview working tree after code buffer delete', function()",
+    "  local view = require('diffview.lib').get_current_view()",
+    "  local main = view and view.cur_layout and view.cur_layout:get_main_win() or nil",
+    "  return main and main.id and vim.api.nvim_win_is_valid(main.id)",
+    "    and realpath(vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(main.id))) == realpath(file)",
+    "end, 5000)",
+    "focus_diff_line(needle)",
+    "assert_true(has_visible_diffview(), 'deleting the code buffer broke Diffview')",
     "vim.cmd('DiffviewClose')",
     "wait_until('working diffview closes', function() return not has_visible_diffview() end, 5000)",
+    "local tree_win",
+    "for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do",
+    "  if vim.bo[vim.api.nvim_win_get_buf(win)].filetype == 'NvimTree' then tree_win = win end",
+    "end",
+    "assert_true(tree_win ~= nil, 'nvim-tree disappeared before tree-only diff test')",
+    "if vim.api.nvim_win_is_valid(code_win) then vim.api.nvim_win_close(code_win, true) end",
+    "vim.api.nvim_set_current_win(tree_win)",
+    "assert_true(#vim.api.nvim_tabpage_list_wins(0) == 1, 'tree-only diff test still has an editor window')",
+    "invoke_map('<leader>gd')",
+    "wait_until('tree-only diffview', has_visible_diffview, 10000)",
+    "wait_until('tree-only diffview files', function() return diffview_file_count() > 0 end, 10000)",
+    "focus_diffview_jump_buffer()",
+    "focus_diff_line(needle)",
+    "invoke_map('<leader>gf')",
+    "wait_until('tree-only original file buffer', function() return realpath(vim.api.nvim_buf_get_name(0)) == realpath(file) end, 5000)",
+    "assert_true(vim.api.nvim_get_current_win() ~= tree_win, 'tree-only diff jump replaced nvim-tree')",
+    "assert_true(vim.api.nvim_win_is_valid(tree_win), 'tree-only diff jump closed nvim-tree')",
+    "wait_for_normal_editor_options()",
+    "vim.api.nvim_set_current_tabpage(find_diffview_tab())",
+    "vim.cmd('DiffviewClose')",
+    "wait_until('tree-only diffview closes', function() return not has_visible_diffview() end, 5000)",
     "invoke_map('<leader>gD')",
     "wait_until('committed diffview', has_visible_diffview, 10000)",
     "wait_until('committed diffview files', function() return diffview_file_count() > 0 end, 10000)",
@@ -4314,6 +4497,7 @@ local function test_git_diff_original_file_jump_starts_go_runtime(worktree)
     "assert_true(has_visible_diffview(), 'committed diffview should remain open after original jump')",
     "local actual_line = vim.api.nvim_win_get_cursor(0)[1]",
     "assert_true(actual_line == expected_line, 'committed jump cursor line ' .. actual_line .. ' should match focused diff line ' .. expected_line)",
+    "wait_for_normal_editor_options()",
   })
 
   local cmd = child_nvim_luafile_command(worktree, script)
@@ -4382,6 +4566,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("Ctrl-J and Ctrl-K move between windows", function()
     test_ctrl_j_and_k_move_between_windows()
+  end)
+
+  test("live grep resumes cached search", function()
+    test_live_grep_resumes_cached_search()
   end)
 
   test("markdown browser preview keymap", function()
