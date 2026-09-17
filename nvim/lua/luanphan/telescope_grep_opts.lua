@@ -53,6 +53,7 @@ function M.live_grep(default_text)
   local finders = require("telescope.finders")
   local make_entry = require("telescope.make_entry")
   local pickers = require("telescope.pickers")
+  local priority = require("luanphan.search_priority")
   local sorters = require("telescope.sorters")
   local conf = require("telescope.config").values
   local opts, args, search_dirs, identity = live_grep_context(default_text)
@@ -69,11 +70,10 @@ function M.live_grep(default_text)
     return M.content_highlights(prompt, display)
   end
 
-  local picker = pickers.new(opts, {
+  local picker_config = priority.decorate_picker({
     prompt_title = "Live Grep",
     finder = finder,
     previewer = conf.grep_previewer(opts),
-    sorter = require("luanphan.search_priority").wrap_sorter(grep_sorter),
     attach_mappings = function(prompt_bufnr, map)
       last_live_grep = {
         picker = action_state.get_current_picker(prompt_bufnr),
@@ -83,7 +83,8 @@ function M.live_grep(default_text)
       return true
     end,
     push_cursor_on_edit = true,
-  })
+  }, grep_sorter)
+  local picker = pickers.new(opts, picker_config)
   last_live_grep = { picker = picker, identity = identity }
   picker:find()
 end

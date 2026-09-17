@@ -193,8 +193,9 @@ return {
                 layout_strategy = "vertical",
               }
               if prioritize_paths then
+                local priority = require("luanphan.search_priority")
                 local base = require("telescope.config").values.generic_sorter(picker_opts)
-                picker_opts.sorter = require("luanphan.search_priority").wrap_sorter(base)
+                priority.decorate_picker(picker_opts, base)
               end
               require("telescope.builtin")[method](picker_opts)
             end

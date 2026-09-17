@@ -1489,10 +1489,14 @@ end
 
 local function test_live_grep_resumes_cached_search()
   local original_cwd = vim.fn.getcwd()
+  local original_priority_path = vim.g.luanphan_search_deprioritize_path
   local fixture = temp_root .. "/live-grep-resume"
   local query = "persistent search target"
-  write(fixture .. "/first.txt", { query })
-  write(fixture .. "/second.txt", { query })
+  write(fixture .. "/first.go", { query })
+  write(fixture .. "/second_test.go", { query })
+  local priority_path = fixture .. "/deprioritize"
+  write(priority_path, { "*_test.go" })
+  vim.g.luanphan_search_deprioritize_path = priority_path
 
   local function prompt_buffer()
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
@@ -1518,6 +1522,29 @@ local function test_live_grep_resumes_cached_search()
     wait_until("initial live grep results", function()
       return first_picker.manager and first_picker.manager:num_results() == 2
     end, 5000)
+    local divider_namespace = vim.api.nvim_get_namespaces()["luanphan-search-priority-divider"]
+    local divider_marks
+    wait_until("live grep deprioritized divider", function()
+      divider_marks = vim.api.nvim_buf_get_extmarks(
+        first_picker.results_bufnr,
+        divider_namespace,
+        0,
+        -1,
+        { details = true }
+      )
+      return #divider_marks == 1
+    end, 5000)
+    local divider = divider_marks[1]
+    local divider_text = ""
+    for _, chunk in ipairs(divider[4].virt_lines[1]) do
+      divider_text = divider_text .. chunk[1]
+    end
+    assert_true(divider[2] == first_picker:get_row(2), "divider was not above the first deprioritized result")
+    assert_true(divider_text:find("DEPRIORITIZED RESULTS", 1, true) ~= nil, "divider label was not visible")
+    assert_true(
+      vim.api.nvim_buf_line_count(first_picker.results_bufnr) == 2,
+      "divider added a selectable result row"
+    )
     first_picker:set_selection(2)
     local selected = action_state.get_selected_entry()
     assert_true(selected ~= nil, "live grep did not select a result before opening it")
@@ -1542,6 +1569,15 @@ local function test_live_grep_resumes_cached_search()
         and entry
         and realpath(entry.filename) == selected_path
     end, 5000)
+    wait_until("resumed live grep divider", function()
+      return #vim.api.nvim_buf_get_extmarks(
+        resumed_picker.results_bufnr,
+        divider_namespace,
+        0,
+        -1,
+        { details = true }
+      ) == 1
+    end, 5000)
     require("telescope.actions").close(resumed_prompt)
     vim.cmd("stopinsert")
   end, debug.traceback)
@@ -1552,6 +1588,7 @@ local function test_live_grep_resumes_cached_search()
   if vim.fn.isdirectory(original_cwd) == 1 then
     vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
   end
+  vim.g.luanphan_search_deprioritize_path = original_priority_path
   assert_true(ok, tostring(err))
 end
 
