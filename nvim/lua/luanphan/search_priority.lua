@@ -130,9 +130,16 @@ end
 
 local function attach_divider(prompt_bufnr)
   local picker = require("telescope.actions.state").get_current_picker(prompt_bufnr)
-  vim.schedule(function()
-    M.render_divider(picker)
-  end)
+  if not picker.cache_picker or picker.cache_picker.is_cached ~= true then
+    return
+  end
+  vim.api.nvim_create_autocmd("User", {
+    pattern = "TelescopeResumePost",
+    once = true,
+    callback = function()
+      M.render_divider(picker)
+    end,
+  })
 end
 
 function M.decorate_picker(opts, base, patterns)

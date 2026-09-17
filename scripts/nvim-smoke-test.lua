@@ -1569,15 +1569,30 @@ local function test_live_grep_resumes_cached_search()
         and entry
         and realpath(entry.filename) == selected_path
     end, 5000)
+    local resumed_divider_marks
     wait_until("resumed live grep divider", function()
-      return #vim.api.nvim_buf_get_extmarks(
+      resumed_divider_marks = vim.api.nvim_buf_get_extmarks(
         resumed_picker.results_bufnr,
         divider_namespace,
         0,
         -1,
         { details = true }
-      ) == 1
+      )
+      return #resumed_divider_marks == 1
     end, 5000)
+    local resumed_divider = resumed_divider_marks[1]
+    local resumed_divider_text = ""
+    for _, chunk in ipairs(resumed_divider[4].virt_lines[1]) do
+      resumed_divider_text = resumed_divider_text .. chunk[1]
+    end
+    assert_true(
+      resumed_divider[2] == resumed_picker:get_row(2),
+      "resumed divider was not above the first deprioritized result"
+    )
+    assert_true(
+      resumed_divider_text:find("DEPRIORITIZED RESULTS", 1, true) ~= nil,
+      "resumed divider label was not visible"
+    )
     require("telescope.actions").close(resumed_prompt)
     vim.cmd("stopinsert")
   end, debug.traceback)
