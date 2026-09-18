@@ -41,6 +41,8 @@ def usage() -> None:
   skills-hub group update [name]
   skills-hub group pick
   skills-hub where
+  skills-hub cat
+  skills-hub edit
 
 Commands:
   add     Run <command> inside the managed skills-hub folder, then cache it in execute_plugins.
@@ -51,6 +53,8 @@ Commands:
   remove  Pick local skills with fzf and remove them from the current folder.
   group   Save, update, and install named skill groups.
   where   Print the managed skills-hub folder path.
+  cat     Print the cached command file.
+  edit    Edit the cached command file with vi.
 
 Environment:
   SKILLS_HUB_HOME  Managed folder. Default: ~/.skills-hub
@@ -96,6 +100,14 @@ def ensure_home(home: Path) -> None:
     package_json = home / "package.json"
     if not package_json.exists():
         package_json.write_text('{"private": true, "name": "skills-hub"}\n')
+
+
+def ensure_cache_file() -> Path:
+    home = hub_home()
+    ensure_home(home)
+    path = cache_file(home)
+    path.touch(exist_ok=True)
+    return path
 
 
 def command_from_args(args: list[str]) -> str:
@@ -840,6 +852,22 @@ def cmd_where() -> int:
     return 0
 
 
+def cmd_cat(args: list[str]) -> int:
+    if args:
+        die("cat takes no args")
+    sys.stdout.write(ensure_cache_file().read_text())
+    return 0
+
+
+def cmd_edit(args: list[str]) -> int:
+    if args:
+        die("edit takes no args")
+    editor = shutil.which("vi")
+    if editor is None:
+        die("vi is required")
+    return subprocess.run([editor, str(ensure_cache_file())]).returncode
+
+
 def main() -> int:
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
         usage()
@@ -871,6 +899,10 @@ def main() -> int:
         if args:
             die("where takes no args")
         return cmd_where()
+    if command == "cat":
+        return cmd_cat(args)
+    if command == "edit":
+        return cmd_edit(args)
 
     die(f"unknown command: {command}")
     return 1

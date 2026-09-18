@@ -432,6 +432,21 @@ if [ "$where_path" != "$HUB" ]; then
 	exit 1
 fi
 
+SKILLS_HUB_HOME="$HUB" python3 "$ROOT/bin/skills-hub" cat > "$TMP/cat.out"
+cmp "$HUB/execute_plugins" "$TMP/cat.out"
+
+cat > "$FAKEBIN/vi" <<'SH'
+#!/bin/sh
+set -eu
+printf '%s\n' "$1" > "$SKILLS_HUB_VI_PATH"
+printf '%s\n' '# edited' >> "$1"
+SH
+chmod +x "$FAKEBIN/vi"
+PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_VI_PATH="$TMP/vi-path" \
+	python3 "$ROOT/bin/skills-hub" edit
+test "$(cat "$TMP/vi-path")" = "$HUB/execute_plugins"
+assert_line "$HUB/execute_plugins" '# edited'
+
 sh -c ". '$ROOT/bin/shell/workspace.sh'"
 
 echo "PASS skills-hub smoke test"

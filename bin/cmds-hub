@@ -25,12 +25,14 @@ def usage() -> None:
         """Usage:
   cmds-hub exec <command>
   cmds-hub replay [--all]
-  cmds-hub pick
+  cmds-hub cat
+  cmds-hub edit
 
 Commands:
   exec    Execute <command> and append it to ~/.cmds-hub/cmd_history on success.
   replay  Pick commands from ~/.cmds-hub/cmd_history with fzf and execute them.
-  pick    Alias for replay.
+  cat     Print the command history file.
+  edit    Edit the command history file with vi.
 
 Options:
   replay --all  Replay every command without opening the picker.
@@ -63,6 +65,13 @@ def append_command(command: str, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as file:
         file.write(f"{command}\n")
+
+
+def ensure_history_file() -> Path:
+    path = history_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch(exist_ok=True)
+    return path
 
 
 def run_command(command: str) -> int:
@@ -151,10 +160,20 @@ def cmd_replay(args: list[str]) -> int:
     return 0
 
 
-def cmd_pick(args: list[str]) -> int:
+def cmd_cat(args: list[str]) -> int:
     if args:
-        die("pick takes no args")
-    return cmd_replay([])
+        die("cat takes no args")
+    sys.stdout.write(ensure_history_file().read_text())
+    return 0
+
+
+def cmd_edit(args: list[str]) -> int:
+    if args:
+        die("edit takes no args")
+    editor = shutil.which("vi")
+    if editor is None:
+        die("vi is required")
+    return subprocess.run([editor, str(ensure_history_file())]).returncode
 
 
 def main(argv: list[str]) -> int:
@@ -168,8 +187,10 @@ def main(argv: list[str]) -> int:
         return cmd_exec(args)
     if command == "replay":
         return cmd_replay(args)
-    if command == "pick":
-        return cmd_pick(args)
+    if command == "cat":
+        return cmd_cat(args)
+    if command == "edit":
+        return cmd_edit(args)
 
     die(f"unknown command: {command}")
     return 1
