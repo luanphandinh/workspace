@@ -6,6 +6,8 @@ local defaults = {
   "*_gen.go",
 }
 
+local deprioritized_highlight = "LuanphanSearchDeprioritized"
+
 function M.config_path()
   return vim.g.luanphan_search_deprioritize_path
     or (vim.fn.stdpath("data") .. "/search-deprioritize")
@@ -63,15 +65,37 @@ local function entry_path(entry, line)
   return line
 end
 
+local function mute_entry(entry)
+  local display = entry and entry.display
+  if type(display) ~= "function" then
+    return
+  end
+
+  entry.display = function(self, picker)
+    local text, highlights = display(self, picker)
+    if type(text) ~= "string" then
+      return text, highlights
+    end
+
+    highlights = vim.list_extend({}, highlights or {})
+    highlights[#highlights + 1] = { { 0, #text }, deprioritized_highlight }
+    return text, highlights
+  end
+end
+
 function M.wrap_sorter(base, patterns)
   patterns = patterns or M.read_patterns()
   local sorters = require("telescope.sorters")
+  local ranks = setmetatable({}, { __mode = "k" })
+  local styled = setmetatable({}, { __mode = "k" })
   local highlighter
   if base.highlighter then
     highlighter = function(_, prompt, display)
       return base.highlighter(base, prompt, display)
     end
   end
+
+  vim.api.nvim_set_hl(0, deprioritized_highlight, { default = true, link = "Comment" })
 
   return sorters.Sorter:new({
     discard = base.discard,
@@ -81,7 +105,23 @@ function M.wrap_sorter(base, patterns)
       if score == nil or score < 0 then
         return score
       end
-      return M.rank_path(entry_path(entry, line), patterns) * 10 + score
+
+      local rank
+      if type(entry) == "table" then
+        rank = ranks[entry]
+      end
+      if rank == nil then
+        rank = M.rank_path(entry_path(entry, line), patterns)
+        if type(entry) == "table" then
+          ranks[entry] = rank
+        end
+      end
+
+      if rank > 0 and type(entry) == "table" and not styled[entry] then
+        mute_entry(entry)
+        styled[entry] = true
+      end
+      return rank * 10 + score
     end,
   })
 end

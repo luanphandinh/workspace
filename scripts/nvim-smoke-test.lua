@@ -1436,17 +1436,32 @@ local function test_search_priority_ordering()
   local base = require("telescope.sorters").empty()
   local sorter = priority.wrap_sorter(base, defaults)
   local function score(filename)
-    local entry = { filename = filename, ordinal = filename }
-    return sorter.scoring_function(sorter, "target", filename, entry)
+    local entry = {
+      filename = filename,
+      ordinal = filename,
+      display = function()
+        return filename, { { { 0, 4 }, "ExistingHighlight" } }
+      end,
+    }
+    return sorter.scoring_function(sorter, "target", filename, entry), entry
   end
 
-  local code = score("service/handler.go")
-  local docs = score("docs/design.md")
+  local code, code_entry = score("service/handler.go")
+  local docs, docs_entry = score("docs/design.md")
   local tests = score("service/handler_test.go")
   local generated = score("service/schema_gen.go")
   assert_true(code < docs, "code did not rank above documentation")
   assert_true(docs < tests, "documentation did not rank above tests")
   assert_true(tests < generated, "configured pattern order was not preserved")
+
+  local _, code_highlights = code_entry:display()
+  assert_true(#code_highlights == 1, "normal search results were visually muted")
+
+  local docs_display, docs_highlights = docs_entry:display()
+  assert_true(docs_highlights[1][2] == "ExistingHighlight", "deprioritized styling replaced existing highlights")
+  local muted = docs_highlights[#docs_highlights]
+  assert_true(muted[2] == "LuanphanSearchDeprioritized", "deprioritized search result was not muted")
+  assert_true(muted[1][1] == 0 and muted[1][2] == #docs_display, "muted highlight did not cover the result row")
 end
 
 local function test_search_priority_editor_closes_on_focus_loss()
