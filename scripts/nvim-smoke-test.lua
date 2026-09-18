@@ -1487,6 +1487,48 @@ local function test_live_grep_highlights_content_only()
   end
 end
 
+local function test_live_grep_debounces_real_picker(repo)
+  local script = temp_root .. "/live-grep-debounce.lua"
+  write(script, {
+    "local function assert_true(value, message) if not value then error(message, 0) end end",
+    "package.loaded['luanphan.telescope_grep_opts'] = nil",
+    "require('luanphan.telescope_grep_opts').live_grep()",
+    "local prompt_bufnr = vim.api.nvim_get_current_buf()",
+    "local picker = require('telescope.actions.state').get_current_picker(prompt_bufnr)",
+    "assert_true(picker ~= nil, 'live grep picker did not open')",
+    "local function replace_prompt(text)",
+    "  local current = vim.api.nvim_buf_get_lines(prompt_bufnr, 0, 1, false)[1]",
+    "  vim.api.nvim_buf_set_text(prompt_bufnr, 0, 0, 0, #current, { text })",
+    "end",
+    "local function type_prompt(text)",
+    "  for character in text:gmatch('.') do",
+    "    local current = vim.api.nvim_buf_get_lines(prompt_bufnr, 0, 1, false)[1]",
+    "    vim.api.nvim_buf_set_text(prompt_bufnr, 0, #current, 0, #current, { character })",
+    "    vim.wait(30)",
+    "  end",
+    "end",
+    "replace_prompt('targetValue')",
+    "assert_true(vim.wait(5000, function() return picker.manager and picker.manager:num_results() > 0 end, 20), 'initial live grep produced no results')",
+    "replace_prompt('missingValue')",
+    "assert_true(vim.wait(1000, function() return vim.api.nvim_buf_get_lines(picker.results_bufnr, 0, 1, false)[1] == '' end, 20), 'live grep left stale rows visible')",
+    "replace_prompt('')",
+    "type_prompt('targetValue')",
+    "local function final_results_visible()",
+    "  if not picker.manager or picker.manager:num_results() == 0 then return false end",
+    "  for entry in picker.manager:iter() do",
+    "    if not tostring(entry.text or entry.value or entry.ordinal):find('targetValue', 1, true) then return false end",
+    "  end",
+    "  return true",
+    "end",
+    "assert_true(vim.wait(5000, final_results_visible, 20), 'live grep did not replace stale rows with final results')",
+    "require('telescope.actions').close(prompt_bufnr)",
+  })
+
+  local cmd = child_nvim_luafile_command(repo, script)
+  local out = vim.fn.systemlist(cmd)
+  assert_true(vim.v.shell_error == 0, table.concat(out, "\n"))
+end
+
 local function test_flow_line_navigation()
   local flow = require("luanphan.flow")
   local original_data_dir = vim.g.luanphan_flow_data_dir
@@ -4445,6 +4487,7 @@ local search_and_navigation_tests = {
   flow = test_flow_line_navigation,
   lsp_search_priority = test_lsp_pickers_use_search_priority,
   live_grep_highlights = test_live_grep_highlights_content_only,
+  live_grep_debounce = test_live_grep_debounces_real_picker,
   search_priority = test_search_priority_ordering,
   search_priority_editor = test_search_priority_editor_closes_on_focus_loss,
 }
@@ -4482,6 +4525,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("live grep highlights content only", function()
     search_and_navigation_tests.live_grep_highlights()
+  end)
+
+  test("live grep debounces its real picker", function()
+    search_and_navigation_tests.live_grep_debounce(repo)
   end)
 
   test("Flow stores editable line marks per workspace", function()
