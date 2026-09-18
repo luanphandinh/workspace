@@ -79,8 +79,12 @@ function M.live_grep(default_text)
   local sorters = require("telescope.sorters")
   local tconf = require("telescope.config")
   local conf = tconf.values
+  local search_rules = require("luanphan.search_priority")
+  local rules = search_rules.read_rules()
   local opts = vim.deepcopy(tconf.pickers.live_grep or {})
-  opts.additional_args = M.additional_args
+  opts.additional_args = function(config)
+    return M.additional_args(config, rules)
+  end
   opts.cwd = opts.cwd or vim.uv.cwd()
   opts.default_text = default_text or opts.default_text
 
@@ -109,7 +113,7 @@ function M.live_grep(default_text)
     prompt_title = "Live Grep",
     finder = finder,
     previewer = conf.grep_previewer(opts),
-    sorter = require("luanphan.search_priority").wrap_sorter(grep_sorter),
+    sorter = search_rules.wrap_sorter(grep_sorter, rules),
     attach_mappings = function(_, map)
       map("i", "<C-Space>", actions.to_fuzzy_refine)
       return true
@@ -120,7 +124,7 @@ function M.live_grep(default_text)
 end
 
 --- Extra ripgrep args for |telescope.builtin.live_grep|.
-function M.additional_args()
+function M.additional_args(_, rules)
   local args = {}
   if vim.g.luanphan_show_dotfiles == 1 then
     table.insert(args, "--hidden")
@@ -137,6 +141,7 @@ function M.additional_args()
   if (vim.g.luanphan_live_grep_regex or 0) == 0 then
     table.insert(args, "--fixed-strings")
   end
+  vim.list_extend(args, require("luanphan.search_priority").ignore_args(rules))
   return args
 end
 

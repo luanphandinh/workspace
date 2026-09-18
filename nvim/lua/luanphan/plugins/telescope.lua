@@ -77,7 +77,7 @@ return {
       { "<leader>p", find_files, desc = "Telescope: find files" },
       { "g/", live_grep, desc = "Telescope: live grep" },
       { "g/", live_grep_selection, mode = "x", desc = "Telescope: live grep selection" },
-      { "<leader>ss", search_settings, desc = "Search priority" },
+      { "<leader>ss", search_settings, desc = "Search settings" },
       { "<leader>fl", buffers, desc = "List open files" },
       { "gs", document_symbols, desc = "Telescope: document symbols" },
       { "<leader>ft", filetypes, desc = "Set filetype" },
