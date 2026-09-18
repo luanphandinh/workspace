@@ -3,6 +3,58 @@
 
 local M = {}
 
+local function debounce_finder(finders, command_generator, entry_maker, cwd, delay, on_search)
+  local async = require("plenary.async")
+  local generation = 0
+  local timer = vim.uv.new_timer()
+  local finder = finders.new_job(command_generator, entry_maker, nil, cwd)
+  local run_finder = async.void(function(...)
+    finder(...)
+  end)
+
+  return setmetatable({
+    close = function()
+      generation = generation + 1
+      timer:stop()
+      finder:close()
+      if not timer:is_closing() then
+        timer:close()
+      end
+    end,
+  }, {
+    __call = function(_, prompt, process_result, process_complete)
+      generation = generation + 1
+      local request_generation = generation
+      timer:stop()
+      finder:close()
+      on_search()
+
+      if not prompt or prompt == "" then
+        process_complete()
+        return
+      end
+
+      timer:start(delay, 0, function()
+        vim.schedule(function()
+          if request_generation ~= generation then
+            return
+          end
+          run_finder(prompt, function(entry)
+            if request_generation ~= generation then
+              return true
+            end
+            return process_result(entry)
+          end, function()
+            if request_generation == generation then
+              process_complete()
+            end
+          end)
+        end)
+      end)
+    end,
+  })
+end
+
 function M.content_highlights(prompt, display)
   local _, coordinates_end = display:find(":%d+:%d+:")
   if not coordinates_end then
@@ -27,8 +79,12 @@ function M.live_grep(default_text)
   local sorters = require("telescope.sorters")
   local tconf = require("telescope.config")
   local conf = tconf.values
+  local search_rules = require("luanphan.search_priority")
+  local rules = search_rules.read_rules()
   local opts = vim.deepcopy(tconf.pickers.live_grep or {})
-  opts.additional_args = M.additional_args
+  opts.additional_args = function(config)
+    return M.additional_args(config, rules)
+  end
   opts.cwd = opts.cwd or vim.uv.cwd()
   opts.default_text = default_text or opts.default_text
 
@@ -36,33 +92,39 @@ function M.live_grep(default_text)
   vim.list_extend(args, opts.additional_args(opts))
   local search_dirs = vim.tbl_map(vim.fn.expand, opts.search_dirs or {})
 
-  local finder = finders.new_job(function(prompt)
+  local picker
+  local finder = debounce_finder(finders, function(prompt)
     if not prompt or prompt == "" then
       return nil
     end
     return vim.list_extend(vim.deepcopy(args), vim.list_extend({ "--", prompt }, search_dirs))
-  end, opts.entry_maker or make_entry.gen_from_vimgrep(opts), nil, opts.cwd)
+  end, opts.entry_maker or make_entry.gen_from_vimgrep(opts), opts.cwd, 200, function()
+    if picker and vim.api.nvim_buf_is_valid(picker.results_bufnr) then
+      vim.api.nvim_buf_set_lines(picker.results_bufnr, 0, -1, false, { "" })
+    end
+  end)
 
   local grep_sorter = sorters.highlighter_only(opts)
   grep_sorter.highlighter = function(_, prompt, display)
     return M.content_highlights(prompt, display)
   end
 
-  pickers.new(opts, {
+  picker = pickers.new(opts, {
     prompt_title = "Live Grep",
     finder = finder,
     previewer = conf.grep_previewer(opts),
-    sorter = require("luanphan.search_priority").wrap_sorter(grep_sorter),
+    sorter = search_rules.wrap_sorter(grep_sorter, rules),
     attach_mappings = function(_, map)
       map("i", "<C-Space>", actions.to_fuzzy_refine)
       return true
     end,
     push_cursor_on_edit = true,
-  }):find()
+  })
+  picker:find()
 end
 
 --- Extra ripgrep args for |telescope.builtin.live_grep|.
-function M.additional_args()
+function M.additional_args(_, rules)
   local args = {}
   if vim.g.luanphan_show_dotfiles == 1 then
     table.insert(args, "--hidden")
@@ -79,6 +141,7 @@ function M.additional_args()
   if (vim.g.luanphan_live_grep_regex or 0) == 0 then
     table.insert(args, "--fixed-strings")
   end
+  vim.list_extend(args, require("luanphan.search_priority").ignore_args(rules))
   return args
 end
 

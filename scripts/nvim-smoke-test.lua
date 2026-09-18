@@ -1419,59 +1419,137 @@ local function test_searches_follow_tree_dotfiles()
   tree_api.tree.close()
 end
 
-local function test_search_priority_ordering()
+local function test_search_rules()
   local priority = require("luanphan.search_priority")
-  local path = temp_root .. "/search-priority/patterns"
-  local defaults = priority.read_patterns(path)
-  assert_true(#defaults == 3, "search priority defaults have the wrong pattern count")
-  assert_true(defaults[1].glob == "*.md", "markdown is not the first deprioritized group")
-  assert_true(defaults[2].glob == "*_test.go", "Go tests are not the second deprioritized group")
-  assert_true(defaults[3].glob == "*_gen.go", "generated Go is not the third deprioritized group")
+  local path = temp_root .. "/search-rules/settings.conf"
+  local defaults = priority.read_rules(path)
+  assert_true(#defaults.deprioritize == 3, "search settings defaults have the wrong pattern count")
+  assert_true(defaults.deprioritize[1].glob == "*.md", "markdown is not the first deprioritized group")
+  assert_true(defaults.deprioritize[2].glob == "*_test.go", "Go tests are not the second deprioritized group")
+  assert_true(defaults.deprioritize[3].glob == "*_gen.go", "generated Go is not the third deprioritized group")
+  assert_true(#defaults.ignore == 0, "search settings should start without custom ignores")
 
-  write(path, { "*.txt", "", "# ignored comment", "*_test.go" })
-  local customized = priority.read_patterns(path)
-  assert_true(#customized == 2, "search priority did not preserve the customized file")
-  assert_true(customized[1].glob == "*.txt", "search priority replaced the customized first group")
+  local legacy_path = temp_root .. "/search-rules/legacy"
+  local migrated_path = temp_root .. "/search-rules/migrated.conf"
+  write(legacy_path, { "*.txt", "", "# ignored comment", "*_test.go" })
+  local migrated = priority.read_rules(migrated_path, legacy_path)
+  assert_true(#migrated.deprioritize == 2, "legacy search priority patterns were not migrated")
+  assert_true(migrated.deprioritize[1].glob == "*.txt", "migration changed the first priority pattern")
+  assert_true(#migrated.ignore == 0, "migration should create an empty ignore section")
+
+  write(path, {
+    "[deprioritize]",
+    "*.md",
+    "*_test.go",
+    "*_gen.go",
+    "",
+    "# ignored comment",
+    "[ignore]",
+    "**/vendor/**",
+  })
+  local rules = priority.read_rules(path)
+  assert_true(#rules.deprioritize == 3, "search settings did not read deprioritized patterns")
+  assert_true(#rules.ignore == 1, "search settings did not read ignore patterns")
 
   local base = require("telescope.sorters").empty()
-  local sorter = priority.wrap_sorter(base, defaults)
+  local sorter = priority.wrap_sorter(base, rules)
   local function score(filename)
-    local entry = { filename = filename, ordinal = filename }
-    return sorter.scoring_function(sorter, "target", filename, entry)
+    local entry = {
+      filename = filename,
+      ordinal = filename,
+      display = function()
+        return filename, { { { 0, 4 }, "ExistingHighlight" } }
+      end,
+    }
+    return sorter.scoring_function(sorter, "target", filename, entry), entry
   end
 
-  local code = score("service/handler.go")
-  local docs = score("docs/design.md")
+  local code, code_entry = score("service/handler.go")
+  local docs, docs_entry = score("docs/design.md")
   local tests = score("service/handler_test.go")
   local generated = score("service/schema_gen.go")
+  local ignored = score("service/vendor/generated.go")
   assert_true(code < docs, "code did not rank above documentation")
   assert_true(docs < tests, "documentation did not rank above tests")
   assert_true(tests < generated, "configured pattern order was not preserved")
+  assert_true(ignored < 0, "ignored search result was not discarded")
+
+  local _, code_highlights = code_entry:display()
+  assert_true(#code_highlights == 1, "normal search results were visually muted")
+
+  local docs_display, docs_highlights = docs_entry:display()
+  assert_true(docs_highlights[1][2] == "ExistingHighlight", "deprioritized styling replaced existing highlights")
+  local muted = docs_highlights[#docs_highlights]
+  assert_true(muted[2] == "LuanphanSearchDeprioritized", "deprioritized search result was not muted")
+  assert_true(muted[1][1] == 0 and muted[1][2] == #docs_display, "muted highlight did not cover the result row")
+end
+
+local function test_search_rules_filter_disk_searches()
+  local fixture = temp_root .. "/search-rules/disk-search"
+  local path = temp_root .. "/search-rules/disk-search.conf"
+  write(fixture .. "/included.txt", { "search target" })
+  write(fixture .. "/archive/excluded.txt", { "search target" })
+  write(path, {
+    "[deprioritize]",
+    "*.md",
+    "",
+    "[ignore]",
+    "**/archive/**",
+  })
+
+  local original_path = vim.g.luanphan_search_rules_path
+  vim.g.luanphan_search_rules_path = path
+  local ok, err = xpcall(function()
+    local grep_args = { "rg", "--files-with-matches" }
+    vim.list_extend(grep_args, require("luanphan.telescope_grep_opts").additional_args())
+    vim.list_extend(grep_args, { "search target", "." })
+    local grep = vim.system(grep_args, { cwd = fixture, text = true }):wait()
+    assert_true(grep.code == 0, "custom-ignore live grep failed: " .. (grep.stderr or ""))
+    assert_true(grep.stdout:find("included.txt", 1, true) ~= nil, "custom ignore removed a normal grep result")
+    assert_true(grep.stdout:find("archive", 1, true) == nil, "custom ignore leaked into live grep results")
+
+    local find_args = require("luanphan.telescope_find_opts").find_command()
+    local files = vim.system(find_args, { cwd = fixture, text = true }):wait()
+    assert_true(files.code == 0, "custom-ignore file search failed: " .. (files.stderr or ""))
+    assert_true(files.stdout:find("included.txt", 1, true) ~= nil, "custom ignore removed a normal file result")
+    assert_true(files.stdout:find("archive", 1, true) == nil, "custom ignore leaked into file results")
+  end, debug.traceback)
+
+  vim.g.luanphan_search_rules_path = original_path
+  assert_true(ok, tostring(err))
 end
 
 local function test_search_priority_editor_closes_on_focus_loss()
   local priority = require("luanphan.search_priority")
-  local original_path = vim.g.luanphan_search_deprioritize_path
-  local path = temp_root .. "/search-priority/editor-patterns"
-  write(path, { "*.md" })
-  vim.g.luanphan_search_deprioritize_path = path
+  local original_path = vim.g.luanphan_search_rules_path
+  local path = temp_root .. "/search-rules/editor.conf"
+  write(path, { "[deprioritize]", "*.md", "", "[ignore]" })
+  vim.g.luanphan_search_rules_path = path
 
   local source_win = vim.api.nvim_get_current_win()
   local ok, err = xpcall(function()
     priority.open_editor()
     local popup_win = vim.api.nvim_get_current_win()
     local buf = vim.api.nvim_get_current_buf()
-    assert_true(popup_win ~= source_win, "search priority editor did not open a popup")
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "*_test.go" })
+    assert_true(popup_win ~= source_win, "search settings editor did not open a popup")
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+      "[deprioritize]",
+      "*_test.go",
+      "",
+      "[ignore]",
+      "**/archive/**",
+    })
 
     vim.api.nvim_set_current_win(source_win)
-    wait_until("search priority editor closes after focus loss", function()
+    wait_until("search settings editor closes after focus loss", function()
       return not vim.api.nvim_win_is_valid(popup_win)
     end, 3000)
-    assert_true(read_lines(path)[1] == "*_test.go", "search priority editor did not save before closing")
+    local rules = priority.read_rules(path)
+    assert_true(rules.deprioritize[1].glob == "*_test.go", "search settings editor did not save priority rules")
+    assert_true(rules.ignore[1].glob == "**/archive/**", "search settings editor did not save ignore rules")
   end, debug.traceback)
 
-  vim.g.luanphan_search_deprioritize_path = original_path
+  vim.g.luanphan_search_rules_path = original_path
   assert_true(ok, tostring(err))
 end
 
@@ -1485,6 +1563,48 @@ local function test_live_grep_highlights_content_only()
   for _, position in ipairs(highlights) do
     assert_true(position > coordinates_end, "live grep highlighted the filename")
   end
+end
+
+local function test_live_grep_debounces_real_picker(repo)
+  local script = temp_root .. "/live-grep-debounce.lua"
+  write(script, {
+    "local function assert_true(value, message) if not value then error(message, 0) end end",
+    "package.loaded['luanphan.telescope_grep_opts'] = nil",
+    "require('luanphan.telescope_grep_opts').live_grep()",
+    "local prompt_bufnr = vim.api.nvim_get_current_buf()",
+    "local picker = require('telescope.actions.state').get_current_picker(prompt_bufnr)",
+    "assert_true(picker ~= nil, 'live grep picker did not open')",
+    "local function replace_prompt(text)",
+    "  local current = vim.api.nvim_buf_get_lines(prompt_bufnr, 0, 1, false)[1]",
+    "  vim.api.nvim_buf_set_text(prompt_bufnr, 0, 0, 0, #current, { text })",
+    "end",
+    "local function type_prompt(text)",
+    "  for character in text:gmatch('.') do",
+    "    local current = vim.api.nvim_buf_get_lines(prompt_bufnr, 0, 1, false)[1]",
+    "    vim.api.nvim_buf_set_text(prompt_bufnr, 0, #current, 0, #current, { character })",
+    "    vim.wait(30)",
+    "  end",
+    "end",
+    "replace_prompt('targetValue')",
+    "assert_true(vim.wait(5000, function() return picker.manager and picker.manager:num_results() > 0 end, 20), 'initial live grep produced no results')",
+    "replace_prompt('missingValue')",
+    "assert_true(vim.wait(1000, function() return vim.api.nvim_buf_get_lines(picker.results_bufnr, 0, 1, false)[1] == '' end, 20), 'live grep left stale rows visible')",
+    "replace_prompt('')",
+    "type_prompt('targetValue')",
+    "local function final_results_visible()",
+    "  if not picker.manager or picker.manager:num_results() == 0 then return false end",
+    "  for entry in picker.manager:iter() do",
+    "    if not tostring(entry.text or entry.value or entry.ordinal):find('targetValue', 1, true) then return false end",
+    "  end",
+    "  return true",
+    "end",
+    "assert_true(vim.wait(5000, final_results_visible, 20), 'live grep did not replace stale rows with final results')",
+    "require('telescope.actions').close(prompt_bufnr)",
+  })
+
+  local cmd = child_nvim_luafile_command(repo, script)
+  local out = vim.fn.systemlist(cmd)
+  assert_true(vim.v.shell_error == 0, table.concat(out, "\n"))
 end
 
 local function test_flow_line_navigation()
@@ -2849,11 +2969,17 @@ local function test_lsp_pickers_use_search_priority(repo)
   local builtin = require("telescope.builtin")
   local original_references = builtin.lsp_references
   local original_implementations = builtin.lsp_implementations
-  local original_path = vim.g.luanphan_search_deprioritize_path
+  local original_path = vim.g.luanphan_search_rules_path
   local captured = {}
-  local path = temp_root .. "/lsp-search-priority/patterns"
-  write(path, { "*_test.go" })
-  vim.g.luanphan_search_deprioritize_path = path
+  local path = temp_root .. "/lsp-search-priority/settings.conf"
+  write(path, {
+    "[deprioritize]",
+    "*_test.go",
+    "",
+    "[ignore]",
+    "**/generated/**",
+  })
+  vim.g.luanphan_search_rules_path = path
 
   local ok, err = xpcall(function()
     builtin.lsp_references = function(opts)
@@ -2879,15 +3005,18 @@ local function test_lsp_pickers_use_search_priority(repo)
       assert_true(type(opts.sorter) == "table", name .. " picker has no search-priority sorter")
       local code = { filename = "service/handler.go", ordinal = "target" }
       local test = { filename = "service/handler_test.go", ordinal = "target" }
+      local ignored = { filename = "service/generated/handler.go", ordinal = "target" }
       local code_score = opts.sorter.scoring_function(opts.sorter, "", "target", code)
       local test_score = opts.sorter.scoring_function(opts.sorter, "", "target", test)
+      local ignored_score = opts.sorter.scoring_function(opts.sorter, "", "target", ignored)
       assert_true(code_score < test_score, name .. " picker did not rank code above Go tests")
+      assert_true(ignored_score < 0, name .. " picker did not discard an ignored path")
     end
   end, debug.traceback)
 
   builtin.lsp_references = original_references
   builtin.lsp_implementations = original_implementations
-  vim.g.luanphan_search_deprioritize_path = original_path
+  vim.g.luanphan_search_rules_path = original_path
   assert_true(ok, tostring(err))
 end
 
@@ -4445,8 +4574,10 @@ local search_and_navigation_tests = {
   flow = test_flow_line_navigation,
   lsp_search_priority = test_lsp_pickers_use_search_priority,
   live_grep_highlights = test_live_grep_highlights_content_only,
-  search_priority = test_search_priority_ordering,
-  search_priority_editor = test_search_priority_editor_closes_on_focus_loss,
+  live_grep_debounce = test_live_grep_debounces_real_picker,
+  search_rules = test_search_rules,
+  search_rules_disk = test_search_rules_filter_disk_searches,
+  search_settings_editor = test_search_priority_editor_closes_on_focus_loss,
 }
 
 local setup_ok, setup_err = xpcall(function()
@@ -4472,16 +4603,24 @@ local setup_ok, setup_err = xpcall(function()
     test_searches_follow_tree_dotfiles()
   end)
 
-  test("live grep deprioritizes configured patterns", function()
-    search_and_navigation_tests.search_priority()
+  test("search settings migrate and apply priority rules", function()
+    search_and_navigation_tests.search_rules()
   end)
 
-  test("search priority editor saves and closes on focus loss", function()
-    search_and_navigation_tests.search_priority_editor()
+  test("custom ignores filter content and file searches", function()
+    search_and_navigation_tests.search_rules_disk()
+  end)
+
+  test("search settings editor saves and closes on focus loss", function()
+    search_and_navigation_tests.search_settings_editor()
   end)
 
   test("live grep highlights content only", function()
     search_and_navigation_tests.live_grep_highlights()
+  end)
+
+  test("live grep debounces its real picker", function()
+    search_and_navigation_tests.live_grep_debounce(repo)
   end)
 
   test("Flow stores editable line marks per workspace", function()
