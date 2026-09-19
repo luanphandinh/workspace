@@ -794,69 +794,82 @@ def cmd_run(command_parts: list) -> int:
 #   "merged"   — merge succeeded
 #   "already"  — already on base, nothing to do (informational; not a failure)
 #   "skipped"  — no base branch or detached HEAD
-#   "failed"   — non-conflict failure; state restored; caller should halt
-#   "conflict" — merge conflict; state left in place; caller MUST halt
+#   "failed"   — non-conflict failure; state restored
+#   "conflict" — merge conflict; state left in place for manual resolution
 # ---------------------------------------------------------------------------
-def _sync_base_merge_one(sub: Path, base_branch: str = "") -> str:
+def _sync_base_merge_one(sub: Path, log: RepoLog, base_branch: str = "") -> str:
     base = resolve_base(sub, base_branch)
     if base is None:
         if base_branch:
-            warn(f"base_branch '{base_branch}' not found, skipping base merge")
+            log.warn(f"base_branch '{base_branch}' not found, skipping base merge")
         else:
-            warn("no main/master branch, skipping base merge")
+            log.warn("no main/master branch, skipping base merge")
         return "skipped"
 
     cur = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
     cur_branch = cur.stdout.strip() if cur.returncode == 0 else ""
     if not cur_branch or cur_branch == "HEAD":
-        warn("detached HEAD, skipping base merge")
+        log.warn("detached HEAD, skipping base merge")
         return "skipped"
     if cur_branch == base:
-        info(f"already on {base}, skipping base merge")
+        log.info(f"already on {base}, skipping base merge")
         return "already"
 
     stashed = False
     status = run(["git", "-C", str(sub), "status", "--porcelain"])
     if status.stdout.strip():
-        info("git stash push -u (autosaving local changes)")
+        log.info("git stash push -u (autosaving local changes)")
         sp = run(["git", "-C", str(sub), "stash", "push", "-u", "-m", "mkws sync autostash"])
+        log.raw((sp.stdout or "").rstrip())
+        log.raw((sp.stderr or "").rstrip())
         if sp.returncode != 0:
-            fail("stash failed")
+            log.fail("stash failed")
             return "failed"
         stashed = True
 
     def pop_stash():
         if not stashed:
             return
-        info("git stash pop")
+        log.info("git stash pop")
         pp = run(["git", "-C", str(sub), "stash", "pop"])
+        log.raw((pp.stdout or "").rstrip())
+        log.raw((pp.stderr or "").rstrip())
         if pp.returncode != 0:
-            warn("stash pop had conflicts — resolve manually")
+            log.warn("stash pop had conflicts — resolve manually")
 
     merge_ref = base_ref(sub, base, explicit_base=bool(base_branch))
-    if not fetch_base_if_remote(sub, base, merge_ref):
-        fail("fetch failed")
-        pop_stash()
-        return "failed"
+    if merge_ref == f"origin/{base}":
+        log.info(f"git fetch origin {base}")
+        fp = run(["git", "-C", str(sub), "fetch", "origin", base])
+        log.raw((fp.stdout or "").rstrip())
+        log.raw((fp.stderr or "").rstrip())
+        if fp.returncode != 0:
+            log.fail("fetch failed")
+            pop_stash()
+            return "failed"
+    else:
+        log.info(f"using local base branch {base}")
 
-    info(f"git merge {merge_ref} (into {cur_branch})")
-    mp = run(["git", "-C", str(sub), "merge", "--no-edit", merge_ref], capture=False)
+    log.info(f"git merge {merge_ref} (into {cur_branch})")
+    mp = run(["git", "-C", str(sub), "merge", "--no-edit", merge_ref])
+    log.raw((mp.stdout or "").rstrip())
+    log.raw((mp.stderr or "").rstrip())
     if mp.returncode == 0:
-        ok(f"merged {merge_ref} into {cur_branch}")
+        log.ok(f"merged {merge_ref} into {cur_branch}")
         pop_stash()
         return "merged"
 
     unmerged = run(["git", "-C", str(sub), "ls-files", "--unmerged"])
     if unmerged.stdout.strip():
-        heading(f"CONFLICT in {sub.name}")
-        warn(f"merge conflict — resolve manually in {sub}")
-        info("  1. fix conflicted files")
-        info("  2. git add <files> && git commit")
+        log.heading(f"CONFLICT in {sub.name}")
+        log.warn(f"merge conflict — resolve manually in {sub}")
+        log.info("  1. fix conflicted files")
+        log.info("  2. git add <files> && git commit")
         if stashed:
-            info(f"  3. {BOLD}git stash pop{RESET} (your pre-sync changes are in the stash)")
+            log.info(f"  3. {BOLD}git stash pop{RESET} (your pre-sync changes are in the stash)")
         return "conflict"
 
-    fail("merge failed (non-conflict)")
+    log.fail("merge failed (non-conflict)")
     run(["git", "-C", str(sub), "merge", "--abort"])
     pop_stash()
     return "failed"
@@ -1202,13 +1215,9 @@ def cmd_push(folders: list) -> int:
 
 
 # ---------------------------------------------------------------------------
-# sync mode: pull -> merge base, per repo, serial. With --push, also push the
-# current branch after the base merge. Pull/push failures are recorded but the
-# command continues to the next repo; only the base merge halts the batch.
-#
-# Why serial: a conflict during the base merge needs the user's attention. Parallel
-# pulls + parallel pushes would also work but would obscure which repo
-# halted.
+# sync mode: pull -> merge base, independently for each repo, in parallel.
+# With --push, also push the current branch after the base merge. Each worker
+# buffers its output so reports remain grouped and ordered by repo.
 # ---------------------------------------------------------------------------
 def cmd_sync(folders: list, push: bool = False) -> int:
     repos = expand_targets(folders)
@@ -1218,22 +1227,17 @@ def cmd_sync(folders: list, push: bool = False) -> int:
         return 0
 
     flow = "pull -> base merge -> push" if push else "pull -> base merge"
-    info(f"syncing {len(repos)} repo(s) - {flow} (serial)...")
-    synced = skipped = 0
-    pull_fails: list = []
-    push_fails: list = []
-    rebase_fails: list = []
+    info(f"syncing {len(repos)} repo(s) in parallel - {flow}...")
 
-    for sub in repos:
-        heading(sub.name)
+    def worker(sub: Path, log: RepoLog) -> str:
+        log.heading(sub.name)
         base_branch = workspace_base_branch_for_repo(sub)
 
         cur = run(["git", "-C", str(sub), "rev-parse", "--abbrev-ref", "HEAD"])
         cur_branch = cur.stdout.strip() if cur.returncode == 0 else ""
         if not cur_branch or cur_branch == "HEAD":
-            warn("detached HEAD, skipping repo")
-            skipped += 1
-            continue
+            log.warn("detached HEAD, skipping repo")
+            return "skipped"
 
         # 1. pull current branch (explicit `origin <branch>` — not `HEAD`, which
         #    on the remote side resolves to the default branch, not the same-
@@ -1245,69 +1249,70 @@ def cmd_sync(folders: list, push: bool = False) -> int:
              "--heads", "origin", cur_branch]
         ).returncode == 0
         if not has_remote:
-            info(f"no origin/{cur_branch} yet — skipping pull (will be created on push)")
+            log.info(f"no origin/{cur_branch} yet — skipping pull (will be created on push)")
         else:
-            info(f"git pull --ff-only origin {BOLD}{cur_branch}{RESET}")
+            log.info(f"git pull --ff-only origin {BOLD}{cur_branch}{RESET}")
             pp = run(
                 [
                     "git", "-C", str(sub), "pull", "--ff-only",
                     "--set-upstream", "origin", cur_branch,
-                ],
-                capture=False,
+                ]
             )
+            log.raw((pp.stdout or "").rstrip())
+            log.raw((pp.stderr or "").rstrip())
             if pp.returncode != 0:
-                fail("pull failed — skipping base-merge/push for this repo")
-                pull_fails.append(sub.name)
-                continue
+                log.fail("pull failed — skipping base-merge/push for this repo")
+                return "pull_failed"
 
         # 2. merge base (unless already on base)
-        status = _sync_base_merge_one(sub, base_branch)
+        status = _sync_base_merge_one(sub, log, base_branch)
         if status == "conflict":
-            info("")
-            info("halted; remaining repos not processed")
-            heading("summary")
-            info(f"synced: {synced}, skipped: {skipped}, halted at: {BOLD}{sub.name}{RESET} (base-merge conflict)")
-            if pull_fails:
-                info(f"pull failed before halt: {RED}{', '.join(pull_fails)}{RESET}")
-            return 1
+            return "conflict"
         if status == "failed":
-            rebase_fails.append(sub.name)
-            heading("summary")
-            info(f"synced: {synced}, skipped: {skipped}, halted at: {BOLD}{sub.name}{RESET} (base merge failed)")
-            return 1
+            return "merge_failed"
 
         # 3. Optional push, but not when the current branch is the base branch.
         if status == "already":
-            info(f"on {BOLD}{cur_branch}{RESET}, skipping push")
-            ok(f"synced {cur_branch} (pull only)")
-            synced += 1
-            continue
+            log.info(f"on {BOLD}{cur_branch}{RESET}, skipping push")
+            log.ok(f"synced {cur_branch} (pull only)")
+            return "synced"
 
         if not push:
-            ok(f"synced {cur_branch} (local only)")
-            synced += 1
-            continue
+            log.ok(f"synced {cur_branch} (local only)")
+            return "synced"
 
-        info("git push --set-upstream origin HEAD")
+        log.info("git push --set-upstream origin HEAD")
         pushp = run(
-            ["git", "-C", str(sub), "push", "--set-upstream", "origin", "HEAD"],
-            capture=False,
+            ["git", "-C", str(sub), "push", "--set-upstream", "origin", "HEAD"]
         )
+        log.raw((pushp.stdout or "").rstrip())
+        log.raw((pushp.stderr or "").rstrip())
         if pushp.returncode != 0:
-            fail("push failed")
-            push_fails.append(sub.name)
-            continue
-        ok(f"synced {cur_branch}")
-        synced += 1
+            log.fail("push failed")
+            return "push_failed"
+        log.ok(f"synced {cur_branch}")
+        return "synced"
+
+    results = run_in_parallel(repos, worker)
+    synced = sum(1 for result in results if result == "synced")
+    skipped = sum(1 for result in results if result == "skipped")
+    pull_fails = [repos[i].name for i, result in enumerate(results) if result == "pull_failed"]
+    push_fails = [repos[i].name for i, result in enumerate(results) if result == "push_failed"]
+    merge_fails = [repos[i].name for i, result in enumerate(results) if result == "merge_failed"]
+    conflicts = [repos[i].name for i, result in enumerate(results) if result == "conflict"]
 
     heading("summary")
-    total_fail = len(pull_fails) + len(push_fails) + len(rebase_fails)
+    total_fail = len(pull_fails) + len(push_fails) + len(merge_fails) + len(conflicts)
     color = GREEN if total_fail == 0 else YELLOW
     info(f"synced: {color}{synced}{RESET}, skipped: {skipped}, failed: {color}{total_fail}{RESET}")
     if pull_fails:
         info(f"pull failed: {RED}{', '.join(pull_fails)}{RESET}")
     if push_fails:
         info(f"push failed: {RED}{', '.join(push_fails)}{RESET}")
+    if merge_fails:
+        info(f"base merge failed: {RED}{', '.join(merge_fails)}{RESET}")
+    if conflicts:
+        info(f"base merge conflict: {RED}{', '.join(conflicts)}{RESET}")
     return 0 if total_fail == 0 else 1
 
 
@@ -1879,9 +1884,9 @@ Modes:
   sync       Composite: for every matching repo, pull the current branch and
              merge its configured base_branch (or default main/master) into
              the current branch. With --push, push the current branch after
-             the base merge. Serial. Merge conflicts halt the whole run.
-             Pull/push failures for one repo don't halt; they're recorded and
-             the run continues.
+             the base merge. Repositories run in parallel; output is grouped
+             and reported in repo order. Failures and conflicts in one repo
+             don't stop the others.
              Examples:
                mkws sync                     # pull+base-merge every repo
                mkws sync --push              # pull+base-merge+push every repo

@@ -99,6 +99,24 @@ assert_not_contains() {
 	fi
 }
 
+assert_ordered() {
+	file=$1
+	shift
+	python3 - "$file" "$@" <<'PY'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text()
+position = -1
+for expected in sys.argv[2:]:
+    next_position = text.find(expected, position + 1)
+    if next_position < 0:
+        print(f"expected {sys.argv[1]} to contain in order: {expected}", file=sys.stderr)
+        raise SystemExit(1)
+    position = next_position
+PY
+}
+
 assert_remote_branch_exists() {
 	repo=$1
 	branch=$2
@@ -236,8 +254,15 @@ test_mkws() {
 	git -C "$root/repo-base-b" commit -q -m "update main"
 	(
 		cd "$base_workspace"
-		mkws sync >/dev/null
+		mkws sync > "$TMP/mkws-sync-parallel.out"
 	)
+	assert_contains "$TMP/mkws-sync-parallel.out" "repo(s) in parallel"
+	assert_ordered "$TMP/mkws-sync-parallel.out" \
+		"=== repo-base-a ===" \
+		"=== repo-base-b ===" \
+		"=== repo-base-c ===" \
+		"=== repo-base-d ===" \
+		"=== summary ==="
 	assert_exists "$base_workspace/repo-base-a/base-a-update.txt"
 	assert_exists "$base_workspace/repo-base-b/main-update.txt"
 	assert_not_exists "$base_workspace/repo-base-c/base-a-update.txt"
