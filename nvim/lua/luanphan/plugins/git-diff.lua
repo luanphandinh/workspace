@@ -380,6 +380,12 @@ local function goto_file_edit()
 end
 
 local function set_diffview_keymaps(buf)
+  vim.keymap.set("n", "<leader>e", function()
+    vim.cmd("DiffviewFocusFiles")
+  end, {
+    buffer = buf,
+    desc = "Focus Diffview files",
+  })
   vim.keymap.set("n", "<leader>gf", goto_file_edit, { buffer = buf, desc = "Jump to original file" })
   vim.keymap.set("n", "<leader>gc", function()
     commit_diffview()
