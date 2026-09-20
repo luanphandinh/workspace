@@ -1381,6 +1381,127 @@ local function test_nvim_tree_hides_dotfiles()
   assert_true(config and config.filters.dotfiles == true, "nvim-tree should hide dotfiles")
 end
 
+local function test_dependency_tree_keeps_workspace_tree(repo)
+  local tree_api = require("nvim-tree.api")
+  local original_cwd = vim.fn.getcwd()
+  local external_file = temp_root .. "/external-module/package/dependency.go"
+  local external_sibling = temp_root .. "/external-module/package/sibling.go"
+  write(external_file, { "package dependency" })
+  write(external_sibling, { "package dependency" })
+  local dependency_buf
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(repo))
+    tree_api.tree.open({ path = repo, focus = false })
+    tree_api.tree.change_root(repo)
+    local main_tree_win = tree_api.tree.winid()
+    assert_true(main_tree_win and vim.api.nvim_win_is_valid(main_tree_win), "workspace tree did not open")
+
+    vim.cmd("edit " .. vim.fn.fnameescape(external_file))
+    local editor_win = vim.api.nvim_get_current_win()
+    invoke_map("<leader>e")
+    local dependency_win = vim.api.nvim_get_current_win()
+    dependency_buf = vim.api.nvim_get_current_buf()
+    assert_true(vim.bo.filetype == "netrw", "external file did not open the dependency tree")
+    assert_true(vim.w.luanphan_dependency_tree == true, "dependency tree window was not marked")
+    assert_true(
+      realpath(vim.w.luanphan_dependency_root) == realpath(vim.fn.fnamemodify(external_file, ":h")),
+      "dependency tree opened at the wrong directory"
+    )
+    assert_true(
+      vim.fn.win_screenpos(dependency_win)[2] > vim.fn.win_screenpos(editor_win)[2],
+      "dependency tree did not open on the right"
+    )
+    assert_true(
+      realpath(require("nvim-tree.core").get_cwd()) == realpath(repo),
+      "dependency tree changed workspace root"
+    )
+
+    local window_count = #vim.api.nvim_tabpage_list_wins(0)
+    local sibling_line
+    for line, text in ipairs(vim.api.nvim_buf_get_lines(dependency_buf, 0, -1, false)) do
+      if text:find("sibling.go", 1, true) then
+        sibling_line = line
+        break
+      end
+    end
+    assert_true(sibling_line ~= nil, "dependency tree did not list the sibling file")
+    vim.api.nvim_win_set_cursor(dependency_win, { sibling_line, 0 })
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "x", false)
+    assert_true(vim.api.nvim_get_current_win() == editor_win, "dependency file did not open in the editor window")
+    assert_true(
+      realpath(vim.api.nvim_buf_get_name(0)) == realpath(external_sibling),
+      "dependency file did not replace the editor buffer"
+    )
+    assert_true(#vim.api.nvim_tabpage_list_wins(0) == window_count, "dependency file opened another window")
+
+    invoke_map("<leader>e")
+    assert_true(vim.api.nvim_get_current_win() == dependency_win, "dependency tree did not regain focus")
+
+    local external_line
+    for line, text in ipairs(vim.api.nvim_buf_get_lines(dependency_buf, 0, -1, false)) do
+      if text:find("dependency.go", 1, true) then
+        external_line = line
+        break
+      end
+    end
+    assert_true(external_line ~= nil, "dependency tree did not list the original file")
+    vim.api.nvim_win_set_cursor(dependency_win, { external_line, 0 })
+    vim.api.nvim_feedkeys("o", "x", false)
+    assert_true(vim.api.nvim_get_current_win() == editor_win, "dependency tree o mapping did not focus the editor")
+    assert_true(
+      realpath(vim.api.nvim_buf_get_name(0)) == realpath(external_file),
+      "dependency tree o mapping did not replace the editor buffer"
+    )
+    assert_true(#vim.api.nvim_tabpage_list_wins(0) == window_count, "dependency tree o mapping opened another window")
+
+    invoke_map("<leader>e")
+    assert_true(vim.api.nvim_get_current_win() == dependency_win, "dependency tree did not regain focus after o")
+    invoke_map("<leader>e")
+    assert_true(vim.api.nvim_get_current_win() == editor_win, "dependency tree did not return focus to the editor")
+    vim.cmd("edit " .. vim.fn.fnameescape(repo .. "/main.go"))
+    invoke_map("<leader>e")
+    assert_true(vim.api.nvim_get_current_win() == main_tree_win, "workspace file did not focus the workspace tree")
+    assert_true(realpath(require("nvim-tree.core").get_cwd()) == realpath(repo), "workspace tree root changed")
+
+    vim.api.nvim_set_current_win(editor_win)
+    vim.cmd("edit " .. vim.fn.fnameescape(external_file))
+    invoke_map("<leader>e")
+    assert_true(vim.api.nvim_get_current_win() == dependency_win, "external file did not refocus the dependency tree")
+    invoke_map("<leader>e")
+    invoke_map("<leader>b")
+    assert_true(not vim.api.nvim_win_is_valid(dependency_win), "first tree toggle did not close the dependency tree")
+    assert_true(vim.api.nvim_win_is_valid(main_tree_win), "closing the dependency tree closed the workspace tree")
+
+    invoke_map("<leader>b")
+    assert_true(not tree_api.tree.is_visible(), "tree toggle did not resume normal workspace-tree behavior")
+    invoke_map("<leader>b")
+    assert_true(tree_api.tree.is_visible(), "workspace tree did not reopen after dependency tree closed")
+    assert_true(realpath(require("nvim-tree.core").get_cwd()) == realpath(repo), "workspace tree reopened at another root")
+
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if not tree_api.tree.is_tree_buf(vim.api.nvim_win_get_buf(win)) then
+        vim.api.nvim_set_current_win(win)
+        break
+      end
+    end
+    vim.cmd("edit " .. vim.fn.fnameescape(external_file))
+    invoke_map("<leader>e")
+    assert_true(vim.w.luanphan_dependency_tree == true, "explicit external-file focus did not reopen the dependency tree")
+  end, debug.traceback)
+
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.w[win].luanphan_dependency_tree then
+      pcall(vim.api.nvim_win_close, win, true)
+    end
+  end
+  tree_api.tree.close()
+  if dependency_buf and vim.api.nvim_buf_is_valid(dependency_buf) then
+    pcall(vim.api.nvim_buf_delete, dependency_buf, { force = true })
+  end
+  vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  assert_true(ok, err)
+end
+
 local function test_searches_follow_tree_dotfiles()
   local fixture = temp_root .. "/live-grep-hidden"
   write(fixture .. "/visible.txt", { "search target" })
@@ -4613,6 +4734,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("nvim-tree hides dotfiles", function()
     test_nvim_tree_hides_dotfiles()
+  end)
+
+  test("external files use a temporary dependency tree", function()
+    test_dependency_tree_keeps_workspace_tree(repo)
   end)
 
   test("file searches follow nvim-tree dotfile visibility", function()
