@@ -1436,6 +1436,10 @@ local function test_dependency_tree_keeps_workspace_tree(repo)
 
     invoke_map("<leader>e")
     assert_true(vim.api.nvim_get_current_win() == dependency_win, "dependency tree did not regain focus")
+    assert_true(
+      vim.api.nvim_get_current_line():find("sibling.go", 1, true) ~= nil,
+      "dependency tree did not focus the current sibling file"
+    )
 
     local external_line
     for line, text in ipairs(vim.api.nvim_buf_get_lines(dependency_buf, 0, -1, false)) do
@@ -1456,6 +1460,10 @@ local function test_dependency_tree_keeps_workspace_tree(repo)
 
     invoke_map("<leader>e")
     assert_true(vim.api.nvim_get_current_win() == dependency_win, "dependency tree did not regain focus after o")
+    assert_true(
+      vim.api.nvim_get_current_line():find("dependency.go", 1, true) ~= nil,
+      "dependency tree did not focus the current file after o"
+    )
     invoke_map("<leader>e")
     assert_true(vim.api.nvim_get_current_win() == editor_win, "dependency tree did not return focus to the editor")
     vim.cmd("edit " .. vim.fn.fnameescape(repo .. "/main.go"))

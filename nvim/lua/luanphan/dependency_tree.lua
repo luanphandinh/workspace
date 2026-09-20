@@ -68,6 +68,19 @@ local function configure_dependency_buffer(win, buf)
   end
 end
 
+local function focus_dependency_file(win, buf, file)
+  local name = vim.fn.fnamemodify(file, ":t")
+  for line, text in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+    if text:find(name, 1, true) then
+      vim.api.nvim_win_set_cursor(win, { line, 0 })
+      vim.api.nvim_win_call(win, function()
+        vim.cmd("normal! zz")
+      end)
+      return
+    end
+  end
+end
+
 local function open_dependency_tree(file)
   local root = normalize(vim.fn.fnamemodify(file, ":h"))
   if not root then
@@ -95,6 +108,7 @@ local function open_dependency_tree(file)
   vim.cmd("wincmd L")
   vim.wo.winfixwidth = true
   vim.api.nvim_win_set_width(0, width)
+  focus_dependency_file(win, buf, file)
 end
 
 function M.focus(tree_api)
