@@ -3942,6 +3942,19 @@ local function test_git_diff_previews(worktree)
 
   invoke_map("<leader>gD")
   wait_for_diffview()
+  local branch_view = require("diffview.lib").get_current_view()
+  local branch_tab = branch_view.tabpage
+  branch_view.panel:focus()
+  invoke_map("L")
+  wait_until("Diffview commit log", function()
+    return branch_view.commit_log_panel:is_focused()
+  end, 5000)
+  invoke_map("q")
+  wait_until("Diffview commit log closes", function()
+    return not branch_view.commit_log_panel:is_open()
+  end, 5000)
+  assert_true(vim.api.nvim_tabpage_is_valid(branch_tab), "closing the commit log closed the Diffview tab")
+  assert_true(require("diffview.lib").get_current_view() == branch_view, "closing the commit log replaced the branch Diffview")
   close_diffview()
 end
 
