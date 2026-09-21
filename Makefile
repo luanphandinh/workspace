@@ -20,7 +20,7 @@ endif
 
 lazy_command ?= restore
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps ueli-install ueli-import-alfred macos-menu-bar default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -59,6 +59,7 @@ ifeq ($(UNAME),Darwin)
 		exit 1; \
 	fi
 	@for app in maccy alfred arc stats codexbar; do brew install --cask "$$app" || true; done
+	@$(MAKE) ueli-install
 	@if command -v codexbar >/dev/null 2>&1; then \
 		codexbar config enable --provider codex; \
 		codexbar config enable --provider cursor; \
@@ -71,17 +72,32 @@ else
 	@echo "apps: skipped; macOS-only"
 endif
 
+ueli-install: ## Install the latest Ueli release without disabling Gatekeeper globally
+ifeq ($(UNAME),Darwin)
+	sh ./scripts/install-ueli.sh
+	open -gj /Applications/ueli.app
+else
+	@echo "ueli-install: skipped; macOS-only"
+endif
+
+ueli-import-alfred: ## Import Alfred custom URLs and web searches into Ueli
+ifeq ($(UNAME),Darwin)
+	sh ./scripts/import-alfred-web-searches-to-ueli.sh
+else
+	@echo "ueli-import-alfred: skipped; macOS-only"
+endif
+
 macos-menu-bar: ## Restore the preferred macOS menu bar layout
 ifeq ($(UNAME),Darwin)
 	@defaults -currentHost write com.apple.Spotlight MenuItemHidden -int 1
 	@for module in CPU RAM Battery; do defaults write eu.exelban.Stats "$${module}_state" -bool true; done
 	@for module in GPU Disk Sensors Network Bluetooth Clock Remote; do defaults write eu.exelban.Stats "$${module}_state" -bool false; done
 	@defaults write eu.exelban.Stats setupProcess -bool true
-	@defaults write com.steipete.codexbar "NSStatusItem Preferred Position codexbar-merged" -int 572
-	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position CPU_mini" -int 525
-	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position RAM_mini" -int 478
-	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position Battery_battery" -int 436
-	@defaults write org.p0deje.Maccy "NSStatusItem Preferred Position Item-0" -int 404
+	@defaults write com.steipete.codexbar "NSStatusItem Preferred Position codexbar-merged" -int 489
+	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position CPU_mini" -int 442
+	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position RAM_mini" -int 395
+	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position Battery_battery" -int 289
+	@defaults write org.p0deje.Maccy "NSStatusItem Preferred Position Item-0" -int 363
 	@defaults write com.runningwithcrayons.Alfred "NSStatusItem Preferred Position Item-0" -int 357
 	@for process in CodexBar Stats Maccy Alfred; do pkill -x "$$process" >/dev/null 2>&1 || true; done
 	@killall SystemUIServer >/dev/null 2>&1 || true
