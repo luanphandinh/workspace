@@ -2,21 +2,38 @@
 -- Default: ignore-case on (-i), fixed-string on (-F). <leader>t1 = strict case, t2 = regex.
 
 local M = {}
+local live_grep_cache
 
-local function debounce_finder(finders, command_generator, entry_maker, cwd, delay, on_search)
+local function cached_finder(opts)
   local async = require("plenary.async")
   local generation = 0
   local timer = vim.uv.new_timer()
-  local finder = finders.new_job(command_generator, entry_maker, nil, cwd)
+  local finder = opts.finders.new_job(opts.command_generator, opts.entry_maker, nil, opts.cwd)
   local run_finder = async.void(function(...)
     finder(...)
   end)
+  local cached = opts.cached
+  local can_replay = cached and cached.results ~= nil
+  local active_prompt
+  local active_results
+  local active_complete = false
+
+  local function save(results)
+    live_grep_cache = {
+      identity = opts.identity,
+      query = active_prompt,
+      results = results,
+    }
+  end
 
   return setmetatable({
     close = function()
       generation = generation + 1
       timer:stop()
       finder:close()
+      if active_prompt ~= nil then
+        save(active_complete and active_results or nil)
+      end
       if not timer:is_closing() then
         timer:close()
       end
@@ -27,14 +44,40 @@ local function debounce_finder(finders, command_generator, entry_maker, cwd, del
       local request_generation = generation
       timer:stop()
       finder:close()
-      on_search()
+      opts.on_search()
+
+      active_prompt = prompt or ""
+      active_results = {}
+      active_complete = false
+      save(nil)
 
       if not prompt or prompt == "" then
+        active_complete = true
+        save(active_results)
         process_complete()
         return
       end
 
-      timer:start(delay, 0, function()
+      if can_replay and prompt == cached.query then
+        can_replay = false
+        for index, line in ipairs(cached.results) do
+          local entry = opts.entry_maker(line)
+          if entry then
+            entry.index = index
+            active_results[#active_results + 1] = line
+            if process_result(entry) then
+              return
+            end
+          end
+        end
+        active_complete = true
+        save(active_results)
+        process_complete()
+        return
+      end
+      can_replay = false
+
+      timer:start(opts.delay, 0, function()
         vim.schedule(function()
           if request_generation ~= generation then
             return
@@ -43,9 +86,14 @@ local function debounce_finder(finders, command_generator, entry_maker, cwd, del
             if request_generation ~= generation then
               return true
             end
+            if entry and type(entry.value) == "string" then
+              active_results[#active_results + 1] = entry.value
+            end
             return process_result(entry)
           end, function()
             if request_generation == generation then
+              active_complete = true
+              save(active_results)
               process_complete()
             end
           end)
@@ -86,23 +134,41 @@ function M.live_grep(default_text)
     return M.additional_args(config, rules)
   end
   opts.cwd = opts.cwd or vim.uv.cwd()
-  opts.default_text = default_text or opts.default_text
 
   local args = vim.deepcopy(opts.vimgrep_arguments or conf.vimgrep_arguments)
   vim.list_extend(args, opts.additional_args(opts))
   local search_dirs = vim.tbl_map(vim.fn.expand, opts.search_dirs or {})
+  local cwd = vim.uv.fs_realpath(opts.cwd) or vim.fs.normalize(opts.cwd)
+  local identity_parts = vim.list_extend({ cwd }, vim.deepcopy(args))
+  vim.list_extend(identity_parts, search_dirs)
+  local identity = table.concat(identity_parts, "\0")
+  local cached
+  if default_text == nil and live_grep_cache and live_grep_cache.identity == identity then
+    cached = live_grep_cache
+  end
+  opts.default_text = default_text or (cached and cached.query) or opts.default_text
+  opts.cache_picker = false
 
   local picker
-  local finder = debounce_finder(finders, function(prompt)
-    if not prompt or prompt == "" then
-      return nil
-    end
-    return vim.list_extend(vim.deepcopy(args), vim.list_extend({ "--", prompt }, search_dirs))
-  end, opts.entry_maker or make_entry.gen_from_vimgrep(opts), opts.cwd, 200, function()
-    if picker and vim.api.nvim_buf_is_valid(picker.results_bufnr) then
-      vim.api.nvim_buf_set_lines(picker.results_bufnr, 0, -1, false, { "" })
-    end
-  end)
+  local finder = cached_finder({
+    cached = cached,
+    command_generator = function(prompt)
+      if not prompt or prompt == "" then
+        return nil
+      end
+      return vim.list_extend(vim.deepcopy(args), vim.list_extend({ "--", prompt }, search_dirs))
+    end,
+    cwd = opts.cwd,
+    delay = 200,
+    entry_maker = opts.entry_maker or make_entry.gen_from_vimgrep(opts),
+    finders = finders,
+    identity = identity,
+    on_search = function()
+      if picker and vim.api.nvim_buf_is_valid(picker.results_bufnr) then
+        vim.api.nvim_buf_set_lines(picker.results_bufnr, 0, -1, false, { "" })
+      end
+    end,
+  })
 
   local grep_sorter = sorters.highlighter_only(opts)
   grep_sorter.highlighter = function(_, prompt, display)

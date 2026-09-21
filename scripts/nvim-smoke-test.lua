@@ -1736,6 +1736,58 @@ local function test_live_grep_debounces_real_picker(repo)
   assert_true(vim.v.shell_error == 0, table.concat(out, "\n"))
 end
 
+local function test_live_grep_caches_only_completed_searches(repo)
+  local script = temp_root .. "/live-grep-cache.lua"
+  local fake_rg = temp_root .. "/live-grep-cache-rg"
+  local invocation_log = temp_root .. "/live-grep-cache-invocations"
+  write_executable(fake_rg, {
+    "#!/bin/sh",
+    "printf 'run\\n' >> " .. vim.fn.shellescape(invocation_log),
+    "for argument in \"$@\"; do",
+    "  if [ \"$argument\" = slowTarget ]; then sleep 2; fi",
+    "done",
+    "exec " .. vim.fn.shellescape(vim.fn.exepath("rg")) .. " \"$@\"",
+  })
+  write(script, {
+    "local function assert_true(value, message) if not value then error(message, 0) end end",
+    "local function invocation_count()",
+    "  local path = " .. string.format("%q", invocation_log),
+    "  return vim.fn.filereadable(path) == 1 and #vim.fn.readfile(path) or 0",
+    "end",
+    "local function open_grep()",
+    "  require('luanphan.telescope_grep_opts').live_grep()",
+    "  local prompt = vim.api.nvim_get_current_buf()",
+    "  local picker = require('telescope.actions.state').get_current_picker(prompt)",
+    "  assert_true(picker ~= nil, 'live grep picker did not open')",
+    "  return prompt, picker",
+    "end",
+    "local config = require('telescope.config')",
+    "config.values.vimgrep_arguments[1] = " .. string.format("%q", fake_rg),
+    "package.loaded['luanphan.telescope_grep_opts'] = nil",
+    "local prompt, picker = open_grep()",
+    "picker:set_prompt('targetValue')",
+    "assert_true(vim.wait(5000, function() return picker.manager and picker.manager:num_results() > 0 end, 20), 'completed search produced no results')",
+    "vim.wait(500)",
+    "assert_true(invocation_count() == 1, 'completed search did not run exactly once')",
+    "require('telescope.actions').close(prompt)",
+    "prompt, picker = open_grep()",
+    "assert_true(vim.wait(1000, function() return picker:_get_prompt() == 'targetValue' end, 20), 'completed search query was not restored')",
+    "assert_true(vim.wait(1000, function() return picker.manager and picker.manager:num_results() > 0 end, 20), 'completed results were not restored')",
+    "assert_true(invocation_count() == 1, 'restoring completed results started rg again')",
+    "picker:set_prompt('slowTarget')",
+    "assert_true(vim.wait(1000, function() return invocation_count() == 2 end, 20), 'slow search did not start')",
+    "require('telescope.actions').close(prompt)",
+    "prompt, picker = open_grep()",
+    "assert_true(vim.wait(1000, function() return picker:_get_prompt() == 'slowTarget' end, 20), 'interrupted search query was not restored')",
+    "assert_true(vim.wait(1000, function() return invocation_count() == 3 end, 20), 'interrupted search did not restart rg')",
+    "require('telescope.actions').close(prompt)",
+  })
+
+  local cmd = child_nvim_luafile_command(repo, script)
+  local out = vim.fn.systemlist(cmd)
+  assert_true(vim.v.shell_error == 0, table.concat(out, "\n"))
+end
+
 local function test_flow_line_navigation()
   local flow = require("luanphan.flow")
   local original_data_dir = vim.g.luanphan_flow_data_dir
@@ -4719,6 +4771,7 @@ local search_and_navigation_tests = {
   flow = test_flow_line_navigation,
   lsp_search_priority = test_lsp_pickers_use_search_priority,
   live_grep_highlights = test_live_grep_highlights_content_only,
+  live_grep_cache = test_live_grep_caches_only_completed_searches,
   live_grep_debounce = test_live_grep_debounces_real_picker,
   search_rules = test_search_rules,
   search_rules_disk = test_search_rules_filter_disk_searches,
@@ -4770,6 +4823,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("live grep debounces its real picker", function()
     search_and_navigation_tests.live_grep_debounce(repo)
+  end)
+
+  test("live grep caches only completed searches", function()
+    search_and_navigation_tests.live_grep_cache(repo)
   end)
 
   test("Flow stores editable line marks per workspace", function()
