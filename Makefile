@@ -20,7 +20,7 @@ endif
 
 lazy_command ?= restore
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar macos-keyboard default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -29,7 +29,7 @@ setup: setup-deps
 	$(MAKE) setup-runtime
 
 setup-runtime: ## Install workspace configs and terminal agent CLIs after deps are available
-setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config newsboat-config cleanup agent-clis
+setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config newsboat-config macos-keyboard cleanup agent-clis
 
 nix-install: ## Install Nix if missing
 	sh ./scripts/install-nix.sh
@@ -90,6 +90,16 @@ ifeq ($(UNAME),Darwin)
 	done
 else
 	@echo "macos-menu-bar: skipped; macOS-only"
+endif
+
+macos-keyboard: ## Map Caps Lock to Escape at login on macOS
+ifeq ($(UNAME),Darwin)
+	@mkdir -p "$(HOME)/Library/LaunchAgents"
+	@cp ./macos/local.workspace.keyboard-remap.plist "$(HOME)/Library/LaunchAgents/local.workspace.keyboard-remap.plist"
+	@launchctl bootout "gui/$$(id -u)" "$(HOME)/Library/LaunchAgents/local.workspace.keyboard-remap.plist" >/dev/null 2>&1 || true
+	@launchctl bootstrap "gui/$$(id -u)" "$(HOME)/Library/LaunchAgents/local.workspace.keyboard-remap.plist"
+else
+	@echo "macos-keyboard: skipped; macOS-only"
 endif
 
 default-shell: ## Use zsh as the default login shell on Linux
