@@ -10,7 +10,7 @@ usage() {
 	case "$mode" in
 		from)
 			cat <<'EOF'
-Usage: fromjson [--] [value]
+Usage: jsondecode [--] [value]
 
 Decode a JSON-encoded string. Existing JSON values pass through unchanged.
 With no value, input is read from the system clipboard.
@@ -18,7 +18,7 @@ EOF
 			;;
 		to)
 			cat <<'EOF'
-Usage: tojson [--] [value]
+Usage: jsonencode [--] [value]
 
 Encode a JSON value as a JSON string. Existing JSON strings pass through unchanged.
 With no value, input is read from the system clipboard.
