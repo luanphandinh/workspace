@@ -20,7 +20,7 @@ endif
 
 lazy_command ?= restore
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar macos-keyboard default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test epoch-tools-test
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test epoch-tools-test
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -100,6 +100,20 @@ ifeq ($(UNAME),Darwin)
 	@launchctl bootstrap "gui/$$(id -u)" "$(HOME)/Library/LaunchAgents/local.workspace.keyboard-remap.plist"
 else
 	@echo "macos-keyboard: skipped; macOS-only"
+endif
+
+macos-shortcuts: workspace-bin ## Build and open the local Shortcut imports
+ifeq ($(UNAME),Darwin)
+	@rm -rf ./tmp/macos-shortcuts
+	@mkdir -p ./tmp/macos-shortcuts
+	@set -e; for workflow in ./macos/shortcuts/*.wflow; do \
+		name=$$(basename "$$workflow" .wflow); \
+		plutil -lint "$$workflow"; \
+		shortcuts sign --mode anyone --input "$$workflow" --output "./tmp/macos-shortcuts/$$name.shortcut"; \
+	done
+	@open ./tmp/macos-shortcuts/*.shortcut
+else
+	@echo "macos-shortcuts: skipped; macOS-only"
 endif
 
 default-shell: ## Use zsh as the default login shell on Linux

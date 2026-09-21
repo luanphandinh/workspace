@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>WFQuickActionSurfaces</key>
+  <array/>
+  <key>WFWorkflowActions</key>
+  <array>
+    <dict>
+      <key>WFWorkflowActionIdentifier</key>
+      <string>is.workflow.actions.runshellscript</string>
+      <key>WFWorkflowActionParameters</key>
+      <dict>
+        <key>InputMode</key>
+        <string>to stdin</string>
+        <key>Script</key>
+        <string>&quot;$HOME/bin/jsonencode&quot; | /usr/bin/pbcopy</string>
+        <key>Shell</key>
+        <string>/bin/zsh</string>
+      </dict>
+    </dict>
+  </array>
+  <key>WFWorkflowClientVersion</key>
+  <string>4711</string>
+  <key>WFWorkflowHasOutputFallback</key>
+  <false/>
+  <key>WFWorkflowHasShortcutInputVariables</key>
+  <false/>
+  <key>WFWorkflowIcon</key>
+  <dict>
+    <key>WFWorkflowIconGlyphNumber</key>
+    <integer>59412</integer>
+    <key>WFWorkflowIconStartColor</key>
+    <integer>463140863</integer>
+  </dict>
+  <key>WFWorkflowImportQuestions</key>
+  <array/>
+  <key>WFWorkflowInputContentItemClasses</key>
+  <array>
+    <string>WFStringContentItem</string>
+  </array>
+  <key>WFWorkflowMinimumClientVersion</key>
+  <integer>900</integer>
+  <key>WFWorkflowMinimumClientVersionString</key>
+  <string>900</string>
+  <key>WFWorkflowNoInputBehavior</key>
+  <dict/>
+  <key>WFWorkflowOutputContentItemClasses</key>
+  <array/>
+  <key>WFWorkflowTypes</key>
+  <array>
+    <string>WFWorkflowTypeShowInSearch</string>
+  </array>
+</dict>
+</plist>
