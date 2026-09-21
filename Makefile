@@ -20,7 +20,7 @@ endif
 
 lazy_command ?= restore
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps ueli-install ueli-import-alfred macos-menu-bar default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -58,8 +58,7 @@ ifeq ($(UNAME),Darwin)
 		echo "apps: Homebrew is required on macOS" >&2; \
 		exit 1; \
 	fi
-	@for app in maccy alfred arc stats codexbar; do brew install --cask "$$app" || true; done
-	@$(MAKE) ueli-install
+	@for app in maccy arc stats codexbar; do brew install --cask "$$app" || true; done
 	@if command -v codexbar >/dev/null 2>&1; then \
 		codexbar config enable --provider codex; \
 		codexbar config enable --provider cursor; \
@@ -70,21 +69,6 @@ ifeq ($(UNAME),Darwin)
 	@$(MAKE) macos-menu-bar
 else
 	@echo "apps: skipped; macOS-only"
-endif
-
-ueli-install: ## Install the latest Ueli release without disabling Gatekeeper globally
-ifeq ($(UNAME),Darwin)
-	sh ./scripts/install-ueli.sh
-	open -gj /Applications/ueli.app
-else
-	@echo "ueli-install: skipped; macOS-only"
-endif
-
-ueli-import-alfred: ## Import Alfred custom URLs and web searches into Ueli
-ifeq ($(UNAME),Darwin)
-	sh ./scripts/import-alfred-web-searches-to-ueli.sh
-else
-	@echo "ueli-import-alfred: skipped; macOS-only"
 endif
 
 macos-menu-bar: ## Restore the preferred macOS menu bar layout
@@ -98,11 +82,10 @@ ifeq ($(UNAME),Darwin)
 	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position RAM_mini" -int 395
 	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position Battery_battery" -int 289
 	@defaults write org.p0deje.Maccy "NSStatusItem Preferred Position Item-0" -int 363
-	@defaults write com.runningwithcrayons.Alfred "NSStatusItem Preferred Position Item-0" -int 357
-	@for process in CodexBar Stats Maccy Alfred; do pkill -x "$$process" >/dev/null 2>&1 || true; done
+	@for process in CodexBar Stats Maccy; do pkill -x "$$process" >/dev/null 2>&1 || true; done
 	@killall SystemUIServer >/dev/null 2>&1 || true
 	@sleep 1
-	@for app in /Applications/CodexBar.app /Applications/Stats.app /Applications/Maccy.app "/Applications/Alfred 5.app"; do \
+	@for app in /Applications/CodexBar.app /Applications/Stats.app /Applications/Maccy.app; do \
 		test ! -d "$$app" || open -gj "$$app"; \
 	done
 else
