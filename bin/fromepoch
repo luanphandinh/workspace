@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+usage() {
+	cat <<'EOF'
+Usage: fromepoch <timestamp>
+
+Convert a Unix timestamp in seconds to local time.
+EOF
+}
+
+case "${1:-}" in
+	-h|--help)
+		usage
+		exit 0
+		;;
+esac
+
+if [ "$#" -ne 1 ]; then
+	printf 'error: expected one Unix timestamp\n' >&2
+	exit 1
+fi
+
+timestamp=$1
+case "$timestamp" in
+	-*) digits=${timestamp#-} ;;
+	*) digits=$timestamp ;;
+esac
+case "$digits" in
+	''|*[!0-9]*)
+		printf 'error: timestamp must be an integer number of seconds\n' >&2
+		exit 1
+		;;
+esac
+
+case "$(uname -s)" in
+	Darwin) date -r "$timestamp" '+%Y-%m-%d %H:%M:%S %z' ;;
+	*) date -d "@$timestamp" '+%Y-%m-%d %H:%M:%S %z' ;;
+esac
