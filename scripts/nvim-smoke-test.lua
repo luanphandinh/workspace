@@ -1381,6 +1381,135 @@ local function test_nvim_tree_hides_dotfiles()
   assert_true(config and config.filters.dotfiles == true, "nvim-tree should hide dotfiles")
 end
 
+local function test_dependency_tree_keeps_workspace_tree(repo)
+  local tree_api = require("nvim-tree.api")
+  local original_cwd = vim.fn.getcwd()
+  local external_file = temp_root .. "/external-module/package/dependency.go"
+  local external_sibling = temp_root .. "/external-module/package/sibling.go"
+  write(external_file, { "package dependency" })
+  write(external_sibling, { "package dependency" })
+  local dependency_buf
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(repo))
+    tree_api.tree.open({ path = repo, focus = false })
+    tree_api.tree.change_root(repo)
+    local main_tree_win = tree_api.tree.winid()
+    assert_true(main_tree_win and vim.api.nvim_win_is_valid(main_tree_win), "workspace tree did not open")
+
+    vim.cmd("edit " .. vim.fn.fnameescape(external_file))
+    local editor_win = vim.api.nvim_get_current_win()
+    invoke_map("<leader>e")
+    local dependency_win = vim.api.nvim_get_current_win()
+    dependency_buf = vim.api.nvim_get_current_buf()
+    assert_true(vim.bo.filetype == "netrw", "external file did not open the dependency tree")
+    assert_true(vim.w.luanphan_dependency_tree == true, "dependency tree window was not marked")
+    assert_true(
+      realpath(vim.w.luanphan_dependency_root) == realpath(vim.fn.fnamemodify(external_file, ":h")),
+      "dependency tree opened at the wrong directory"
+    )
+    assert_true(
+      vim.fn.win_screenpos(dependency_win)[2] > vim.fn.win_screenpos(editor_win)[2],
+      "dependency tree did not open on the right"
+    )
+    assert_true(
+      realpath(require("nvim-tree.core").get_cwd()) == realpath(repo),
+      "dependency tree changed workspace root"
+    )
+
+    local window_count = #vim.api.nvim_tabpage_list_wins(0)
+    local sibling_line
+    for line, text in ipairs(vim.api.nvim_buf_get_lines(dependency_buf, 0, -1, false)) do
+      if text:find("sibling.go", 1, true) then
+        sibling_line = line
+        break
+      end
+    end
+    assert_true(sibling_line ~= nil, "dependency tree did not list the sibling file")
+    vim.api.nvim_win_set_cursor(dependency_win, { sibling_line, 0 })
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "x", false)
+    assert_true(vim.api.nvim_get_current_win() == editor_win, "dependency file did not open in the editor window")
+    assert_true(
+      realpath(vim.api.nvim_buf_get_name(0)) == realpath(external_sibling),
+      "dependency file did not replace the editor buffer"
+    )
+    assert_true(#vim.api.nvim_tabpage_list_wins(0) == window_count, "dependency file opened another window")
+
+    invoke_map("<leader>e")
+    assert_true(vim.api.nvim_get_current_win() == dependency_win, "dependency tree did not regain focus")
+    assert_true(
+      vim.api.nvim_get_current_line():find("sibling.go", 1, true) ~= nil,
+      "dependency tree did not focus the current sibling file"
+    )
+
+    local external_line
+    for line, text in ipairs(vim.api.nvim_buf_get_lines(dependency_buf, 0, -1, false)) do
+      if text:find("dependency.go", 1, true) then
+        external_line = line
+        break
+      end
+    end
+    assert_true(external_line ~= nil, "dependency tree did not list the original file")
+    vim.api.nvim_win_set_cursor(dependency_win, { external_line, 0 })
+    vim.api.nvim_feedkeys("o", "x", false)
+    assert_true(vim.api.nvim_get_current_win() == editor_win, "dependency tree o mapping did not focus the editor")
+    assert_true(
+      realpath(vim.api.nvim_buf_get_name(0)) == realpath(external_file),
+      "dependency tree o mapping did not replace the editor buffer"
+    )
+    assert_true(#vim.api.nvim_tabpage_list_wins(0) == window_count, "dependency tree o mapping opened another window")
+
+    invoke_map("<leader>e")
+    assert_true(vim.api.nvim_get_current_win() == dependency_win, "dependency tree did not regain focus after o")
+    assert_true(
+      vim.api.nvim_get_current_line():find("dependency.go", 1, true) ~= nil,
+      "dependency tree did not focus the current file after o"
+    )
+    invoke_map("<leader>e")
+    assert_true(vim.api.nvim_get_current_win() == editor_win, "dependency tree did not return focus to the editor")
+    vim.cmd("edit " .. vim.fn.fnameescape(repo .. "/main.go"))
+    invoke_map("<leader>e")
+    assert_true(vim.api.nvim_get_current_win() == main_tree_win, "workspace file did not focus the workspace tree")
+    assert_true(realpath(require("nvim-tree.core").get_cwd()) == realpath(repo), "workspace tree root changed")
+
+    vim.api.nvim_set_current_win(editor_win)
+    vim.cmd("edit " .. vim.fn.fnameescape(external_file))
+    invoke_map("<leader>e")
+    assert_true(vim.api.nvim_get_current_win() == dependency_win, "external file did not refocus the dependency tree")
+    invoke_map("<leader>e")
+    invoke_map("<leader>b")
+    assert_true(not vim.api.nvim_win_is_valid(dependency_win), "first tree toggle did not close the dependency tree")
+    assert_true(vim.api.nvim_win_is_valid(main_tree_win), "closing the dependency tree closed the workspace tree")
+
+    invoke_map("<leader>b")
+    assert_true(not tree_api.tree.is_visible(), "tree toggle did not resume normal workspace-tree behavior")
+    invoke_map("<leader>b")
+    assert_true(tree_api.tree.is_visible(), "workspace tree did not reopen after dependency tree closed")
+    assert_true(realpath(require("nvim-tree.core").get_cwd()) == realpath(repo), "workspace tree reopened at another root")
+
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if not tree_api.tree.is_tree_buf(vim.api.nvim_win_get_buf(win)) then
+        vim.api.nvim_set_current_win(win)
+        break
+      end
+    end
+    vim.cmd("edit " .. vim.fn.fnameescape(external_file))
+    invoke_map("<leader>e")
+    assert_true(vim.w.luanphan_dependency_tree == true, "explicit external-file focus did not reopen the dependency tree")
+  end, debug.traceback)
+
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.w[win].luanphan_dependency_tree then
+      pcall(vim.api.nvim_win_close, win, true)
+    end
+  end
+  tree_api.tree.close()
+  if dependency_buf and vim.api.nvim_buf_is_valid(dependency_buf) then
+    pcall(vim.api.nvim_buf_delete, dependency_buf, { force = true })
+  end
+  vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  assert_true(ok, err)
+end
+
 local function test_searches_follow_tree_dotfiles()
   local fixture = temp_root .. "/live-grep-hidden"
   write(fixture .. "/visible.txt", { "search target" })
@@ -1600,6 +1729,58 @@ local function test_live_grep_debounces_real_picker(repo)
     "end",
     "assert_true(vim.wait(5000, final_results_visible, 20), 'live grep did not replace stale rows with final results')",
     "require('telescope.actions').close(prompt_bufnr)",
+  })
+
+  local cmd = child_nvim_luafile_command(repo, script)
+  local out = vim.fn.systemlist(cmd)
+  assert_true(vim.v.shell_error == 0, table.concat(out, "\n"))
+end
+
+local function test_live_grep_caches_only_completed_searches(repo)
+  local script = temp_root .. "/live-grep-cache.lua"
+  local fake_rg = temp_root .. "/live-grep-cache-rg"
+  local invocation_log = temp_root .. "/live-grep-cache-invocations"
+  write_executable(fake_rg, {
+    "#!/bin/sh",
+    "printf 'run\\n' >> " .. vim.fn.shellescape(invocation_log),
+    "for argument in \"$@\"; do",
+    "  if [ \"$argument\" = slowTarget ]; then sleep 2; fi",
+    "done",
+    "exec " .. vim.fn.shellescape(vim.fn.exepath("rg")) .. " \"$@\"",
+  })
+  write(script, {
+    "local function assert_true(value, message) if not value then error(message, 0) end end",
+    "local function invocation_count()",
+    "  local path = " .. string.format("%q", invocation_log),
+    "  return vim.fn.filereadable(path) == 1 and #vim.fn.readfile(path) or 0",
+    "end",
+    "local function open_grep()",
+    "  require('luanphan.telescope_grep_opts').live_grep()",
+    "  local prompt = vim.api.nvim_get_current_buf()",
+    "  local picker = require('telescope.actions.state').get_current_picker(prompt)",
+    "  assert_true(picker ~= nil, 'live grep picker did not open')",
+    "  return prompt, picker",
+    "end",
+    "local config = require('telescope.config')",
+    "config.values.vimgrep_arguments[1] = " .. string.format("%q", fake_rg),
+    "package.loaded['luanphan.telescope_grep_opts'] = nil",
+    "local prompt, picker = open_grep()",
+    "picker:set_prompt('targetValue')",
+    "assert_true(vim.wait(5000, function() return picker.manager and picker.manager:num_results() > 0 end, 20), 'completed search produced no results')",
+    "vim.wait(500)",
+    "assert_true(invocation_count() == 1, 'completed search did not run exactly once')",
+    "require('telescope.actions').close(prompt)",
+    "prompt, picker = open_grep()",
+    "assert_true(vim.wait(1000, function() return picker:_get_prompt() == 'targetValue' end, 20), 'completed search query was not restored')",
+    "assert_true(vim.wait(1000, function() return picker.manager and picker.manager:num_results() > 0 end, 20), 'completed results were not restored')",
+    "assert_true(invocation_count() == 1, 'restoring completed results started rg again')",
+    "picker:set_prompt('slowTarget')",
+    "assert_true(vim.wait(1000, function() return invocation_count() == 2 end, 20), 'slow search did not start')",
+    "require('telescope.actions').close(prompt)",
+    "prompt, picker = open_grep()",
+    "assert_true(vim.wait(1000, function() return picker:_get_prompt() == 'slowTarget' end, 20), 'interrupted search query was not restored')",
+    "assert_true(vim.wait(1000, function() return invocation_count() == 3 end, 20), 'interrupted search did not restart rg')",
+    "require('telescope.actions').close(prompt)",
   })
 
   local cmd = child_nvim_luafile_command(repo, script)
@@ -3942,6 +4123,19 @@ local function test_git_diff_previews(worktree)
 
   invoke_map("<leader>gD")
   wait_for_diffview()
+  local branch_view = require("diffview.lib").get_current_view()
+  local branch_tab = branch_view.tabpage
+  branch_view.panel:focus()
+  invoke_map("L")
+  wait_until("Diffview commit log", function()
+    return branch_view.commit_log_panel:is_focused()
+  end, 5000)
+  invoke_map("q")
+  wait_until("Diffview commit log closes", function()
+    return not branch_view.commit_log_panel:is_open()
+  end, 5000)
+  assert_true(vim.api.nvim_tabpage_is_valid(branch_tab), "closing the commit log closed the Diffview tab")
+  assert_true(require("diffview.lib").get_current_view() == branch_view, "closing the commit log replaced the branch Diffview")
   close_diffview()
 end
 
@@ -3989,6 +4183,9 @@ local function test_git_diff_repository_bar_from_workspace_root()
   local tab, bar_win, bar_buf = find_workspace_diff_bar()
   assert_true(tab ~= nil and bar_win ~= nil and bar_buf ~= nil, "multi-repository diff did not create a repository bar")
   local initial_view = require("diffview.lib").get_current_view()
+  vim.api.nvim_set_current_win(bar_win)
+  invoke_map("<leader>e")
+  assert_true(initial_view.panel:is_focused(), "<leader>e from the repository bar did not focus the Diffview file panel")
   wait_until("first repository files", function()
     return initial_view.files and initial_view.files:len() > 0
   end, 10000)
@@ -4574,6 +4771,7 @@ local search_and_navigation_tests = {
   flow = test_flow_line_navigation,
   lsp_search_priority = test_lsp_pickers_use_search_priority,
   live_grep_highlights = test_live_grep_highlights_content_only,
+  live_grep_cache = test_live_grep_caches_only_completed_searches,
   live_grep_debounce = test_live_grep_debounces_real_picker,
   search_rules = test_search_rules,
   search_rules_disk = test_search_rules_filter_disk_searches,
@@ -4599,6 +4797,10 @@ local setup_ok, setup_err = xpcall(function()
     test_nvim_tree_hides_dotfiles()
   end)
 
+  test("external files use a temporary dependency tree", function()
+    test_dependency_tree_keeps_workspace_tree(repo)
+  end)
+
   test("file searches follow nvim-tree dotfile visibility", function()
     test_searches_follow_tree_dotfiles()
   end)
@@ -4621,6 +4823,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("live grep debounces its real picker", function()
     search_and_navigation_tests.live_grep_debounce(repo)
+  end)
+
+  test("live grep caches only completed searches", function()
+    search_and_navigation_tests.live_grep_cache(repo)
   end)
 
   test("Flow stores editable line marks per workspace", function()

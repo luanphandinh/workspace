@@ -8,19 +8,19 @@ die() {
 
 usage() {
 	case "$mode" in
-		from)
+		decode)
 			cat <<'EOF'
-Usage: jsondecode [--] [value]
+Usage: base64decode [--] [value]
 
-Decode a JSON-encoded string. Existing JSON values pass through unchanged.
+Decode a standard Base64 value.
 With no value, input is read from the system clipboard.
 EOF
 			;;
-		to)
+		encode)
 			cat <<'EOF'
-Usage: jsonencode [--] [value]
+Usage: base64encode [--] [value]
 
-Encode a JSON value as a JSON string. Existing JSON strings pass through unchanged.
+Encode a value as standard Base64.
 With no value, input is read from the system clipboard.
 EOF
 			;;
@@ -52,11 +52,11 @@ read_clipboard() {
 }
 
 [ "$#" -ge 1 ] || die "missing transform mode"
-mode="$1"
+mode=$1
 shift
 
 case "$mode" in
-	from|to) ;;
+	decode|encode) ;;
 	*) die "unknown transform mode: $mode" ;;
 esac
 
@@ -71,10 +71,11 @@ case "${1:-}" in
 esac
 
 [ "$#" -le 1 ] || die "expected one quoted value"
-command -v jq >/dev/null 2>&1 || die "jq is required"
+command -v base64 >/dev/null 2>&1 || die "base64 is required"
 
-tmp=$(mktemp "${TMPDIR:-/tmp}/json-transform.XXXXXX")
-trap 'rm -f "$tmp"' EXIT HUP INT TERM
+tmp=$(mktemp "${TMPDIR:-/tmp}/base64-transform.XXXXXX")
+clean=$(mktemp "${TMPDIR:-/tmp}/base64-transform-clean.XXXXXX")
+trap 'rm -f "$tmp" "$clean"' EXIT HUP INT TERM
 if [ "$#" -eq 1 ]; then
 	printf '%s' "$1" > "$tmp"
 else
@@ -82,37 +83,17 @@ else
 fi
 
 case "$mode" in
-	from)
-		jq -Rs '
-def parse_json($text):
-  try {ok: true, value: ($text | fromjson)} catch {ok: false};
-. as $raw
-| parse_json($raw) as $outer
-| if ($outer.ok | not) then
-    error("input is not valid JSON")
-  elif ($outer.value | type) == "string" then
-    parse_json($outer.value) as $inner
-    | if $inner.ok then $inner.value else $outer.value end
-  else
-    $outer.value
-  end
-' < "$tmp"
+	encode)
+		base64 < "$tmp" | tr -d '\n'
 		;;
-	to)
-		jq -Rs '
-def parse_json($text):
-  try {ok: true, value: ($text | fromjson)} catch {ok: false};
-. as $raw
-| parse_json($raw) as $parsed
-| if $parsed.ok then
-    if ($parsed.value | type) == "string" then
-      $parsed.value
-    else
-      ($parsed.value | tojson)
-    end
-  else
-    $raw
-  end
-' < "$tmp"
+	decode)
+		tr -d '[:space:]' < "$tmp" > "$clean"
+		if [ -s "$clean" ] && ! grep -Eq '^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$' "$clean"; then
+			die "input is not valid standard Base64"
+		fi
+		case "$(uname -s)" in
+			Darwin) base64 -D < "$clean" ;;
+			*) base64 --decode < "$clean" ;;
+		esac
 		;;
 esac

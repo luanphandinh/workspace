@@ -380,6 +380,12 @@ local function goto_file_edit()
 end
 
 local function set_diffview_keymaps(buf)
+  vim.keymap.set("n", "<leader>e", function()
+    vim.cmd("DiffviewFocusFiles")
+  end, {
+    buffer = buf,
+    desc = "Focus Diffview files",
+  })
   vim.keymap.set("n", "<leader>gf", goto_file_edit, { buffer = buf, desc = "Jump to original file" })
   vim.keymap.set("n", "<leader>gc", function()
     commit_diffview()
@@ -1016,6 +1022,18 @@ local function close_current_diffview()
   end
 end
 
+local function close_diffview_context()
+  local ok, lib = pcall(require, "diffview.lib")
+  local view = ok and lib.get_current_view() or nil
+  local commit_log_panel = view and view.commit_log_panel or nil
+  if commit_log_panel and commit_log_panel:is_focused() then
+    commit_log_panel:close()
+    return
+  end
+
+  close_current_diffview()
+end
+
 local function with_diff_repository(action, has_diff)
   return function()
     local cwd = vim.fn.getcwd()
@@ -1205,12 +1223,12 @@ return {
       })
 
 
-      -- Close diffview with q in any diffview buffer
+      -- Close a focused Diffview modal before closing its parent view.
       vim.api.nvim_create_autocmd("BufEnter", {
         callback = function()
           local bufname = vim.api.nvim_buf_get_name(0)
           if bufname:match("diffview://") then
-            vim.keymap.set("n", "q", close_current_diffview, { buffer = true, silent = true })
+            vim.keymap.set("n", "q", close_diffview_context, { buffer = true, silent = true })
           end
           if current_tab_has_diffview() then
             set_diffview_keymaps(0)

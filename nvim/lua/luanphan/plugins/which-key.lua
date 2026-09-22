@@ -19,9 +19,9 @@ return {
       local toggle_icons = require("luanphan.toggle_icons")
       wk.add({
         { "<leader>a", group = "Cursor", icon = { icon = "󰆿 ", color = "blue" } },
-        { "<leader>b", desc = "Toggle NvimTree", icon = { icon = "󰙅 ", color = "green" } },
+        { "<leader>b", desc = "Toggle file tree", icon = { icon = "󰙅 ", color = "green" } },
         { "<leader>c", group = "Code Actions" },
-        { "<leader>e", desc = "Focus NvimTree", icon = { icon = "󰙅 ", color = "green" } },
+        { "<leader>e", desc = "Focus file tree", icon = { icon = "󰙅 ", color = "green" } },
         { "<leader>f", group = "Files" },
         { "<leader>g", group = "Git" },
         { "<leader>h", group = "Flow", icon = { icon = "󰛢 ", color = "azure" } },

@@ -19,8 +19,9 @@ alacritty_config_dir := $(shell wslpath -u '$(windows_appdata)')/alacritty
 endif
 
 lazy_command ?= restore
+shortcut_names ?=
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test epoch-tools-test base64-tools-test
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -29,7 +30,7 @@ setup: setup-deps
 	$(MAKE) setup-runtime
 
 setup-runtime: ## Install workspace configs and terminal agent CLIs after deps are available
-setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config newsboat-config cleanup agent-clis
+setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config newsboat-config macos-keyboard cleanup agent-clis
 
 nix-install: ## Install Nix if missing
 	sh ./scripts/install-nix.sh
@@ -58,7 +59,7 @@ ifeq ($(UNAME),Darwin)
 		echo "apps: Homebrew is required on macOS" >&2; \
 		exit 1; \
 	fi
-	@for app in maccy alfred arc stats codexbar; do brew install --cask "$$app" || true; done
+	@for app in maccy arc stats codexbar; do brew install --cask "$$app" || true; done
 	@if command -v codexbar >/dev/null 2>&1; then \
 		codexbar config enable --provider codex; \
 		codexbar config enable --provider cursor; \
@@ -66,13 +67,62 @@ ifeq ($(UNAME),Darwin)
 	@pkill -x Stats >/dev/null 2>&1 || true
 	@sleep 1
 	@defaults write eu.exelban.Stats version -string "$$(plutil -extract CFBundleShortVersionString raw -o - /Applications/Stats.app/Contents/Info.plist)"
-	@for module in CPU RAM Network; do defaults write eu.exelban.Stats "$${module}_state" -bool true; done
-	@for module in GPU Disk Sensors Battery Bluetooth Clock Remote; do defaults write eu.exelban.Stats "$${module}_state" -bool false; done
-	@defaults write eu.exelban.Stats setupProcess -bool true
-	@open -g /Applications/Stats.app
-	@open -g /Applications/CodexBar.app
+	@$(MAKE) macos-menu-bar
 else
 	@echo "apps: skipped; macOS-only"
+endif
+
+macos-menu-bar: ## Restore the preferred macOS menu bar layout
+ifeq ($(UNAME),Darwin)
+	@defaults -currentHost write com.apple.Spotlight MenuItemHidden -int 1
+	@for module in CPU RAM Battery; do defaults write eu.exelban.Stats "$${module}_state" -bool true; done
+	@for module in GPU Disk Sensors Network Bluetooth Clock Remote; do defaults write eu.exelban.Stats "$${module}_state" -bool false; done
+	@defaults write eu.exelban.Stats setupProcess -bool true
+	@defaults write com.steipete.codexbar "NSStatusItem Preferred Position codexbar-merged" -int 489
+	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position CPU_mini" -int 442
+	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position RAM_mini" -int 395
+	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position Battery_battery" -int 289
+	@defaults write org.p0deje.Maccy "NSStatusItem Preferred Position Item-0" -int 363
+	@for process in CodexBar Stats Maccy; do pkill -x "$$process" >/dev/null 2>&1 || true; done
+	@killall SystemUIServer >/dev/null 2>&1 || true
+	@sleep 1
+	@for app in /Applications/CodexBar.app /Applications/Stats.app /Applications/Maccy.app; do \
+		test ! -d "$$app" || open -gj "$$app"; \
+	done
+else
+	@echo "macos-menu-bar: skipped; macOS-only"
+endif
+
+macos-keyboard: ## Map Caps Lock to Escape at login on macOS
+ifeq ($(UNAME),Darwin)
+	@mkdir -p "$(HOME)/Library/LaunchAgents"
+	@cp ./macos/local.workspace.keyboard-remap.plist "$(HOME)/Library/LaunchAgents/local.workspace.keyboard-remap.plist"
+	@launchctl bootout "gui/$$(id -u)" "$(HOME)/Library/LaunchAgents/local.workspace.keyboard-remap.plist" >/dev/null 2>&1 || true
+	@launchctl bootstrap "gui/$$(id -u)" "$(HOME)/Library/LaunchAgents/local.workspace.keyboard-remap.plist"
+else
+	@echo "macos-keyboard: skipped; macOS-only"
+endif
+
+macos-shortcuts: workspace-bin ## Build and open the local Shortcut imports
+ifeq ($(UNAME),Darwin)
+	@rm -rf ./tmp/macos-shortcuts
+	@mkdir -p ./tmp/macos-shortcuts
+	@set -e; \
+	if [ -n "$(shortcut_names)" ]; then \
+		set --; \
+		for name in $(shortcut_names); do set -- "$$@" "./macos/shortcuts/$$name.wflow"; done; \
+	else \
+		set -- ./macos/shortcuts/*.wflow; \
+	fi; \
+	for workflow in "$$@"; do \
+		test -f "$$workflow"; \
+		name=$$(basename "$$workflow" .wflow); \
+		plutil -lint "$$workflow"; \
+		shortcuts sign --mode anyone --input "$$workflow" --output "./tmp/macos-shortcuts/$$name.shortcut"; \
+	done
+	@open ./tmp/macos-shortcuts/*.shortcut
+else
+	@echo "macos-shortcuts: skipped; macOS-only"
 endif
 
 default-shell: ## Use zsh as the default login shell on Linux
@@ -162,7 +212,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test agent-session-test mcursor-persist-test nvim-reference-test nix-test tmux-sidebar-test ## Run smoke tests
+test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test agent-session-test mcursor-persist-test nvim-reference-test epoch-tools-test base64-tools-test nix-test tmux-sidebar-test ## Run smoke tests
 
 mkws-test: ## Run mkws/meta-hub smoke tests
 	sh ./scripts/mkws-smoke-test.sh
@@ -187,6 +237,12 @@ mcursor-persist-test: ## Run native Cursor persist wrapper smoke tests
 
 nvim-reference-test: ## Run terminal reference URL handler smoke tests
 	sh ./scripts/nvim-reference-smoke-test.sh
+
+epoch-tools-test: ## Run epoch conversion command smoke tests
+	sh ./scripts/epoch-tools-smoke-test.sh
+
+base64-tools-test: ## Run Base64 conversion command smoke tests
+	sh ./scripts/base64-tools-smoke-test.sh
 
 workspace-shell-test: ## Run workspace shell smoke tests
 	sh ./scripts/workspace-shell-smoke-test.sh

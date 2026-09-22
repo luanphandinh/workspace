@@ -97,16 +97,19 @@ test "$(sed -n '1p' "$RUN_LOG")" = "first"
 test "$(sed -n '2p' "$RUN_LOG")" = "second"
 assert_line_count "$HISTORY" 2
 
-: > "$RUN_LOG"
-(
-	cd "$PROJECT"
-	PATH="$FAKEBIN:$PATH" \
-		HOME="$FAKEHOME" \
-		CMDS_HUB_FZF_INPUT="$FZF_INPUT" \
-		CMDS_HUB_FZF_OUTPUT='printf "%s\n" second >> run.log' \
-		python3 "$ROOT/bin/cmds-hub" pick >/dev/null
-)
-assert_line_count "$RUN_LOG" 1
-test "$(cat "$RUN_LOG")" = "second"
+HOME="$FAKEHOME" python3 "$ROOT/bin/cmds-hub" cat > "$TMP/cat.out"
+cmp "$HISTORY" "$TMP/cat.out"
+
+cat > "$FAKEBIN/vi" <<'SH'
+#!/bin/sh
+set -eu
+printf '%s\n' "$1" > "$CMDS_HUB_VI_PATH"
+printf '%s\n' '# edited' >> "$1"
+SH
+chmod +x "$FAKEBIN/vi"
+PATH="$FAKEBIN:$PATH" HOME="$FAKEHOME" CMDS_HUB_VI_PATH="$TMP/vi-path" \
+	python3 "$ROOT/bin/cmds-hub" edit
+test "$(cat "$TMP/vi-path")" = "$HISTORY"
+assert_line "$HISTORY" '# edited'
 
 echo "PASS cmds-hub smoke test"
