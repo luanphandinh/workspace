@@ -19,8 +19,9 @@ alacritty_config_dir := $(shell wslpath -u '$(windows_appdata)')/alacritty
 endif
 
 lazy_command ?= restore
+shortcut_names ?=
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test epoch-tools-test
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test epoch-tools-test base64-tools-test
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -106,7 +107,15 @@ macos-shortcuts: workspace-bin ## Build and open the local Shortcut imports
 ifeq ($(UNAME),Darwin)
 	@rm -rf ./tmp/macos-shortcuts
 	@mkdir -p ./tmp/macos-shortcuts
-	@set -e; for workflow in ./macos/shortcuts/*.wflow; do \
+	@set -e; \
+	if [ -n "$(shortcut_names)" ]; then \
+		set --; \
+		for name in $(shortcut_names); do set -- "$$@" "./macos/shortcuts/$$name.wflow"; done; \
+	else \
+		set -- ./macos/shortcuts/*.wflow; \
+	fi; \
+	for workflow in "$$@"; do \
+		test -f "$$workflow"; \
 		name=$$(basename "$$workflow" .wflow); \
 		plutil -lint "$$workflow"; \
 		shortcuts sign --mode anyone --input "$$workflow" --output "./tmp/macos-shortcuts/$$name.shortcut"; \
@@ -203,7 +212,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test agent-session-test mcursor-persist-test nvim-reference-test epoch-tools-test nix-test tmux-sidebar-test ## Run smoke tests
+test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test agent-session-test mcursor-persist-test nvim-reference-test epoch-tools-test base64-tools-test nix-test tmux-sidebar-test ## Run smoke tests
 
 mkws-test: ## Run mkws/meta-hub smoke tests
 	sh ./scripts/mkws-smoke-test.sh
@@ -231,6 +240,9 @@ nvim-reference-test: ## Run terminal reference URL handler smoke tests
 
 epoch-tools-test: ## Run epoch conversion command smoke tests
 	sh ./scripts/epoch-tools-smoke-test.sh
+
+base64-tools-test: ## Run Base64 conversion command smoke tests
+	sh ./scripts/base64-tools-smoke-test.sh
 
 workspace-shell-test: ## Run workspace shell smoke tests
 	sh ./scripts/workspace-shell-smoke-test.sh
