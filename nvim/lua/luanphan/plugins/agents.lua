@@ -297,6 +297,22 @@ function M.toggle()
   M.open(active and active.agent or "codex", active and active.bufnr or nil)
 end
 
+function M.hide()
+  local hidden = false
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_is_valid(win) then
+      local bufnr = vim.api.nvim_win_get_buf(win)
+      if vim.bo[bufnr].buftype == "terminal"
+        and vim.b[bufnr].luanphan_persist_term
+        and not vim.b[bufnr].luanphan_toggleterm
+      then
+        hidden = pcall(vim.api.nvim_win_close, win, false) or hidden
+      end
+    end
+  end
+  return hidden
+end
+
 function M.send_selection(name)
   local visible = visible_agent()
   local active = most_recent_tab(vim.fn.getcwd())

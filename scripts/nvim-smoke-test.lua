@@ -881,9 +881,28 @@ local function has_visible_diffview()
   return false
 end
 
-local function wait_for_diffview()
-  wait_until("diffview", function()
-    return has_visible_diffview()
+local function wait_for_diffview(path)
+  wait_until(path and ("diffview repository " .. path) or "diffview", function()
+    local ok, lib = pcall(require, "diffview.lib")
+    local view = ok and lib.get_current_view() or nil
+    if not view or not has_visible_diffview() or not view.ready or not view.initialized then
+      return false
+    end
+    if path then
+      local root = view.adapter and view.adapter.ctx and view.adapter.ctx.toplevel
+      if not root or realpath(root) ~= realpath(path) then
+        return false
+      end
+    end
+    if not view.cur_entry or not view.cur_entry.opened or not view.cur_layout then
+      return false
+    end
+    for _, win in ipairs(view.cur_layout.windows or {}) do
+      if not win:is_file_open() then
+        return false
+      end
+    end
+    return true
   end, 10000)
 end
 
@@ -948,12 +967,7 @@ local function find_workspace_diff_bar()
 end
 
 local function wait_for_diffview_repository(path)
-  wait_until("diffview repository " .. path, function()
-    local ok, lib = pcall(require, "diffview.lib")
-    local view = ok and lib.get_current_view() or nil
-    local root = view and view.adapter and view.adapter.ctx and view.adapter.ctx.toplevel
-    return root and realpath(root) == realpath(path)
-  end, 10000)
+  wait_for_diffview(path)
 end
 
 local function focus_file_window_inside_diffview_tab(path)
@@ -2414,6 +2428,12 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
     local target_buf = start_terminal(worktree)
     vim.g.codex_agent_bufnr = { [repo] = old_buf }
     vim.g.cursor_agent_bufnr = { [worktree] = target_buf }
+    vim.b[old_buf].luanphan_agent_name = "codex"
+    vim.b[old_buf].luanphan_agent_cwd = repo
+    vim.b[old_buf].luanphan_agent_last_used = 1
+    vim.b[target_buf].luanphan_agent_name = "cursor"
+    vim.b[target_buf].luanphan_agent_cwd = worktree
+    vim.b[target_buf].luanphan_agent_last_used = 2
 
     vim.api.nvim_open_win(old_buf, true, {
       relative = "editor",
@@ -2448,6 +2468,11 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
     assert_true(window_for_buffer(old_buf) == nil, "old repository agent window remained visible")
     assert_true(window_for_buffer(target_buf) ~= nil, "selected repository agent window was not focused")
     assert_true(visible_agent_float_count() == 1, "agent switch left multiple agent windows visible")
+
+    api.switch_to(repo, "worktree")
+    assert_true(realpath(vim.fn.getcwd()) == realpath(repo), "workspace switch did not return to the repository")
+    assert_true(window_for_buffer(target_buf) == nil, "previous workspace agent remained visible")
+    assert_true(visible_agent_float_count() == 0, "workspace switch kept an agent from another cwd visible")
   end, debug.traceback)
 
   agents.focus = original_focus
@@ -3923,7 +3948,7 @@ local function test_agent_terminal_lifecycle(repo)
   vim.fn.delete(status_dir, "rf")
 end
 
-local function test_worktree_switch_restores_agent_terminal(repo, worktree)
+local function test_worktree_switch_hides_agent_terminal(repo, worktree)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
 
   local agent = require("luanphan.terminal_agent").create({
@@ -3957,12 +3982,18 @@ local function test_worktree_switch_restores_agent_terminal(repo, worktree)
   wait_until("repo cwd", function()
     return realpath(vim.fn.getcwd()) == expected_repo
   end, 10000)
-  wait_until("repo agent terminal restored", function()
+  assert_true(visible_agent_float_count() == 0, "workspace switch did not hide the worktree agent terminal")
+
+  agent.toggle()
+  wait_until("repo agent terminal manually reopened", function()
     return visible_agent_float_count() == 1
   end, 1000)
 
   worktree_test_api().switch_to(worktree)
-  wait_until("worktree agent terminal restored again", function()
+  assert_true(visible_agent_float_count() == 0, "workspace switch did not hide the repository agent terminal")
+
+  agent.toggle()
+  wait_until("worktree agent terminal manually reopened", function()
     return visible_agent_float_count() == 1
   end, 1000)
 
@@ -5037,8 +5068,8 @@ local setup_ok, setup_err = xpcall(function()
     test_git_diff_original_file_jump_starts_go_runtime(worktree)
   end)
 
-  test("worktree switch restores agent terminal", function()
-    test_worktree_switch_restores_agent_terminal(repo, worktree)
+  test("worktree switch hides agent terminal", function()
+    test_worktree_switch_hides_agent_terminal(repo, worktree)
   end)
 
   test("git diff refresh preserves directory folds", function()
