@@ -32,7 +32,8 @@ local function setup()
   --     } }
   local BUFSTORE_KEY = "luanphan_workspace_buffers"
   local WS_CONTAINER = "local_workspaces"
-  local AGENT_BUFFER_KEYS = require("luanphan.plugins.agents").agent_buffer_keys()
+  local agents = require("luanphan.plugins.agents")
+  local AGENT_BUFFER_KEYS = agents.agent_buffer_keys()
   local AGENT_ORDER = {}
   for index, agent in ipairs(AGENT_BUFFER_KEYS) do
     AGENT_ORDER[agent.name] = index
@@ -1258,7 +1259,11 @@ local function setup()
       pcall(tree_api.tree.change_root, cwd)
     end
 
-    -- 10. Focus priority: agent float > reopened active file > nvim-tree.
+    -- 10. Always hide the shared agent panel after switching workspaces. Its
+    --     terminal buffers and jobs remain alive for an explicit reopen.
+    agents.hide()
+
+    -- 11. Focus priority: reopened active file > nvim-tree.
     focus_after_switch(reopened)
 
     local msg = "Switched to " .. (kind or "worktree") .. ": " .. path
