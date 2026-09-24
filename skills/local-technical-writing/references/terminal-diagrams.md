@@ -2,8 +2,9 @@
 
 ## Output contract
 
-- Start the answer with exactly one merged diagram in a top-level fenced block with info string `ansi`.
-- Emit real ANSI SGR bytes. Color only the user's requested identifier, value, mutation, or missing edge; never color borders, connectors, arrows, or padding.
+- Start the answer with exactly one merged diagram in a top-level fenced block with info string `text`.
+- Never emit ANSI escape sequences because chat renderers can expose them as broken text such as `[36m` and `[0m`.
+- Use stable color swatches instead: `🟦` for the requested identifier or value, `🟩` for a confirmed mutation, and `🟨` for missing or unproven propagation.
 - Follow the diagram with ordered `path:line` evidence. Add at most three bullets for behavior not visible in the graph.
 
 ## Graph model
@@ -31,7 +32,7 @@ Use the user's actual identifier, not a generic `FOCUS` label:
 - `passes: <identifier>`
 - `missing: <identifier>`
 
-Suggested ANSI colors: cyan bold for the requested item, green bold for confirmed mutation, yellow bold for missing or unproven propagation. Width calculations must ignore ANSI bytes.
+Use `🟦`, `🟩`, and `🟨` only where emphasis changes how the graph is read. Put the swatch immediately before the text it describes and account for its rendered display width when aligning the diagram.
 
 ## Layout
 
@@ -60,7 +61,7 @@ Suggested ANSI colors: cyan bold for the requested item, green bold for confirme
                       v                         v
 +--------------------------------+  +--------------------------------+
 | PATH A                         |  | PATH B                         |
-| mutates: state-a -> state-b    |  | passes: field-a               |
+| 🟩 state-a -> state-b          |  | 🟦 passes: field-a            |
 +--------------------------------+  +--------------------------------+
                       |                         |
                       +------------+------------+
