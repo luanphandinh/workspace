@@ -519,6 +519,13 @@ EOF
 	assert_contains "$TMP/mkws-pull.out" "pulling 2 repo(s) in parallel (1 regular, 1 external)"
 	assert_contains "$TMP/mkws-pull.out" "_external/external-pull"
 	assert_contains "$TMP/mkws-pull.out" "external: pulled 1, skipped: 0, failed: 0"
+	(
+		cd "$pull_root"
+		mkws run 'printf generated > run-output.txt' > "$TMP/mkws-root-run.out"
+	)
+	assert_eq "generated" "$(cat "$pull_root/repo-pull/run-output.txt")"
+	assert_eq "generated" "$(cat "$pull_root/_external/external-pull/run-output.txt")"
+	assert_contains "$TMP/mkws-root-run.out" "succeeded: 2"
 
 	pass "mkws"
 }
