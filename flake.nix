@@ -91,9 +91,6 @@
             zoxide
             zsh
           ];
-          darwinPackages = with pkgs; [
-            terminal-notifier
-          ];
           linuxPackages = with pkgs; [
             curl
           ];
@@ -101,7 +98,6 @@
             systemPackages
             ++ codingPackages
             ++ terminalPackages
-            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin darwinPackages
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux linuxPackages;
         in
         allPackages;

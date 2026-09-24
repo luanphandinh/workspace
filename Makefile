@@ -208,11 +208,11 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	find ~/bin -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 	cp -r ./bin/. ~/bin/
 	find ~/bin -type f -exec chmod +x {} +
-	@python3 ./bin/sync-agent-notification-hooks
+	@python3 ./bin/sync-agent-status-hooks
 	@sh ./bin/workspace-shell-sync
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-notification-hooks-test workspace-shell-test agent-session-test mcursor-persist-test nvim-reference-test epoch-tools-test base64-tools-test nix-test tmux-sidebar-test ## Run smoke tests
+test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-status-hooks-test workspace-shell-test agent-session-test mcursor-persist-test nvim-reference-test epoch-tools-test base64-tools-test nix-test tmux-sidebar-test ## Run smoke tests
 
 mkws-test: ## Run mkws/meta-hub smoke tests
 	sh ./scripts/mkws-smoke-test.sh
@@ -226,8 +226,8 @@ cmds-hub-test: ## Run cmds-hub smoke tests
 codex-config-test: ## Run Codex config smoke tests
 	sh ./scripts/codex-config-smoke-test.sh
 
-agent-notification-hooks-test: ## Run agent notification hook smoke tests
-	sh ./scripts/agent-notification-hooks-smoke-test.sh
+agent-status-hooks-test: ## Run agent status hook smoke tests
+	sh ./scripts/agent-status-hooks-smoke-test.sh
 
 agent-session-test: ## Run durable agent-session bridge smoke tests
 	sh ./scripts/agent-session-smoke-test.sh
