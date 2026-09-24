@@ -46,6 +46,31 @@ local configured = {}
 local setup_opts = {}
 local agent_container
 
+local function default_agent_file()
+  return vim.g.luanphan_default_agent_file or (vim.fn.stdpath("data") .. "/default-agent")
+end
+
+function M.default_agent()
+  local ok, lines = pcall(vim.fn.readfile, default_agent_file(), "", 1)
+  local name = ok and vim.trim(lines[1] or "") or ""
+  return agent_defs[name] and name or "codex"
+end
+
+function M.set_default_agent(name)
+  if not agent_defs[name] then
+    return false
+  end
+  local path = default_agent_file()
+  local ok = pcall(vim.fn.mkdir, vim.fn.fnamemodify(path, ":h"), "p")
+  local wrote, result = pcall(vim.fn.writefile, { name }, path)
+  if not ok or not wrote or result ~= 0 then
+    vim.notify("Could not save default agent", vim.log.levels.ERROR)
+    return false
+  end
+  vim.notify("Default agent: " .. name)
+  return true
+end
+
 local function terminal_running(bufnr)
   if type(bufnr) ~= "number" or not vim.api.nvim_buf_is_valid(bufnr) then
     return false
@@ -134,6 +159,22 @@ local function agent_choices()
     }
   end
   return choices
+end
+
+function M.pick_default_agent()
+  local current = M.default_agent()
+  local choices = agent_choices()
+  for _, choice in ipairs(choices) do
+    if choice.id == current then
+      choice.display = choice.label .. " (current)"
+    end
+  end
+  require("luanphan.view_container").select("Default Agent", choices, function(choice)
+    M.set_default_agent(choice.id)
+  end, {
+    layout_strategy = "center",
+    layout_config = { width = 0.3, height = 0.25 },
+  })
 end
 
 local function visible_agent()
@@ -294,7 +335,7 @@ function M.toggle()
     return
   end
   local active = most_recent_tab(vim.fn.getcwd())
-  M.open(active and active.agent or "codex", active and active.bufnr or nil)
+  M.open(active and active.agent or M.default_agent(), active and active.bufnr or nil)
 end
 
 function M.hide()
@@ -316,7 +357,7 @@ end
 function M.send_selection(name)
   local visible = visible_agent()
   local active = most_recent_tab(vim.fn.getcwd())
-  name = name or (visible and visible.name) or (active and active.agent) or "codex"
+  name = name or (visible and visible.name) or (active and active.agent) or M.default_agent()
   if not agent_defs[name] then
     return false
   end
@@ -378,14 +419,22 @@ agent_container = require("luanphan.view_container").create({
 
 local function agent_spec(name)
   local def = agent_defs[name]
+  local keys = {
+    key_spec(name, "toggle"),
+    key_spec(name, "focus"),
+    key_spec(name, "send"),
+  }
+  if name == "codex" then
+    keys[#keys + 1] = {
+      "<leader>sa",
+      M.pick_default_agent,
+      desc = "Default agent",
+    }
+  end
   return {
     def.plugin,
     virtual = true,
-    keys = {
-      key_spec(name, "toggle"),
-      key_spec(name, "focus"),
-      key_spec(name, "send"),
-    },
+    keys = keys,
     config = function()
       setup_agent(name)
     end,

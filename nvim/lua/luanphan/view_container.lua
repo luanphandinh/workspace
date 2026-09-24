@@ -54,6 +54,10 @@ local function select_item(title, items, on_select, picker_opts)
 		:find()
 end
 
+function M.select(title, items, on_select, picker_opts)
+	select_item(title, items, on_select, picker_opts)
+end
+
 function Container:context()
 	return self.opts.context()
 end

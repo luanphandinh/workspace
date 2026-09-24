@@ -2495,6 +2495,60 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
   assert_true(ok, tostring(err))
 end
 
+local function test_default_agent_setting()
+  local agents = require("luanphan.plugins.agents")
+  local container = require("luanphan.view_container")
+  local original_file = vim.g.luanphan_default_agent_file
+  local original_select = container.select
+  local original_open = agents.open
+  local setting_file = temp_root .. "/default-agent"
+  vim.g.luanphan_default_agent_file = setting_file
+  vim.fn.delete(setting_file)
+  close_agent_terminals()
+
+  local ok, err = xpcall(function()
+    assert_true(agents.default_agent() == "codex", "missing default-agent setting did not fall back to Codex")
+
+    local selected = false
+    container.select = function(title, choices, on_select)
+      assert_true(title == "Default Agent", "default-agent picker has the wrong title")
+      assert_true(#choices == 3, "default-agent picker did not list every agent")
+      assert_true(choices[1].id == "codex", "default-agent picker did not list Codex first")
+      assert_true(choices[2].id == "cursor", "default-agent picker omitted Cursor")
+      assert_true(choices[3].id == "claude", "default-agent picker omitted Claude")
+      assert_true(choices[1].display == "codex (current)", "default-agent picker did not mark the current agent")
+      selected = true
+      on_select(choices[2])
+    end
+
+    local map = vim.fn.maparg("<leader>sa", "n", false, true)
+    assert_true(type(map) == "table" and type(map.callback) == "function", "<leader>sa is missing its picker")
+    assert_true(map.desc == "Default agent", "<leader>sa has the wrong description")
+    map.callback()
+    assert_true(selected, "<leader>sa did not open the default-agent picker")
+    assert_true(agents.default_agent() == "cursor", "selected default agent was not persisted")
+    assert_true(read_lines(setting_file)[1] == "cursor", "default-agent setting file has the wrong value")
+
+    local opened
+    agents.open = function(name, bufnr)
+      opened = { name = name, bufnr = bufnr }
+      return true
+    end
+    agents.toggle()
+    assert_true(opened and opened.name == "cursor", "empty workspace did not launch the default agent")
+    assert_true(opened.bufnr == nil, "empty workspace unexpectedly reused an agent buffer")
+
+    write(setting_file, { "unknown" })
+    assert_true(agents.default_agent() == "codex", "invalid default-agent setting did not fall back to Codex")
+  end, debug.traceback)
+
+  agents.open = original_open
+  container.select = original_select
+  vim.g.luanphan_default_agent_file = original_file
+  vim.fn.delete(setting_file)
+  assert_true(ok, tostring(err))
+end
+
 local function test_filetype_refire_uses_target_buffer()
   local api = worktree_test_api()
   local original_cwd = vim.fn.getcwd()
@@ -4809,6 +4863,17 @@ local search_and_navigation_tests = {
   search_settings_editor = test_search_priority_editor_closes_on_focus_loss,
 }
 
+local agent_tests = {
+  cli_commands = test_agent_cli_commands_available,
+  default_setting = test_default_agent_setting,
+  keys = test_agent_keys_invoke_cli_commands,
+  lifecycle = test_agent_terminal_lifecycle,
+  reference_links = test_terminal_reference_links,
+  reference_view = test_agent_terminal_reference_restores_view,
+  send_selection = test_leader_semicolon_sends_visual_selection_to_active_agent,
+  view_container = test_agent_view_container,
+}
+
 local setup_ok, setup_err = xpcall(function()
   require_command("git", { "git", "--version" })
   require_command("go", { "go", "version" })
@@ -4937,27 +5002,31 @@ local setup_ok, setup_err = xpcall(function()
   end)
 
   test("agent cli commands are executable", function()
-    test_agent_cli_commands_available()
+    agent_tests.cli_commands()
   end)
 
   test("agent terminal paths become editor reference links", function()
-    test_terminal_reference_links()
+    agent_tests.reference_links()
   end)
 
   test("agent terminal reference restores scrollback view", function()
-    test_agent_terminal_reference_restores_view(repo)
+    agent_tests.reference_view(repo)
   end)
 
   test("agent keys invoke cli commands inside nvim", function()
-    test_agent_keys_invoke_cli_commands()
+    agent_tests.keys()
   end)
 
   test("leader semicolon sends visual selection to active agent", function()
-    test_leader_semicolon_sends_visual_selection_to_active_agent()
+    agent_tests.send_selection()
+  end)
+
+  test("default agent setting controls empty workspace launch", function()
+    agent_tests.default_setting()
   end)
 
   test("agent terminals share a tabbed view container", function()
-    test_agent_view_container(repo)
+    agent_tests.view_container(repo)
   end)
 
   test("deleted startup workspace falls back to master worktree", function()
@@ -5045,7 +5114,7 @@ local setup_ok, setup_err = xpcall(function()
   end)
 
   test("agent terminal quits or hides without stale buffers", function()
-    test_agent_terminal_lifecycle(repo)
+    agent_tests.lifecycle(repo)
   end)
 
   test("git diff previews", function()
