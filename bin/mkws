@@ -565,15 +565,22 @@ def resolve_default_context(pwd: Path, name_flag: str):
     return repo_root / WS_CONTAINER / workspace_folder, repo_root, name_flag
 
 
+def find_existing_workspace_context(pwd: Path):
+    cur = pwd.resolve()
+    for candidate in (cur, *cur.parents):
+        if (candidate / "workspace.yml").is_file():
+            return candidate
+    return None
+
+
 def resolve_existing_workspace_context(pwd: Path, name_flag: str) -> Path:
     if name_flag:
         workspace_dir, _, _ = resolve_default_context(pwd, name_flag)
         return workspace_dir
 
-    cur = pwd.resolve()
-    for candidate in (cur, *cur.parents):
-        if (candidate / "workspace.yml").is_file():
-            return candidate
+    workspace_dir = find_existing_workspace_context(pwd)
+    if workspace_dir is not None:
+        return workspace_dir
 
     die("--name required (or run from inside a workspace dir/worktree)")
 
@@ -735,24 +742,32 @@ def cmd_checkout(target_branch: str = "", use_base: bool = False) -> int:
 
 
 def cmd_run(command_parts: list) -> int:
-    workspace_dir = resolve_existing_workspace_context(Path.cwd(), "")
-    data = read_manifest(workspace_dir / "workspace.yml")
-    repos = normalize_repos(data["repos"], data["branch_name"])
     command = command_parts[0] if len(command_parts) == 1 else shlex.join(command_parts)
+    workspace_dir = find_existing_workspace_context(Path.cwd())
+    if workspace_dir is not None:
+        data = read_manifest(workspace_dir / "workspace.yml")
+        repos = normalize_repos(data["repos"], data["branch_name"])
+        targets = [(repo["name"], workspace_dir / repo["name"]) for repo in repos]
+        empty_message = "no workspace repos found"
+        missing_message = "workspace repo not found"
+    else:
+        repos = expand_targets([], include_default_external=True)
+        targets = [(target_label(repo), repo) for repo in repos]
+        empty_message = "no git repos found"
+        missing_message = "git repo not found"
 
-    if not repos:
+    if not targets:
         heading("summary")
-        info("no workspace repos found")
+        info(empty_message)
         return 0
 
-    info(f"running across {len(repos)} repo(s) in parallel: {BOLD}{command}{RESET}")
+    info(f"running across {len(targets)} repo(s) in parallel: {BOLD}{command}{RESET}")
 
-    def worker(repo: dict, log: RepoLog) -> str:
-        name = repo["name"]
-        path = workspace_dir / name
+    def worker(target: tuple, log: RepoLog) -> str:
+        name, path = target
         log.heading(name)
         if not path.is_dir() or not is_git_worktree(path):
-            log.fail(f"workspace repo not found: {path}")
+            log.fail(f"{missing_message}: {path}")
             return "failed"
 
         proc = run(["sh", "-c", command], cwd=path)
@@ -764,9 +779,9 @@ def cmd_run(command_parts: list) -> int:
         log.ok(f"command succeeded in {name}")
         return "succeeded"
 
-    results = run_in_parallel(repos, worker)
+    results = run_in_parallel(targets, worker)
     succeeded = sum(1 for result in results if result == "succeeded")
-    failed_repos = [repos[i]["name"] for i, result in enumerate(results) if result == "failed"]
+    failed_repos = [targets[i][0] for i, result in enumerate(results) if result == "failed"]
     failed = len(failed_repos)
 
     heading("summary")
@@ -1826,10 +1841,10 @@ Modes:
              selects each configured base_branch or detected main/master. A
              branch argument applies the same branch to every repo. Best effort
              and parallel; normal Git worktree branch locks are preserved.
-  run        Run the same shell command from every repo recorded in the current
-             workspace. Commands run through `sh -c` in parallel; output and
-             failures are grouped by repo. Run from the workspace directory or
-             any repo inside it.
+  run        Run the same shell command in parallel across repositories. Inside
+             a workspace, use every repo recorded in its manifest. Otherwise,
+             use every immediate Git repo under $PWD plus immediate repos under
+             $PWD/_external, matching bare `mkws pull` discovery.
              Examples:
                mkws run 'git checkout -- .'
                mkws run 'git status --short'
