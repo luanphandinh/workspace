@@ -19,9 +19,11 @@ WORKSPACE_FILE = "workspace.yml"
 WS_CONTAINER = "local_workspaces"
 TECH_DOC_DIR = "tech_doc"
 EXTERNAL_DIR = "_external"
-EXTRA_SYNC_PATHS = (
+HOME_HISTORY_PATHS = (
     (Path(".skills-hub") / "execute_plugins", Path(".skills-hub") / "execute_plugins"),
     (Path(".cmds-hub") / "cmd_history", Path(".cmds-hub") / "cmd_history"),
+)
+EXTRA_SYNC_PATHS = HOME_HISTORY_PATHS + (
     (
         Path(".local") / "share" / "tmux" / "resurrect" / "last",
         Path(".local") / "share" / "tmux" / "resurrect" / "last",
@@ -983,6 +985,21 @@ def copy_extra_metadata(clone: Path) -> list:
     return records
 
 
+def restore_home_histories(clone: Path) -> list:
+    records = []
+    for home_rel, clone_rel in HOME_HISTORY_PATHS:
+        records.extend(merge_copy_path(clone / clone_rel, Path.home() / home_rel, home_rel))
+    return records
+
+
+def print_restored_home_histories(records: list) -> None:
+    if not records:
+        return
+    heading("home histories")
+    for record in records:
+        info(f"{record['rel']}: {record['status']}")
+
+
 def commit_metadata_changes(clone: Path) -> bool:
     proc = run(["git", "-C", str(clone), "add", "-A"])
     if proc.returncode != 0:
@@ -1160,7 +1177,7 @@ def index_entry(entry: dict) -> bool:
     return indexed > 0
 
 
-def setup_repo_from_metadata(workstation_root: Path, repo: dict) -> str:
+def setup_repo_from_metadata(workstation_root: Path, repo: dict, position: int, total: int) -> str:
     repo_data = normalize_repo_record(repo)
     if not repo_data["name"]:
         return "skipped"
@@ -1174,6 +1191,7 @@ def setup_repo_from_metadata(workstation_root: Path, repo: dict) -> str:
 
     if dest.exists():
         if is_git_repo_path(dest):
+            info(f"[{position}/{total}] already present: {repo_data['path']}")
             return "skipped"
         warn(f"path exists but is not a git repo: {dest}")
         return "failed"
@@ -1184,17 +1202,19 @@ def setup_repo_from_metadata(workstation_root: Path, repo: dict) -> str:
         return "failed"
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["git", "clone"]
+    info(f"[{position}/{total}] cloning: {repo_data['path']}")
+    cmd = ["git", "clone", "--progress"]
     if repo_data.get("remote"):
         cmd.extend(["--origin", repo_data["remote"]])
     branch = workstation_clone_branch(repo_data)
     if branch:
         cmd.extend(["--branch", branch])
     cmd.extend([remote_url_value, str(dest)])
-    proc = run(cmd)
+    proc = run(cmd, capture=False)
     if proc.returncode != 0:
-        warn(f"clone failed for {repo_data['path']}: {(proc.stderr or proc.stdout).rstrip()}")
+        warn(f"clone failed for {repo_data['path']} (exit {proc.returncode})")
         return "failed"
+    ok(f"[{position}/{total}] cloned: {repo_data['path']}")
     return "cloned"
 
 
@@ -1220,12 +1240,16 @@ def sync_entry(entry: dict) -> bool:
         warn("skipping workstation setup because remote pull did not complete")
         return False
 
+    history_records = restore_home_histories(clone)
+    print_restored_home_histories(history_records)
+
     workstations = read_cached_workstations(entry, required=False)
     if not workstations:
         info("no indexed workstations")
         return True
 
     cloned = skipped = failed = workspace_dirs = 0
+    repo_jobs = []
     for workstation in workstations:
         rel_root = workstation.get("root") or "."
         station_root = safe_source_path(root, rel_root)
@@ -1237,15 +1261,18 @@ def sync_entry(entry: dict) -> bool:
             continue
         data = read_workstation_manifest_text(manifest.read_text())
         for repo in normalize_workstation_repos(data.get("repos", [])):
-            result = setup_repo_from_metadata(station_root, repo)
-            if result == "cloned":
-                cloned += 1
-            elif result == "skipped":
-                skipped += 1
-            else:
-                failed += 1
+            repo_jobs.append((station_root, repo))
         metadata_prefix = Path() if rel_root == "." else Path(rel_root)
         workspace_dirs += ensure_workspace_dirs_from_metadata(clone, station_root, metadata_prefix)
+
+    for position, (station_root, repo) in enumerate(repo_jobs, start=1):
+        result = setup_repo_from_metadata(station_root, repo, position, len(repo_jobs))
+        if result == "cloned":
+            cloned += 1
+        elif result == "skipped":
+            skipped += 1
+        else:
+            failed += 1
 
     ok(f"cloned {cloned}, skipped {skipped}, failed {failed}, workspace dirs {workspace_dirs}")
     return failed == 0

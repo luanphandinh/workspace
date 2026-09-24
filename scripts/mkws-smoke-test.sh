@@ -680,15 +680,24 @@ EOF
 	meta_hub push >/dev/null
 	restore_home="$TMP/meta-hub-restore-home"
 	restore_root="$TMP/meta-hub-restore-root"
-	mkdir -p "$restore_home" "$restore_root"
+	mkdir -p "$restore_home/.skills-hub" "$restore_home/.cmds-hub" "$restore_root"
+	printf 'plugin-local\n' > "$restore_home/.skills-hub/execute_plugins"
+	printf 'cmd-local\n' > "$restore_home/.cmds-hub/cmd_history"
 	HOME="$restore_home" meta_hub -f "$restore_root" -r "$meta_remote" >/dev/null
-	HOME="$restore_home" meta_hub sync >/dev/null
+	HOME="$restore_home" meta_hub sync > "$TMP/meta-sync-restore.out"
 	assert_exists "$restore_root/station-a/repo-a/.git"
 	assert_exists "$restore_root/station-b/repo-b/.git"
 	assert_not_exists "$restore_root/station-a/workstation.yml"
 	assert_not_exists "$restore_root/station-b/workstation.yml"
 	assert_exists "$restore_root/station-a/local_workspaces/feature-a"
 	assert_not_exists "$restore_root/station-a/local_workspaces/feature-a/workspace.yml"
+	assert_contains "$TMP/meta-sync-restore.out" "[1/"
+	assert_contains "$TMP/meta-sync-restore.out" "cloning:"
+	assert_contains "$TMP/meta-sync-restore.out" "=== home histories ==="
+	assert_contains "$restore_home/.skills-hub/execute_plugins" "plugin-base"
+	assert_contains "$restore_home/.skills-hub/execute_plugins" "plugin-local"
+	assert_contains "$restore_home/.cmds-hub/cmd_history" "cmd-base"
+	assert_contains "$restore_home/.cmds-hub/cmd_history" "cmd-local"
 
 	if meta_hub pull >"$TMP/meta-hub-pull.out" 2>&1; then
 		printf 'expected meta-hub pull to be removed\n' >&2
