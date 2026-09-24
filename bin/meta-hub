@@ -1218,15 +1218,21 @@ def setup_repo_from_metadata(workstation_root: Path, repo: dict, position: int, 
     return "cloned"
 
 
-def ensure_workspace_dirs_from_metadata(clone: Path, station_root: Path, metadata_prefix: Path) -> int:
-    count = 0
+def restore_workspace_manifests(clone: Path, station_root: Path, metadata_prefix: Path) -> list:
+    records = []
     metadata_root = clone / metadata_prefix
     for workspace_yml in sorted((metadata_root / WS_CONTAINER).glob(f"*/{WORKSPACE_FILE}")):
-        workspace_dir = station_root / WS_CONTAINER / workspace_yml.parent.name
-        if not workspace_dir.exists():
-            workspace_dir.mkdir(parents=True, exist_ok=True)
-            count += 1
-    return count
+        rel = workspace_yml.relative_to(metadata_root)
+        records.append(merge_copy_file(workspace_yml, station_root / rel, metadata_prefix / rel))
+    return records
+
+
+def print_restored_workspace_manifests(records: list) -> None:
+    if not records:
+        return
+    heading("workspace manifests")
+    for record in records:
+        info(f"{record['rel']}: {record['status']}")
 
 
 def sync_entry(entry: dict) -> bool:
@@ -1248,7 +1254,8 @@ def sync_entry(entry: dict) -> bool:
         info("no indexed workstations")
         return True
 
-    cloned = skipped = failed = workspace_dirs = 0
+    cloned = skipped = failed = 0
+    workspace_records = []
     repo_jobs = []
     for workstation in workstations:
         rel_root = workstation.get("root") or "."
@@ -1263,7 +1270,9 @@ def sync_entry(entry: dict) -> bool:
         for repo in normalize_workstation_repos(data.get("repos", [])):
             repo_jobs.append((station_root, repo))
         metadata_prefix = Path() if rel_root == "." else Path(rel_root)
-        workspace_dirs += ensure_workspace_dirs_from_metadata(clone, station_root, metadata_prefix)
+        workspace_records.extend(restore_workspace_manifests(clone, station_root, metadata_prefix))
+
+    print_restored_workspace_manifests(workspace_records)
 
     for position, (station_root, repo) in enumerate(repo_jobs, start=1):
         result = setup_repo_from_metadata(station_root, repo, position, len(repo_jobs))
@@ -1274,7 +1283,10 @@ def sync_entry(entry: dict) -> bool:
         else:
             failed += 1
 
-    ok(f"cloned {cloned}, skipped {skipped}, failed {failed}, workspace dirs {workspace_dirs}")
+    ok(
+        f"cloned {cloned}, skipped {skipped}, failed {failed}, "
+        f"workspace manifests {len(workspace_records)}"
+    )
     return failed == 0
 
 

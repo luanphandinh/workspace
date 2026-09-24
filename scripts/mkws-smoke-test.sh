@@ -680,9 +680,23 @@ EOF
 	meta_hub push >/dev/null
 	restore_home="$TMP/meta-hub-restore-home"
 	restore_root="$TMP/meta-hub-restore-root"
-	mkdir -p "$restore_home/.skills-hub" "$restore_home/.cmds-hub" "$restore_root"
+	mkdir -p \
+		"$restore_home/.skills-hub" \
+		"$restore_home/.cmds-hub" \
+		"$restore_root/station-a/local_workspaces/feature-a"
 	printf 'plugin-local\n' > "$restore_home/.skills-hub/execute_plugins"
 	printf 'cmd-local\n' > "$restore_home/.cmds-hub/cmd_history"
+	cat > "$restore_root/station-a/local_workspaces/feature-a/workspace.yml" <<EOF
+version: v2
+name: feature-a
+branch_name: stale-local-branch
+links:
+  - name: local-link
+    link: https://example.com/local
+repos:
+  - name: repo-local
+    branch_name: feature/local
+EOF
 	HOME="$restore_home" meta_hub -f "$restore_root" -r "$meta_remote" >/dev/null
 	HOME="$restore_home" meta_hub sync > "$TMP/meta-sync-restore.out"
 	assert_exists "$restore_root/station-a/repo-a/.git"
@@ -690,7 +704,13 @@ EOF
 	assert_not_exists "$restore_root/station-a/workstation.yml"
 	assert_not_exists "$restore_root/station-b/workstation.yml"
 	assert_exists "$restore_root/station-a/local_workspaces/feature-a"
-	assert_not_exists "$restore_root/station-a/local_workspaces/feature-a/workspace.yml"
+	assert_exists "$restore_root/station-a/local_workspaces/feature-a/workspace.yml"
+	assert_exists "$restore_root/station-b/local_workspaces/feature-b/workspace.yml"
+	assert_contains "$restore_root/station-a/local_workspaces/feature-a/workspace.yml" "branch_name: feature/a"
+	assert_contains "$restore_root/station-a/local_workspaces/feature-a/workspace.yml" "name: repo-a"
+	assert_contains "$restore_root/station-a/local_workspaces/feature-a/workspace.yml" "name: repo-local"
+	assert_contains "$restore_root/station-a/local_workspaces/feature-a/workspace.yml" "name: local-link"
+	assert_contains "$TMP/meta-sync-restore.out" "=== workspace manifests ==="
 	assert_contains "$TMP/meta-sync-restore.out" "[1/"
 	assert_contains "$TMP/meta-sync-restore.out" "cloning:"
 	assert_contains "$TMP/meta-sync-restore.out" "=== home histories ==="
