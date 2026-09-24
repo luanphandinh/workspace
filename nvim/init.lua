@@ -2,7 +2,23 @@ vim.g.mapleader = " "
 vim.g.maplocalleader = " "
 
 if vim.env.SSH_TTY or vim.env.SSH_CONNECTION then
-  vim.g.clipboard = "osc52"
+  local tmux_copy = vim.fn.expand("~/bin/tmux-copy-osc52")
+  if vim.env.TMUX and vim.fn.executable(tmux_copy) == 1 then
+    vim.g.clipboard = {
+      name = "OSC52 through tmux client",
+      copy = {
+        ["+"] = { tmux_copy },
+        ["*"] = { tmux_copy },
+      },
+      paste = {
+        ["+"] = { "tmux", "save-buffer", "-" },
+        ["*"] = { "tmux", "save-buffer", "-" },
+      },
+      cache_enabled = 0,
+    }
+  else
+    vim.g.clipboard = "osc52"
+  end
 end
 
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"

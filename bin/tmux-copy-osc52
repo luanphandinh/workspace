@@ -1,0 +1,41 @@
+#!/bin/sh
+
+set -eu
+
+encoded=$(base64 | tr -d '\r\n')
+if [ -z "$encoded" ]; then
+  exit 0
+fi
+
+write_clipboard() {
+  client_tty=$1
+  if [ -n "$client_tty" ] && [ -w "$client_tty" ]; then
+    printf '\033]52;c;%s\007' "$encoded" > "$client_tty"
+  fi
+}
+
+client_tty=${1:-}
+if [ -n "$client_tty" ]; then
+  write_clipboard "$client_tty"
+  exit 0
+fi
+
+if [ -z "${TMUX:-}" ] || [ -z "${TMUX_PANE:-}" ]; then
+  exit 0
+fi
+
+tmux_bin=$(command -v tmux 2>/dev/null || true)
+if [ -z "$tmux_bin" ] && [ -x "$HOME/.nix-profile/bin/tmux" ]; then
+  tmux_bin="$HOME/.nix-profile/bin/tmux"
+fi
+if [ -z "$tmux_bin" ]; then
+  exit 0
+fi
+
+pane_session=$("$tmux_bin" display-message -p -t "$TMUX_PANE" '#{session_id}')
+"$tmux_bin" list-clients -F '#{session_id}|#{client_tty}' |
+  while IFS='|' read -r client_session client_tty; do
+    if [ "$client_session" = "$pane_session" ]; then
+      write_clipboard "$client_tty"
+    fi
+  done
