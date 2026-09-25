@@ -74,9 +74,10 @@ chmod +x "$fakebin/codex"
 cat > "$fakebin/ps" <<'SH'
 #!/bin/sh
 if [ -n "${CODEX_FAKE_DUPLICATE_DAEMONS:-}" ]; then
+	process_home="${CODEX_FAKE_PROCESS_HOME:-${CODEX_HOME}}"
   printf '%s\n' \
-    "999997 ${CODEX_HOME}/packages/standalone/releases/0.1.0/bin/codex app-server --remote-control --listen unix://" \
-    "999998 ${CODEX_HOME}/packages/standalone/releases/0.2.0/bin/codex app-server --remote-control --listen unix://"
+    "999997 ${process_home}/packages/standalone/releases/0.1.0/bin/codex app-server --remote-control --listen unix://" \
+    "999998 ${process_home}/packages/standalone/releases/0.2.0/bin/codex app-server --remote-control --listen unix://"
   exit 0
 fi
 exec /bin/ps "$@"
@@ -156,8 +157,9 @@ stale_home="$tmp/stale-codex-home"
 mkdir -p "$stale_home/app-server-control" "$stale_home/app-server-daemon"
 : > "$stale_home/app-server-control/mcodex-remote-control-started"
 : > "$stale_home/app-server-control/app-server-control.sock"
-printf '{"pid":999999}\n' > "$stale_home/app-server-daemon/app-server.pid"
-printf '{"pid":999998}\n' > "$stale_home/app-server-daemon/app-server-updater.pid"
+printf '{"pid":999999}\n' > "$stale_home/app-server-daemon/daemon.pid"
+printf '{"pid":999998}\n' > "$stale_home/app-server-daemon/daemon-updater.pid"
+: > "$stale_home/app-server-daemon/daemon-updater.sock"
 : > "$codex_log"
 rm -f "$daemon_file"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" CODEX_HOME="$stale_home" CODEX_FAKE_STALE_DAEMON=1 \
@@ -166,25 +168,32 @@ grep -Fxq 'app-server daemon version' "$codex_log"
 grep -Fxq 'remote-control start --json' "$codex_log"
 grep -Fxq -- '--remote unix:// -C '"$repo_root"' stale-prompt' "$codex_log"
 test ! -e "$stale_home/app-server-control/app-server-control.sock"
-test ! -e "$stale_home/app-server-daemon/app-server.pid"
-test ! -e "$stale_home/app-server-daemon/app-server-updater.pid"
+test ! -e "$stale_home/app-server-daemon/daemon.pid"
+test ! -e "$stale_home/app-server-daemon/daemon-updater.pid"
+test ! -e "$stale_home/app-server-daemon/daemon-updater.sock"
 
-duplicate_home="$tmp/duplicate-codex-home"
-mkdir -p "$duplicate_home/app-server-control" "$duplicate_home/app-server-daemon"
+duplicate_physical_home="$tmp/duplicate-codex-home-physical"
+duplicate_home="$tmp/duplicate-codex-home-link"
+mkdir -p "$duplicate_physical_home/app-server-control" "$duplicate_physical_home/app-server-daemon"
+duplicate_physical_home=$(CDPATH= cd -- "$duplicate_physical_home" && pwd -P)
+ln -s "$duplicate_physical_home" "$duplicate_home"
 : > "$duplicate_home/app-server-control/mcodex-remote-control-started"
 : > "$duplicate_home/app-server-control/app-server-control.sock"
-printf '{"pid":999997}\n' > "$duplicate_home/app-server-daemon/app-server.pid"
-printf '{"pid":999996}\n' > "$duplicate_home/app-server-daemon/app-server-updater.pid"
+printf '{"pid":999997}\n' > "$duplicate_home/app-server-daemon/daemon.pid"
+printf '{"pid":999996}\n' > "$duplicate_home/app-server-daemon/daemon-updater.pid"
+: > "$duplicate_home/app-server-daemon/daemon-updater.sock"
 : > "$codex_log"
 rm -f "$daemon_file"
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" CODEX_HOME="$duplicate_home" CODEX_FAKE_DUPLICATE_DAEMONS=1 \
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" CODEX_HOME="$duplicate_home" \
+	CODEX_FAKE_PROCESS_HOME="$duplicate_physical_home" CODEX_FAKE_DUPLICATE_DAEMONS=1 \
 	sh "$repo_root/bin/mcodex" duplicate-prompt 2> "$tmp/duplicate-stderr"
 grep -Fxq 'mcodex: consolidating duplicate app-server processes' "$tmp/duplicate-stderr"
 grep -Fxq 'remote-control start --json' "$codex_log"
 grep -Fxq -- '--remote unix:// -C '"$repo_root"' duplicate-prompt' "$codex_log"
 test ! -e "$duplicate_home/app-server-control/app-server-control.sock"
-test ! -e "$duplicate_home/app-server-daemon/app-server.pid"
-test ! -e "$duplicate_home/app-server-daemon/app-server-updater.pid"
+test ! -e "$duplicate_home/app-server-daemon/daemon.pid"
+test ! -e "$duplicate_home/app-server-daemon/daemon-updater.pid"
+test ! -e "$duplicate_home/app-server-daemon/daemon-updater.sock"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/bin/shell/workspace.sh'; ! command -v mcodex >/dev/null 2>&1"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; meta-hub project; test \"\$PWD\" = '$project_jump'"
