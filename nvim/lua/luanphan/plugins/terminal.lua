@@ -2,15 +2,12 @@ local terms = {}
 local active_terms = {}
 local terminal_container
 
-local function close_agent_floats()
+local function close_agent_windows()
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_is_valid(win) then
-      local cfg = vim.api.nvim_win_get_config(win)
-      if cfg.relative and cfg.relative ~= "" then
-        local buf = vim.api.nvim_win_get_buf(win)
-        if vim.b[buf].luanphan_persist_term and not vim.b[buf].luanphan_toggleterm then
-          pcall(vim.api.nvim_win_close, win, false)
-        end
+      local buf = vim.api.nvim_win_get_buf(win)
+      if vim.b[buf].luanphan_persist_term and not vim.b[buf].luanphan_toggleterm then
+        pcall(vim.api.nvim_win_close, win, false)
       end
     end
   end
@@ -69,7 +66,7 @@ end
 
 local function new_terminal(cwd)
   cwd = cwd or vim.fn.getcwd()
-  close_agent_floats()
+  close_agent_windows()
   close_open_terms(cwd)
 
   local Terminal = require("toggleterm.terminal").Terminal
@@ -102,7 +99,7 @@ local function show_terminal(term, cwd)
   if not term then
     return new_terminal(cwd)
   end
-  close_agent_floats()
+  close_agent_windows()
   close_open_terms(cwd, term)
   active_terms[cwd] = term
   if term:is_open() then

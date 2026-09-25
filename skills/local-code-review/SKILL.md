@@ -57,15 +57,15 @@ Before drawing the diagram, use `local-code-explore` as the exploration and rend
 - Reuse the `local-code-explore` terminal diagram rules exactly: one merged graph, shared service boxes, RPC/API/function level, centered connectors, protocol/method/topic labels on arrows, and no per-repo or per-service split charts.
 - If `local-code-explore` output already exists in the current review context, reuse its graph after verifying the changed edges against the diff. Do not redraw with a review-specific ASCII format.
 - Overlay review annotations on that diagram:
-  - `🟩` for changed service boxes, handlers, methods, fields, stores, queues, or edges.
-  - `🟨` for risk hotspots found during review.
+  - `✅` for changed service boxes, handlers, methods, fields, stores, queues, or edges.
+  - `⚠️` for risk hotspots found during review.
 - If a changed edge cannot be mapped to a repo, keep it in the same diagram as `External / not found` and explain the missing evidence below the diagram.
 
 If the change is purely local and has no cross-service flow, still include a compact one-box diagram:
 ```
 +-------------------------------+
 | <repo-a>                      |
-| 🟩 <function/file>            |
+| ✅ <function/file>            |
 | risk: <short risk or none>    |
 +-------------------------------+
 ```

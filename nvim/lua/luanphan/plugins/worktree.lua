@@ -1372,6 +1372,10 @@ local function setup()
       return
     end
 
+    if vim.api.nvim_get_mode().mode:sub(1, 1) == "t" then
+      vim.cmd("stopinsert")
+    end
+
     local repos, current_root = list_all_project_repos()
     if #repos == 0 then
       vim.notify("no workspace or root git repositories found", vim.log.levels.WARN)
@@ -1686,7 +1690,7 @@ local function setup()
     })
     vim.keymap.set("n", "<leader>ww", pick_worktree, { desc = "Switch workspace" })
     vim.keymap.set("n", "<leader>wa", pick_add_repository, { desc = "Add repository" })
-    vim.keymap.set("n", "<leader>wr", pick_project, { desc = "Pick repository" })
+    vim.keymap.set({ "n", "t" }, "<leader>wr", pick_project, { desc = "Pick repository" })
     vim.keymap.set("n", "<leader>wp", pick_workspace_project, { desc = "Pick workspace" })
     vim.keymap.set("n", "<leader>w;", pick_agent, { desc = "Switch active agent" })
   end
@@ -1760,7 +1764,7 @@ return {
     keys = {
       { "<leader>ww", pick_worktree, desc = "Switch workspace" },
       { "<leader>wa", pick_add_repository, desc = "Add repository" },
-      { "<leader>wr", pick_project, desc = "Pick repository" },
+      { "<leader>wr", pick_project, mode = { "n", "t" }, desc = "Pick repository" },
       { "<leader>wp", pick_workspace_project, desc = "Pick workspace" },
       { "<leader>w;", pick_agent, desc = "Switch active agent" },
     },
