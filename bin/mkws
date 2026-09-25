@@ -1525,6 +1525,54 @@ def cmd_open(name_flag: str, query_parts: list) -> int:
     return rc
 
 
+def cmd_resume(folder: str = "") -> int:
+    if folder:
+        workspace_dir = Path(folder)
+        if not workspace_dir.is_absolute():
+            workspace_dir = Path.cwd() / workspace_dir
+        workspace_dir = workspace_dir.resolve()
+        if not (workspace_dir / "workspace.yml").is_file():
+            die(f"no workspace.yml at {workspace_dir} (not a workspace)")
+    else:
+        workspace_dir = resolve_existing_workspace_context(Path.cwd(), "")
+    data = read_manifest(workspace_dir / "workspace.yml")
+    repos = normalize_repos(data["repos"], data["branch_name"])
+
+    missing = []
+    invalid = []
+    present = 0
+    for repo in repos:
+        path = workspace_dir / repo["name"]
+        if not path.exists():
+            missing.append(repo)
+        elif is_git_worktree(path):
+            present += 1
+        else:
+            invalid.append(repo["name"])
+
+    if invalid:
+        heading("resume")
+        for name in invalid:
+            fail(f"workspace path exists but is not a git worktree: {workspace_dir / name}")
+
+    if not missing:
+        heading("summary")
+        info(f"workspace: {BOLD}{workspace_dir}{RESET}")
+        info(f"present: {present}, missing: 0, invalid: {len(invalid)}")
+        return 1 if invalid else 0
+
+    repo_root = workspace_dir.parent.parent
+    for repo in missing:
+        source = resolve_source(repo["name"], repo_root)
+        if source is not None:
+            run(["git", "-C", str(source), "worktree", "prune"])
+
+    info(f"restoring {len(missing)} missing workspace repo(s) from workspace.yml")
+    repo_args = [{"spec": repo["name"], "base_branch": None} for repo in missing]
+    result = cmd_default(str(workspace_dir), "", repo_args)
+    return 1 if invalid else result
+
+
 def resolve_skill_sync_context(pwd: Path):
     pwd = pwd.resolve()
     if (pwd / "workspace.yml").is_file():
@@ -1822,6 +1870,7 @@ USAGE = """\
 Usage:
   mkws [--name <name>] [--branch <branch>] [--add <repo>... [--base <branch>]]...
   mkws [--name <workspace>] --link <name> <link> [<name> <link>...]
+  mkws resume [<workspace-folder>]
   mkws checkout [--base|<branch>]
   mkws run <command>
   mkws pull [<folder>...]
@@ -1836,6 +1885,13 @@ Usage:
 Modes:
   (default)  Create or extend a workspace. Run from the root folder that
              contains the source repos, or from inside a workspace dir.
+  resume     Restore workspace repos that are listed in workspace.yml but
+             missing on disk. Existing worktrees are left untouched. Source
+             repos must already exist at the workstation root. Run from a
+             workspace dir or any repo inside it, or pass a workspace folder.
+             Examples:
+               mkws resume
+               mkws resume ./local_workspaces/myws
   checkout   Switch every repo recorded in the current workspace manifest.
              No argument restores each repo's workspace branch. `--base`
              selects each configured base_branch or detected main/master. A
@@ -2009,6 +2065,11 @@ def parse_args(argv):
                 target_path = argv.pop(0)
             if argv:
                 die("'checkout' accepts no argument, --base, or one branch name")
+        elif sub == "resume":
+            mode = "resume"
+            argv.pop(0)
+            if argv and not argv[0].startswith("-"):
+                target_path = argv.pop(0)
         elif sub == "run":
             mode = "run"
             argv.pop(0)
@@ -2133,6 +2194,10 @@ def main() -> None:
         if repos or branch or name or link_pairs or target_paths or sync_push:
             die("'checkout' accepts no argument, --base, or one branch name")
         sys.exit(cmd_checkout(target_path, use_base=checkout_base))
+    if mode == "resume":
+        if repos or branch or name or link_pairs or target_paths or sync_push or checkout_base:
+            die("'resume' takes an optional workspace folder only; --add/--branch/--name/--link are not accepted")
+        sys.exit(cmd_resume(target_path))
     if mode == "run":
         if repos or branch or name or link_pairs or target_path or sync_push or checkout_base:
             die("'run' takes a command only")

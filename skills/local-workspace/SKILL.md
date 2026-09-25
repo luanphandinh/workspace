@@ -16,6 +16,7 @@ Drives `mkws` and `meta-hub` (installed on `$PATH`). `mkws` manages multi-repo g
 ```
 mkws [--name <name>] [--branch <branch>] [--add <repo>... [--base <branch>]]...
 mkws [--name <workspace>] --link <name> <link> [<name> <link>...]
+mkws resume [<workspace-folder>]
 mkws checkout [--base|<branch>]
 mkws run <command>
 mkws pull [<folder>...]
@@ -44,6 +45,7 @@ meta-hub r
 - `--base <branch>` — base branch for every repo in the immediately preceding `--add` group. Omit it to use default `main`/`master` detection. Repeat `--add` to assign different bases, for example `--add repo-a --base feature/base-a --add repo-b --base feature/base-b`. An orphaned `--base`, or another flag between `--add` and `--base`, is rejected.
 - `--link <name> <link> [<name> <link>...]` — add or update one or more quick-access workspace links in `workspace.yml`. Values are name/link pairs. Repeating `--link` also works. Run from inside a workspace dir/worktree, or pass `--name <workspace>` from the root. If an existing link URL is found, the latest provided name replaces the old name; if an existing name is found, its link is updated.
 - `mkws clean` — removes code worktrees listed in `workspace.yml`, prunes source repos, keeps workspace-level files such as `tech_doc/`, preserves links, and resets `workspace.yml` to an empty branch/repo list. No confirmation prompt.
+- `resume` — subcommand. Restores repositories listed in `workspace.yml` when their workspace worktree is missing, using each recorded `branch_name` and `base_branch`. Existing worktrees are left untouched. Source repositories must already exist at the workstation root. Run it from the workspace directory, any repository inside it, or pass a workspace folder.
 - `checkout` — subcommand. From a workspace directory or any repo inside it, switches every repo recorded in `workspace.yml`. With no argument, restores each repo's recorded workspace `branch_name`; with `--base`, switches each repo to its configured `base_branch` or detected `main`/`master`; with `<branch>`, switches every repo to that branch. Existing local branches are used, and remote-only branches become local tracking branches. Repositories are processed in parallel and failures are reported after all attempts. Normal Git worktree locks remain active, so a branch already checked out in another worktree fails for that repository without blocking the others.
 - `run` — subcommand. Runs the same shell command through `sh -c` in parallel, with output and failures grouped by repo. From a workspace directory or any repo inside it, targets every repo recorded in `workspace.yml`. Otherwise, targets every immediate git repo under `$PWD` plus immediate git repos under `$PWD/_external`, matching bare `mkws pull` discovery. Example: `mkws run 'git checkout -- .'`.
 - `meta-hub -f <folder> -r <git-repository>` — registers a metadata source root and metadata git repository. `-f` defaults to the current folder. The command clones the repository under `~/.meta-hub/<git-repo>` and stores the local root/clone mapping in `~/.meta-hub/info.yml`. The remote is read from the clone's Git config.

@@ -209,6 +209,26 @@ test_mkws() {
 	assert_contains "$workspace/workspace.yml" "branch_name: feature/a"
 	assert_eq "feature/a" "$(git -C "$workspace/repo-a" branch --show-current)"
 
+	printf 'keep\n' > "$workspace/repo-a/resume-local.txt"
+	git -C "$root/repo-b" worktree remove "$workspace/repo-b"
+	assert_not_exists "$workspace/repo-b"
+	(
+		cd "$workspace/repo-a"
+		mkws resume > "$TMP/mkws-resume.out"
+	)
+	assert_exists "$workspace/repo-a/resume-local.txt"
+	assert_exists "$workspace/repo-b/.git"
+	assert_eq "feature/a" "$(git -C "$workspace/repo-b" branch --show-current)"
+	assert_contains "$TMP/mkws-resume.out" "restoring 1 missing workspace repo(s) from workspace.yml"
+	rm "$workspace/repo-a/resume-local.txt"
+	git -C "$root/repo-b" worktree remove "$workspace/repo-b"
+	(
+		cd "$root"
+		mkws resume local_workspaces/feature-a >/dev/null
+	)
+	assert_exists "$workspace/repo-b/.git"
+	assert_eq "feature/a" "$(git -C "$workspace/repo-b" branch --show-current)"
+
 	mkdir -p "$root/repo-empty"
 	git init -q "$root/repo-empty"
 	(
