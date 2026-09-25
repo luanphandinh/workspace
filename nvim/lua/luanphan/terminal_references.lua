@@ -5,16 +5,11 @@ local attached = {}
 local pending = {}
 local dirty = {}
 local tracked = {}
+local targets = {}
 local update_delay_ms = 250
 local enabled = vim.g.luanphan_terminal_reference_links_enabled ~= false
   and vim.g.luanphan_terminal_reference_links_enabled ~= 0
 vim.g.luanphan_terminal_reference_links_enabled = enabled
-
-local function encode(value)
-  return tostring(value):gsub("([^%w%-._~])", function(char)
-    return string.format("%%%02X", string.byte(char))
-  end)
-end
 
 local function resolve_path(cwd, value)
   value = value:gsub("^@", "")
@@ -33,19 +28,6 @@ local function resolve_path(cwd, value)
   return path
 end
 
-local function reference_url(path, line, column)
-  local server = vim.v.servername
-  if server == "" then
-    return nil
-  end
-  return table.concat({
-    "nvim-ref://open?server=", encode(server),
-    "&path=", encode(path),
-    "&line=", tostring(line),
-    "&column=", tostring(column or 1),
-  })
-end
-
 local function references_in_line(cwd, text)
   local result = {}
   local offset = 1
@@ -60,12 +42,13 @@ local function references_in_line(cwd, text)
     local path = raw_path and resolve_path(cwd, raw_path) or nil
     local line_number = tonumber(line)
     local column_number = tonumber(column) or 1
-    local url = path and line_number and reference_url(path, line_number, column_number) or nil
-    if url then
+    if path and line_number then
       result[#result + 1] = {
         first_col = first - 1,
         last_col = last,
-        url = url,
+        path = path,
+        line = line_number,
+        column = column_number,
       }
     end
     offset = last + 1
@@ -87,8 +70,7 @@ local function wrapped_reference(cwd, first_text, second_text)
   local path = resolve_path(cwd, first_path .. second_path)
   local line_number = tonumber(line)
   local column_number = tonumber(column) or 1
-  local url = path and line_number and reference_url(path, line_number, column_number) or nil
-  if not url then
+  if not path or not line_number then
     return nil
   end
 
@@ -97,12 +79,16 @@ local function wrapped_reference(cwd, first_text, second_text)
     first = {
       first_col = first_col - 1,
       last_col = first_end,
-      url = url,
+      path = path,
+      line = line_number,
+      column = column_number,
     },
     second = {
       first_col = second_col - 1,
       last_col = second_end,
-      url = url,
+      path = path,
+      line = line_number,
+      column = column_number,
     },
   }
 end
@@ -117,10 +103,85 @@ local function overlaps(reference, ranges)
 end
 
 local function set_reference(bufnr, row, reference)
-  vim.api.nvim_buf_set_extmark(bufnr, namespace, row, reference.first_col, {
+  local id = vim.api.nvim_buf_set_extmark(bufnr, namespace, row, reference.first_col, {
     end_col = reference.last_col,
-    url = reference.url,
   })
+  targets[bufnr] = targets[bufnr] or {}
+  targets[bufnr][id] = {
+    path = reference.path,
+    line = reference.line,
+    column = reference.column,
+  }
+end
+
+local function clear_references(bufnr, first_line, last_line)
+  if last_line == first_line then
+    return
+  end
+  local finish = last_line == -1 and -1 or { last_line - 1, -1 }
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(bufnr, namespace, { first_line, 0 }, finish, {})) do
+    if targets[bufnr] then
+      targets[bufnr][mark[1]] = nil
+    end
+  end
+  vim.api.nvim_buf_clear_namespace(bufnr, namespace, first_line, last_line)
+end
+
+local function target_at(bufnr, row, column)
+  if not enabled or not attached[bufnr] or row < 0 or column < 0 then
+    return nil
+  end
+  local marks = vim.api.nvim_buf_get_extmarks(
+    bufnr,
+    namespace,
+    { row, 0 },
+    { row, -1 },
+    { details = true }
+  )
+  for _, mark in ipairs(marks) do
+    local details = mark[4]
+    if mark[2] == row and column >= mark[3] and column < (details.end_col or mark[3]) then
+      return targets[bufnr] and targets[bufnr][mark[1]] or nil
+    end
+  end
+  return nil
+end
+
+local function handle_mouse_click(bufnr)
+  local mouse = vim.fn.getmousepos()
+  if not mouse or not mouse.winid or not vim.api.nvim_win_is_valid(mouse.winid) then
+    return "<M-LeftMouse>"
+  end
+  if vim.api.nvim_win_get_buf(mouse.winid) ~= bufnr then
+    return "<M-LeftMouse>"
+  end
+
+  local target = target_at(bufnr, (mouse.line or 0) - 1, (mouse.column or 0) - 1)
+  if not target then
+    return "<M-LeftMouse>"
+  end
+
+  vim.schedule(function()
+    if vim.api.nvim_win_is_valid(mouse.winid) then
+      vim.api.nvim_set_current_win(mouse.winid)
+      M.open(target.path, target.line, target.column)
+    end
+  end)
+  return "<Ignore>"
+end
+
+local function set_click_keymaps(bufnr)
+  local opts = {
+    buffer = bufnr,
+    expr = true,
+    silent = true,
+    desc = "Open terminal file reference",
+  }
+  for _, mode in ipairs({ "n", "t" }) do
+    vim.keymap.set(mode, "<M-LeftMouse>", function()
+      return handle_mouse_click(bufnr)
+    end, opts)
+  end
 end
 
 local function refresh(bufnr, first_line, last_line)
@@ -137,7 +198,7 @@ local function refresh(bufnr, first_line, last_line)
   last_line = math.max(first_line, math.min(last_line or line_count, line_count))
   first_line = math.max(0, first_line - 1)
   last_line = math.min(line_count, last_line + 1)
-  vim.api.nvim_buf_clear_namespace(bufnr, namespace, first_line, last_line)
+  clear_references(bufnr, first_line, last_line)
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, first_line, last_line, false)
   local wrapped = {}
@@ -222,6 +283,7 @@ function M.attach(bufnr, cwd)
   cwd = vim.fs.normalize(cwd)
   tracked[bufnr] = cwd
   vim.b[bufnr].luanphan_terminal_reference_cwd = cwd
+  set_click_keymaps(bufnr)
   if enabled then
     if vim.fn.bufwinid(bufnr) == -1 then
       dirty[bufnr] = true
@@ -243,6 +305,7 @@ function M.attach(bufnr, cwd)
       close_pending(detached_bufnr)
       dirty[detached_bufnr] = nil
       tracked[detached_bufnr] = nil
+      targets[detached_bufnr] = nil
     end,
   })
   return namespace
@@ -269,7 +332,7 @@ function M.set_enabled(value, silent)
     if vim.api.nvim_buf_is_valid(bufnr) then
       close_pending(bufnr)
       dirty[bufnr] = nil
-      vim.api.nvim_buf_clear_namespace(bufnr, namespace, 0, -1)
+      clear_references(bufnr, 0, -1)
       if enabled then
         if vim.fn.bufwinid(bufnr) == -1 then
           dirty[bufnr] = true
