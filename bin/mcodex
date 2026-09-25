@@ -218,18 +218,18 @@ case "${1:-}" in
 		subcmd="$1"
 		shift
 		if [ "$has_cd_arg" -eq 1 ]; then
-			exec codex "$subcmd" --remote unix:// "$@"
+			exec codex -c 'tui.animations=false' "$subcmd" --remote unix:// "$@"
 		fi
-		exec codex "$subcmd" --remote unix:// -C "$PWD" "$@"
+		exec codex -c 'tui.animations=false' "$subcmd" --remote unix:// -C "$PWD" "$@"
 		;;
 esac
 
 if [ "$#" -eq 0 ]; then
-	exec codex resume --remote unix:// -C "$PWD"
+	exec codex -c 'tui.animations=false' resume --remote unix:// -C "$PWD"
 fi
 
 if [ "$has_cd_arg" -eq 1 ]; then
-	exec codex --remote unix:// "$@"
+	exec codex -c 'tui.animations=false' --remote unix:// "$@"
 fi
 
-exec codex --remote unix:// -C "$PWD" "$@"
+exec codex -c 'tui.animations=false' --remote unix:// -C "$PWD" "$@"

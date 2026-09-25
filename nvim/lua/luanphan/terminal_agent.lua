@@ -444,7 +444,7 @@ local function configure_terminal_window(win)
     winfixheight = false,
     winfixwidth = false,
     winhighlight = "EndOfBuffer:",
-    wrap = true,
+    wrap = false,
   }
   for name, value in pairs(options) do
     pcall(vim.api.nvim_set_option_value, name, value, { win = win, scope = "local" })
