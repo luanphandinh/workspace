@@ -21,7 +21,7 @@ endif
 lazy_command ?= restore
 shortcut_names ?=
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test nvim-reference-test epoch-tools-test base64-tools-test
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -212,7 +212,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-status-hooks-test workspace-shell-test agent-session-test mcursor-persist-test nvim-reference-test epoch-tools-test base64-tools-test nix-test tmux-sidebar-test ## Run smoke tests
+test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-status-hooks-test workspace-shell-test agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test nix-test tmux-sidebar-test ## Run smoke tests
 
 mkws-test: ## Run mkws/meta-hub smoke tests
 	sh ./scripts/mkws-smoke-test.sh
@@ -234,9 +234,6 @@ agent-session-test: ## Run durable agent-session bridge smoke tests
 
 mcursor-persist-test: ## Run native Cursor persist wrapper smoke tests
 	sh ./scripts/mcursor-persist-smoke-test.sh
-
-nvim-reference-test: ## Run terminal reference URL handler smoke tests
-	sh ./scripts/nvim-reference-smoke-test.sh
 
 epoch-tools-test: ## Run epoch conversion command smoke tests
 	sh ./scripts/epoch-tools-smoke-test.sh
