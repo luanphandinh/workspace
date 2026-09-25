@@ -2,11 +2,7 @@ local M = {}
 
 local namespace = vim.api.nvim_create_namespace("LuanphanTerminalReferences")
 local attached = {}
-local pending = {}
-local dirty = {}
 local tracked = {}
-local targets = {}
-local update_delay_ms = 250
 local enabled = vim.g.luanphan_terminal_reference_links_enabled ~= false
   and vim.g.luanphan_terminal_reference_links_enabled ~= 0
 vim.g.luanphan_terminal_reference_links_enabled = enabled
@@ -93,55 +89,58 @@ local function wrapped_reference(cwd, first_text, second_text)
   }
 end
 
-local function overlaps(reference, ranges)
-  for _, range in ipairs(ranges or {}) do
-    if reference.first_col < range.last_col and reference.last_col > range.first_col then
-      return true
-    end
-  end
-  return false
-end
-
-local function set_reference(bufnr, row, reference)
-  local id = vim.api.nvim_buf_set_extmark(bufnr, namespace, row, reference.first_col, {
-    end_col = reference.last_col,
-  })
-  targets[bufnr] = targets[bufnr] or {}
-  targets[bufnr][id] = {
-    path = reference.path,
-    line = reference.line,
-    column = reference.column,
-  }
-end
-
-local function clear_references(bufnr, first_line, last_line)
-  if last_line == first_line then
-    return
-  end
-  local finish = last_line == -1 and -1 or { last_line - 1, -1 }
-  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(bufnr, namespace, { first_line, 0 }, finish, {})) do
-    if targets[bufnr] then
-      targets[bufnr][mark[1]] = nil
-    end
-  end
-  vim.api.nvim_buf_clear_namespace(bufnr, namespace, first_line, last_line)
-end
-
 local function target_at(bufnr, row, column)
   if not enabled or not attached[bufnr] or row < 0 or column < 0 then
     return nil
   end
-  local marks = vim.api.nvim_buf_get_extmarks(
-    bufnr,
-    namespace,
-    { row, 0 },
-    { row, -1 },
-    { details = true }
-  )
-  for _, mark in ipairs(marks) do
-    local details = mark[4]
-    if mark[2] == row and column >= mark[3] and column < (details.end_col or mark[3]) then
-      return targets[bufnr] and targets[bufnr][mark[1]] or nil
+
+  local cwd = tracked[bufnr]
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  if not cwd or row >= line_count then
+    return nil
+  end
+
+  local function line_at(index)
+    if index < 0 or index >= line_count then
+      return nil
+    end
+    return vim.api.nvim_buf_get_lines(bufnr, index, index + 1, false)[1]
+  end
+
+  local function contains(reference)
+    return reference
+      and column >= reference.first_col
+      and column < reference.last_col
+  end
+
+  local function target(reference)
+    return {
+      path = reference.path,
+      line = reference.line,
+      column = reference.column,
+    }
+  end
+
+  local current = line_at(row) or ""
+  for _, reference in ipairs(references_in_line(cwd, current)) do
+    if contains(reference) then
+      return target(reference)
+    end
+  end
+
+  local next_line = line_at(row + 1)
+  if next_line then
+    local wrapped = wrapped_reference(cwd, current, next_line)
+    if wrapped and contains(wrapped.first) then
+      return target(wrapped.first)
+    end
+  end
+
+  local previous = line_at(row - 1)
+  if previous then
+    local wrapped = wrapped_reference(cwd, previous, current)
+    if wrapped and contains(wrapped.second) then
+      return target(wrapped.second)
     end
   end
   return nil
@@ -184,98 +183,6 @@ local function set_click_keymaps(bufnr)
   end
 end
 
-local function refresh(bufnr, first_line, last_line)
-  if not vim.api.nvim_buf_is_valid(bufnr) then
-    return
-  end
-  local cwd = vim.b[bufnr].luanphan_terminal_reference_cwd
-  if type(cwd) ~= "string" or cwd == "" then
-    return
-  end
-
-  local line_count = vim.api.nvim_buf_line_count(bufnr)
-  first_line = math.max(0, math.min(first_line or 0, line_count))
-  last_line = math.max(first_line, math.min(last_line or line_count, line_count))
-  first_line = math.max(0, first_line - 1)
-  last_line = math.min(line_count, last_line + 1)
-  clear_references(bufnr, first_line, last_line)
-
-  local lines = vim.api.nvim_buf_get_lines(bufnr, first_line, last_line, false)
-  local wrapped = {}
-  for index = 1, #lines - 1 do
-    local reference = wrapped_reference(cwd, lines[index], lines[index + 1])
-    if reference then
-      wrapped[index] = wrapped[index] or {}
-      wrapped[index + 1] = wrapped[index + 1] or {}
-      wrapped[index][#wrapped[index] + 1] = reference.first
-      wrapped[index + 1][#wrapped[index + 1] + 1] = reference.second
-    end
-  end
-
-  for index, text in ipairs(lines) do
-    local row = first_line + index - 1
-    for _, reference in ipairs(references_in_line(cwd, text)) do
-      if not overlaps(reference, wrapped[index]) then
-        set_reference(bufnr, row, reference)
-      end
-    end
-    for _, reference in ipairs(wrapped[index] or {}) do
-      set_reference(bufnr, row, reference)
-    end
-  end
-end
-
-local function close_pending(bufnr)
-  local range = pending[bufnr]
-  pending[bufnr] = nil
-  if range and range.timer and not range.timer:is_closing() then
-    range.timer:stop()
-    range.timer:close()
-  end
-end
-
-local function schedule_refresh(bufnr, first_line, last_line)
-  if not enabled then
-    return
-  end
-  if vim.fn.bufwinid(bufnr) == -1 then
-    dirty[bufnr] = true
-    return
-  end
-
-  local range = pending[bufnr]
-  if range then
-    range.first = math.min(range.first, first_line)
-    range.last = math.max(range.last, last_line)
-  else
-    range = {
-      first = first_line,
-      last = last_line,
-      timer = assert(vim.uv.new_timer()),
-    }
-    pending[bufnr] = range
-  end
-
-  range.generation = (range.generation or 0) + 1
-  local generation = range.generation
-  range.timer:stop()
-  range.timer:start(update_delay_ms, 0, vim.schedule_wrap(function()
-    if pending[bufnr] ~= range or range.generation ~= generation then
-      return
-    end
-    pending[bufnr] = nil
-    range.timer:close()
-    if not enabled then
-      return
-    end
-    if vim.fn.bufwinid(bufnr) == -1 then
-      dirty[bufnr] = true
-    else
-      refresh(bufnr, range.first, range.last)
-    end
-  end))
-end
-
 function M.attach(bufnr, cwd)
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
     return nil
@@ -284,41 +191,21 @@ function M.attach(bufnr, cwd)
   tracked[bufnr] = cwd
   vim.b[bufnr].luanphan_terminal_reference_cwd = cwd
   set_click_keymaps(bufnr)
-  if enabled then
-    if vim.fn.bufwinid(bufnr) == -1 then
-      dirty[bufnr] = true
-    else
-      refresh(bufnr, 0, vim.api.nvim_buf_line_count(bufnr))
-    end
-  end
 
   if attached[bufnr] then
     return namespace
   end
   attached[bufnr] = true
   vim.api.nvim_buf_attach(bufnr, false, {
-    on_lines = function(_, changed_bufnr, _, first_line, _, last_line)
-      schedule_refresh(changed_bufnr, first_line, last_line)
-    end,
     on_detach = function(_, detached_bufnr)
       attached[detached_bufnr] = nil
-      close_pending(detached_bufnr)
-      dirty[detached_bufnr] = nil
       tracked[detached_bufnr] = nil
-      targets[detached_bufnr] = nil
     end,
   })
   return namespace
 end
 
-function M.activate(bufnr)
-  if not enabled or not dirty[bufnr] or not vim.api.nvim_buf_is_valid(bufnr) then
-    return
-  end
-  dirty[bufnr] = nil
-  close_pending(bufnr)
-  refresh(bufnr, 0, vim.api.nvim_buf_line_count(bufnr))
-end
+function M.activate() end
 
 function M.is_enabled()
   return enabled
@@ -327,21 +214,6 @@ end
 function M.set_enabled(value, silent)
   enabled = value == true
   vim.g.luanphan_terminal_reference_links_enabled = enabled
-
-  for bufnr in pairs(tracked) do
-    if vim.api.nvim_buf_is_valid(bufnr) then
-      close_pending(bufnr)
-      dirty[bufnr] = nil
-      clear_references(bufnr, 0, -1)
-      if enabled then
-        if vim.fn.bufwinid(bufnr) == -1 then
-          dirty[bufnr] = true
-        else
-          refresh(bufnr, 0, vim.api.nvim_buf_line_count(bufnr))
-        end
-      end
-    end
-  end
 
   if not silent then
     vim.notify("Terminal reference links " .. (enabled and "enabled" or "disabled"))
@@ -352,15 +224,6 @@ end
 function M.toggle()
   return M.set_enabled(not enabled)
 end
-
-vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter" }, {
-  group = vim.api.nvim_create_augroup("LuanphanTerminalReferences", { clear = true }),
-  callback = function(args)
-    if attached[args.buf] then
-      M.activate(args.buf)
-    end
-  end,
-})
 
 local function is_editor_window(win)
   if not vim.api.nvim_win_is_valid(win) then
