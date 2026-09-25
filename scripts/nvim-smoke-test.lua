@@ -2627,6 +2627,48 @@ local function test_terminal_reference_links()
   assert_true(#marks == 1, "terminal references did not link exactly one existing file")
   assert_true(marks[1][4].url:match("^nvim%-ref://open"), "terminal reference URL has the wrong scheme")
   assert_true(marks[1][4].url:find("example%-repo%%2Fmain.go"), "terminal reference URL omitted the file")
+
+  local click_map = vim.fn.maparg("<M-LeftMouse>", "n", false, true)
+  local terminal_click_map = vim.fn.maparg("<M-LeftMouse>", "t", false, true)
+  assert_true(
+    type(click_map) == "table" and type(click_map.callback) == "function",
+    "terminal reference normal-mode click mapping is missing"
+  )
+  assert_true(
+    type(terminal_click_map) == "table" and type(terminal_click_map.callback) == "function",
+    "terminal reference terminal-mode click mapping is missing"
+  )
+
+  local clicked_target = nil
+  local original_open = references.open
+  local original_getmousepos = vim.fn.getmousepos
+  references.open = function(path, line, column)
+    clicked_target = { path = path, line = line, column = column }
+    return true
+  end
+  vim.fn.getmousepos = function()
+    return {
+      winid = vim.api.nvim_get_current_win(),
+      line = 1,
+      column = assert((vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] or ""):find("example%-repo")),
+    }
+  end
+  local click_result = click_map.callback()
+  vim.wait(50, function()
+    return clicked_target ~= nil
+  end)
+  references.open = original_open
+  vim.fn.getmousepos = original_getmousepos
+  assert_true(click_result == "<Ignore>", "terminal reference click was not consumed")
+  assert_true(clicked_target and clicked_target.path == first_path, "terminal reference click opened the wrong file")
+  assert_true(clicked_target.line == 1 and clicked_target.column == 1, "terminal reference click lost its position")
+
+  vim.fn.getmousepos = function()
+    return { winid = vim.api.nvim_get_current_win(), line = 1, column = 1 }
+  end
+  local plain_click_result = click_map.callback()
+  vim.fn.getmousepos = original_getmousepos
+  assert_true(plain_click_result == "<M-LeftMouse>", "plain terminal click was not passed through")
   vim.api.nvim_win_set_buf(0, previous_buf)
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {

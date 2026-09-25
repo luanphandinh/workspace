@@ -123,6 +123,80 @@ local function set_reference(bufnr, row, reference)
   })
 end
 
+local function target_from_url(url)
+  if type(url) ~= "string" or not url:match("^nvim%-ref://open%?") then
+    return nil
+  end
+  local path = url:match("[?&]path=([^&]+)")
+  local line = tonumber(url:match("[?&]line=(%d+)"))
+  local column = tonumber(url:match("[?&]column=(%d+)")) or 1
+  if not path or not line then
+    return nil
+  end
+  return {
+    path = vim.uri_decode(path),
+    line = line,
+    column = column,
+  }
+end
+
+local function target_at(bufnr, row, column)
+  if not enabled or not attached[bufnr] or row < 0 or column < 0 then
+    return nil
+  end
+  local marks = vim.api.nvim_buf_get_extmarks(
+    bufnr,
+    namespace,
+    { row, 0 },
+    { row, -1 },
+    { details = true }
+  )
+  for _, mark in ipairs(marks) do
+    local details = mark[4]
+    if mark[2] == row and column >= mark[3] and column < (details.end_col or mark[3]) then
+      return target_from_url(details.url)
+    end
+  end
+  return nil
+end
+
+local function handle_mouse_click(bufnr)
+  local mouse = vim.fn.getmousepos()
+  if not mouse or not mouse.winid or not vim.api.nvim_win_is_valid(mouse.winid) then
+    return "<M-LeftMouse>"
+  end
+  if vim.api.nvim_win_get_buf(mouse.winid) ~= bufnr then
+    return "<M-LeftMouse>"
+  end
+
+  local target = target_at(bufnr, (mouse.line or 0) - 1, (mouse.column or 0) - 1)
+  if not target then
+    return "<M-LeftMouse>"
+  end
+
+  vim.schedule(function()
+    if vim.api.nvim_win_is_valid(mouse.winid) then
+      vim.api.nvim_set_current_win(mouse.winid)
+      M.open(target.path, target.line, target.column)
+    end
+  end)
+  return "<Ignore>"
+end
+
+local function set_click_keymaps(bufnr)
+  local opts = {
+    buffer = bufnr,
+    expr = true,
+    silent = true,
+    desc = "Open terminal file reference",
+  }
+  for _, mode in ipairs({ "n", "t" }) do
+    vim.keymap.set(mode, "<M-LeftMouse>", function()
+      return handle_mouse_click(bufnr)
+    end, opts)
+  end
+end
+
 local function refresh(bufnr, first_line, last_line)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return
@@ -222,6 +296,7 @@ function M.attach(bufnr, cwd)
   cwd = vim.fs.normalize(cwd)
   tracked[bufnr] = cwd
   vim.b[bufnr].luanphan_terminal_reference_cwd = cwd
+  set_click_keymaps(bufnr)
   if enabled then
     if vim.fn.bufwinid(bufnr) == -1 then
       dirty[bufnr] = true
