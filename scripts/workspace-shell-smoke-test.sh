@@ -191,12 +191,12 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; meta-hub repo; test \"\$PWD\" = '$repo_jump'"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; meta-hub p; test \"\$PWD\" = '$project_jump'"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; meta-hub r; test \"\$PWD\" = '$repo_jump'"
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; before=\$PWD; meta-hub sync; test \"\$PWD\" = \"\$before\""
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; before=\$PWD; meta-hub pull; test \"\$PWD\" = \"\$before\""
 grep -Fxq 'project' "$tmp/meta-hub.log"
 grep -Fxq 'repo' "$tmp/meta-hub.log"
 grep -Fxq 'p' "$tmp/meta-hub.log"
 grep -Fxq 'r' "$tmp/meta-hub.log"
-grep -Fxq 'sync' "$tmp/meta-hub.log"
+grep -Fxq 'pull' "$tmp/meta-hub.log"
 
 zsh_bin=$(command -v zsh || true)
 if [ -n "$zsh_bin" ]; then

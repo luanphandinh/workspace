@@ -205,7 +205,7 @@ test_mkws() {
 	assert_exists "$workspace/repo-a/.git"
 	assert_exists "$workspace/repo-b/.git"
 	assert_exists "$workspace/tech_doc"
-	assert_git_repo "$workspace/tech_doc"
+	assert_not_exists "$workspace/tech_doc/.git"
 	assert_contains "$workspace/workspace.yml" "branch_name: feature/a"
 	assert_eq "feature/a" "$(git -C "$workspace/repo-a" branch --show-current)"
 
@@ -401,7 +401,8 @@ EOF
 	)
 	empty_workspace="$root/local_workspaces/design-only"
 	assert_exists "$empty_workspace/workspace.yml"
-	assert_git_repo "$empty_workspace/tech_doc"
+	assert_exists "$empty_workspace/tech_doc"
+	assert_not_exists "$empty_workspace/tech_doc/.git"
 
 	(
 		cd "$root"
@@ -417,7 +418,8 @@ EOF
 	)
 	assert_not_exists "$workspace/repo-a"
 	assert_not_exists "$workspace/repo-b"
-	assert_git_repo "$workspace/tech_doc"
+	assert_exists "$workspace/tech_doc"
+	assert_not_exists "$workspace/tech_doc/.git"
 	assert_contains "$workspace/workspace.yml" "branch_name:"
 	assert_exists "$root/repo-a/.git"
 	assert_exists "$root/repo-b/.git"
@@ -549,6 +551,12 @@ test_meta_hub() {
 		cd "$root/station-b"
 		mkws --name feature-b --branch feature/b --add repo-b >/dev/null
 	)
+	printf 'design notes\n' > "$root/station-a/local_workspaces/feature-a/tech_doc/notes.md"
+	printf 'workspace test notes\n' > "$root/station-a/local_workspaces/feature-a/testing.md"
+	printf 'private workspace notes\n' > "$root/station-a/local_workspaces/feature-a/.private.md"
+	mkdir -p "$root/station-a/local_workspaces/feature-a/tech_doc/.drafts"
+	printf 'draft\n' > "$root/station-a/local_workspaces/feature-a/tech_doc/.drafts/note.md"
+	git init -q "$root/station-a/local_workspaces/feature-a/tech_doc"
 	mkdir -p "$HOME/.skills-hub" "$HOME/.cmds-hub" "$HOME/.local/share/tmux/resurrect" "$HOME/.config/tmux"
 	printf 'plugin-base\n' > "$HOME/.skills-hub/execute_plugins"
 	printf 'cmd-base\n' > "$HOME/.cmds-hub/cmd_history"
@@ -580,7 +588,7 @@ test_meta_hub() {
 	assert_contains "$TMP/meta-index-a.out" "repo-a"
 	assert_contains "$TMP/meta-index-a.out" "=== summary ==="
 	assert_contains "$TMP/meta-index-a.out" "workstation.yml: station-a/workstation.yml"
-	assert_contains "$TMP/meta-index-a.out" "workspace.yml: station-a/local_workspaces/feature-a/workspace.yml"
+	assert_contains "$TMP/meta-index-a.out" "workspace file: station-a/local_workspaces/feature-a/workspace.yml"
 	meta_hub index -p "$root/station-b" > "$TMP/meta-index-b.out"
 	init_repo "$root/station-b/repo-b2"
 	add_origin_remote "$root/station-b/repo-b2" "$TMP/repo-b2.git"
@@ -588,7 +596,7 @@ test_meta_hub() {
 	assert_contains "$TMP/meta-index-all.out" "repo-b: already indexed"
 	assert_contains "$TMP/meta-index-all.out" "repo-b2"
 	assert_contains "$TMP/meta-index-all.out" "=== summary ==="
-	assert_contains "$TMP/meta-index-all.out" "workspace.yml: station-b/local_workspaces/feature-b/workspace.yml"
+	assert_contains "$TMP/meta-index-all.out" "workspace file: station-b/local_workspaces/feature-b/workspace.yml"
 	assert_exists "$clone/registry.yml"
 	assert_not_exists "$clone/workstations.yml"
 	assert_not_exists "$root/workstations.yml"
@@ -599,6 +607,12 @@ test_meta_hub() {
 	assert_exists "$clone/station-a/workstation.yml"
 	assert_exists "$clone/station-b/workstation.yml"
 	assert_exists "$clone/station-a/local_workspaces/feature-a/workspace.yml"
+	assert_exists "$clone/station-a/local_workspaces/feature-a/tech_doc/notes.md"
+	assert_exists "$clone/station-a/local_workspaces/feature-a/testing.md"
+	assert_not_exists "$clone/station-a/local_workspaces/feature-a/tech_doc/.git"
+	assert_not_exists "$clone/station-a/local_workspaces/feature-a/.private.md"
+	assert_not_exists "$clone/station-a/local_workspaces/feature-a/tech_doc/.drafts"
+	assert_not_exists "$root/station-a/local_workspaces/feature-a/tech_doc/.git"
 	assert_exists "$clone/station-b/local_workspaces/feature-b/workspace.yml"
 	assert_exists "$clone/.skills-hub/execute_plugins"
 	assert_exists "$clone/.cmds-hub/cmd_history"
@@ -705,7 +719,15 @@ repos:
     branch_name: feature/local
 EOF
 	HOME="$restore_home" meta_hub -f "$restore_root" -r "$meta_remote" >/dev/null
-	HOME="$restore_home" meta_hub sync > "$TMP/meta-sync-restore.out"
+	mkdir -p "$restore_root/station-a/local_workspaces/feature-a/tech_doc"
+	printf 'stale\n' > "$restore_root/station-a/local_workspaces/feature-a/tech_doc/stale.md"
+	git init -q "$restore_root/station-a/local_workspaces/feature-a/tech_doc"
+	printf 'local only\n' > "$restore_root/station-a/local_workspaces/feature-a/local-only.md"
+	printf 'keep private\n' > "$restore_root/station-a/local_workspaces/feature-a/.private.md"
+	mkdir -p "$restore_root/station-a/local_workspaces/feature-a/tech_doc/.drafts"
+	printf 'keep draft\n' > "$restore_root/station-a/local_workspaces/feature-a/tech_doc/.drafts/note.md"
+	init_repo "$restore_root/station-a/local_workspaces/feature-a/repo-local"
+	HOME="$restore_home" meta_hub pull > "$TMP/meta-pull-restore.out"
 	assert_exists "$restore_root/station-a/repo-a/.git"
 	assert_exists "$restore_root/station-b/repo-b/.git"
 	assert_not_exists "$restore_root/station-a/workstation.yml"
@@ -715,22 +737,27 @@ EOF
 	assert_exists "$restore_root/station-b/local_workspaces/feature-b/workspace.yml"
 	assert_contains "$restore_root/station-a/local_workspaces/feature-a/workspace.yml" "branch_name: feature/a"
 	assert_contains "$restore_root/station-a/local_workspaces/feature-a/workspace.yml" "name: repo-a"
-	assert_contains "$restore_root/station-a/local_workspaces/feature-a/workspace.yml" "name: repo-local"
-	assert_contains "$restore_root/station-a/local_workspaces/feature-a/workspace.yml" "name: local-link"
-	assert_contains "$TMP/meta-sync-restore.out" "=== workspace manifests ==="
-	assert_contains "$TMP/meta-sync-restore.out" "[1/"
-	assert_contains "$TMP/meta-sync-restore.out" "cloning:"
-	assert_contains "$TMP/meta-sync-restore.out" "=== home histories ==="
+	assert_not_contains "$restore_root/station-a/local_workspaces/feature-a/workspace.yml" "name: repo-local"
+	assert_not_contains "$restore_root/station-a/local_workspaces/feature-a/workspace.yml" "name: local-link"
+	assert_contains "$TMP/meta-pull-restore.out" "=== workspace files ==="
+	assert_contains "$TMP/meta-pull-restore.out" "[1/"
+	assert_contains "$TMP/meta-pull-restore.out" "cloning:"
+	assert_contains "$TMP/meta-pull-restore.out" "=== home histories ==="
+	assert_not_exists "$restore_root/station-a/local_workspaces/feature-a/tech_doc/.git"
+	assert_exists "$restore_root/station-a/local_workspaces/feature-a/tech_doc/notes.md"
+	assert_not_exists "$restore_root/station-a/local_workspaces/feature-a/tech_doc/stale.md"
+	assert_not_exists "$restore_root/station-a/local_workspaces/feature-a/local-only.md"
+	assert_exists "$restore_root/station-a/local_workspaces/feature-a/.private.md"
+	assert_exists "$restore_root/station-a/local_workspaces/feature-a/tech_doc/.drafts/note.md"
+	assert_exists "$restore_root/station-a/local_workspaces/feature-a/repo-local/.git"
+	assert_exists "$restore_root/station-a/local_workspaces/feature-a/repo-local/README.md"
 	assert_contains "$restore_home/.skills-hub/execute_plugins" "plugin-base"
 	assert_contains "$restore_home/.skills-hub/execute_plugins" "plugin-local"
 	assert_contains "$restore_home/.cmds-hub/cmd_history" "cmd-base"
 	assert_contains "$restore_home/.cmds-hub/cmd_history" "cmd-local"
 
-	if meta_hub pull >"$TMP/meta-hub-pull.out" 2>&1; then
-		printf 'expected meta-hub pull to be removed\n' >&2
-		exit 1
-	fi
-	assert_contains "$TMP/meta-hub-pull.out" "pull"
+	HOME="$restore_home" meta_hub sync >"$TMP/meta-hub-sync-alias.out"
+	assert_contains "$TMP/meta-hub-sync-alias.out" "deprecated; use"
 
 	other="$TMP/meta-hub-other"
 	git clone -q "$meta_remote" "$other"
@@ -774,7 +801,7 @@ EOF
 	git -C "$clone" add .skills-hub/execute_plugins .cmds-hub/cmd_history .config/tmux/pinned-sessions
 	git -C "$clone" commit -q -m "local extra metadata"
 
-	meta_hub sync >/dev/null
+	meta_hub pull >/dev/null
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-local"
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-remote"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-local"
@@ -827,7 +854,7 @@ remotes:
     roots:
       - path: "$old_root"
 EOF
-	meta_hub sync >/dev/null
+	meta_hub pull >/dev/null
 	assert_exists "$HOME/.meta-hub/info.yml"
 	assert_not_exists "$HOME/.meta-hub/registry.yml"
 	assert_contains "$HOME/.meta-hub/info.yml" "clone: \"$old_clone\""
@@ -857,7 +884,7 @@ entries:
     repo: "$legacy_remote"
     clone: "$legacy_clone"
 EOF
-	meta_hub sync >/dev/null
+	meta_hub pull >/dev/null
 	assert_exists "$HOME/.meta-hub/info.yml"
 	assert_not_exists "$HOME/.meta-hub/registry.yml"
 	assert_exists "$HOME/.meta-hub/legacy-metadata/.git"
