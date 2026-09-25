@@ -8,10 +8,15 @@ case "${1:-}" in
 esac
 
 codex_home="${CODEX_HOME:-$HOME/.codex}"
+codex_home_physical="$codex_home"
+if [ -d "$codex_home" ]; then
+	codex_home_physical="$(CDPATH= cd -- "$codex_home" && pwd -P)"
+fi
 stamp_dir="$codex_home/app-server-control"
 stamp_file="$stamp_dir/mcodex-remote-control-started"
 daemon_dir="$codex_home/app-server-daemon"
 daemon_timeout="${MCODEX_DAEMON_TIMEOUT:-8}"
+daemon_start_timeout="${MCODEX_DAEMON_START_TIMEOUT:-30}"
 mcodex_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/mcodex.XXXXXX")"
 cleanup_mcodex_tmp() {
 	rm -rf "$mcodex_tmp_dir"
@@ -64,7 +69,7 @@ daemon_ready() {
 
 start_remote_control() {
 	start_output="$mcodex_tmp_dir/remote-control-start.json"
-	run_capture_timeout "$daemon_timeout" "$start_output" codex remote-control start --json
+	run_capture_timeout "$daemon_start_timeout" "$start_output" codex remote-control start --json
 }
 
 pid_from_file() {
@@ -74,8 +79,10 @@ pid_from_file() {
 }
 
 app_server_pids() {
-	ps -axo pid=,args= 2>/dev/null | awk -v home="$codex_home/" '
-		index($2, home) == 1 &&
+	ps -axo pid=,args= 2>/dev/null | awk \
+		-v home="$codex_home/" \
+		-v physical_home="$codex_home_physical/" '
+		(index($2, home) == 1 || index($2, physical_home) == 1) &&
 		$2 ~ /\/codex$/ &&
 		$3 == "app-server" &&
 		$4 == "--remote-control" &&
@@ -129,17 +136,25 @@ terminate_processes() {
 }
 
 reset_app_server_state() {
-	updater_pid="$(pid_from_file "$daemon_dir/app-server-updater.pid")"
+	updater_pids="$({
+		pid_from_file "$daemon_dir/app-server-updater.pid"
+		pid_from_file "$daemon_dir/daemon-updater.pid"
+	} | awk 'NF && !seen[$0]++')"
 	server_pids="$({
 		app_server_pids
 		pid_from_file "$daemon_dir/app-server.pid"
-	} | awk '!seen[$0]++')"
-	terminate_processes "$updater_pid"
+		pid_from_file "$daemon_dir/daemon.pid"
+	} | awk 'NF && !seen[$0]++')"
+	terminate_processes $updater_pids
 	terminate_processes $server_pids
 	rm -f "$stamp_file" \
 		"$stamp_dir/app-server-control.sock" \
 		"$daemon_dir/app-server.pid" \
-		"$daemon_dir/app-server-updater.pid"
+		"$daemon_dir/app-server-updater.pid" \
+		"$daemon_dir/app-server-updater.sock" \
+		"$daemon_dir/daemon.pid" \
+		"$daemon_dir/daemon-updater.pid" \
+		"$daemon_dir/daemon-updater.sock"
 }
 
 ensure_remote_control() {
