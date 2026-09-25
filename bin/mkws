@@ -542,7 +542,13 @@ def resolve_default_context(pwd: Path, name_flag: str):
     if yml.is_file():
         data = read_manifest(yml)
         name_from_yml = data["name"] or ""
-        if name_flag and name_flag != name_from_yml:
+        name_is_current_path = False
+        if name_flag and (Path(name_flag).is_absolute() or "/" in name_flag):
+            candidate = Path(name_flag)
+            if not candidate.is_absolute():
+                candidate = pwd / candidate
+            name_is_current_path = candidate.resolve() == pwd.resolve()
+        if name_flag and not name_is_current_path and name_flag != name_from_yml:
             die(f"--name '{name_flag}' does not match workspace.yml name '{name_from_yml}'")
         return pwd, pwd.parent.parent, name_from_yml
 
@@ -1525,7 +1531,9 @@ def cmd_open(name_flag: str, query_parts: list) -> int:
     return rc
 
 
-def cmd_resume(folder: str = "") -> int:
+def cmd_resume(folder: str = "", name_flag: str = "") -> int:
+    if folder and name_flag:
+        die("'resume' accepts either --name <workspace> or a workspace folder, not both")
     if folder:
         workspace_dir = Path(folder)
         if not workspace_dir.is_absolute():
@@ -1534,7 +1542,7 @@ def cmd_resume(folder: str = "") -> int:
         if not (workspace_dir / "workspace.yml").is_file():
             die(f"no workspace.yml at {workspace_dir} (not a workspace)")
     else:
-        workspace_dir = resolve_existing_workspace_context(Path.cwd(), "")
+        workspace_dir = resolve_existing_workspace_context(Path.cwd(), name_flag)
     data = read_manifest(workspace_dir / "workspace.yml")
     repos = normalize_repos(data["repos"], data["branch_name"])
 
@@ -1870,7 +1878,7 @@ USAGE = """\
 Usage:
   mkws [--name <name>] [--branch <branch>] [--add <repo>... [--base <branch>]]...
   mkws [--name <workspace>] --link <name> <link> [<name> <link>...]
-  mkws resume [<workspace-folder>]
+  mkws resume [--name <workspace>|<workspace-folder>]
   mkws checkout [--base|<branch>]
   mkws run <command>
   mkws pull [<folder>...]
@@ -1888,9 +1896,11 @@ Modes:
   resume     Restore workspace repos that are listed in workspace.yml but
              missing on disk. Existing worktrees are left untouched. Source
              repos must already exist at the workstation root. Run from a
-             workspace dir or any repo inside it, or pass a workspace folder.
+             workspace dir or any repo inside it. From the workstation root,
+             pass --name <workspace> or a workspace folder.
              Examples:
                mkws resume
+               mkws resume --name myws
                mkws resume ./local_workspaces/myws
   checkout   Switch every repo recorded in the current workspace manifest.
              No argument restores each repo's workspace branch. `--base`
@@ -2195,9 +2205,9 @@ def main() -> None:
             die("'checkout' accepts no argument, --base, or one branch name")
         sys.exit(cmd_checkout(target_path, use_base=checkout_base))
     if mode == "resume":
-        if repos or branch or name or link_pairs or target_paths or sync_push or checkout_base:
-            die("'resume' takes an optional workspace folder only; --add/--branch/--name/--link are not accepted")
-        sys.exit(cmd_resume(target_path))
+        if repos or branch or link_pairs or target_paths or sync_push or checkout_base:
+            die("'resume' takes --name <workspace> or an optional workspace folder; --add/--branch/--link are not accepted")
+        sys.exit(cmd_resume(target_path, name))
     if mode == "run":
         if repos or branch or name or link_pairs or target_path or sync_push or checkout_base:
             die("'run' takes a command only")
