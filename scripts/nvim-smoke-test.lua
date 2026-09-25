@@ -1369,6 +1369,11 @@ local function test_worktree_plugin_starts_lazy()
     type(repository_map) == "table" and type(repository_map.callback) == "function",
     "<leader>wr is not a lazy callback mapping"
   )
+  local terminal_repository_map = vim.fn.maparg("<leader>wr", "t", false, true)
+  assert_true(
+    type(terminal_repository_map) == "table" and type(terminal_repository_map.callback) == "function",
+    "<leader>wr is not available from terminal mode"
+  )
   local workspace_map = vim.fn.maparg("<leader>ww", "n", false, true)
   assert_true(
     type(workspace_map) == "table" and type(workspace_map.callback) == "function",
