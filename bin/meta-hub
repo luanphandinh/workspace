@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""meta-hub - sync workspace metadata into a git repository."""
+"""meta-hub - manage workspace metadata through a git repository."""
 
 import getpass
 import hashlib
@@ -773,7 +773,7 @@ def print_indexed_metadata_files(manifest_record: dict, workspace_records: list)
     heading("indexed metadata")
     info(f"workstation.yml: {manifest_record['rel']} ({manifest_record['status']})")
     for record in workspace_records:
-        info(f"workspace.yml: {record['rel']} ({record['status']})")
+        info(f"workspace file: {record['rel']} ({record['status']})")
     print_resolved_metadata_records([manifest_record, *workspace_records])
 
 
@@ -967,14 +967,75 @@ def merge_copy_path(src: Path, dest: Path, rel_path: Path) -> list:
     return [merge_copy_file(src, dest, rel_path)]
 
 
-def copy_workspace_manifests(workstation_root: Path, clone: Path, dest_prefix: Path) -> list:
+def remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def remove_legacy_tech_doc_git(workspace_dir: Path) -> None:
+    git_dir = workspace_dir / TECH_DOC_DIR / ".git"
+    if git_dir.exists() or git_dir.is_symlink():
+        remove_path(git_dir)
+
+
+def workspace_snapshot_files(workspace_dir: Path) -> list:
+    files = []
+    for root, dirs, names in os.walk(workspace_dir):
+        root_path = Path(root)
+        kept_dirs = []
+        for name in sorted(dirs):
+            if name.startswith("."):
+                continue
+            child = root_path / name
+            if child.is_symlink():
+                files.append(child)
+            elif (child / ".git").exists():
+                continue
+            else:
+                kept_dirs.append(name)
+        dirs[:] = kept_dirs
+        for name in sorted(names):
+            if name.startswith("."):
+                continue
+            files.append(root_path / name)
+    return sorted(files, key=lambda path: path.relative_to(workspace_dir).as_posix())
+
+
+def replace_copy_file(src: Path, dest: Path, rel_path: Path) -> dict:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() or dest.is_symlink():
+        remove_path(dest)
+    if src.is_symlink():
+        dest.symlink_to(os.readlink(src), target_is_directory=src.is_dir())
+    else:
+        shutil.copy2(src, dest)
+    return metadata_file_record(rel_path, dest, "copied")
+
+
+def copy_workspace_snapshot(src: Path, dest: Path, rel_prefix: Path) -> list:
+    records = []
+    for source_file in workspace_snapshot_files(src):
+        rel = source_file.relative_to(src)
+        records.append(replace_copy_file(source_file, dest / rel, rel_prefix / rel))
+    return records
+
+
+def copy_workspace_files(workstation_root: Path, clone: Path, dest_prefix: Path) -> list:
     records = []
     local_workspaces = workstation_root / WS_CONTAINER
     if not local_workspaces.is_dir():
         return records
     for workspace_yml in sorted(local_workspaces.glob(f"*/{WORKSPACE_FILE}")):
-        rel = workspace_yml.relative_to(workstation_root)
-        records.append(merge_copy_file(workspace_yml, clone / dest_prefix / rel, dest_prefix / rel))
+        workspace_dir = workspace_yml.parent
+        remove_legacy_tech_doc_git(workspace_dir)
+        workspace_rel = workspace_dir.relative_to(workstation_root)
+        destination = clone / dest_prefix / workspace_rel
+        if destination.exists() or destination.is_symlink():
+            remove_path(destination)
+        destination.mkdir(parents=True, exist_ok=True)
+        records.extend(copy_workspace_snapshot(workspace_dir, destination, dest_prefix / workspace_rel))
     return records
 
 
@@ -1075,7 +1136,7 @@ def index_workstation_metadata(entry: dict, rel_root: str, workstation_root: Pat
         "manifest": manifest_rel,
     })
     dest_prefix = Path() if rel_root == "." else Path(rel_root)
-    workspace_records = copy_workspace_manifests(workstation_root, clone, dest_prefix)
+    workspace_records = copy_workspace_files(workstation_root, clone, dest_prefix)
     print_indexed_metadata_files(manifest_record, workspace_records)
     return workstations, len(data.get("repos", [])), len(workspace_records)
 
@@ -1123,7 +1184,7 @@ def index_entry_path(path: str) -> bool:
     if changed:
         ok(
             f"indexed {repo_count} repo(s), "
-            f"{workspace_count} workspace manifest(s), {len(extra_records)} extra file(s)"
+            f"{workspace_count} workspace file(s), {len(extra_records)} extra file(s)"
         )
     return True
 
@@ -1170,7 +1231,7 @@ def index_entry(entry: dict) -> bool:
     if changed:
         ok(
             f"indexed {indexed} workstation(s), {repo_count} repo(s), "
-            f"{workspace_count} workspace manifest(s), {len(extra_records)} extra file(s)"
+            f"{workspace_count} workspace file(s), {len(extra_records)} extra file(s)"
         )
     elif skipped:
         info(f"skipped {skipped} missing workstation(s)")
@@ -1218,30 +1279,54 @@ def setup_repo_from_metadata(workstation_root: Path, repo: dict, position: int, 
     return "cloned"
 
 
-def restore_workspace_manifests(clone: Path, station_root: Path, metadata_prefix: Path) -> list:
+def remove_workspace_non_git_files(workspace_dir: Path) -> None:
+    if not workspace_dir.is_dir():
+        return
+    for child in list(workspace_dir.iterdir()):
+        if child.name.startswith("."):
+            continue
+        if child.is_dir() and not child.is_symlink() and (child / ".git").exists():
+            continue
+        if child.is_dir() and not child.is_symlink():
+            remove_workspace_non_git_files(child)
+            try:
+                child.rmdir()
+            except OSError:
+                pass
+        else:
+            remove_path(child)
+
+
+def restore_workspace_files(clone: Path, station_root: Path, metadata_prefix: Path) -> list:
     records = []
     metadata_root = clone / metadata_prefix
     for workspace_yml in sorted((metadata_root / WS_CONTAINER).glob(f"*/{WORKSPACE_FILE}")):
-        rel = workspace_yml.relative_to(metadata_root)
-        records.append(merge_copy_file(workspace_yml, station_root / rel, metadata_prefix / rel))
+        source = workspace_yml.parent
+        workspace_rel = source.relative_to(metadata_root)
+        destination = station_root / workspace_rel
+        destination.mkdir(parents=True, exist_ok=True)
+        remove_legacy_tech_doc_git(destination)
+        remove_workspace_non_git_files(destination)
+        records.extend(copy_workspace_snapshot(source, destination, metadata_prefix / workspace_rel))
+        (destination / TECH_DOC_DIR).mkdir(parents=True, exist_ok=True)
     return records
 
 
-def print_restored_workspace_manifests(records: list) -> None:
+def print_restored_workspace_files(records: list) -> None:
     if not records:
         return
-    heading("workspace manifests")
+    heading("workspace files")
     for record in records:
         info(f"{record['rel']}: {record['status']}")
 
 
-def sync_entry(entry: dict) -> bool:
+def pull_entry(entry: dict) -> bool:
     root = Path(entry["root"]).resolve()
     root.mkdir(parents=True, exist_ok=True)
     clone = Path(entry["clone"]).expanduser().resolve()
     ensure_clone(entry["repo"], clone)
 
-    heading(f"sync {repo_basename(entry['repo'])}")
+    heading(f"pull {repo_basename(entry['repo'])}")
     if not pull_metadata(entry):
         warn("skipping workstation setup because remote pull did not complete")
         return False
@@ -1270,9 +1355,9 @@ def sync_entry(entry: dict) -> bool:
         for repo in normalize_workstation_repos(data.get("repos", [])):
             repo_jobs.append((station_root, repo))
         metadata_prefix = Path() if rel_root == "." else Path(rel_root)
-        workspace_records.extend(restore_workspace_manifests(clone, station_root, metadata_prefix))
+        workspace_records.extend(restore_workspace_files(clone, station_root, metadata_prefix))
 
-    print_restored_workspace_manifests(workspace_records)
+    print_restored_workspace_files(workspace_records)
 
     for position, (station_root, repo) in enumerate(repo_jobs, start=1):
         result = setup_repo_from_metadata(station_root, repo, position, len(repo_jobs))
@@ -1285,7 +1370,7 @@ def sync_entry(entry: dict) -> bool:
 
     ok(
         f"cloned {cloned}, skipped {skipped}, failed {failed}, "
-        f"workspace manifests {len(workspace_records)}"
+        f"workspace files {len(workspace_records)}"
     )
     return failed == 0
 
@@ -1591,8 +1676,8 @@ def run_entries(mode: str, pick: bool) -> int:
     entries = choose_entries(read_registry(), pick)
     ok_count = 0
     for entry in entries:
-        if mode == "sync":
-            ok_count += 1 if sync_entry(entry) else 0
+        if mode == "pull":
+            ok_count += 1 if pull_entry(entry) else 0
         elif mode == "sync_tech_doc":
             ok_count += 1 if sync_tech_doc_entry(entry) else 0
         elif mode == "push":
@@ -1608,7 +1693,7 @@ Usage:
   meta-hub -r <git-repository>
   meta-hub index
   meta-hub index -p <workstation-folder>
-  meta-hub sync [pick]
+  meta-hub pull [pick]
   meta-hub sync_tech_doc [pick]
   meta-hub push [pick]
   meta-hub project
@@ -1651,8 +1736,11 @@ def main() -> None:
         info(f"index: {ok_count}/{len(entries)}")
         sys.exit(0 if ok_count == len(entries) else 1)
 
-    if argv[0] in ("sync", "sync_tech_doc", "push"):
+    if argv[0] in ("pull", "sync", "sync_tech_doc", "push"):
         mode = argv.pop(0)
+        if mode == "sync":
+            warn("`meta-hub sync` is deprecated; use `meta-hub pull`")
+            mode = "pull"
         pick = False
         if argv == ["pick"]:
             pick = True

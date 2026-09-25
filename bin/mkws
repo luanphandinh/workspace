@@ -276,16 +276,16 @@ def write_manifest(yml: Path, name: str, branch: str, repos: list, links: list =
     yml.write_text("\n".join(lines) + "\n")
 
 
-def ensure_tech_doc_repo(workspace_dir: Path) -> None:
+def ensure_tech_doc_dir(workspace_dir: Path) -> None:
     tech_doc = workspace_dir / "tech_doc"
     if tech_doc.exists() and not tech_doc.is_dir():
         die(f"tech_doc path exists and is not a directory: {tech_doc}")
     tech_doc.mkdir(parents=True, exist_ok=True)
-    if (tech_doc / ".git").exists():
-        return
-    proc = run(["git", "-C", str(tech_doc), "init", "-q"])
-    if proc.returncode != 0:
-        die(f"failed to initialize tech_doc git repo at {tech_doc}")
+    git_dir = tech_doc / ".git"
+    if git_dir.is_dir() and not git_dir.is_symlink():
+        shutil.rmtree(git_dir)
+    elif git_dir.exists() or git_dir.is_symlink():
+        git_dir.unlink()
 
 
 def normalize_repos(repos: list, default_branch: str = "") -> list:
@@ -1650,7 +1650,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
         branch = branch_flag or ""
         branch_for_added_repos = branch
 
-    ensure_tech_doc_repo(workspace_dir)
+    ensure_tech_doc_dir(workspace_dir)
 
     added = skipped = failed = 0
 
@@ -1965,8 +1965,8 @@ Flags:
 
 Layout:
   All workspaces live inside `$PWD/local_workspaces/<name>/`.
-  Each workspace has `tech_doc/` initialized as its own git repo for design
-  milestone commits.
+  Each workspace has a normal `tech_doc/` directory. `meta-hub index` stores
+  visible workspace files that are outside nested git repositories.
 
 Environment:
   NO_COLOR      set to any value to disable colored output.
