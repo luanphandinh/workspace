@@ -2836,6 +2836,7 @@ local function test_agent_terminal_reference_restores_view(repo)
 
   local terminal_buf = vim.api.nvim_get_current_buf()
   local terminal_win = vim.api.nvim_get_current_win()
+  assert_true(not vim.wo[terminal_win].wrap, "agent terminal enabled editor line wrapping")
   local job = vim.b[terminal_buf].terminal_job_id
   vim.fn.chansend(job, "i=1; while [ $i -le 80 ]; do echo line-$i; i=$((i + 1)); done\n")
   wait_until("agent terminal scrollback", function()

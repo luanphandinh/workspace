@@ -40,6 +40,9 @@ chmod +x "$fakebin/fzf"
 cat > "$fakebin/codex" <<SH
 #!/bin/sh
 printf '%s\n' "\$*" >> "$codex_log"
+if [ "\${1:-}" = "-c" ] && [ "\${2:-}" = "tui.animations=false" ]; then
+  shift 2
+fi
 case "\${1:-} \${2:-} \${3:-}" in
   "remote-control start --json")
     : > "$daemon_file"
@@ -146,12 +149,12 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" resume
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" resume -C "$tmp/resume-other" explicit
 test "$(grep -Fxc 'remote-control start --json' "$codex_log")" = 1
 grep -Fxq 'app-server daemon version' "$codex_log"
-grep -Fxq -- 'resume --remote unix:// -C '"$repo_root" "$codex_log"
-grep -Fxq -- '--remote unix:// -C '"$repo_root"' prompt' "$codex_log"
-grep -Fxq -- '--remote unix:// -C '"$repo_root"' next' "$codex_log"
-grep -Fxq -- '--remote unix:// -C '"$tmp/other"' explicit' "$codex_log"
-grep -Fxq -- 'resume --remote unix:// -C '"$repo_root"' --last' "$codex_log"
-grep -Fxq -- 'resume --remote unix:// -C '"$tmp/resume-other"' explicit' "$codex_log"
+grep -Fxq -- '-c tui.animations=false resume --remote unix:// -C '"$repo_root" "$codex_log"
+grep -Fxq -- '-c tui.animations=false --remote unix:// -C '"$repo_root"' prompt' "$codex_log"
+grep -Fxq -- '-c tui.animations=false --remote unix:// -C '"$repo_root"' next' "$codex_log"
+grep -Fxq -- '-c tui.animations=false --remote unix:// -C '"$tmp/other"' explicit' "$codex_log"
+grep -Fxq -- '-c tui.animations=false resume --remote unix:// -C '"$repo_root"' --last' "$codex_log"
+grep -Fxq -- '-c tui.animations=false resume --remote unix:// -C '"$tmp/resume-other"' explicit' "$codex_log"
 
 stale_home="$tmp/stale-codex-home"
 mkdir -p "$stale_home/app-server-control" "$stale_home/app-server-daemon"
@@ -166,7 +169,7 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" CODEX_HOME="$stale_home" CODEX_FA
 	sh "$repo_root/bin/mcodex" stale-prompt
 grep -Fxq 'app-server daemon version' "$codex_log"
 grep -Fxq 'remote-control start --json' "$codex_log"
-grep -Fxq -- '--remote unix:// -C '"$repo_root"' stale-prompt' "$codex_log"
+grep -Fxq -- '-c tui.animations=false --remote unix:// -C '"$repo_root"' stale-prompt' "$codex_log"
 test ! -e "$stale_home/app-server-control/app-server-control.sock"
 test ! -e "$stale_home/app-server-daemon/daemon.pid"
 test ! -e "$stale_home/app-server-daemon/daemon-updater.pid"
@@ -189,7 +192,7 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" CODEX_HOME="$duplicate_home" \
 	sh "$repo_root/bin/mcodex" duplicate-prompt 2> "$tmp/duplicate-stderr"
 grep -Fxq 'mcodex: consolidating duplicate app-server processes' "$tmp/duplicate-stderr"
 grep -Fxq 'remote-control start --json' "$codex_log"
-grep -Fxq -- '--remote unix:// -C '"$repo_root"' duplicate-prompt' "$codex_log"
+grep -Fxq -- '-c tui.animations=false --remote unix:// -C '"$repo_root"' duplicate-prompt' "$codex_log"
 test ! -e "$duplicate_home/app-server-control/app-server-control.sock"
 test ! -e "$duplicate_home/app-server-daemon/daemon.pid"
 test ! -e "$duplicate_home/app-server-daemon/daemon-updater.pid"
