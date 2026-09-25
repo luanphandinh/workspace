@@ -3,6 +3,7 @@ approval_policy = "never"
 
 [tui]
 auto_recap = false
+alternate_screen = "never"
 
 [features]
 multi_agent = true
