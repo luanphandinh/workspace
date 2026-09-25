@@ -2680,15 +2680,12 @@ local function test_terminal_reference_links()
     "first example-repo/main.go:1 and missing.go:2",
   })
   local namespace = references.attach(buf, root)
-  local marks = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
-  assert_true(#marks == 0, "hidden terminal references were scanned during attach")
-
   local previous_buf = vim.api.nvim_get_current_buf()
   vim.api.nvim_win_set_buf(0, buf)
-  marks = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
-  assert_true(#marks == 1, "terminal references did not link exactly one existing file")
-  assert_true(marks[1][4].url == nil, "terminal reference emitted a terminal hyperlink")
-  local initial_mark_id = marks[1][1]
+  assert_true(
+    #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, {}) == 0,
+    "terminal references scanned output before a click"
+  )
 
   local click_map = vim.fn.maparg("<M-LeftMouse>", "n", false, true)
   local terminal_click_map = vim.fn.maparg("<M-LeftMouse>", "t", false, true)
@@ -2731,79 +2728,58 @@ local function test_terminal_reference_links()
   local plain_click_result = click_map.callback()
   vim.fn.getmousepos = original_getmousepos
   assert_true(plain_click_result == "<M-LeftMouse>", "plain terminal click was not passed through")
-  vim.api.nvim_win_set_buf(0, previous_buf)
 
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-    "second example-repo/other.go:1:1",
-  })
-  vim.wait(300)
-  local hidden_marks = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
+  for index = 1, 20 do
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+      "update-" .. index .. " example-repo/other.go:1:1",
+    })
+  end
   assert_true(
-    #hidden_marks == 1 and hidden_marks[1][1] == initial_mark_id,
-    "hidden terminal reference was rescanned"
+    #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, {}) == 0,
+    "terminal output updates created reference extmarks"
   )
-
-  vim.api.nvim_win_set_buf(0, buf)
-  wait_until("updated terminal reference link", function()
-    local updated = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
-    return #updated == 1 and updated[1][3] == 7 and updated[1][4].url == nil
-  end)
-
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-    "first example-repo/main.go:1",
-  })
-  wait_until("debounced visible terminal reference link", function()
-    local updated = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
-    return #updated == 1 and updated[1][3] == 6 and updated[1][4].url == nil
-  end)
-  local settled_mark_id = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, {})[1][1]
-
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-    "second example-repo/other.go:1:1",
-  })
-  vim.wait(180)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-    "output still changing",
-  })
-  vim.wait(120)
-  local unsettled = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
-  assert_true(
-    #unsettled == 1 and unsettled[1][1] == settled_mark_id,
-    "terminal references scanned before output settled"
-  )
-  wait_until("terminal reference scan after output settles", function()
-    return #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true }) == 0
-  end)
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
     "wrapped example-repo/",
     "  other.go:1:1",
   })
-  wait_until("wrapped terminal reference link", function()
-    local updated = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
-    return #updated == 2
-      and updated[1][4].url == nil
-      and updated[2][4].url == nil
+
+  clicked_target = nil
+  references.open = function(path, line, column)
+    clicked_target = { path = path, line = line, column = column }
+    return true
+  end
+  vim.fn.getmousepos = function()
+    return { winid = vim.api.nvim_get_current_win(), line = 1, column = 9 }
+  end
+  assert_true(click_map.callback() == "<Ignore>", "wrapped reference first line was not consumed")
+  vim.wait(50, function()
+    return clicked_target ~= nil
   end)
+  assert_true(clicked_target and clicked_target.path == second_path, "wrapped reference first line opened the wrong file")
+
+  clicked_target = nil
+  vim.fn.getmousepos = function()
+    return { winid = vim.api.nvim_get_current_win(), line = 2, column = 3 }
+  end
+  assert_true(click_map.callback() == "<Ignore>", "wrapped reference second line was not consumed")
+  vim.wait(50, function()
+    return clicked_target ~= nil
+  end)
+  references.open = original_open
+  vim.fn.getmousepos = original_getmousepos
+  assert_true(clicked_target and clicked_target.path == second_path, "wrapped reference second line opened the wrong file")
 
   references.set_enabled(false, true)
-  assert_true(
-    #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true }) == 0,
-    "disabling terminal references left hyperlinks behind"
-  )
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-    "second example-repo/other.go:1:1",
-  })
-  vim.wait(300)
-  assert_true(
-    #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true }) == 0,
-    "disabled terminal references continued scanning"
-  )
+  vim.fn.getmousepos = function()
+    return { winid = vim.api.nvim_get_current_win(), line = 2, column = 3 }
+  end
+  assert_true(click_map.callback() == "<M-LeftMouse>", "disabled terminal reference click was consumed")
+  vim.fn.getmousepos = original_getmousepos
   references.set_enabled(true, true)
-  local enabled_marks = vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, { details = true })
   assert_true(
-    #enabled_marks == 1 and enabled_marks[1][4].url == nil,
-    "enabling terminal references did not rebuild visible links"
+    #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, {}) == 0,
+    "enabling terminal references scanned existing output"
   )
   vim.api.nvim_win_set_buf(0, previous_buf)
 
