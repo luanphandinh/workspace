@@ -156,46 +156,7 @@ local actions = {
   {
     name = "Change Agent Terminal Position",
     action = function()
-      local pickers = require("telescope.pickers")
-      local finders = require("telescope.finders")
-      local conf = require("telescope.config").values
-      local actions_telescope = require("telescope.actions")
-      local action_state = require("telescope.actions.state")
-      local themes = require("telescope.themes")
-
-      local options = { "full", "left", "right" }
-
-      local opts = themes.get_dropdown({
-        winblend = 10,
-        prompt_title = "Agent Terminal Position",
-        previewer = false,
-        borderchars = { "─", "│", "─", "│", "╭", "╮", "╯", "╰" },
-        layout_strategy = "center",
-        layout_config = { width = 0.3, height = 0.3 },
-      })
-
-      pickers.new(opts, {
-        finder = finders.new_table({
-          results = options,
-          entry_maker = function(pos)
-            return { value = pos, display = pos, ordinal = pos }
-          end,
-        }),
-        sorter = conf.generic_sorter({}),
-        attach_mappings = function(prompt_bufnr, _)
-          actions_telescope.select_default:replace(function()
-            local sel = action_state.get_selected_entry()
-            actions_telescope.close(prompt_bufnr)
-            if not sel then return end
-            local ok, agents = pcall(require, "luanphan.plugins.agents")
-            if ok and type(agents.set_float_position) == "function" then
-              agents.set_float_position(sel.value)
-            end
-            vim.notify("Agent terminal position: " .. sel.value)
-          end)
-          return true
-        end,
-      }):find()
+      require("luanphan.plugins.agents").pick_agent_position()
     end,
   },
   {

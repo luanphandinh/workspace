@@ -45,9 +45,14 @@ local apis = {}
 local configured = {}
 local setup_opts = {}
 local agent_container
+local agent_positions = { full = true, left = true, right = true }
 
 local function default_agent_file()
   return vim.g.luanphan_default_agent_file or (vim.fn.stdpath("data") .. "/default-agent")
+end
+
+local function agent_position_file()
+  return vim.g.luanphan_agent_position_file or (vim.fn.stdpath("data") .. "/agent-position")
 end
 
 function M.default_agent()
@@ -68,6 +73,34 @@ function M.set_default_agent(name)
     return false
   end
   vim.notify("Default agent: " .. name)
+  return true
+end
+
+function M.agent_position()
+  local ok, lines = pcall(vim.fn.readfile, agent_position_file(), "", 1)
+  local position = ok and vim.trim(lines[1] or "") or ""
+  return agent_positions[position] and position or "full"
+end
+
+function M.set_agent_position(position)
+  if not agent_positions[position] then
+    return false
+  end
+  local path = agent_position_file()
+  local made_dir = pcall(vim.fn.mkdir, vim.fn.fnamemodify(path, ":h"), "p")
+  local wrote, result = pcall(vim.fn.writefile, { position }, path)
+  if not made_dir or not wrote or result ~= 0 then
+    vim.notify("Could not save agent position", vim.log.levels.ERROR)
+    return false
+  end
+  for _, name in ipairs(agent_order) do
+    setup_opts[name] = vim.tbl_extend("force", setup_opts[name] or {}, { float_position = position })
+    local api = apis[name]
+    if api and type(api.set_position) == "function" then
+      api.set_position(position)
+    end
+  end
+  vim.notify("Agent position: " .. position)
   return true
 end
 
@@ -177,6 +210,25 @@ function M.pick_default_agent()
   })
 end
 
+function M.pick_agent_position()
+  local current = M.agent_position()
+  local choices = {}
+  for _, position in ipairs({ "full", "left", "right" }) do
+    choices[#choices + 1] = {
+      id = position,
+      label = position,
+      display = position == current and (position .. " (current)") or position,
+      ordinal = position,
+    }
+  end
+  require("luanphan.view_container").select("Agent Position", choices, function(choice)
+    M.set_agent_position(choice.id)
+  end, {
+    layout_strategy = "center",
+    layout_config = { width = 0.3, height = 0.25 },
+  })
+end
+
 local function visible_agent()
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_is_valid(win) then
@@ -229,7 +281,7 @@ local function get_agent(name)
     notify_prefix = def.notify_prefix,
     augroup_prefix = def.augroup_prefix,
     hint_open = def.keys.toggle.lhs,
-    defaults = resolve_defaults(def.defaults),
+    defaults = vim.tbl_extend("force", resolve_defaults(def.defaults), { float_position = M.agent_position() }),
     on_prepare = function(win)
       agent_container:reserve(win)
     end,
@@ -262,13 +314,7 @@ local function setup_agent(name)
 end
 
 function M.set_float_position(pos)
-  for _, name in ipairs(agent_order) do
-    setup_opts[name] = vim.tbl_extend("force", setup_opts[name] or {}, { float_position = pos })
-    local api = apis[name]
-    if api and type(api.set_float_position) == "function" then
-      api.set_float_position(pos)
-    end
-  end
+  return M.set_agent_position(pos)
 end
 
 function M.focus(name, bufnr, opts)
@@ -380,16 +426,17 @@ local function key_spec(name, action)
   return {
     key.lhs,
     function()
+      local agents = require("luanphan.plugins.agents")
       if name == "codex" and action == "toggle" then
-        M.toggle()
+        agents.toggle()
       elseif name == "codex" and action == "send" then
-        M.send_selection()
+        agents.send_selection()
       elseif action == "toggle" then
-        M.toggle_agent(name)
+        agents.toggle_agent(name)
       elseif action == "focus" then
-        M.focus(name)
+        agents.focus(name)
       else
-        M.send_selection(name)
+        agents.send_selection(name)
       end
     end,
     mode = key.mode,
@@ -426,9 +473,18 @@ local function agent_spec(name)
   }
   if name == "codex" then
     keys[#keys + 1] = {
-      "<leader>sa",
-      M.pick_default_agent,
+      "<leader>sad",
+      function()
+        require("luanphan.plugins.agents").pick_default_agent()
+      end,
       desc = "Default agent",
+    }
+    keys[#keys + 1] = {
+      "<leader>sap",
+      function()
+        require("luanphan.plugins.agents").pick_agent_position()
+      end,
+      desc = "Agent position",
     }
   end
   return {

@@ -28,6 +28,7 @@ return {
         { "<leader>k", group = "Editor" },
         { "<leader>r", group = "Restart", icon = { icon = " ", color = "cyan" } },
         { "<leader>s", group = "Settings", icon = { icon = " ", color = "yellow" } },
+        { "<leader>sa", group = "Agent" },
         { "<leader>t", group = "Toggle" },
         { "<leader>w", group = "Workspace", icon = { icon = "󰍹 ", color = "cyan" } },
         { "<leader>x", group = "Claude", icon = { icon = " ", color = "green" } },
