@@ -213,7 +213,7 @@ test_mkws() {
 	git -C "$root/repo-b" worktree remove "$workspace/repo-b"
 	assert_not_exists "$workspace/repo-b"
 	(
-		cd "$workspace/repo-a"
+		cd "$workspace"
 		mkws resume > "$TMP/mkws-resume.out"
 	)
 	assert_exists "$workspace/repo-a/resume-local.txt"
@@ -224,7 +224,7 @@ test_mkws() {
 	git -C "$root/repo-b" worktree remove "$workspace/repo-b"
 	(
 		cd "$root"
-		mkws resume local_workspaces/feature-a >/dev/null
+		mkws resume --name feature-a >/dev/null
 	)
 	assert_exists "$workspace/repo-b/.git"
 	assert_eq "feature/a" "$(git -C "$workspace/repo-b" branch --show-current)"
