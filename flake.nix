@@ -57,7 +57,7 @@
           codingPackages = with pkgs; [
             cargo
             gcc
-            go_1_25
+            go_1_26
             gopls
             nerd-fonts.fira-code
             neovim

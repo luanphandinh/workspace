@@ -494,7 +494,11 @@ local function test_csv_preview_keymap()
   wait_until("csvlens preview", function()
     return visible_csvlens_preview_count() == 1 and vim.fn.filereadable(log) == 1
   end, 3000)
-  assert_true(read_lines(log)[1] == csv, "csvlens should receive current CSV file")
+  local preview_file = read_lines(log)[1]
+  assert_true(
+    preview_file and realpath(preview_file) == realpath(csv),
+    "csvlens should receive current CSV file: " .. vim.inspect(preview_file)
+  )
 
   local preview_buf
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
