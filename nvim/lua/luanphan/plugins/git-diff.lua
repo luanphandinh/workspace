@@ -113,7 +113,8 @@ local function close_or_focus_existing_diffview(cwd)
   return true
 end
 
-local function open_diffview(repo, revision)
+local function open_diffview(repo, revision, retries)
+  retries = retries or 2
   local command = "DiffviewOpen"
   if revision and revision ~= "" then
     command = command .. " " .. revision
@@ -121,7 +122,17 @@ local function open_diffview(repo, revision)
   if repo and repo ~= "" then
     command = command .. " -C" .. vim.fn.fnameescape(repo)
   end
-  vim.cmd(command)
+
+  local ok, lib = pcall(require, "diffview.lib")
+  local view_count = ok and #(lib.views or {}) or 0
+  local command_ok, command_error = pcall(vim.cmd, command)
+  if ok and #(lib.views or {}) == view_count and retries > 0 then
+    vim.schedule(function()
+      open_diffview(repo, revision, retries - 1)
+    end)
+  elseif not command_ok then
+    vim.notify(command_error, vim.log.levels.ERROR)
+  end
 end
 
 local function toggle_file_history()
