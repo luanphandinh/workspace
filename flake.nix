@@ -94,11 +94,15 @@
           linuxPackages = with pkgs; [
             curl
           ];
+          darwinPackages = with pkgs; [
+            neovide
+          ];
           allPackages =
             systemPackages
             ++ codingPackages
             ++ terminalPackages
-            ++ pkgs.lib.optionals pkgs.stdenv.isLinux linuxPackages;
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux linuxPackages
+            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin darwinPackages;
         in
         allPackages;
     in
