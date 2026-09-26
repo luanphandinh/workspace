@@ -1352,7 +1352,11 @@ def pull_entry(entry: dict) -> bool:
             warn(f"missing metadata workstation manifest: {manifest_rel}")
             continue
         data = read_workstation_manifest_text(manifest.read_text())
-        for repo in normalize_workstation_repos(data.get("repos", [])):
+        manifest_repos = [
+            *data.get("repos", []),
+            *data.get("_external", {}).get("repos", []),
+        ]
+        for repo in normalize_workstation_repos(manifest_repos):
             repo_jobs.append((station_root, repo))
         metadata_prefix = Path() if rel_root == "." else Path(rel_root)
         workspace_records.extend(restore_workspace_files(clone, station_root, metadata_prefix))
