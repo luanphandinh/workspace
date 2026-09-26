@@ -52,16 +52,12 @@ daemon_ready() {
 	version_output="$mcodex_tmp_dir/daemon-version.json"
 	run_capture_timeout "$daemon_timeout" "$version_output" codex app-server daemon version || return 1
 	daemon_status="$(json_field status "$version_output")"
-	cli_version="$(json_field cliVersion "$version_output")"
 	app_server_version="$(json_field appServerVersion "$version_output")"
 	managed_version="$(json_field managedCodexVersion "$version_output")"
 	if [ -n "$daemon_status" ] && [ "$daemon_status" != "running" ]; then
 		return 1
 	fi
-	if [ -n "$cli_version" ] && [ -n "$app_server_version" ] && [ "$cli_version" != "$app_server_version" ]; then
-		return 2
-	fi
-	if [ -n "$cli_version" ] && [ -n "$managed_version" ] && [ "$cli_version" != "$managed_version" ]; then
+	if [ -n "$app_server_version" ] && [ -n "$managed_version" ] && [ "$app_server_version" != "$managed_version" ]; then
 		return 2
 	fi
 	return 0

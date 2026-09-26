@@ -50,12 +50,16 @@ case "\${1:-} \${2:-} \${3:-}" in
     exit 0
     ;;
   "app-server daemon version")
+    if [ -n "\${CODEX_FAKE_CLI_VERSION_DRIFT:-}" ]; then
+      printf '{"status":"running","managedCodexVersion":"0.142.1","cliVersion":"0.142.0","appServerVersion":"0.142.1"}\n'
+      exit 0
+    fi
     if [ -f "$daemon_file" ]; then
       printf '{"status":"running","managedCodexVersion":"0.142.1","cliVersion":"0.142.1","appServerVersion":"0.142.1"}\n'
       exit 0
     fi
     if [ -n "\${CODEX_FAKE_STALE_DAEMON:-}" ]; then
-      printf '{"status":"running","managedCodexVersion":"0.142.0","cliVersion":"0.142.1","appServerVersion":"0.142.0"}\n'
+      printf '{"status":"running","managedCodexVersion":"0.142.1","cliVersion":"0.142.0","appServerVersion":"0.142.0"}\n'
       exit 0
     fi
     exit 1
@@ -174,6 +178,21 @@ test ! -e "$stale_home/app-server-control/app-server-control.sock"
 test ! -e "$stale_home/app-server-daemon/daemon.pid"
 test ! -e "$stale_home/app-server-daemon/daemon-updater.pid"
 test ! -e "$stale_home/app-server-daemon/daemon-updater.sock"
+
+drift_home="$tmp/drift-codex-home"
+mkdir -p "$drift_home/app-server-control" "$drift_home/app-server-daemon"
+: > "$drift_home/app-server-control/mcodex-remote-control-started"
+: > "$drift_home/app-server-control/app-server-control.sock"
+printf '{"pid":999995}\n' > "$drift_home/app-server-daemon/daemon.pid"
+: > "$codex_log"
+rm -f "$daemon_file"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" CODEX_HOME="$drift_home" CODEX_FAKE_CLI_VERSION_DRIFT=1 \
+	sh "$repo_root/bin/mcodex" drift-prompt
+grep -Fxq 'app-server daemon version' "$codex_log"
+test "$(grep -Fxc 'remote-control start --json' "$codex_log" || true)" = 0
+grep -Fxq -- '-c tui.animations=false --remote unix:// -C '"$repo_root"' drift-prompt' "$codex_log"
+test -e "$drift_home/app-server-control/app-server-control.sock"
+test -e "$drift_home/app-server-daemon/daemon.pid"
 
 duplicate_physical_home="$tmp/duplicate-codex-home-physical"
 duplicate_home="$tmp/duplicate-codex-home-link"
