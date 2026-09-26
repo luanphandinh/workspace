@@ -748,6 +748,55 @@ local function setup()
     end)
   end
 
+  local function normalize_directory(path)
+    local normalized = vim.fn.fnamemodify(path, ":p")
+    if normalized ~= "/" then
+      normalized = normalized:gsub("/+$", "")
+    end
+    return normalized
+  end
+
+  local function list_folder_entries(path)
+    local current = normalize_directory(path)
+    if not dir_exists(current) then
+      return {}
+    end
+
+    local entries = {
+      { name = ".", path = current, current = true },
+    }
+    local parent = vim.fn.fnamemodify(current, ":h")
+    local parent_name = "../"
+    while parent ~= current do
+      entries[#entries + 1] = { name = parent_name, path = parent, parent = true }
+      local next_parent = vim.fn.fnamemodify(parent, ":h")
+      if next_parent == parent then
+        break
+      end
+      parent = next_parent
+      parent_name = parent_name .. "../"
+    end
+
+    local children = {}
+    local uv = vim.uv or vim.loop
+    local handle = uv.fs_scandir(current)
+    if handle then
+      while true do
+        local name = uv.fs_scandir_next(handle)
+        if not name then break end
+        local child = current .. (current == "/" and "" or "/") .. name
+        if name:sub(1, 1) ~= "." and dir_exists(child) then
+          children[#children + 1] = { name = name .. "/", path = child, child = true }
+        end
+      end
+    end
+    table.sort(children, function(a, b)
+      return a.name < b.name
+    end)
+    vim.list_extend(entries, children)
+    return entries
+  end
+
   local function list_sibling_repos()
     local root = git_root(safe_getcwd())
     if not root then
@@ -799,7 +848,8 @@ local function setup()
     end
 
     if not marker_start then
-      return {}, nil
+      append(list_repos_in_dir(cwd), "root")
+      return repos, #repos > 0 and cwd or nil
     end
 
     local workstation = cwd:sub(1, marker_start - 1)
@@ -1367,6 +1417,70 @@ local function setup()
     }):find()
   end
 
+  local function activate_folder(path)
+    path = normalize_directory(path)
+    if path == safe_getcwd() then
+      recent_paths.touch(path)
+      vim.notify("already in this folder", vim.log.levels.INFO)
+      return
+    end
+    switch_to(path, "folder")
+  end
+
+  local function pick_folder(start_path)
+    if rescue_deleted_cwd() then
+      return
+    end
+
+    local pickers, finders, conf, actions, action_state = telescope_modules()
+    if not pickers then return end
+    local current = normalize_directory(start_path or safe_getcwd())
+    if not dir_exists(current) then
+      vim.notify("folder path not found: " .. current, vim.log.levels.ERROR)
+      return
+    end
+
+    local function finder(path)
+      return finders.new_table({
+        results = list_folder_entries(path),
+        entry_maker = function(entry)
+          local display = entry.current and (".  " .. entry.path) or entry.name
+          return {
+            value = entry,
+            display = display,
+            ordinal = entry.name,
+          }
+        end,
+      })
+    end
+
+    pickers.new({}, {
+      prompt_title = "Workspace Folder",
+      finder = finder(current),
+      sorter = conf.generic_sorter({}),
+      attach_mappings = function(prompt_bufnr, _map)
+        actions.select_default:replace(function()
+          local selection = action_state.get_selected_entry()
+          if not selection or not selection.value or not selection.value.path then
+            vim.notify("folder picker: no selection", vim.log.levels.WARN)
+            return
+          end
+          if selection.value.current then
+            actions.close(prompt_bufnr)
+            vim.schedule(function()
+              activate_folder(selection.value.path)
+            end)
+            return
+          end
+          current = selection.value.path
+          local picker = action_state.get_current_picker(prompt_bufnr)
+          picker:refresh(finder(current), { reset_prompt = true })
+        end)
+        return true
+      end,
+    }):find()
+  end
+
   local function pick_project()
     if rescue_deleted_cwd() then
       return
@@ -1669,12 +1783,16 @@ local function setup()
 
   local function register_keymap()
     pcall(vim.api.nvim_del_user_command, "WorktreeSwitch")
+    pcall(vim.api.nvim_del_user_command, "FolderSwitch")
     pcall(vim.api.nvim_del_user_command, "ProjectSwitch")
     pcall(vim.api.nvim_del_user_command, "RepositorySwitch")
     pcall(vim.api.nvim_del_user_command, "RepositoryAdd")
     pcall(vim.api.nvim_del_user_command, "AgentSwitch")
     vim.api.nvim_create_user_command("WorktreeSwitch", pick_worktree, {
       desc = "Switch nvim instance to another git worktree",
+    })
+    vim.api.nvim_create_user_command("FolderSwitch", pick_folder, {
+      desc = "Browse folders and switch the current workspace",
     })
     vim.api.nvim_create_user_command("ProjectSwitch", pick_workspace_project, {
       desc = "Pick a local workspace and switch to its root",
@@ -1689,6 +1807,7 @@ local function setup()
       desc = "Switch nvim instance to a project with an active agent",
     })
     vim.keymap.set("n", "<leader>ww", pick_worktree, { desc = "Switch workspace" })
+    vim.keymap.set("n", "<leader>wf", pick_folder, { desc = "Pick workspace folder" })
     vim.keymap.set("n", "<leader>wa", pick_add_repository, { desc = "Add repository" })
     vim.keymap.set({ "n", "t" }, "<leader>wr", pick_project, { desc = "Pick repository" })
     vim.keymap.set("n", "<leader>wp", pick_workspace_project, { desc = "Pick workspace" })
@@ -1700,6 +1819,7 @@ local function setup()
   local test_api = {
     switch_to = switch_to,
     pick_worktree = pick_worktree,
+    pick_folder = pick_folder,
     pick_add_repository = pick_add_repository,
     pick_project = pick_project,
     pick_workspace_project = pick_workspace_project,
@@ -1707,6 +1827,7 @@ local function setup()
     activate_workspace = activate_workspace,
     activate_agent = activate_agent,
     list_sibling_repos = list_sibling_repos,
+    list_folder_entries = list_folder_entries,
     list_worktrees = list_worktrees,
     list_all_project_repos = list_all_project_repos,
     list_addable_repositories = list_addable_repositories,
@@ -1739,6 +1860,10 @@ local function pick_worktree()
   ensure_setup().pick_worktree()
 end
 
+local function pick_folder()
+  ensure_setup().pick_folder()
+end
+
 local function pick_project()
   ensure_setup().pick_project()
 end
@@ -1760,9 +1885,10 @@ return {
     "luanphan-worktree",
     virtual = true,
     init = init,
-    cmd = { "WorktreeSwitch", "ProjectSwitch", "RepositorySwitch", "RepositoryAdd", "AgentSwitch" },
+    cmd = { "WorktreeSwitch", "FolderSwitch", "ProjectSwitch", "RepositorySwitch", "RepositoryAdd", "AgentSwitch" },
     keys = {
       { "<leader>ww", pick_worktree, desc = "Switch workspace" },
+      { "<leader>wf", pick_folder, desc = "Pick workspace folder" },
       { "<leader>wa", pick_add_repository, desc = "Add repository" },
       { "<leader>wr", pick_project, mode = { "n", "t" }, desc = "Pick repository" },
       { "<leader>wp", pick_workspace_project, desc = "Pick workspace" },

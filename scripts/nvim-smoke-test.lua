@@ -1405,6 +1405,11 @@ local function test_worktree_plugin_starts_lazy()
     type(workspace_map) == "table" and type(workspace_map.callback) == "function",
     "<leader>ww is not a lazy callback mapping"
   )
+  local folder_map = vim.fn.maparg("<leader>wf", "n", false, true)
+  assert_true(
+    type(folder_map) == "table" and type(folder_map.callback) == "function",
+    "<leader>wf is not a lazy callback mapping"
+  )
   local add_repository_map = vim.fn.maparg("<leader>wa", "n", false, true)
   assert_true(
     type(add_repository_map) == "table" and type(add_repository_map.callback) == "function",
@@ -2042,6 +2047,20 @@ local function test_workspace_and_master_project_discovery()
   local api = worktree_test_api()
   local original_cwd = vim.fn.getcwd()
   local sources, workspaces, station, workspace_name = make_project_scope_fixture()
+
+  vim.cmd("cd " .. vim.fn.fnameescape(station))
+  local root_projects, root_current = api.list_all_project_repos()
+  assert_true(#root_projects == 2, "bare workstation root did not discover its git repositories")
+  assert_true(realpath(root_current) == realpath(station), "bare workstation root resolved the wrong current folder")
+  local root_project_paths = {}
+  for _, project in ipairs(root_projects) do
+    root_project_paths[realpath(project.path)] = true
+    assert_true(project.scope == "root", "bare workstation repository received the wrong scope")
+  end
+  for _, source in pairs(sources) do
+    assert_true(root_project_paths[realpath(source)] == true, "bare workstation root omitted a git repository")
+  end
+
   local nested = workspaces["example-project-a"] .. "/nested"
   vim.fn.mkdir(nested, "p")
   vim.cmd("cd " .. vim.fn.fnameescape(nested))
@@ -2146,6 +2165,54 @@ local function test_workspace_and_master_project_discovery()
     local expected_scope = vim.startswith(project_path, normalized_workspace_root .. "/") and "workspace" or "root"
     assert_true(project.scope == expected_scope, "workspace root discovery assigned the wrong scope")
   end
+
+  vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+end
+
+local function test_workspace_folder_browser()
+  local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
+  local _, _, station = make_project_scope_fixture()
+  local hidden = station .. "/.example-hidden"
+  vim.fn.mkdir(hidden, "p")
+  write(station .. "/example-file.txt", { "not a directory" })
+
+  local entries = api.list_folder_entries(station)
+  local by_name = {}
+  for _, entry in ipairs(entries) do
+    by_name[entry.name] = entry
+  end
+  assert_true(entries[1].current == true, "folder browser did not put the current folder first")
+  assert_true(realpath(entries[1].path) == realpath(station), "folder browser current entry has the wrong path")
+  assert_true(by_name["../"] and by_name["../"].parent, "folder browser omitted its parent")
+  assert_true(by_name["../../"] and by_name["../../"].parent, "folder browser omitted a higher ancestor")
+  assert_true(by_name["local_workspaces/"] and by_name["local_workspaces/"].child, "folder browser omitted a child")
+  assert_true(by_name[".example-hidden/"] == nil, "folder browser included a hidden child")
+  assert_true(by_name["example-file.txt"] == nil, "folder browser included a file")
+
+  local script = temp_root .. "/workspace-folder-picker.lua"
+  write(script, {
+    "local function assert_true(value, message) if not value then error(message, 0) end end",
+    "local function realpath(path) return (vim.uv or vim.loop).fs_realpath(path) or path end",
+    "require('lazy').load({ plugins = { 'luanphan-worktree' } })",
+    "local api = _G._luanphan_wt_test",
+    "api.pick_folder(" .. string.format("%q", station) .. ")",
+    "local prompt_bufnr = vim.api.nvim_get_current_buf()",
+    "local action_state = require('telescope.actions.state')",
+    "local actions = require('telescope.actions')",
+    "local picker = action_state.get_current_picker(prompt_bufnr)",
+    "assert_true(picker ~= nil, 'folder picker did not open')",
+    "picker:set_prompt('local_workspaces')",
+    "assert_true(vim.wait(3000, function() return picker.manager and picker.manager:num_results() == 1 end, 20), 'folder picker child result timed out')",
+    "actions.select_default(prompt_bufnr)",
+    "local target = " .. string.format("%q", station .. "/local_workspaces"),
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.current and realpath(selection.value.path) == realpath(target) end, 20), 'folder picker child navigation timed out')",
+    "actions.select_default(prompt_bufnr)",
+    "assert_true(vim.wait(3000, function() return realpath(vim.fn.getcwd()) == realpath(target) end, 20), 'folder picker workspace switch timed out')",
+    "assert_true(vim.fn.exists(':FolderSwitch') == 2, 'FolderSwitch command is missing')",
+  })
+  local output = vim.fn.systemlist(child_nvim_luafile_command(station, script))
+  assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
 
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
 end
@@ -5165,6 +5232,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("workspace picker switches to root and workspace destinations", function()
     test_workspace_project_discovery()
+  end)
+
+  test("workspace folder picker browses and switches directories", function()
+    test_workspace_folder_browser()
   end)
 
   test("repository picker adds a root project to the current workspace", function()
