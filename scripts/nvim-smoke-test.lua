@@ -2184,11 +2184,26 @@ local function test_workspace_folder_browser()
   end
   assert_true(entries[1].current == true, "folder browser did not put the current folder first")
   assert_true(realpath(entries[1].path) == realpath(station), "folder browser current entry has the wrong path")
-  assert_true(by_name["../"] and by_name["../"].parent, "folder browser omitted its parent")
-  assert_true(by_name["../../"] and by_name["../../"].parent, "folder browser omitted a higher ancestor")
+  assert_true(by_name["../"] == nil, "folder browser included a parent shortcut")
+  assert_true(by_name["../../"] == nil, "folder browser included an ancestor shortcut")
   assert_true(by_name["local_workspaces/"] and by_name["local_workspaces/"].child, "folder browser omitted a child")
   assert_true(by_name[".example-hidden/"] == nil, "folder browser included a hidden child")
   assert_true(by_name["example-file.txt"] == nil, "folder browser included a file")
+
+  local parent = vim.fn.fnamemodify(station, ":h")
+  local resolved, path_input = api.resolve_folder_input("../", station)
+  assert_true(path_input and realpath(resolved) == realpath(parent), "folder input did not resolve ../")
+  resolved, path_input = api.resolve_folder_input("../../", station)
+  assert_true(
+    path_input and realpath(resolved) == realpath(vim.fn.fnamemodify(parent, ":h")),
+    "folder input did not resolve ../../"
+  )
+  resolved, path_input = api.resolve_folder_input(station .. "/local_workspaces", station)
+  assert_true(path_input and realpath(resolved) == realpath(station .. "/local_workspaces"), "absolute folder input failed")
+  resolved, path_input = api.resolve_folder_input("~", station)
+  assert_true(path_input and realpath(resolved) == realpath(vim.uv.os_homedir()), "home-relative folder input failed")
+  resolved, path_input = api.resolve_folder_input("local_workspaces", station)
+  assert_true(resolved == nil and path_input == false, "fuzzy folder input was treated as a path")
 
   local script = temp_root .. "/workspace-folder-picker.lua"
   write(script, {
@@ -2202,13 +2217,20 @@ local function test_workspace_folder_browser()
     "local actions = require('telescope.actions')",
     "local picker = action_state.get_current_picker(prompt_bufnr)",
     "assert_true(picker ~= nil, 'folder picker did not open')",
-    "picker:set_prompt('local_workspaces')",
-    "assert_true(vim.wait(3000, function() return picker.manager and picker.manager:num_results() == 1 end, 20), 'folder picker child result timed out')",
-    "actions.select_default(prompt_bufnr)",
     "local target = " .. string.format("%q", station .. "/local_workspaces"),
-    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.current and realpath(selection.value.path) == realpath(target) end, 20), 'folder picker child navigation timed out')",
+    "picker:set_prompt(target)",
+    "assert_true(vim.wait(3000, function() return action_state.get_current_line() == target end, 20), 'absolute folder input did not reach the prompt')",
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return picker.manager and picker.manager:num_results() == 3 and selection and selection.value and selection.value.current and realpath(selection.value.path) == realpath(target) end, 20), 'resolved folder and children did not populate the picker')",
+    "assert_true(picker:get_selection().display == target, 'resolved folder was not displayed first')",
+    "actions.move_selection_next(prompt_bufnr)",
+    "local child = picker:get_selection().value.path",
+    "assert_true(realpath(child) ~= realpath(target), 'resolved folder child was not selectable')",
     "actions.select_default(prompt_bufnr)",
-    "assert_true(vim.wait(3000, function() return realpath(vim.fn.getcwd()) == realpath(target) end, 20), 'folder picker workspace switch timed out')",
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return action_state.get_current_line() == '' and selection and selection.value and selection.value.current and realpath(selection.value.path) == realpath(child) end, 20), 'resolved folder child did not open in the picker')",
+    "picker:set_prompt(target)",
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return action_state.get_current_line() == target and selection and selection.value and selection.value.current and realpath(selection.value.path) == realpath(target) end, 20), 'resolved folder did not repopulate after child navigation')",
+    "actions.select_default(prompt_bufnr)",
+    "assert_true(vim.wait(3000, function() return realpath(vim.fn.getcwd()) == realpath(target) end, 20), 'absolute folder input did not switch workspaces')",
     "assert_true(vim.fn.exists(':FolderSwitch') == 2, 'FolderSwitch command is missing')",
   })
   local output = vim.fn.systemlist(child_nvim_luafile_command(station, script))

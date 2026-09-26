@@ -749,7 +749,7 @@ local function setup()
   end
 
   local function normalize_directory(path)
-    local normalized = vim.fn.fnamemodify(path, ":p")
+    local normalized = vim.fs.normalize(vim.fn.fnamemodify(path, ":p"))
     if normalized ~= "/" then
       normalized = normalized:gsub("/+$", "")
     end
@@ -765,18 +765,6 @@ local function setup()
     local entries = {
       { name = ".", path = current, current = true },
     }
-    local parent = vim.fn.fnamemodify(current, ":h")
-    local parent_name = "../"
-    while parent ~= current do
-      entries[#entries + 1] = { name = parent_name, path = parent, parent = true }
-      local next_parent = vim.fn.fnamemodify(parent, ":h")
-      if next_parent == parent then
-        break
-      end
-      parent = next_parent
-      parent_name = parent_name .. "../"
-    end
-
     local children = {}
     local uv = vim.uv or vim.loop
     local handle = uv.fs_scandir(current)
@@ -795,6 +783,19 @@ local function setup()
     end)
     vim.list_extend(entries, children)
     return entries
+  end
+
+  local function resolve_folder_input(input, base)
+    input = vim.trim(input or "")
+    local explicit = input:sub(1, 1) == "/" or input:sub(1, 1) == "~" or input:sub(1, 1) == "."
+    if not explicit then
+      return nil, false
+    end
+
+    local expanded = vim.fn.expand(input)
+    local path = expanded:sub(1, 1) == "/" and expanded or (base .. "/" .. expanded)
+    path = normalize_directory(path)
+    return dir_exists(path) and path or nil, true
   end
 
   local function list_sibling_repos()
@@ -1440,11 +1441,25 @@ local function setup()
       return
     end
 
-    local function finder(path)
-      return finders.new_table({
-        results = list_folder_entries(path),
+    local function folder_results(prompt)
+      local resolved, path_input = resolve_folder_input(prompt, current)
+      if path_input and not resolved then
+        return {}
+      end
+
+      local results = list_folder_entries(resolved or current)
+      for index, entry in ipairs(results) do
+        entry.order = index
+        entry.path_prompt = resolved and prompt or nil
+      end
+      return results
+    end
+
+    local function finder()
+      return finders.new_dynamic({
+        fn = folder_results,
         entry_maker = function(entry)
-          local display = entry.current and (".  " .. entry.path) or entry.name
+          local display = entry.current and (entry.path_prompt or (".  " .. entry.path)) or entry.name
           return {
             value = entry,
             display = display,
@@ -1454,14 +1469,41 @@ local function setup()
       })
     end
 
+    local base_sorter = conf.generic_sorter({})
+    local sorter = require("telescope.sorters").Sorter:new({
+      scoring_function = function(_, prompt, line, entry)
+        if entry.value.path_prompt then
+          return entry.value.order / 10000
+        end
+        return base_sorter:scoring_function(prompt, line, entry)
+      end,
+      highlighter = function(_, prompt, display)
+        return base_sorter:highlighter(prompt, display)
+      end,
+    })
+
     pickers.new({}, {
       prompt_title = "Workspace Folder",
-      finder = finder(current),
-      sorter = conf.generic_sorter({}),
+      finder = finder(),
+      sorter = sorter,
       attach_mappings = function(prompt_bufnr, _map)
         actions.select_default:replace(function()
+          local input_path, path_input = resolve_folder_input(action_state.get_current_line(), current)
+          if path_input then
+            if not input_path then
+              vim.notify("folder path not found", vim.log.levels.WARN)
+              return
+            end
+          end
           local selection = action_state.get_selected_entry()
           if not selection or not selection.value or not selection.value.path then
+            if input_path then
+              actions.close(prompt_bufnr)
+              vim.schedule(function()
+                activate_folder(input_path)
+              end)
+              return
+            end
             vim.notify("folder picker: no selection", vim.log.levels.WARN)
             return
           end
@@ -1474,7 +1516,7 @@ local function setup()
           end
           current = selection.value.path
           local picker = action_state.get_current_picker(prompt_bufnr)
-          picker:refresh(finder(current), { reset_prompt = true })
+          picker:refresh(finder(), { reset_prompt = true })
         end)
         return true
       end,
@@ -1828,6 +1870,7 @@ local function setup()
     activate_agent = activate_agent,
     list_sibling_repos = list_sibling_repos,
     list_folder_entries = list_folder_entries,
+    resolve_folder_input = resolve_folder_input,
     list_worktrees = list_worktrees,
     list_all_project_repos = list_all_project_repos,
     list_addable_repositories = list_addable_repositories,
