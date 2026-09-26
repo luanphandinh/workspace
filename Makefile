@@ -21,7 +21,7 @@ endif
 lazy_command ?= restore
 shortcut_names ?=
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config neovide neovide-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -30,7 +30,7 @@ setup: setup-deps
 	$(MAKE) setup-runtime
 
 setup-runtime: ## Install workspace configs and terminal agent CLIs after deps are available
-setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config newsboat-config macos-keyboard cleanup agent-clis
+setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config neovide-config newsboat-config macos-keyboard cleanup agent-clis
 
 nix-install: ## Install Nix if missing
 	sh ./scripts/install-nix.sh
@@ -195,6 +195,17 @@ kitty-config: ## Install kitty config
 	test -d "$(kitty_config_dir)" || mkdir -p "$(kitty_config_dir)"
 	cp -r ./kitty/. "$(kitty_config_dir)/"
 	kitten themes --dump-theme 'Gruvbox Dark' > "$(kitty_config_dir)/current-theme.conf"
+
+neovide: ## Install Neovide and its configuration on macOS
+neovide: setup-deps fonts-install neovide-config
+
+neovide-config: ## Install Neovide configuration on macOS
+ifeq ($(UNAME),Darwin)
+	test -d ~/.config/neovide || mkdir -p ~/.config/neovide
+	cp ./neovide/config.toml ~/.config/neovide/config.toml
+else
+	@echo "neovide-config: skipped; macOS-only"
+endif
 
 scripts: ## chmod +x for all scripts
 	chmod -R +x ./scripts

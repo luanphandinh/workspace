@@ -1,6 +1,38 @@
 vim.g.mapleader = " "
 vim.g.maplocalleader = " "
 
+local neovide_zoom_configured = false
+
+local function configure_neovide_zoom()
+  if neovide_zoom_configured or not vim.g.neovide then
+    return
+  end
+
+  neovide_zoom_configured = true
+  vim.g.neovide_scale_factor = 1.0
+
+  local function change_scale(multiplier)
+    local scale = vim.g.neovide_scale_factor * multiplier
+    vim.g.neovide_scale_factor = math.max(0.5, math.min(3.0, scale))
+  end
+
+  local modes = { "n", "i", "v", "t" }
+  for _, key in ipairs({ "<D-=>", "<D-+>" }) do
+    vim.keymap.set(modes, key, function()
+      change_scale(1.1)
+    end, { desc = "Zoom in" })
+  end
+  vim.keymap.set(modes, "<D-->", function()
+    change_scale(1 / 1.1)
+  end, { desc = "Zoom out" })
+  vim.keymap.set(modes, "<D-0>", function()
+    vim.g.neovide_scale_factor = 1.0
+  end, { desc = "Reset zoom" })
+end
+
+configure_neovide_zoom()
+vim.api.nvim_create_autocmd("UIEnter", { callback = configure_neovide_zoom })
+
 if vim.env.SSH_TTY or vim.env.SSH_CONNECTION then
   local tmux_copy = vim.fn.expand("~/bin/tmux-copy-osc52")
   if vim.env.TMUX and vim.fn.executable(tmux_copy) == 1 then
