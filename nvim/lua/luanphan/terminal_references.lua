@@ -28,17 +28,20 @@ local function references_in_line(cwd, text)
   local result = {}
   local offset = 1
   while offset <= #text do
-    local first, last = text:find("[@~%w%._%-%+/]+:%d+:?%d*", offset)
+    local first, last = text:find("[@~%w%._%-%+/]+", offset)
     if not first then
       break
     end
 
-    local value = text:sub(first, last)
-    local raw_path, line, column = value:match("^@?(.-):(%d+):?(%d*)$")
-    local path = raw_path and resolve_path(cwd, raw_path) or nil
-    local line_number = tonumber(line)
+    local raw_path = text:sub(first, last)
+    local suffix, line, column = text:sub(last + 1):match("^(:[Ll]?(%d+):?(%d*))")
+    local path = resolve_path(cwd, raw_path)
+    local line_number = tonumber(line) or 1
     local column_number = tonumber(column) or 1
-    if path and line_number then
+    if suffix then
+      last = last + #suffix
+    end
+    if path then
       result[#result + 1] = {
         first_col = first - 1,
         last_col = last,
@@ -58,7 +61,9 @@ local function wrapped_reference(cwd, first_text, second_text)
     return nil
   end
 
-  local _, second_end, second_path, line, column = second_text:find("^%s*([@~%w%._%-%+/]+):(%d+):?(%d*)")
+  local _, second_end, second_path, line, column = second_text:find(
+    "^%s*([@~%w%._%-%+/]+):[Ll]?(%d+):?(%d*)"
+  )
   if not second_path then
     return nil
   end

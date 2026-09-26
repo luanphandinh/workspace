@@ -2770,7 +2770,7 @@ local function test_terminal_reference_links()
   local buf = vim.api.nvim_create_buf(false, true)
   local references = require("luanphan.terminal_references")
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-    "first example-repo/main.go:1 and missing.go:2",
+    "line example-repo/main.go:7 plain example-repo/other.go labelled @example-repo/main.go:L11 and missing.go:2",
   })
   local namespace = references.attach(buf, root)
   local previous_buf = vim.api.nvim_get_current_buf()
@@ -2809,11 +2809,40 @@ local function test_terminal_reference_links()
   vim.wait(50, function()
     return clicked_target ~= nil
   end)
-  references.open = original_open
-  vim.fn.getmousepos = original_getmousepos
   assert_true(click_result == "<Ignore>", "terminal reference click was not consumed")
   assert_true(clicked_target and clicked_target.path == first_path, "terminal reference click opened the wrong file")
-  assert_true(clicked_target.line == 1 and clicked_target.column == 1, "terminal reference click lost its position")
+  assert_true(clicked_target.line == 7 and clicked_target.column == 1, "terminal reference click lost its position")
+
+  clicked_target = nil
+  vim.fn.getmousepos = function()
+    return {
+      winid = vim.api.nvim_get_current_win(),
+      line = 1,
+      column = assert((vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] or ""):find("plain")) + 6,
+    }
+  end
+  assert_true(click_map.callback() == "<Ignore>", "plain terminal file reference was not consumed")
+  vim.wait(50, function()
+    return clicked_target ~= nil
+  end)
+  assert_true(clicked_target and clicked_target.path == second_path, "plain terminal file reference opened the wrong file")
+  assert_true(clicked_target.line == 1 and clicked_target.column == 1, "plain terminal file reference lost its position")
+
+  clicked_target = nil
+  vim.fn.getmousepos = function()
+    return {
+      winid = vim.api.nvim_get_current_win(),
+      line = 1,
+      column = assert((vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] or ""):find("@example%-repo")),
+    }
+  end
+  assert_true(click_map.callback() == "<Ignore>", "L-prefixed terminal reference was not consumed")
+  vim.wait(50, function()
+    return clicked_target ~= nil
+  end)
+  assert_true(clicked_target and clicked_target.path == first_path, "L-prefixed terminal reference opened the wrong file")
+  assert_true(clicked_target.line == 11 and clicked_target.column == 1, "L-prefixed terminal reference lost its position")
+  references.open = original_open
 
   vim.fn.getmousepos = function()
     return { winid = vim.api.nvim_get_current_win(), line = 1, column = 1 }
@@ -2834,7 +2863,7 @@ local function test_terminal_reference_links()
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
     "wrapped example-repo/",
-    "  other.go:1:1",
+    "  other.go:L1:1",
   })
 
   clicked_target = nil
