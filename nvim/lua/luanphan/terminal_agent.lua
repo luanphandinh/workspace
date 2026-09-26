@@ -404,12 +404,26 @@ local function apply_agent_scrollback(buf)
 end
 
 local function configure_terminal_buffer(buf)
-  if not buf or not vim.api.nvim_buf_is_valid(buf) or vim.bo[buf].buftype ~= "terminal" then
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  if vim.bo[buf].buftype ~= "terminal" then
+    local group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Configure_" .. buf, { clear = true })
+    vim.api.nvim_create_autocmd("TermOpen", {
+      group = group,
+      buffer = buf,
+      once = true,
+      callback = function(args)
+        configure_terminal_buffer(args.buf)
+      end,
+    })
     return
   end
   pcall(vim.treesitter.stop, buf)
   pcall(vim.api.nvim_buf_call, buf, function()
     vim.bo.syntax = ""
+    vim.b.matchparen_timeout = 0
+    vim.b.matchparen_insert_timeout = 0
   end)
 end
 
