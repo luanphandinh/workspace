@@ -974,12 +974,6 @@ def remove_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def remove_legacy_tech_doc_git(workspace_dir: Path) -> None:
-    git_dir = workspace_dir / TECH_DOC_DIR / ".git"
-    if git_dir.exists() or git_dir.is_symlink():
-        remove_path(git_dir)
-
-
 def workspace_snapshot_files(workspace_dir: Path) -> list:
     files = []
     for root, dirs, names in os.walk(workspace_dir):
@@ -991,7 +985,7 @@ def workspace_snapshot_files(workspace_dir: Path) -> list:
             child = root_path / name
             if child.is_symlink():
                 files.append(child)
-            elif (child / ".git").exists():
+            elif (child / ".git").exists() and child != workspace_dir / TECH_DOC_DIR:
                 continue
             else:
                 kept_dirs.append(name)
@@ -1029,7 +1023,6 @@ def copy_workspace_files(workstation_root: Path, clone: Path, dest_prefix: Path)
         return records
     for workspace_yml in sorted(local_workspaces.glob(f"*/{WORKSPACE_FILE}")):
         workspace_dir = workspace_yml.parent
-        remove_legacy_tech_doc_git(workspace_dir)
         workspace_rel = workspace_dir.relative_to(workstation_root)
         destination = clone / dest_prefix / workspace_rel
         if destination.exists() or destination.is_symlink():
@@ -1279,24 +1272,6 @@ def setup_repo_from_metadata(workstation_root: Path, repo: dict, position: int, 
     return "cloned"
 
 
-def remove_workspace_non_git_files(workspace_dir: Path) -> None:
-    if not workspace_dir.is_dir():
-        return
-    for child in list(workspace_dir.iterdir()):
-        if child.name.startswith("."):
-            continue
-        if child.is_dir() and not child.is_symlink() and (child / ".git").exists():
-            continue
-        if child.is_dir() and not child.is_symlink():
-            remove_workspace_non_git_files(child)
-            try:
-                child.rmdir()
-            except OSError:
-                pass
-        else:
-            remove_path(child)
-
-
 def restore_workspace_files(clone: Path, station_root: Path, metadata_prefix: Path) -> list:
     records = []
     metadata_root = clone / metadata_prefix
@@ -1305,8 +1280,6 @@ def restore_workspace_files(clone: Path, station_root: Path, metadata_prefix: Pa
         workspace_rel = source.relative_to(metadata_root)
         destination = station_root / workspace_rel
         destination.mkdir(parents=True, exist_ok=True)
-        remove_legacy_tech_doc_git(destination)
-        remove_workspace_non_git_files(destination)
         records.extend(copy_workspace_snapshot(source, destination, metadata_prefix / workspace_rel))
         (destination / TECH_DOC_DIR).mkdir(parents=True, exist_ok=True)
     return records
