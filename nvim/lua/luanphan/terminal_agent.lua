@@ -20,6 +20,7 @@ local BASE_DEFAULTS = {
   lock_split = true,
   resize_debounce_ms = 250,
   float_border = "single",
+  float_zindex = 40,
   scrollback = nil,
   max_send_chars = 256 * 1024,
   defer_send_ms = 200,
@@ -787,6 +788,7 @@ local function open_terminal_float(opts)
       border = config.float_border or "single",
     })
   end
+  vim.api.nvim_win_set_config(win, { zindex = config.float_zindex })
   prepare_terminal_window(win)
   configure_terminal_window(win)
   local win_config = vim.api.nvim_win_get_config(win)
@@ -878,6 +880,7 @@ local function show_terminal_float(bufnr, opts)
     vim.api.nvim_win_set_buf(win, cur)
     pcall(vim.api.nvim_buf_delete, placeholder, { force = true })
   end
+  vim.api.nvim_win_set_config(win, { zindex = config.float_zindex })
   configure_terminal_window(win)
   require("luanphan.terminal_references").activate(cur)
   local win_config = vim.api.nvim_win_get_config(win)
