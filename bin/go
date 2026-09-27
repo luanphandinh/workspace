@@ -1,5 +1,8 @@
 #!/bin/sh
-# ~/bin/go — wrapper around the real `go` binary. For `go test`:
+# ~/bin/go — wrapper around the real `go` binary:
+#   * selects a repository-compatible Go toolchain for every command
+# For `go test` it additionally:
+#   * routes through a healthy covering wsync session when available
 #   * always runs with GOWORK=off (per-module deps; see workspace notes)
 #   * optionally injects -toolexec / -gcflags read from env
 #
@@ -16,6 +19,16 @@
 
 PATCHER="${LOCAL_GO_PATCHER:-}"
 GCFLAGS="${LOCAL_GO_GCFLAGS:-}"
+# Go downloads and caches configured toolchains that are not already on PATH.
+TOOLCHAINS="${LOCAL_GO_TOOLCHAINS:-go1.23.12 go1.24.13 go1.25.12 go1.26.4}"
+NO_REMOTE=0
+
+# Wrapper-only escape hatch used by the testbox invocation. It must be the
+# leading argument so it can never collide with a real Go subcommand flag.
+if [ "${1:-}" = "--no-remote" ]; then
+	NO_REMOTE=1
+	shift
+fi
 
 # Canonicalise the wrapper's own directory once so the PATH scrubbing below
 # matches whether $PATH lists a symlink or the real path.
@@ -48,37 +61,129 @@ find_real_go() {
 	PATH="$(scrub_self_from_path)" command -v go 2>/dev/null
 }
 
+command_directory() {
+	directory="$PWD"
+	case "${1:-}" in
+		-C)
+			[ -n "${2:-}" ] || return 1
+			directory=$2
+			;;
+		-C=*) directory=${1#-C=} ;;
+	esac
+	(cd "$directory" 2>/dev/null && pwd -P)
+}
+
+find_go_mod() {
+	directory=$1
+	while :; do
+		if [ -f "$directory/go.mod" ]; then
+			printf '%s\n' "$directory/go.mod"
+			return 0
+		fi
+		parent=${directory%/*}
+		[ -n "$parent" ] || parent=/
+		[ "$parent" != "$directory" ] || return 1
+		directory=$parent
+	done
+}
+
+select_toolchain() {
+	go_mod=$1
+	go_version=$(awk '$1 == "go" { print $2; exit }' "$go_mod")
+	[ -n "$go_version" ] || return 1
+	toolchain_version=$(awk '$1 == "toolchain" { print $2; exit }' "$go_mod")
+
+	awk -v go_version="$go_version" -v toolchain_version="$toolchain_version" -v candidates="$TOOLCHAINS" '
+		function score(version, parts, count) {
+			sub(/^go/, "", version)
+			count = split(version, parts, ".")
+			if (count < 2 || count > 3) return -1
+			if (parts[1] !~ /^[0-9]+$/ || parts[2] !~ /^[0-9]+$/) return -1
+			if (count == 2) parts[3] = 0
+			if (parts[3] !~ /^[0-9]+$/) return -1
+			return parts[1] * 1000000 + parts[2] * 1000 + parts[3]
+		}
+		BEGIN {
+			required = score(go_version)
+			if (required < 0) exit 1
+			if (toolchain_version != "" && toolchain_version != "default") {
+				toolchain_required = score(toolchain_version)
+				if (toolchain_required > required) required = toolchain_required
+			}
+			count = split(candidates, values, /[[:space:]]+/)
+			best_score = -1
+			highest_score = -1
+			for (i = 1; i <= count; i++) {
+				candidate_score = score(values[i])
+				if (candidate_score < 0) continue
+				if (candidate_score > highest_score) {
+					highest_score = candidate_score
+					highest = values[i]
+				}
+				if (candidate_score >= required && (best_score < 0 || candidate_score < best_score)) {
+					best_score = candidate_score
+					best = values[i]
+				}
+			}
+			if (best_score >= 0) print best "+auto"
+			else if (highest_score >= 0) print highest "+auto"
+			else exit 1
+		}
+	'
+}
+
 REAL_GO="$(find_real_go)"
 if [ -z "$REAL_GO" ]; then
 	echo "go wrapper: real go not found. Set LOCAL_REAL_GO=/path/to/go or install go on PATH." >&2
 	exit 127
 fi
 
+if [ -z "${GOTOOLCHAIN:-}" ]; then
+	COMMAND_DIRECTORY=$(command_directory "$@") || COMMAND_DIRECTORY=""
+	if [ -n "$COMMAND_DIRECTORY" ]; then
+		GO_MOD=$(find_go_mod "$COMMAND_DIRECTORY") || GO_MOD=""
+		if [ -n "$GO_MOD" ]; then
+			GOTOOLCHAIN=$(select_toolchain "$GO_MOD") || GOTOOLCHAIN=""
+			[ -z "$GOTOOLCHAIN" ] || export GOTOOLCHAIN
+		fi
+	fi
+fi
+
 log() {
-	printf 'go wrapper execute "%s"\n' "$*" >&2
+	if [ -n "${GOTOOLCHAIN:-}" ]; then
+		printf 'go wrapper execute "GOTOOLCHAIN=%s %s"\n' "$GOTOOLCHAIN" "$*" >&2
+	else
+		printf 'go wrapper execute "%s"\n' "$*" >&2
+	fi
 }
 
-if [ "$1" = "test" ]; then
+if [ "${1:-}" = "test" ]; then
 	shift
 
-    # Detect existing flags to avoid double-injection.
-    have_toolexec=0
-    have_gcflags=0
-    for arg in "$@"; do
-	    case "$arg" in
-		    -toolexec=*|--toolexec=*) have_toolexec=1 ;;
-		    -gcflags=*|--gcflags=*)   have_gcflags=1 ;;
-	    esac
-    done
+	if [ "$NO_REMOTE" = "0" ] && command -v go-remote-test >/dev/null 2>&1; then
+		if go-remote-test probe "$PWD"; then
+			exec go-remote-test run "$PWD" -- "$@"
+		fi
+	fi
 
-    set -- "$@"
-    # Inject only when (a) the user didn't already pass the flag AND
-    # (b) the override isn't an explicit empty string (which means "off").
-    [ "$have_toolexec" = "0" ] && [ -n "$PATCHER" ] && set -- "-toolexec=$PATCHER" "$@"
-    [ "$have_gcflags"  = "0" ] && [ -n "$GCFLAGS" ] && set -- "-gcflags=$GCFLAGS"  "$@"
+	# Detect existing flags to avoid double-injection.
+	have_toolexec=0
+	have_gcflags=0
+	for arg in "$@"; do
+		case "$arg" in
+			-toolexec=*|--toolexec=*) have_toolexec=1 ;;
+			-gcflags=*|--gcflags=*)   have_gcflags=1 ;;
+		esac
+	done
 
-    log "GOWORK=off $REAL_GO test $*"
-    exec env GOWORK=off "$REAL_GO" test "$@"
+	set -- "$@"
+	# Inject only when (a) the user didn't already pass the flag AND
+	# (b) the override isn't an explicit empty string (which means "off").
+	[ "$have_toolexec" = "0" ] && [ -n "$PATCHER" ] && set -- "-toolexec=$PATCHER" "$@"
+	[ "$have_gcflags"  = "0" ] && [ -n "$GCFLAGS" ] && set -- "-gcflags=$GCFLAGS"  "$@"
+
+	log "GOWORK=off $REAL_GO test $*"
+	exec env GOWORK=off "$REAL_GO" test "$@"
 fi
 
 log "$REAL_GO $*"

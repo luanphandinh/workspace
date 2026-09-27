@@ -1,61 +1,8 @@
 vim.g.mapleader = " "
 vim.g.maplocalleader = " "
 
-local neovide_configured = false
-
-local function configure_neovide()
-  if neovide_configured or not vim.g.neovide then
-    return
-  end
-
-  neovide_configured = true
-  vim.g.neovide_scale_factor = 1.0
-
-  local function change_scale(multiplier)
-    local scale = vim.g.neovide_scale_factor * multiplier
-    vim.g.neovide_scale_factor = math.max(0.5, math.min(3.0, scale))
-  end
-
-  local modes = { "n", "i", "v", "t" }
-  for _, key in ipairs({ "<D-=>", "<D-+>" }) do
-    vim.keymap.set(modes, key, function()
-      change_scale(1.1)
-    end, { desc = "Zoom in" })
-  end
-  vim.keymap.set(modes, "<D-->", function()
-    change_scale(1 / 1.1)
-  end, { desc = "Zoom out" })
-  vim.keymap.set(modes, "<D-0>", function()
-    vim.g.neovide_scale_factor = 1.0
-  end, { desc = "Reset zoom" })
-
-  vim.keymap.set({ "n", "i", "v", "c", "t" }, "<D-v>", function()
-    vim.api.nvim_paste(vim.fn.getreg("+"), true, -1)
-  end, { silent = true, desc = "Paste" })
-end
-
-configure_neovide()
-vim.api.nvim_create_autocmd("UIEnter", { callback = configure_neovide })
-
-if vim.env.SSH_TTY or vim.env.SSH_CONNECTION then
-  local tmux_copy = vim.fn.expand("~/bin/tmux-copy-osc52")
-  if vim.env.TMUX and vim.fn.executable(tmux_copy) == 1 then
-    vim.g.clipboard = {
-      name = "OSC52 through tmux client",
-      copy = {
-        ["+"] = { tmux_copy },
-        ["*"] = { tmux_copy },
-      },
-      paste = {
-        ["+"] = { "tmux", "save-buffer", "-" },
-        ["*"] = { "tmux", "save-buffer", "-" },
-      },
-      cache_enabled = 0,
-    }
-  else
-    vim.g.clipboard = "osc52"
-  end
-end
+require("luanphan.neovide").setup()
+require("luanphan.ssh_clipboard").setup()
 
 local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 if not (vim.uv or vim.loop).fs_stat(lazypath) then

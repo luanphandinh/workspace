@@ -1,0 +1,585 @@
+#!/usr/bin/env python3
+"""Manage guarded, one-way Mutagen workspace replicas."""
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+from pathlib import Path, PurePosixPath
+
+
+SESSION_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+IGNORE_PATHS = (
+    ".*",
+)
+
+REMOTE_SCRIPT = r"""
+set -eu
+
+operation=$1
+raw_target=$2
+expected_marker=$3
+
+case "$raw_target" in
+    "~") target=$HOME ;;
+    "~/"*) target=$HOME/${raw_target#\~/} ;;
+    /*) target=$raw_target ;;
+    *) printf 'remote path must be absolute or start with ~/: %s\n' "$raw_target" >&2; exit 20 ;;
+esac
+
+command -v realpath >/dev/null 2>&1 || {
+    printf 'realpath is required on the remote host\n' >&2
+    exit 21
+}
+
+target=$(realpath -m -- "$target")
+remote_home=$(realpath -m -- "$HOME")
+case "$target" in
+    /|"$remote_home")
+        printf 'refusing dangerous remote root: %s\n' "$target" >&2
+        exit 22
+        ;;
+esac
+
+marker=$target/.wsync-managed
+
+marker_state() {
+    if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+        printf 'absent'
+    elif [ -f "$marker" ] && [ ! -L "$marker" ] && [ "$(cat -- "$marker")" = "$expected_marker" ]; then
+        printf 'match'
+    else
+        printf 'mismatch'
+    fi
+}
+
+directory_empty() {
+    [ -z "$(find "$target" -mindepth 1 -maxdepth 1 ! -name .wsync-managed -print -quit)" ]
+}
+
+case "$operation" in
+    inspect)
+        printf 'resolved=%s\n' "$target"
+        if [ ! -e "$target" ]; then
+            printf 'state=absent\nmarker=absent\nempty=true\n'
+        elif [ ! -d "$target" ] || [ -L "$target" ]; then
+            printf 'state=not-directory\nmarker=%s\nempty=false\n' "$(marker_state)"
+        else
+            printf 'state=directory\nmarker=%s\n' "$(marker_state)"
+            if directory_empty; then printf 'empty=true\n'; else printf 'empty=false\n'; fi
+        fi
+        ;;
+    initialize)
+        if [ -e "$target" ] && { [ ! -d "$target" ] || [ -L "$target" ]; }; then
+            printf 'remote target is not a directory: %s\n' "$target" >&2
+            exit 23
+        fi
+        mkdir -p -- "$target"
+        current_marker=$(marker_state)
+        if [ "$current_marker" = mismatch ]; then
+            printf 'remote target belongs to another wsync session: %s\n' "$target" >&2
+            exit 24
+        fi
+        if [ "$current_marker" = absent ] && ! directory_empty; then
+            printf 'remote target is non-empty and unmanaged: %s\n' "$target" >&2
+            exit 25
+        fi
+        if [ "$current_marker" = absent ]; then
+            umask 077
+            set -C
+            printf '%s\n' "$expected_marker" > "$marker"
+            set +C
+        fi
+        ;;
+    verify)
+        if [ ! -d "$target" ] || [ -L "$target" ]; then
+            printf 'managed remote target is missing: %s\n' "$target" >&2
+            exit 26
+        fi
+        if [ "$(marker_state)" != match ]; then
+            printf 'remote management marker does not match: %s\n' "$marker" >&2
+            exit 27
+        fi
+        ;;
+    *)
+        printf 'unknown remote operation: %s\n' "$operation" >&2
+        exit 28
+        ;;
+esac
+"""
+
+
+def die(message: str, code: int = 1) -> None:
+    print(f"error: {message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def config_root() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME")
+    return Path(base).expanduser() / "wsync" if base else Path.home() / ".config" / "wsync"
+
+
+def session_dir(name: str) -> Path:
+    validate_name(name)
+    return config_root() / name
+
+
+def validate_name(name: str) -> None:
+    if not SESSION_RE.fullmatch(name):
+        die("session name must contain only lowercase letters, digits, '_' or '-'")
+
+
+def require_command(name: str) -> None:
+    if shutil.which(name) is None:
+        die(f"required command not found: {name}")
+
+
+def parse_endpoint(value: str) -> tuple[str, str]:
+    if ":" not in value:
+        die("remote endpoint must have the form <ssh-host>:<remote-root>")
+    host, remote_root = value.split(":", 1)
+    if not host or not re.fullmatch(r"[A-Za-z0-9_.@-]+", host):
+        die("SSH host must be an alias, hostname, or user@host without shell characters")
+    if not remote_root or any(char in remote_root for char in "\r\n\0"):
+        die("remote root is empty or contains control characters")
+    if remote_root not in ("~", "/") and not remote_root.startswith(("~/", "/")):
+        die("remote root must be absolute or start with ~/")
+    if remote_root in ("~", "~/", "/"):
+        die(f"refusing dangerous remote root: {remote_root}")
+    return host, remote_root
+
+
+def validate_local_root(value: str) -> Path:
+    expanded = Path(value).expanduser()
+    if expanded.is_symlink():
+        die(f"local root must not be a symbolic link: {expanded}")
+    try:
+        root = expanded.resolve(strict=True)
+    except (FileNotFoundError, RuntimeError) as error:
+        die(f"local root cannot be resolved: {error}")
+    if not root.is_dir():
+        die(f"local root is not a directory: {root}")
+    if root == Path(root.anchor) or root == Path.home().resolve():
+        die(f"refusing dangerous local root: {root}")
+
+    root_device = root.stat().st_dev
+
+    def walk_error(error: OSError) -> None:
+        raise error
+
+    try:
+        for current, directories, files in os.walk(root, followlinks=False, onerror=walk_error):
+            for entry in directories + files:
+                path = Path(current) / entry
+                if path.is_symlink():
+                    continue
+                if path.stat(follow_symlinks=False).st_dev != root_device:
+                    die(f"local root crosses a filesystem boundary at: {path}")
+    except OSError as error:
+        die(f"unable to scan local root: {error}")
+    return root
+
+
+def marker_value(name: str, local_root: Path, endpoint: str) -> str:
+    identity = json.dumps(
+        {"name": name, "local_root": str(local_root), "endpoint": endpoint},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "wsync-v1:" + hashlib.sha256(identity.encode()).hexdigest()
+
+
+def remote_call(host: str, operation: str, remote_root: str, marker: str, capture: bool = True):
+    command = "sh -s -- " + " ".join(
+        shlex.quote(value) for value in (operation, remote_root, marker)
+    )
+    process = subprocess.run(
+        ["ssh", host, command],
+        input=REMOTE_SCRIPT,
+        text=True,
+        capture_output=capture,
+    )
+    if process.returncode != 0:
+        detail = process.stderr.strip() if capture else "remote command failed"
+        die(detail or f"remote {operation} failed")
+    return process
+
+
+def inspect_remote(host: str, remote_root: str, marker: str) -> dict[str, str]:
+    process = remote_call(host, "inspect", remote_root, marker)
+    result = {}
+    for line in process.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            result[key] = value
+    required = {"resolved", "state", "marker", "empty"}
+    if not required.issubset(result):
+        die("remote preflight returned an invalid response")
+    return result
+
+
+def check_remote_available(state: dict[str, str]) -> None:
+    if state["state"] == "not-directory":
+        die(f"remote target is not a directory: {state['resolved']}")
+    if state["marker"] == "mismatch":
+        die(f"remote target belongs to another wsync session: {state['resolved']}")
+    if state["marker"] == "absent" and state["empty"] != "true":
+        die(f"remote target is non-empty and unmanaged: {state['resolved']}")
+
+
+def yaml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def project_yaml(name: str, local_root: Path, endpoint: str) -> str:
+    lines = [
+        "sync:",
+        f"  {name}:",
+        f"    alpha: {yaml_string(str(local_root))}",
+        f"    beta: {yaml_string(endpoint)}",
+        "    mode: one-way-replica",
+        "    watch:",
+        "      mode: portable",
+        "    scanMode: accelerated",
+        "    ignore:",
+        "      vcs: true",
+        "      paths:",
+    ]
+    lines.extend(f"        - {yaml_string(path)}" for path in IGNORE_PATHS)
+    lines.extend(
+        [
+            "    symlink:",
+            "      mode: portable",
+            "    maxEntryCount: 500000",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def write_private(path: Path, content: str) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(content)
+    temporary.chmod(0o600)
+    temporary.replace(path)
+
+
+def write_session(name: str, metadata: dict, yaml: str) -> Path:
+    directory = session_dir(name)
+    directory.mkdir(parents=True, mode=0o700)
+    directory.chmod(0o700)
+    project_file = directory / "mutagen.yml"
+    write_private(project_file, yaml)
+    write_private(directory / "session.json", json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+    return project_file
+
+
+def load_session(name: str) -> tuple[dict, Path]:
+    directory = session_dir(name)
+    metadata_file = directory / "session.json"
+    project_file = directory / "mutagen.yml"
+    if not metadata_file.is_file() or not project_file.is_file():
+        die(f"unknown wsync session: {name}")
+    try:
+        metadata = json.loads(metadata_file.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        die(f"unable to read session metadata: {error}")
+    required = {
+        "version",
+        "name",
+        "local_root",
+        "endpoint",
+        "host",
+        "remote_root",
+        "resolved_remote_root",
+        "marker",
+    }
+    if not isinstance(metadata, dict) or not required.issubset(metadata):
+        die(f"invalid session metadata: {metadata_file}")
+    if metadata["version"] != 1 or metadata["name"] != name:
+        die(f"session metadata does not match: {metadata_file}")
+    return metadata, project_file
+
+
+def configured_sessions() -> list[tuple[dict, Path]]:
+    root = config_root()
+    if not root.is_dir():
+        return []
+    sessions = []
+    for directory in sorted(path for path in root.iterdir() if path.is_dir()):
+        sessions.append(load_session(directory.name))
+    return sessions
+
+
+def mutagen_session(metadata: dict) -> dict:
+    process = subprocess.run(
+        [
+            "mutagen",
+            "sync",
+            "list",
+            metadata["name"],
+            "--template",
+            "{{ json . }}",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if process.returncode != 0:
+        die(process.stderr.strip() or "unable to query Mutagen session", 4)
+    try:
+        records = json.loads(process.stdout)
+    except json.JSONDecodeError as error:
+        die(f"Mutagen returned invalid session JSON: {error}", 4)
+    matches = [
+        record
+        for record in records
+        if record.get("name") == metadata["name"]
+        and record.get("alpha", {}).get("protocol") == "local"
+        and record.get("alpha", {}).get("path") == metadata["local_root"]
+        and record.get("beta", {}).get("protocol") == "ssh"
+        and record.get("beta", {}).get("host") == metadata["host"]
+        and record.get("beta", {}).get("path") == metadata["remote_root"]
+    ]
+    if len(matches) != 1:
+        die(f"unable to identify active Mutagen session: {metadata['name']}", 4)
+    record = matches[0]
+    if (
+        record.get("paused")
+        or not record.get("alpha", {}).get("connected")
+        or not record.get("alpha", {}).get("scanned")
+        or not record.get("beta", {}).get("connected")
+        or not record.get("beta", {}).get("scanned")
+    ):
+        die(f"Mutagen session is not ready: {metadata['name']}", 4)
+    return record
+
+
+def resolve_session(local_path: Path) -> dict:
+    try:
+        resolved_path = local_path.expanduser().resolve(strict=True)
+    except (FileNotFoundError, RuntimeError) as error:
+        die(f"local path cannot be resolved: {error}", 3)
+    if not resolved_path.is_dir():
+        die(f"local path is not a directory: {resolved_path}", 3)
+
+    candidates = []
+    for metadata, project_file in configured_sessions():
+        root = Path(metadata["local_root"])
+        try:
+            relative = resolved_path.relative_to(root)
+        except ValueError:
+            continue
+        candidates.append((len(root.parts), metadata, project_file, relative))
+    if not candidates:
+        die(f"no wsync session covers: {resolved_path}", 3)
+
+    depth = max(candidate[0] for candidate in candidates)
+    matches = [candidate for candidate in candidates if candidate[0] == depth]
+    if len(matches) != 1:
+        die(f"multiple wsync sessions cover the same local root: {resolved_path}", 3)
+
+    _, metadata, project_file, relative = matches[0]
+    if any(part.startswith(".") for part in relative.parts):
+        die(f"local path is ignored by the wsync dot-entry rule: {resolved_path}", 3)
+
+    require_command("mutagen")
+    mutagen_session(metadata)
+
+    remote_root = PurePosixPath(metadata["resolved_remote_root"])
+    if not remote_root.is_absolute() or remote_root == PurePosixPath("/"):
+        die(f"invalid canonical remote root: {remote_root}", 4)
+    remote_path = remote_root.joinpath(*relative.parts)
+    return {
+        "version": 1,
+        "name": metadata["name"],
+        "project_file": str(project_file),
+        "host": metadata["host"],
+        "local_root": metadata["local_root"],
+        "remote_root": metadata["remote_root"],
+        "resolved_remote_root": str(remote_root),
+        "relative_path": relative.as_posix(),
+        "remote_path": str(remote_path),
+    }
+
+
+def run_mutagen(operation: str, project_file: Path, long: bool = False) -> None:
+    command = ["mutagen", "project", operation, "--project-file", str(project_file)]
+    if operation == "start":
+        command.append("--no-global-configuration")
+    if operation == "list" and long:
+        command.append("--long")
+    process = subprocess.run(command)
+    if process.returncode != 0:
+        die(f"mutagen project {operation} failed", process.returncode)
+
+
+def confirm_create(name: str, local_root: Path, endpoint: str, resolved_remote: str, yes: bool) -> None:
+    print(f"Session:      {name}")
+    print(f"Local alpha:  {local_root}")
+    print(f"Remote beta:  {endpoint} ({resolved_remote})")
+    print("Mode:         one-way-replica")
+    print("Warning: remote-only content inside beta will be removed.")
+    if yes:
+        return
+    if not sys.stdin.isatty():
+        die("confirmation required; rerun interactively or pass --yes")
+    if input("Create this synchronization session? [y/N] ").strip().lower() not in ("y", "yes"):
+        die("cancelled")
+
+
+def command_create(args) -> None:
+    require_command("ssh")
+    require_command("mutagen")
+    validate_name(args.name)
+    directory = session_dir(args.name)
+    if directory.exists():
+        die(f"wsync session already exists: {args.name}")
+    local_root = validate_local_root(args.local_root)
+    host, remote_root = parse_endpoint(args.remote)
+    marker = marker_value(args.name, local_root, args.remote)
+    remote = inspect_remote(host, remote_root, marker)
+    check_remote_available(remote)
+    confirm_create(args.name, local_root, args.remote, remote["resolved"], args.yes)
+
+    metadata = {
+        "version": 1,
+        "name": args.name,
+        "local_root": str(local_root),
+        "endpoint": args.remote,
+        "host": host,
+        "remote_root": remote_root,
+        "resolved_remote_root": remote["resolved"],
+        "marker": marker,
+    }
+    remote_call(host, "initialize", remote_root, marker)
+    project_file = write_session(
+        args.name,
+        metadata,
+        project_yaml(args.name, local_root, args.remote),
+    )
+    try:
+        run_mutagen("start", project_file)
+    except SystemExit:
+        shutil.rmtree(directory)
+        print(
+            "note: local session config was rolled back; the guarded remote marker was retained",
+            file=sys.stderr,
+        )
+        raise
+    print(f"wsync session created: {args.name}")
+
+
+def verify_session(metadata: dict) -> None:
+    root = Path(metadata["local_root"])
+    if root.is_symlink() or not root.is_dir():
+        die(f"local root is missing: {root}")
+    try:
+        resolved = root.resolve(strict=True)
+    except (FileNotFoundError, RuntimeError) as error:
+        die(f"local root cannot be resolved: {error}")
+    if resolved != root or root == Path(root.anchor) or root == Path.home().resolve():
+        die(f"local root no longer matches the guarded path: {root}")
+    remote_call(metadata["host"], "verify", metadata["remote_root"], metadata["marker"])
+
+
+def command_push(args) -> None:
+    require_command("ssh")
+    require_command("mutagen")
+    metadata, project_file = load_session(args.name)
+    verify_session(metadata)
+    run_mutagen("flush", project_file)
+
+
+def command_status(args) -> None:
+    require_command("mutagen")
+    if args.name:
+        _, project_file = load_session(args.name)
+        run_mutagen("list", project_file, long=True)
+        return
+    root = config_root()
+    directories = sorted(path for path in root.iterdir() if path.is_dir()) if root.is_dir() else []
+    if not directories:
+        print("No wsync sessions.")
+        return
+    for index, directory in enumerate(directories):
+        if index:
+            print()
+        print(f"== {directory.name} ==")
+        _, project_file = load_session(directory.name)
+        run_mutagen("list", project_file, long=True)
+
+
+def command_resolve(args) -> None:
+    route = resolve_session(Path(args.path))
+    if args.json:
+        print(json.dumps(route, sort_keys=True))
+        return
+    print(f"{route['name']} {route['host']}:{route['remote_path']}")
+
+
+def command_pause(args) -> None:
+    require_command("mutagen")
+    _, project_file = load_session(args.name)
+    run_mutagen("pause", project_file)
+
+
+def command_resume(args) -> None:
+    require_command("ssh")
+    require_command("mutagen")
+    metadata, project_file = load_session(args.name)
+    verify_session(metadata)
+    run_mutagen("resume", project_file)
+
+
+def command_remove(args) -> None:
+    require_command("mutagen")
+    _, project_file = load_session(args.name)
+    run_mutagen("terminate", project_file)
+    shutil.rmtree(session_dir(args.name))
+    print(f"wsync session removed; remote files were left intact: {args.name}")
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(description=__doc__)
+    commands = result.add_subparsers(dest="command", required=True)
+
+    create = commands.add_parser("create", help="create and start a guarded replica")
+    create.add_argument("name")
+    create.add_argument("local_root")
+    create.add_argument("remote")
+    create.add_argument("--yes", action="store_true", help="skip the interactive confirmation")
+    create.set_defaults(handler=command_create)
+
+    for name, help_text, handler in (
+        ("push", "flush pending changes and wait", command_push),
+        ("pause", "pause synchronization", command_pause),
+        ("resume", "resume synchronization", command_resume),
+        ("remove", "terminate the session without deleting remote files", command_remove),
+    ):
+        subparser = commands.add_parser(name, help=help_text)
+        subparser.add_argument("name")
+        subparser.set_defaults(handler=handler)
+
+    status = commands.add_parser("status", help="show one or all sessions")
+    status.add_argument("name", nargs="?")
+    status.set_defaults(handler=command_status)
+
+    resolve = commands.add_parser("resolve", help="resolve a local path to a ready session")
+    resolve.add_argument("--path", default=".")
+    resolve.add_argument("--json", action="store_true")
+    resolve.set_defaults(handler=command_resolve)
+    return result
+
+
+def main() -> None:
+    args = parser().parse_args()
+    args.handler(args)
+
+
+if __name__ == "__main__":
+    main()

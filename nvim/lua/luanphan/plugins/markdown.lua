@@ -18,40 +18,7 @@ return {
       if preview_port and remote_open_port then
         vim.g.mkdp_port = tostring(preview_port)
         vim.g.mkdp_echo_preview_url = 1
-        vim.g.mkdp_browserfunc = "WorkspaceMarkdownPreviewOpen"
-
-        _G.workspace_markdown_preview_open = function(url)
-          if type(url) ~= "string" or not url:match("^https?://") then
-            vim.notify("Markdown preview returned an invalid URL", vim.log.levels.ERROR)
-            return
-          end
-
-          local client = vim.uv.new_tcp()
-          client:connect("127.0.0.1", remote_open_port, function(connect_error)
-            if connect_error then
-              client:close()
-              vim.schedule(function()
-                vim.notify("Markdown preview could not reach the local browser bridge", vim.log.levels.ERROR)
-              end)
-              return
-            end
-
-            client:write(url .. "\n", function(write_error)
-              client:close()
-              if write_error then
-                vim.schedule(function()
-                  vim.notify("Markdown preview could not send the URL to the local browser", vim.log.levels.ERROR)
-                end)
-              end
-            end)
-          end)
-        end
-
-        vim.cmd([[
-          function! WorkspaceMarkdownPreviewOpen(url) abort
-            call v:lua.workspace_markdown_preview_open(a:url)
-          endfunction
-        ]])
+        vim.g.mkdp_browserfunc = require("luanphan.neovide_remote").setup_url_opener(remote_open_port)
       end
       vim.g.mkdp_preview_options = {
         disable_sync_scroll = 1,

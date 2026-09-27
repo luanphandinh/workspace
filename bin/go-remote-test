@@ -1,0 +1,367 @@
+#!/usr/bin/env python3
+"""Resolve, snapshot, and run a Go test on a wsync testbox."""
+
+import fcntl
+import json
+import os
+import re
+import secrets
+import shlex
+import subprocess
+import sys
+from contextlib import contextmanager
+from pathlib import Path, PurePosixPath
+
+
+SESSION_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+HOST_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
+
+PROBE_SCRIPT = r"""
+set -eu
+remote_path=$1
+[ -d "$remote_path" ] && [ ! -L "$remote_path" ]
+login_shell=${SHELL:-/bin/sh}
+"$login_shell" -lic 'go --no-remote version >/dev/null'
+"""
+
+SNAPSHOT_SCRIPT = r"""
+set -eu
+session=$1
+remote_root=$2
+source_repo=$3
+token=$4
+
+case "$session" in
+    ''|*[!a-z0-9_-]*) printf 'invalid session name\n' >&2; exit 40 ;;
+esac
+case "$source_repo" in
+    "$remote_root"|"$remote_root"/*) ;;
+    *) printf 'repository is outside the synchronized root\n' >&2; exit 41 ;;
+esac
+[ -d "$source_repo" ] && [ ! -L "$source_repo" ] || {
+    printf 'remote repository is missing or unsafe: %s\n' "$source_repo" >&2
+    exit 42
+}
+
+cache=${XDG_CACHE_HOME:-$HOME/.cache}
+jobs=$cache/wsync-go/$session/jobs
+mkdir -p -- "$jobs"
+chmod 700 "$cache/wsync-go" "$cache/wsync-go/$session" "$jobs"
+job=$(mktemp -d "$jobs/job.XXXXXXXX")
+complete=false
+cleanup_incomplete() {
+    [ "$complete" = true ] || rm -rf -- "$job"
+}
+trap cleanup_incomplete EXIT HUP INT TERM
+mkdir "$job/repo"
+printf '%s\n' "$token" > "$job/.wsync-go-job"
+chmod 600 "$job/.wsync-go-job"
+cp -a --reflink=auto "$source_repo/." "$job/repo/"
+complete=true
+trap - EXIT HUP INT TERM
+printf '%s\n' "$job"
+"""
+
+RUN_SCRIPT = r"""
+set -eu
+session=$1
+job=$2
+token=$3
+work_relative=$4
+test_command=$5
+
+case "$session" in
+    ''|*[!a-z0-9_-]*) printf 'invalid session name\n' >&2; exit 50 ;;
+esac
+cache=${XDG_CACHE_HOME:-$HOME/.cache}
+jobs=$cache/wsync-go/$session/jobs
+case "$job" in
+    "$jobs"/job.*) ;;
+    *) printf 'refusing unsafe job path: %s\n' "$job" >&2; exit 51 ;;
+esac
+[ -f "$job/.wsync-go-job" ] && [ ! -L "$job/.wsync-go-job" ] || {
+    printf 'remote job marker is missing\n' >&2
+    exit 52
+}
+[ "$(cat -- "$job/.wsync-go-job")" = "$token" ] || {
+    printf 'remote job marker does not match\n' >&2
+    exit 53
+}
+
+cleanup() { rm -rf -- "$job"; }
+trap cleanup EXIT HUP INT TERM
+work=$job/repo
+if [ "$work_relative" != . ]; then
+    work=$work/$work_relative
+fi
+[ -d "$work" ] && [ ! -L "$work" ] || {
+    printf 'snapshot working directory is missing or unsafe: %s\n' "$work" >&2
+    exit 54
+}
+cd "$work"
+login_shell=${SHELL:-/bin/sh}
+"$login_shell" -lic "$test_command"
+"""
+
+CLEANUP_SCRIPT = r"""
+set -eu
+session=$1
+job=$2
+token=$3
+
+case "$session" in
+    ''|*[!a-z0-9_-]*) exit 0 ;;
+esac
+cache=${XDG_CACHE_HOME:-$HOME/.cache}
+jobs=$cache/wsync-go/$session/jobs
+case "$job" in
+    "$jobs"/job.*) ;;
+    *) exit 0 ;;
+esac
+[ -d "$job" ] || exit 0
+[ -f "$job/.wsync-go-job" ] && [ ! -L "$job/.wsync-go-job" ] || exit 0
+[ "$(cat -- "$job/.wsync-go-job")" = "$token" ] || exit 0
+rm -rf -- "$job"
+"""
+
+
+class RemoteUnavailable(Exception):
+    """The current invocation should use the local Go toolchain."""
+
+
+class RemoteFailure(Exception):
+    """A selected remote invocation failed before Go returned."""
+
+
+def resolve_route(path: Path) -> dict:
+    process = subprocess.run(
+        ["wsync", "resolve", "--path", str(path), "--json"],
+        text=True,
+        capture_output=True,
+    )
+    if process.returncode != 0:
+        raise RemoteUnavailable(process.stderr.strip() or "no ready wsync route")
+    try:
+        route = json.loads(process.stdout)
+    except json.JSONDecodeError as error:
+        raise RemoteUnavailable(f"invalid wsync route: {error}") from error
+    required = {
+        "name",
+        "host",
+        "local_root",
+        "resolved_remote_root",
+        "remote_path",
+    }
+    if not isinstance(route, dict) or not required.issubset(route):
+        raise RemoteUnavailable("incomplete wsync route")
+    if not all(isinstance(route[key], str) and route[key] for key in required):
+        raise RemoteUnavailable("invalid wsync route values")
+    if not SESSION_RE.fullmatch(route["name"]):
+        raise RemoteUnavailable("invalid wsync session name")
+    if not HOST_RE.fullmatch(route["host"]) or route["host"].startswith("-"):
+        raise RemoteUnavailable("invalid wsync SSH host")
+    return route
+
+
+def ssh_command(host: str, script: str, arguments: list[str], *, capture: bool = False):
+    remote_command = "sh -s -- " + " ".join(shlex.quote(argument) for argument in arguments)
+    return subprocess.run(
+        [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            host,
+            remote_command,
+        ],
+        input=script,
+        text=True,
+        capture_output=capture,
+    )
+
+
+def git_context(path: Path, route: dict) -> tuple[Path, Path, PurePosixPath]:
+    process = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+        text=True,
+        capture_output=True,
+    )
+    if process.returncode != 0:
+        raise RemoteUnavailable("current directory is not inside a Git repository")
+    repository_output = process.stdout.strip()
+    if not repository_output or not Path(repository_output).is_absolute():
+        raise RemoteUnavailable("Git returned an invalid repository root")
+    try:
+        working = path.expanduser().resolve(strict=True)
+        repository = Path(repository_output).resolve(strict=True)
+        local_root = Path(route["local_root"]).resolve(strict=True)
+        repository_relative = repository.relative_to(local_root)
+        working_relative = working.relative_to(repository)
+    except (FileNotFoundError, RuntimeError, ValueError) as error:
+        raise RemoteUnavailable("Git repository is outside the wsync route") from error
+
+    remote_root = PurePosixPath(route["resolved_remote_root"])
+    if not remote_root.is_absolute() or remote_root == PurePosixPath("/"):
+        raise RemoteUnavailable("invalid canonical remote root")
+    remote_repository = remote_root.joinpath(*repository_relative.parts)
+    return repository, working_relative, remote_repository
+
+
+def check_remote(route: dict) -> None:
+    process = ssh_command(route["host"], PROBE_SCRIPT, [route["remote_path"]], capture=True)
+    if process.returncode != 0:
+        raise RemoteUnavailable(process.stderr.strip() or "remote testbox probe failed")
+
+
+def probe(path: Path) -> int:
+    try:
+        route = resolve_route(path)
+        git_context(path, route)
+        check_remote(route)
+    except (OSError, RemoteUnavailable):
+        return 1
+    return 0
+
+
+@contextmanager
+def session_lock(name: str):
+    lock_root = Path.home() / ".cache" / "wsync-go" / "locks"
+    lock_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_root.chmod(0o700)
+    with (lock_root / f"{name}.lock").open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def checked_local(command: list[str], description: str) -> None:
+    process = subprocess.run(command)
+    if process.returncode != 0:
+        raise RemoteFailure(f"{description} failed with exit status {process.returncode}")
+
+
+def snapshot(route: dict, remote_repository: PurePosixPath, token: str) -> str:
+    process = ssh_command(
+        route["host"],
+        SNAPSHOT_SCRIPT,
+        [
+            route["name"],
+            route["resolved_remote_root"],
+            str(remote_repository),
+            token,
+        ],
+        capture=True,
+    )
+    if process.returncode != 0:
+        raise RemoteFailure(process.stderr.strip() or "remote snapshot failed")
+    job = process.stdout.strip()
+    if not job or "\n" in job or not job.startswith("/"):
+        raise RemoteFailure("remote snapshot returned an invalid job path")
+    return job
+
+
+def cleanup(route: dict, job: str, token: str) -> None:
+    process = ssh_command(
+        route["host"],
+        CLEANUP_SCRIPT,
+        [route["name"], job, token],
+        capture=True,
+    )
+    if process.returncode != 0:
+        print("go remote test: warning: remote snapshot cleanup failed", file=sys.stderr)
+
+
+def test_command(test_arguments: list[str]) -> str:
+    arguments = list(test_arguments)
+    if not any(argument == "-mod" or argument.startswith("-mod=") for argument in arguments):
+        arguments.insert(0, "-mod=readonly")
+    return "exec go --no-remote test " + " ".join(shlex.quote(argument) for argument in arguments)
+
+
+def run(path: Path, test_arguments: list[str]) -> int:
+    try:
+        route = resolve_route(path)
+        _, working_relative, remote_repository = git_context(path, route)
+        check_remote(route)
+    except RemoteUnavailable as error:
+        raise RemoteFailure(f"remote route became unavailable: {error}") from error
+
+    token = secrets.token_hex(16)
+    job = ""
+    paused = False
+    operation_error = None
+    resume_error = None
+    with session_lock(route["name"]):
+        try:
+            checked_local(["wsync", "push", route["name"]], "wsync flush")
+            checked_local(["wsync", "pause", route["name"]], "wsync pause")
+            paused = True
+            job = snapshot(route, remote_repository, token)
+        except BaseException as error:
+            operation_error = error
+        finally:
+            if paused:
+                try:
+                    checked_local(["wsync", "resume", route["name"]], "wsync resume")
+                except BaseException as error:
+                    resume_error = error
+
+    if resume_error is not None:
+        if job:
+            cleanup(route, job, token)
+        raise resume_error
+    if operation_error is not None:
+        if job:
+            cleanup(route, job, token)
+        raise operation_error
+
+    command = test_command(test_arguments)
+    remote_work = PurePosixPath(job) / "repo"
+    if working_relative != Path("."):
+        remote_work = remote_work.joinpath(*working_relative.parts)
+    print(
+        f"go remote test: {route['host']}:{remote_work} $ {command}",
+        file=sys.stderr,
+    )
+    try:
+        process = ssh_command(
+            route["host"],
+            RUN_SCRIPT,
+            [
+                route["name"],
+                job,
+                token,
+                working_relative.as_posix(),
+                command,
+            ],
+        )
+        return process.returncode
+    finally:
+        cleanup(route, job, token)
+
+
+def usage() -> None:
+    print(
+        "usage: go-remote-test probe [path]\n"
+        "       go-remote-test run <path> -- [go-test-arguments...]",
+        file=sys.stderr,
+    )
+
+
+def main() -> int:
+    if len(sys.argv) >= 2 and sys.argv[1] == "probe" and len(sys.argv) <= 3:
+        return probe(Path(sys.argv[2] if len(sys.argv) == 3 else "."))
+    if len(sys.argv) >= 4 and sys.argv[1] == "run" and sys.argv[3] == "--":
+        try:
+            return run(Path(sys.argv[2]), sys.argv[4:])
+        except (OSError, RemoteFailure) as error:
+            print(f"go remote test: {error}", file=sys.stderr)
+            return 1
+        except KeyboardInterrupt:
+            return 130
+    usage()
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

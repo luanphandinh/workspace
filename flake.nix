@@ -85,6 +85,7 @@
             jq
             kitty
             mosh
+            mutagen
             ripgrep
             unzip
             xz

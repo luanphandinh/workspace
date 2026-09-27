@@ -2,38 +2,120 @@
 set -eu
 
 usage() {
-	printf 'Usage: neovide-server [port] [nvim-args...]\n' >&2
+	printf '%s\n' \
+		'Usage: neovide-server [options] [port] [-- nvim-args...]' \
+		'' \
+		'Options:' \
+		'  -p, --port PORT  Remote Neovim base port (default: 6666)' \
+		'      --trace      Print every shell command as it executes' \
+		'  -h, --help       Show this help' \
+		'' \
+		'Port bundle:' \
+		'  PORT      Neovim RPC' \
+		'  PORT + 1  Markdown preview' \
+		'  PORT + 2  Local-browser callback' \
+		'  PORT + 3  Local clipboard-image callback'
 }
 
-case "${1:-}" in
-	-h|--help)
-		usage
-		exit 0
-		;;
-esac
+if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
+	color_info=$(printf '\033[34m')
+	color_error=$(printf '\033[31m')
+	color_command=$(printf '\033[35m')
+	color_reset=$(printf '\033[0m')
+else
+	color_info=
+	color_error=
+	color_command=
+	color_reset=
+fi
 
-port="${1:-6666}"
-if [ "$#" -gt 0 ]; then
+log() {
+	level=$1
 	shift
+	timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+	case "$level" in
+		Info) color=$color_info ;;
+		Error) color=$color_error ;;
+		Command) color=$color_command ;;
+		*) color= ;;
+	esac
+	printf '[%s] %s[%s]%s neovide-server: %s\n' "$timestamp" "$color" "$level" "$color_reset" "$*" >&2
+}
+
+port=6666
+port_set=0
+trace=0
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		-p|--port)
+			[ "$#" -gt 1 ] || {
+				log Error "$1 requires a value"
+				exit 2
+			}
+			port=$2
+			port_set=1
+			shift 2
+			;;
+		--port=*)
+			port=${1#*=}
+			port_set=1
+			shift
+			;;
+		--trace)
+			trace=1
+			shift
+			;;
+		-h|--help)
+			usage
+			exit 0
+			;;
+		--)
+			shift
+			break
+			;;
+		*[!0-9]*)
+			break
+			;;
+		*)
+			if [ "$port_set" -eq 1 ]; then
+				log Error 'port specified more than once'
+				exit 2
+			fi
+			port=$1
+			port_set=1
+			shift
+			;;
+	esac
+done
+
+if [ "$trace" -eq 1 ]; then
+	set -x
 fi
 
 case "$port" in
 	""|*[!0-9]*)
+		log Error 'port must be numeric'
 		usage
 		exit 2
 		;;
 esac
-if [ "$port" -lt 1 ] || [ "$port" -gt 65533 ]; then
-	printf 'neovide-server: port must be between 1 and 65533\n' >&2
+if [ "$port" -lt 1 ] || [ "$port" -gt 65532 ]; then
+	log Error 'port must be between 1 and 65532'
 	exit 2
 fi
 
 command -v nvim >/dev/null 2>&1 || {
-	printf 'neovide-server: nvim is not installed\n' >&2
+	log Error 'nvim is not installed'
 	exit 1
 }
 
 export NEOVIDE_MARKDOWN_PREVIEW_PORT=$((port + 1))
 export NEOVIDE_REMOTE_OPEN_PORT=$((port + 2))
+export NEOVIDE_REMOTE_IMAGE_PORT=$((port + 3))
 
+log Info "Neovim RPC listening on 127.0.0.1:$port"
+log Info "Markdown preview will use 127.0.0.1:$NEOVIDE_MARKDOWN_PREVIEW_PORT"
+log Info "browser callback will use 127.0.0.1:$NEOVIDE_REMOTE_OPEN_PORT"
+log Info "clipboard-image callback will use 127.0.0.1:$NEOVIDE_REMOTE_IMAGE_PORT"
+log Command "nvim --headless --listen 127.0.0.1:$port"
 exec nvim --headless --listen "127.0.0.1:$port" "$@"

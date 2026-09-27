@@ -2,62 +2,182 @@
 set -eu
 
 usage() {
-	printf 'Usage: neovide-client <ssh-host>[:port] [neovide-args...]\n' >&2
+	printf '%s\n' \
+		'Usage: neovide-client [options] <ssh-host>[:port] [neovide-args...]' \
+		'' \
+		'Options:' \
+		'  -p, --port PORT  Remote Neovim base port (default: 6666)' \
+		'      --trace      Print every shell command as it executes' \
+		'      --ssh-verbose  Stream verbose SSH diagnostics' \
+		'  -h, --help       Show this help'
 }
 
-target="${1:-}"
-if [ "$target" = "-h" ] || [ "$target" = "--help" ]; then
-	usage
-	exit 0
+if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
+	color_info=$(printf '\033[34m')
+	color_success=$(printf '\033[32m')
+	color_warning=$(printf '\033[33m')
+	color_error=$(printf '\033[31m')
+	color_command=$(printf '\033[35m')
+	color_reset=$(printf '\033[0m')
+else
+	color_info=
+	color_success=
+	color_warning=
+	color_error=
+	color_command=
+	color_reset=
 fi
+
+log() {
+	level=$1
+	shift
+	timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+	case "$level" in
+		Info) color=$color_info ;;
+		Success) color=$color_success ;;
+		Warning) color=$color_warning ;;
+		Error) color=$color_error ;;
+		Command) color=$color_command ;;
+		*) color= ;;
+	esac
+	printf '[%s] %s[%s]%s neovide-client: %s\n' "$timestamp" "$color" "$level" "$color_reset" "$*" >&2
+}
+
+log_command() {
+	timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+	printf '[%s] %s[Command]%s neovide-client:' "$timestamp" "$color_command" "$color_reset" >&2
+	for argument in "$@"; do
+		printf ' [%s]' "$argument" >&2
+	done
+	printf '\n' >&2
+}
+
+port=6666
+port_set=0
+trace=0
+ssh_verbose=
+target=
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		-p|--port)
+			[ "$#" -gt 1 ] || {
+				log Error "$1 requires a value"
+				exit 2
+			}
+			port=$2
+			port_set=1
+			shift 2
+			;;
+		--port=*)
+			port=${1#*=}
+			port_set=1
+			shift
+			;;
+		--trace)
+			trace=1
+			shift
+			;;
+		--ssh-verbose)
+			ssh_verbose=-v
+			shift
+			;;
+		-h|--help)
+			usage
+			exit 0
+			;;
+		--)
+			shift
+			[ "$#" -gt 0 ] || {
+				log Error 'missing SSH host after --'
+				exit 2
+			}
+			target=$1
+			shift
+			break
+			;;
+		-*)
+			log Error "unknown option: $1"
+			exit 2
+			;;
+		*)
+			target=$1
+			shift
+			break
+			;;
+	esac
+done
+
 if [ -z "$target" ]; then
+	log Error 'missing SSH host'
 	usage
 	exit 2
 fi
-shift
+
+if [ "$trace" -eq 1 ]; then
+	set -x
+fi
 
 case "$(uname -s)" in
 	Darwin)
 		browser_opener=open
+		operating_system=macOS
+		if command -v swift >/dev/null 2>&1; then
+			clipboard_backend=macos
+		else
+			clipboard_backend=none
+		fi
 		;;
 	Linux)
 		browser_opener=xdg-open
+		operating_system=Linux
+		if command -v wl-paste >/dev/null 2>&1; then
+			clipboard_backend=wayland
+		elif command -v xclip >/dev/null 2>&1; then
+			clipboard_backend=x11
+		else
+			clipboard_backend=none
+		fi
 		;;
 	*)
-		printf 'neovide-client: unsupported operating system\n' >&2
+		log Error 'unsupported operating system'
 		exit 1
 		;;
 esac
 
 case "$target" in
 	:*|-*)
+		log Error "invalid SSH host: $target"
 		usage
 		exit 2
 		;;
 	*:*)
 		ssh_host=${target%:*}
+		if [ "$port_set" -eq 1 ]; then
+			log Error 'port specified both in the target and with --port'
+			exit 2
+		fi
 		port=${target##*:}
 		;;
 	*)
 		ssh_host=$target
-		port=6666
 		;;
 esac
 
 case "$port" in
 	""|*[!0-9]*)
+		log Error 'port must be numeric'
 		usage
 		exit 2
 		;;
 esac
-if [ "$port" -lt 1 ] || [ "$port" -gt 65533 ]; then
-	printf 'neovide-client: port must be between 1 and 65533\n' >&2
+if [ "$port" -lt 1 ] || [ "$port" -gt 65532 ]; then
+	log Error 'port must be between 1 and 65532'
 	exit 2
 fi
 
 for dependency in python3 ssh neovide "$browser_opener"; do
 	command -v "$dependency" >/dev/null 2>&1 || {
-		printf 'neovide-client: %s is not installed\n' "$dependency" >&2
+		log Error "$dependency is not installed"
 		exit 1
 	}
 done
@@ -65,12 +185,13 @@ done
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 bridge="$script_dir/.neovide-url-bridge"
 [ -x "$bridge" ] || {
-	printf 'neovide-client: missing %s\n' "$bridge" >&2
+	log Error "missing $bridge"
 	exit 1
 }
 
 preview_port=$((port + 1))
 open_port=$((port + 2))
+image_port=$((port + 3))
 client_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/neovide-client.XXXXXX")
 control_socket="$client_tmp_dir/ssh-control"
 "$bridge" allocate --count 3 > "$client_tmp_dir/local-ports"
@@ -78,11 +199,22 @@ read -r local_nvim_port local_preview_port local_open_port < "$client_tmp_dir/lo
 bridge_pid=
 tunnel_started=0
 
+log Info "platform: $operating_system; browser opener: $browser_opener"
+log Info "remote ports: Neovim $port, preview $preview_port, browser callback $open_port, image callback $image_port"
+log Info "local ports: Neovim $local_nvim_port, preview $local_preview_port, callback $local_open_port"
+if [ "$clipboard_backend" = none ]; then
+	log Warning 'local image clipboard support is unavailable'
+else
+	log Info "local image clipboard backend: $clipboard_backend"
+fi
+
 cleanup() {
 	if [ "$tunnel_started" -eq 1 ]; then
+		log Info "stopping SSH tunnel to $ssh_host"
 		ssh -S "$control_socket" -O exit "$ssh_host" >/dev/null 2>&1 || true
 	fi
 	if [ -n "$bridge_pid" ]; then
+		log Info "stopping local browser bridge"
 		kill "$bridge_pid" >/dev/null 2>&1 || true
 		wait "$bridge_pid" 2>/dev/null || true
 	fi
@@ -93,23 +225,47 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 
+log Info "starting local browser bridge"
+log_command "$bridge" serve --listen-port "$local_open_port" --remote-preview-port "$preview_port" --local-preview-port "$local_preview_port" --opener "$browser_opener" --clipboard-backend "$clipboard_backend"
 "$bridge" serve \
 	--listen-port "$local_open_port" \
 	--remote-preview-port "$preview_port" \
 	--local-preview-port "$local_preview_port" \
-	--opener "$browser_opener" &
+	--opener "$browser_opener" \
+	--clipboard-backend "$clipboard_backend" &
 bridge_pid=$!
 "$bridge" wait --port "$local_open_port" --timeout 3
+log Success "local browser bridge is ready"
 
+log Info "creating SSH tunnel to $ssh_host"
+log Info "forward: local 127.0.0.1:$local_nvim_port -> remote 127.0.0.1:$port"
+log Info "forward: local 127.0.0.1:$local_preview_port -> remote 127.0.0.1:$preview_port"
+log Info "callback: remote 127.0.0.1:$open_port -> local 127.0.0.1:$local_open_port"
+log Info "callback: remote 127.0.0.1:$image_port -> local 127.0.0.1:$local_open_port (image clipboard)"
+log_command ssh ${ssh_verbose:+"$ssh_verbose"} -M -S "$control_socket" -o ControlPersist=no -o ExitOnForwardFailure=yes -fN -L "127.0.0.1:$local_nvim_port:127.0.0.1:$port" -L "127.0.0.1:$local_preview_port:127.0.0.1:$preview_port" -R "127.0.0.1:$open_port:127.0.0.1:$local_open_port" -R "127.0.0.1:$image_port:127.0.0.1:$local_open_port" "$ssh_host"
 ssh -M -S "$control_socket" \
+	${ssh_verbose:+"$ssh_verbose"} \
 	-o ControlPersist=no \
 	-o ExitOnForwardFailure=yes \
 	-fN \
 	-L "127.0.0.1:$local_nvim_port:127.0.0.1:$port" \
 	-L "127.0.0.1:$local_preview_port:127.0.0.1:$preview_port" \
 	-R "127.0.0.1:$open_port:127.0.0.1:$local_open_port" \
+	-R "127.0.0.1:$image_port:127.0.0.1:$local_open_port" \
 	"$ssh_host"
 tunnel_started=1
+log Success "SSH tunnel established"
 
+log Info "waiting for remote Neovim"
 "$bridge" wait --port "$local_nvim_port" --timeout "${NEOVIDE_CONNECT_TIMEOUT:-15}"
-neovide --no-fork --server "127.0.0.1:$local_nvim_port" "$@"
+log Success "remote Neovim is reachable"
+log Info "launching Neovide"
+log_command neovide --no-fork --server "127.0.0.1:$local_nvim_port" "$@"
+neovide_status=0
+neovide --no-fork --server "127.0.0.1:$local_nvim_port" "$@" || neovide_status=$?
+if [ "$neovide_status" -eq 0 ]; then
+	log Success "Neovide exited with status $neovide_status"
+else
+	log Error "Neovide exited with status $neovide_status"
+fi
+exit "$neovide_status"

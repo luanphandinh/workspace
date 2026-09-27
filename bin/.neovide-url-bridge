@@ -1,14 +1,77 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import socket
 import socketserver
 import subprocess
 import sys
+import tempfile
 import time
 from urllib.parse import urlsplit, urlunsplit
 
 
 MAX_URL_BYTES = 8192
+MAX_IMAGE_BYTES = 25 * 1024 * 1024
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+MACOS_CLIPBOARD_IMAGE = r"""
+import AppKit
+import Darwin
+import Foundation
+
+let pasteboard = NSPasteboard.general
+var imageData = pasteboard.data(forType: .png)
+if imageData == nil,
+   let tiffData = pasteboard.data(forType: .tiff),
+   let representation = NSBitmapImageRep(data: tiffData) {
+    imageData = representation.representation(using: .png, properties: [:])
+}
+guard let imageData else {
+    FileHandle.standardError.write(Data("clipboard does not contain an image\n".utf8))
+    exit(2)
+}
+FileHandle.standardOutput.write(imageData)
+"""
+
+COLORS = {
+    "Info": "\033[34m",
+    "Success": "\033[32m",
+    "Error": "\033[31m",
+    "Command": "\033[35m",
+}
+
+
+def log(level, message):
+    color_enabled = sys.stderr.isatty() and not os.environ.get("NO_COLOR")
+    color = COLORS.get(level, "") if color_enabled else ""
+    reset = "\033[0m" if color else ""
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(
+        f"[{timestamp}] {color}[{level}]{reset} neovide bridge: {message}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def clipboard_image(backend):
+    commands = {
+        "macos": ["swift", "-e", MACOS_CLIPBOARD_IMAGE],
+        "wayland": ["wl-paste", "--no-newline", "--type", "image/png"],
+        "x11": ["xclip", "-selection", "clipboard", "-target", "image/png", "-out"],
+    }
+    command = commands.get(backend)
+    if command is None:
+        raise RuntimeError("local image clipboard support is unavailable")
+
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(detail or "clipboard does not contain a PNG image")
+    if not result.stdout.startswith(PNG_SIGNATURE):
+        raise RuntimeError("clipboard does not contain a PNG image")
+    if len(result.stdout) > MAX_IMAGE_BYTES:
+        raise RuntimeError("clipboard image exceeds 25 MiB")
+    return result.stdout
 
 
 def preview_url(value, remote_preview_port, local_preview_port):
@@ -41,17 +104,31 @@ def serve(args):
             value = bytes(payload).split(b"\n", 1)[0].decode("utf-8", errors="strict")
             if not value:
                 return
+            if value == "clipboard-image":
+                log("Info", "received clipboard image request")
+                try:
+                    image = clipboard_image(args.clipboard_backend)
+                except RuntimeError as error:
+                    message = str(error).replace("\n", " ")[:512]
+                    log("Error", message)
+                    self.request.sendall(f"ERROR {message}\n".encode())
+                    return
+                log("Success", f"sending clipboard image ({len(image)} bytes)")
+                self.request.sendall(f"OK {len(image)}\n".encode() + image)
+                return
+
+            log("Info", f"received preview URL: {value}")
             try:
                 url = preview_url(value, args.remote_preview_port, args.local_preview_port)
             except (UnicodeError, ValueError) as error:
-                print(f"neovide URL bridge: rejected callback: {error}", file=sys.stderr)
+                log("Error", f"rejected callback: {error}")
                 return
 
+            log("Info", f"opening local URL: {url}")
+            log("Command", f"{args.opener} {url}")
             subprocess.Popen(
                 [args.opener, url],
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
 
@@ -60,7 +137,54 @@ def serve(args):
         daemon_threads = True
 
     with Server(("127.0.0.1", args.listen_port), Handler) as server:
+        log("Success", f"listening on 127.0.0.1:{args.listen_port}")
         server.serve_forever()
+
+
+def receive_image(args):
+    output_path = None
+    try:
+        with socket.create_connection(("127.0.0.1", args.port), timeout=args.timeout) as connection:
+            connection.sendall(b"clipboard-image\n")
+            with connection.makefile("rb") as response:
+                header = response.readline(1024).decode("utf-8", errors="replace").strip()
+                if header.startswith("ERROR "):
+                    raise RuntimeError(header[6:])
+                fields = header.split()
+                if len(fields) != 2 or fields[0] != "OK" or not fields[1].isdigit():
+                    raise RuntimeError("invalid clipboard image response")
+                size = int(fields[1])
+                if size < len(PNG_SIGNATURE) or size > MAX_IMAGE_BYTES:
+                    raise RuntimeError("invalid clipboard image size")
+
+                os.makedirs(args.output_dir, mode=0o700, exist_ok=True)
+                descriptor, output_path = tempfile.mkstemp(
+                    prefix="clipboard-",
+                    suffix=".png",
+                    dir=args.output_dir,
+                )
+                remaining = size
+                with os.fdopen(descriptor, "wb") as output:
+                    while remaining > 0:
+                        chunk = response.read(min(64 * 1024, remaining))
+                        if not chunk:
+                            raise RuntimeError("clipboard image transfer ended early")
+                        output.write(chunk)
+                        remaining -= len(chunk)
+
+        with open(output_path, "rb") as image_file:
+            if image_file.read(len(PNG_SIGNATURE)) != PNG_SIGNATURE:
+                raise RuntimeError("received clipboard data is not a PNG image")
+        log("Success", f"saved clipboard image to {output_path}")
+        print(os.path.abspath(output_path))
+    except (OSError, RuntimeError) as error:
+        if output_path:
+            try:
+                os.unlink(output_path)
+            except OSError:
+                pass
+        log("Error", str(error))
+        raise SystemExit(1)
 
 
 def wait_for_port(args):
@@ -71,7 +195,8 @@ def wait_for_port(args):
                 return
         except OSError:
             time.sleep(0.1)
-    raise SystemExit(f"neovide client: timed out waiting for local port {args.port}")
+    log("Error", f"timed out waiting for local port {args.port}")
+    raise SystemExit(1)
 
 
 def allocate_ports(args):
@@ -96,6 +221,11 @@ def parse_args():
     serve_parser.add_argument("--remote-preview-port", type=int, required=True)
     serve_parser.add_argument("--local-preview-port", type=int, required=True)
     serve_parser.add_argument("--opener", required=True)
+    serve_parser.add_argument(
+        "--clipboard-backend",
+        choices=("macos", "wayland", "x11", "none"),
+        default="none",
+    )
 
     wait_parser = commands.add_parser("wait")
     wait_parser.add_argument("--port", type=int, required=True)
@@ -103,6 +233,11 @@ def parse_args():
 
     allocate_parser = commands.add_parser("allocate")
     allocate_parser.add_argument("--count", type=int, required=True)
+
+    receive_parser = commands.add_parser("receive-image")
+    receive_parser.add_argument("--port", type=int, required=True)
+    receive_parser.add_argument("--output-dir", required=True)
+    receive_parser.add_argument("--timeout", type=float, default=10)
     return parser.parse_args()
 
 
@@ -112,8 +247,10 @@ def main():
         serve(args)
     elif args.command == "wait":
         wait_for_port(args)
-    else:
+    elif args.command == "allocate":
         allocate_ports(args)
+    else:
+        receive_image(args)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+image_port=${NEOVIDE_REMOTE_IMAGE_PORT:-}
+case "$image_port" in
+	""|*[!0-9]*)
+		printf '[%s] [Error] neovide-paste-image: image bridge is unavailable\n' "$(date '+%Y-%m-%d %H:%M:%S')" >&2
+		exit 1
+		;;
+esac
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+output_dir=${XDG_CACHE_HOME:-$HOME/.cache}/neovide/clipboard-images
+exec "$script_dir/.neovide-url-bridge" receive-image \
+	--port "$image_port" \
+	--output-dir "$output_dir"
