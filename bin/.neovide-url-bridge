@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+import argparse
+import socket
+import socketserver
+import subprocess
+import sys
+import time
+from urllib.parse import urlsplit, urlunsplit
+
+
+MAX_URL_BYTES = 8192
+
+
+def preview_url(value, remote_preview_port, local_preview_port):
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("URL scheme must be http or https")
+    if parsed.hostname not in {"127.0.0.1", "localhost"}:
+        raise ValueError("URL host must be loopback")
+    if parsed.port != remote_preview_port:
+        raise ValueError("URL port does not match the preview port")
+    if not parsed.path.startswith("/page/"):
+        raise ValueError("URL path is not a Markdown preview page")
+    return urlunsplit(
+        (parsed.scheme, f"127.0.0.1:{local_preview_port}", parsed.path, parsed.query, parsed.fragment)
+    )
+
+
+def serve(args):
+    class Handler(socketserver.BaseRequestHandler):
+        def handle(self):
+            payload = bytearray()
+            while len(payload) < MAX_URL_BYTES:
+                chunk = self.request.recv(min(1024, MAX_URL_BYTES - len(payload)))
+                if not chunk:
+                    break
+                payload.extend(chunk)
+                if b"\n" in chunk:
+                    break
+
+            value = bytes(payload).split(b"\n", 1)[0].decode("utf-8", errors="strict")
+            if not value:
+                return
+            try:
+                url = preview_url(value, args.remote_preview_port, args.local_preview_port)
+            except (UnicodeError, ValueError) as error:
+                print(f"neovide URL bridge: rejected callback: {error}", file=sys.stderr)
+                return
+
+            subprocess.Popen(
+                [args.opener, url],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+
+    class Server(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
+    with Server(("127.0.0.1", args.listen_port), Handler) as server:
+        server.serve_forever()
+
+
+def wait_for_port(args):
+    deadline = time.monotonic() + args.timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", args.port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.1)
+    raise SystemExit(f"neovide client: timed out waiting for local port {args.port}")
+
+
+def allocate_ports(args):
+    sockets = []
+    try:
+        for _ in range(args.count):
+            current = socket.socket()
+            current.bind(("127.0.0.1", 0))
+            sockets.append(current)
+        print(" ".join(str(current.getsockname()[1]) for current in sockets))
+    finally:
+        for current in sockets:
+            current.close()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    serve_parser = commands.add_parser("serve")
+    serve_parser.add_argument("--listen-port", type=int, required=True)
+    serve_parser.add_argument("--remote-preview-port", type=int, required=True)
+    serve_parser.add_argument("--local-preview-port", type=int, required=True)
+    serve_parser.add_argument("--opener", required=True)
+
+    wait_parser = commands.add_parser("wait")
+    wait_parser.add_argument("--port", type=int, required=True)
+    wait_parser.add_argument("--timeout", type=float, required=True)
+
+    allocate_parser = commands.add_parser("allocate")
+    allocate_parser.add_argument("--count", type=int, required=True)
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    if args.command == "serve":
+        serve(args)
+    elif args.command == "wait":
+        wait_for_port(args)
+    else:
+        allocate_ports(args)
+
+
+if __name__ == "__main__":
+    main()

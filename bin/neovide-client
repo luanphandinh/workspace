@@ -1,0 +1,115 @@
+#!/bin/sh
+set -eu
+
+usage() {
+	printf 'Usage: neovide-client <ssh-host>[:port] [neovide-args...]\n' >&2
+}
+
+target="${1:-}"
+if [ "$target" = "-h" ] || [ "$target" = "--help" ]; then
+	usage
+	exit 0
+fi
+if [ -z "$target" ]; then
+	usage
+	exit 2
+fi
+shift
+
+case "$(uname -s)" in
+	Darwin)
+		browser_opener=open
+		;;
+	Linux)
+		browser_opener=xdg-open
+		;;
+	*)
+		printf 'neovide-client: unsupported operating system\n' >&2
+		exit 1
+		;;
+esac
+
+case "$target" in
+	:*|-*)
+		usage
+		exit 2
+		;;
+	*:*)
+		ssh_host=${target%:*}
+		port=${target##*:}
+		;;
+	*)
+		ssh_host=$target
+		port=6666
+		;;
+esac
+
+case "$port" in
+	""|*[!0-9]*)
+		usage
+		exit 2
+		;;
+esac
+if [ "$port" -lt 1 ] || [ "$port" -gt 65533 ]; then
+	printf 'neovide-client: port must be between 1 and 65533\n' >&2
+	exit 2
+fi
+
+for dependency in python3 ssh neovide "$browser_opener"; do
+	command -v "$dependency" >/dev/null 2>&1 || {
+		printf 'neovide-client: %s is not installed\n' "$dependency" >&2
+		exit 1
+	}
+done
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+bridge="$script_dir/.neovide-url-bridge"
+[ -x "$bridge" ] || {
+	printf 'neovide-client: missing %s\n' "$bridge" >&2
+	exit 1
+}
+
+preview_port=$((port + 1))
+open_port=$((port + 2))
+client_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/neovide-client.XXXXXX")
+control_socket="$client_tmp_dir/ssh-control"
+"$bridge" allocate --count 3 > "$client_tmp_dir/local-ports"
+read -r local_nvim_port local_preview_port local_open_port < "$client_tmp_dir/local-ports"
+bridge_pid=
+tunnel_started=0
+
+cleanup() {
+	if [ "$tunnel_started" -eq 1 ]; then
+		ssh -S "$control_socket" -O exit "$ssh_host" >/dev/null 2>&1 || true
+	fi
+	if [ -n "$bridge_pid" ]; then
+		kill "$bridge_pid" >/dev/null 2>&1 || true
+		wait "$bridge_pid" 2>/dev/null || true
+	fi
+	rm -rf "$client_tmp_dir"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+"$bridge" serve \
+	--listen-port "$local_open_port" \
+	--remote-preview-port "$preview_port" \
+	--local-preview-port "$local_preview_port" \
+	--opener "$browser_opener" &
+bridge_pid=$!
+"$bridge" wait --port "$local_open_port" --timeout 3
+
+ssh -M -S "$control_socket" \
+	-o ControlPersist=no \
+	-o ExitOnForwardFailure=yes \
+	-fN \
+	-L "127.0.0.1:$local_nvim_port:127.0.0.1:$port" \
+	-L "127.0.0.1:$local_preview_port:127.0.0.1:$preview_port" \
+	-R "127.0.0.1:$open_port:127.0.0.1:$local_open_port" \
+	"$ssh_host"
+tunnel_started=1
+
+"$bridge" wait --port "$local_nvim_port" --timeout "${NEOVIDE_CONNECT_TIMEOUT:-15}"
+neovide --no-fork --server "127.0.0.1:$local_nvim_port" "$@"
