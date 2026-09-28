@@ -18,7 +18,7 @@ return {
       if preview_port and remote_open_port then
         vim.g.mkdp_port = tostring(preview_port)
         vim.g.mkdp_echo_preview_url = 1
-        vim.g.mkdp_browserfunc = require("luanphan.neovide_remote").setup_url_opener(remote_open_port)
+        vim.g.mkdp_browserfunc = require("luanphan.neovide_remote").setup_url_opener()
       end
       vim.g.mkdp_preview_options = {
         disable_sync_scroll = 1,

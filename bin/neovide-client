@@ -175,7 +175,7 @@ if [ "$port" -lt 1 ] || [ "$port" -gt 65532 ]; then
 	exit 2
 fi
 
-for dependency in python3 ssh neovide "$browser_opener"; do
+for dependency in nvim python3 ssh neovide "$browser_opener"; do
 	command -v "$dependency" >/dev/null 2>&1 || {
 		log Error "$dependency is not installed"
 		exit 1
@@ -190,8 +190,8 @@ bridge="$script_dir/.neovide-url-bridge"
 }
 
 preview_port=$((port + 1))
-open_port=$((port + 2))
-image_port=$((port + 3))
+fixed_open_port=$((port + 2))
+fixed_image_port=$((port + 3))
 client_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/neovide-client.XXXXXX")
 control_socket="$client_tmp_dir/ssh-control"
 "$bridge" allocate --count 3 > "$client_tmp_dir/local-ports"
@@ -200,7 +200,7 @@ bridge_pid=
 tunnel_started=0
 
 log Info "platform: $operating_system; browser opener: $browser_opener"
-log Info "remote ports: Neovim $port, preview $preview_port, browser callback $open_port, image callback $image_port"
+log Info "remote ports: Neovim $port, preview $preview_port; callback ports pending"
 log Info "local ports: Neovim $local_nvim_port, preview $local_preview_port, callback $local_open_port"
 if [ "$clipboard_backend" = none ]; then
 	log Warning 'local image clipboard support is unavailable'
@@ -240,18 +240,16 @@ log Success "local browser bridge is ready"
 log Info "creating SSH tunnel to $ssh_host"
 log Info "forward: local 127.0.0.1:$local_nvim_port -> remote 127.0.0.1:$port"
 log Info "forward: local 127.0.0.1:$local_preview_port -> remote 127.0.0.1:$preview_port"
-log Info "callback: remote 127.0.0.1:$open_port -> local 127.0.0.1:$local_open_port"
-log Info "callback: remote 127.0.0.1:$image_port -> local 127.0.0.1:$local_open_port (image clipboard)"
-log_command ssh ${ssh_verbose:+"$ssh_verbose"} -M -S "$control_socket" -o ControlPersist=no -o ExitOnForwardFailure=yes -fN -L "127.0.0.1:$local_nvim_port:127.0.0.1:$port" -L "127.0.0.1:$local_preview_port:127.0.0.1:$preview_port" -R "127.0.0.1:$open_port:127.0.0.1:$local_open_port" -R "127.0.0.1:$image_port:127.0.0.1:$local_open_port" "$ssh_host"
+log_command ssh ${ssh_verbose:+"$ssh_verbose"} -M -S "$control_socket" -o ControlPersist=no -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -fN -L "127.0.0.1:$local_nvim_port:127.0.0.1:$port" -L "127.0.0.1:$local_preview_port:127.0.0.1:$preview_port" "$ssh_host"
 ssh -M -S "$control_socket" \
 	${ssh_verbose:+"$ssh_verbose"} \
 	-o ControlPersist=no \
 	-o ExitOnForwardFailure=yes \
+	-o ServerAliveInterval=15 \
+	-o ServerAliveCountMax=3 \
 	-fN \
 	-L "127.0.0.1:$local_nvim_port:127.0.0.1:$port" \
 	-L "127.0.0.1:$local_preview_port:127.0.0.1:$preview_port" \
-	-R "127.0.0.1:$open_port:127.0.0.1:$local_open_port" \
-	-R "127.0.0.1:$image_port:127.0.0.1:$local_open_port" \
 	"$ssh_host"
 tunnel_started=1
 log Success "SSH tunnel established"
@@ -259,6 +257,43 @@ log Success "SSH tunnel established"
 log Info "waiting for remote Neovim"
 "$bridge" wait --port "$local_nvim_port" --timeout "${NEOVIDE_CONNECT_TIMEOUT:-15}"
 log Success "remote Neovim is reachable"
+
+port_api=$(nvim --server "127.0.0.1:$local_nvim_port" --remote-expr "luaeval(\"type(require('luanphan.neovide_remote').set_ports)\")" 2>/dev/null || true)
+if [ "$port_api" = function ]; then
+	log Info "allocating dynamic remote callback ports"
+	log_command ssh -S "$control_socket" -O forward -R "127.0.0.1:0:127.0.0.1:$local_open_port" "$ssh_host"
+	open_port=$(ssh -S "$control_socket" -O forward -R "127.0.0.1:0:127.0.0.1:$local_open_port" "$ssh_host")
+	log_command ssh -S "$control_socket" -O forward -R "127.0.0.1:0:127.0.0.1:$local_open_port" "$ssh_host"
+	image_port=$(ssh -S "$control_socket" -O forward -R "127.0.0.1:0:127.0.0.1:$local_open_port" "$ssh_host")
+else
+	log Warning "remote Neovim does not support dynamic callback ports; using fixed ports"
+	open_port=$fixed_open_port
+	image_port=$fixed_image_port
+	log_command ssh -S "$control_socket" -O forward -R "127.0.0.1:$open_port:127.0.0.1:$local_open_port" -R "127.0.0.1:$image_port:127.0.0.1:$local_open_port" "$ssh_host"
+	ssh -S "$control_socket" -O forward \
+		-R "127.0.0.1:$open_port:127.0.0.1:$local_open_port" \
+		-R "127.0.0.1:$image_port:127.0.0.1:$local_open_port" \
+		"$ssh_host"
+fi
+
+case "$open_port:$image_port" in
+	*[!0-9:]*|:*|*:) log Error "SSH returned invalid callback ports: $open_port $image_port"; exit 1 ;;
+esac
+if [ "$open_port" -lt 1 ] || [ "$open_port" -gt 65535 ] || [ "$image_port" -lt 1 ] || [ "$image_port" -gt 65535 ]; then
+	log Error "SSH returned out-of-range callback ports: $open_port $image_port"
+	exit 1
+fi
+
+log Success "callback ports allocated: browser $open_port, image $image_port"
+log Info "callback: remote 127.0.0.1:$open_port -> local 127.0.0.1:$local_open_port"
+log Info "callback: remote 127.0.0.1:$image_port -> local 127.0.0.1:$local_open_port (image clipboard)"
+if [ "$port_api" = function ]; then
+	port_expression="luaeval(\"require('luanphan.neovide_remote').set_ports(_A[1], _A[2])\", [$open_port, $image_port])"
+	log Command "updating remote Neovim callback ports"
+	nvim --server "127.0.0.1:$local_nvim_port" --remote-expr "$port_expression" >/dev/null
+	log Success "remote Neovim callback ports updated"
+fi
+
 log Info "launching Neovide"
 log_command neovide --no-fork --server "127.0.0.1:$local_nvim_port" "$@"
 neovide_status=0

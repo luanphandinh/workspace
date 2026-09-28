@@ -42,6 +42,20 @@ image_port=$((base_port + 3))
 
 cat > "$fakebin/nvim" <<'SH'
 #!/bin/sh
+case " $* " in
+	*" --server "*" --remote-expr "*)
+		case "$*" in
+			*"type(require('luanphan.neovide_remote').set_ports)"*)
+				printf '%s\n' "$NEOVIDE_TEST_PORT_API"
+				;;
+			*"require('luanphan.neovide_remote').set_ports"*)
+				printf '%s\n' "$*" > "$NEOVIDE_TEST_PORT_UPDATE_LOG"
+				printf 'true\n'
+				;;
+		esac
+		exit 0
+		;;
+esac
 printf '%s\n' "$NEOVIDE_MARKDOWN_PREVIEW_PORT" "$NEOVIDE_REMOTE_OPEN_PORT" "$NEOVIDE_REMOTE_IMAGE_PORT" "$*" > "$NEOVIDE_TEST_NVIM_LOG"
 SH
 
@@ -93,6 +107,25 @@ case " $* " in
 		fi
 		exit 0
 		;;
+	*" -O forward "*)
+		while [ "$#" -gt 0 ]; do
+			if [ "$1" = "-R" ]; then
+				shift
+				case "$1" in
+					127.0.0.1:0:*)
+						if [ ! -f "$NEOVIDE_TEST_SSH_FORWARD_COUNT" ]; then
+							printf '1\n' > "$NEOVIDE_TEST_SSH_FORWARD_COUNT"
+							printf '%s\n' "$NEOVIDE_TEST_DYNAMIC_OPEN_PORT"
+						else
+							printf '%s\n' "$NEOVIDE_TEST_DYNAMIC_IMAGE_PORT"
+						fi
+						;;
+				esac
+			fi
+			shift
+		done
+		exit 0
+		;;
 esac
 
 local_port=
@@ -121,11 +154,11 @@ import time
 
 log = open(sys.argv[1], encoding="utf-8").read()
 local_forwards = re.findall(r"-L 127\.0\.0\.1:(\d+):127\.0\.0\.1:\d+", log)
-reverse = re.search(r"-R 127\.0\.0\.1:\d+:127\.0\.0\.1:(\d+)", log)
-if len(local_forwards) != 2 or reverse is None:
+reverse = re.findall(r"-R 127\.0\.0\.1:\d+:127\.0\.0\.1:(\d+)", log)
+if len(local_forwards) != 2 or len(reverse) != 2:
     raise SystemExit("missing SSH forwards")
 local_nvim_port, local_preview_port = map(int, local_forwards)
-local_open_port = int(reverse.group(1))
+local_open_port = int(reverse[0])
 with open(sys.argv[3], "w", encoding="utf-8") as output:
     output.write(f"{local_nvim_port} {local_preview_port} {local_open_port}\n")
 
@@ -198,8 +231,9 @@ run_client_test() {
 	operating_system=$1
 	expected_opener=$2
 	expected_clipboard_backend=$3
+	port_api=$4
 	: > "$test_tmp_dir/ssh.log"
-	rm -f "$test_tmp_dir/open.log" "$test_tmp_dir/neovide.log" "$test_tmp_dir/image.log" "$test_tmp_dir/ssh-listener.pid"
+	rm -f "$test_tmp_dir/open.log" "$test_tmp_dir/neovide.log" "$test_tmp_dir/image.log" "$test_tmp_dir/port-update.log" "$test_tmp_dir/ssh-forward-count" "$test_tmp_dir/ssh-listener.pid"
 	rm -rf "$test_tmp_dir/image-cache"
 
 	NEOVIDE_TEST_SSH_LOG="$test_tmp_dir/ssh.log" \
@@ -212,6 +246,11 @@ run_client_test() {
 	NEOVIDE_TEST_PASTE_IMAGE="$repo_root/bin/neovide-paste-image" \
 	NEOVIDE_TEST_PREVIEW_PORT="$preview_port" \
 	NEOVIDE_TEST_PORT_MAP="$test_tmp_dir/port-map" \
+	NEOVIDE_TEST_PORT_API="$port_api" \
+	NEOVIDE_TEST_PORT_UPDATE_LOG="$test_tmp_dir/port-update.log" \
+	NEOVIDE_TEST_SSH_FORWARD_COUNT="$test_tmp_dir/ssh-forward-count" \
+	NEOVIDE_TEST_DYNAMIC_OPEN_PORT="$dynamic_open_port" \
+	NEOVIDE_TEST_DYNAMIC_IMAGE_PORT="$dynamic_image_port" \
 	NEOVIDE_TEST_UNAME="$operating_system" \
 	PATH="$fakebin:/usr/bin:/bin" \
 	sh -c 'if [ "$1" = Darwin ]; then
@@ -234,8 +273,17 @@ assert pathlib.Path(sys.argv[1]).read_bytes() == b"\x89PNG\r\n\x1a\nclipboard-im
 PY
 	grep -F -- "-L 127.0.0.1:$local_nvim_port:127.0.0.1:$base_port" "$test_tmp_dir/ssh.log" >/dev/null
 	grep -F -- "-L 127.0.0.1:$local_preview_port:127.0.0.1:$preview_port" "$test_tmp_dir/ssh.log" >/dev/null
-	grep -F -- "-R 127.0.0.1:$open_port:127.0.0.1:$local_open_port" "$test_tmp_dir/ssh.log" >/dev/null
-	grep -F -- "-R 127.0.0.1:$image_port:127.0.0.1:$local_open_port" "$test_tmp_dir/ssh.log" >/dev/null
+	grep -F -- '-o ServerAliveInterval=15 -o ServerAliveCountMax=3' "$test_tmp_dir/ssh.log" >/dev/null
+	if [ "$port_api" = function ]; then
+		test "$(grep -c -- "-O forward -R 127.0.0.1:0:127.0.0.1:$local_open_port" "$test_tmp_dir/ssh.log")" = 2
+		grep -F -- "[$dynamic_open_port, $dynamic_image_port]" "$test_tmp_dir/port-update.log" >/dev/null
+		grep -F "[Success] neovide-client: callback ports allocated: browser $dynamic_open_port, image $dynamic_image_port" "$test_tmp_dir/client-$operating_system.log" >/dev/null
+	else
+		grep -F -- "-R 127.0.0.1:$open_port:127.0.0.1:$local_open_port" "$test_tmp_dir/ssh.log" >/dev/null
+		grep -F -- "-R 127.0.0.1:$image_port:127.0.0.1:$local_open_port" "$test_tmp_dir/ssh.log" >/dev/null
+		test ! -e "$test_tmp_dir/port-update.log"
+		grep -F '[Warning] neovide-client: remote Neovim does not support dynamic callback ports; using fixed ports' "$test_tmp_dir/client-$operating_system.log" >/dev/null
+	fi
 	grep -F "[Success] neovide-client: SSH tunnel established" "$test_tmp_dir/client-$operating_system.log" >/dev/null
 	grep -F "[Info] neovide-client: launching Neovide" "$test_tmp_dir/client-$operating_system.log" >/dev/null
 	grep -F "[Info] neovide-client: local image clipboard backend: $expected_clipboard_backend" "$test_tmp_dir/client-$operating_system.log" >/dev/null
@@ -254,7 +302,10 @@ PY
 	fi
 }
 
-run_client_test Darwin open macos
-run_client_test Linux xdg-open wayland
+dynamic_open_port=$((base_port - 2))
+dynamic_image_port=$((base_port - 1))
+run_client_test Darwin open macos function
+run_client_test Linux xdg-open wayland function
+run_client_test Linux xdg-open wayland nil
 
 printf 'PASS remote Neovide bridge smoke test\n'
