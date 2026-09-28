@@ -256,9 +256,43 @@ log Info "waiting for remote Neovim"
 "$bridge" wait --port "$local_nvim_port" --timeout "${NEOVIDE_CONNECT_TIMEOUT:-15}"
 log Success "remote Neovim is reachable"
 
-callback_api=$(nvim --server "127.0.0.1:$local_nvim_port" --remote-expr "exists('*WorkspaceNeovideSetCallbackPort')" 2>/dev/null || true)
-if [ "$callback_api" != 1 ]; then
+log Info "checking remote Neovim bridge"
+callback_api=
+callback_status=1
+callback_error_file="$client_tmp_dir/callback-api-error"
+callback_attempt=1
+callback_attempts=5
+while [ "$callback_attempt" -le "$callback_attempts" ]; do
+	: > "$callback_error_file"
+	if callback_api=$(nvim --headless --server "127.0.0.1:$local_nvim_port" --remote-expr "exists('*WorkspaceNeovideSetCallbackPort')" 2> "$callback_error_file"); then
+		callback_status=0
+	else
+		callback_status=$?
+	fi
+	if [ "$callback_status" -eq 0 ] && [ "$callback_api" = 1 ]; then
+		break
+	fi
+	if [ "$callback_attempt" -lt "$callback_attempts" ]; then
+		log Warning "remote Neovim bridge check failed; retrying ($callback_attempt/$callback_attempts)"
+		sleep 0.2
+	fi
+	callback_attempt=$((callback_attempt + 1))
+done
+
+if [ "$callback_status" -eq 0 ] && [ "$callback_api" = 1 ]; then
+	log Success "remote Neovim bridge is ready"
+elif [ "$callback_status" -eq 0 ] && [ "$callback_api" = 0 ]; then
 	log Error "remote Neovim bridge is outdated; update its config and restart neovide-server"
+	exit 1
+else
+	callback_error=$(tr '\n' ' ' < "$callback_error_file")
+	if [ -n "$callback_error" ]; then
+		log Error "remote Neovim bridge check failed: $callback_error"
+	elif [ "$callback_status" -ne 0 ]; then
+		log Error "remote Neovim bridge check failed with exit status $callback_status"
+	else
+		log Error "remote Neovim bridge returned an unexpected response: $callback_api"
+	fi
 	exit 1
 fi
 
@@ -280,7 +314,7 @@ fi
 log Success "callback port allocated: $callback_port"
 log Info "callback: remote 127.0.0.1:$callback_port -> local 127.0.0.1:$local_open_port"
 log Command "updating remote Neovim callback port"
-nvim --server "127.0.0.1:$local_nvim_port" --remote-expr "WorkspaceNeovideSetCallbackPort($callback_port)" >/dev/null
+nvim --headless --server "127.0.0.1:$local_nvim_port" --remote-expr "WorkspaceNeovideSetCallbackPort($callback_port)" >/dev/null
 log Success "remote Neovim callback port updated"
 
 log Info "launching Neovide"
