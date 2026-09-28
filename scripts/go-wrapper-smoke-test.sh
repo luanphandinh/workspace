@@ -21,6 +21,8 @@ chmod +x "$FAKEBIN/real-go"
 
 cat > "$FAKEBIN/go-remote-test" <<'SH'
 #!/bin/sh
+[ "${FAKE_REMOTE_HELPER_CRASH:-}" != 1 ] || exit 9
+: > "$GO_REMOTE_ERROR_FILE"
 exit 1
 SH
 chmod +x "$FAKEBIN/go-remote-test"
@@ -107,5 +109,31 @@ assert_contains "$LOG" 'toolchain=<go1.24.13>'
 )
 assert_contains "$LOG" 'toolchain=<go1.24.13+auto>'
 assert_contains "$LOG" 'argument=<test>'
+
+: > "$LOG"
+status=0
+output=$(
+    cd "$TMP/modules/old"
+    PATH=/usr/bin:/bin "$ROOT/bin/go" test ./... 2>&1
+) || status=$?
+[ "$status" = 2 ] || fail "expected missing remote helper exit 2, got $status"
+printf '%s\n' "$output" | grep -F 'DO NOT ATTEMPT to run test on local' >/dev/null ||
+    fail 'missing remote helper did not print the remote execution warning'
+if [ -s "$LOG" ]; then
+    fail 'missing remote helper fell back to local Go'
+fi
+
+: > "$LOG"
+status=0
+output=$(
+    cd "$TMP/modules/old"
+    FAKE_REMOTE_HELPER_CRASH=1 "$ROOT/bin/go" test ./... 2>&1
+) || status=$?
+[ "$status" = 2 ] || fail "expected crashed remote helper exit 2, got $status"
+printf '%s\n' "$output" | grep -F 'error: go-remote-test terminated without reporting an outcome' >/dev/null ||
+    fail 'crashed remote helper did not print the remote execution warning'
+if [ -s "$LOG" ]; then
+    fail 'crashed remote helper fell back to local Go'
+fi
 
 printf 'PASS go wrapper smoke test\n'

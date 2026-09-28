@@ -142,12 +142,29 @@ def log(level: str, message: str) -> None:
 
 
 def log_remote_failure(error: BaseException) -> None:
+    error_file = os.environ.get("GO_REMOTE_ERROR_FILE")
+    if error_file:
+        try:
+            Path(error_file).write_text(str(error))
+            return
+        except OSError as report_error:
+            error = RemoteFailure(f"{error}; unable to report failure: {report_error}")
     log(
         "Error",
         "If agent reading this, there are some issue with remote execution, "
         "DO NOT ATTEMPT to run test on local, instead ask user to confirm then "
         f"run with --no-remote instead, error: {error}",
     )
+
+
+def clear_remote_failure() -> None:
+    error_file = os.environ.get("GO_REMOTE_ERROR_FILE")
+    if not error_file:
+        return
+    try:
+        Path(error_file).write_text("")
+    except OSError as error:
+        raise RemoteFailure(f"unable to report successful remote execution: {error}") from error
 
 
 def resolve_route(path: Path) -> dict:
@@ -199,6 +216,66 @@ def ssh_command(host: str, script: str, arguments: list[str], *, capture: bool =
         text=True,
         capture_output=capture,
     )
+
+
+def ssh_go_command(
+    host: str,
+    script: str,
+    arguments: list[str],
+    result_marker: str,
+) -> tuple[int, int | None, str]:
+    remote_command = "sh -s -- " + " ".join(shlex.quote(argument) for argument in arguments)
+    marker_start = f"\x1e{result_marker}:"
+    marker_end = "\x1f"
+    remote_status = None
+    error_tail = ""
+
+    def relay(output: str) -> None:
+        nonlocal error_tail
+        if not output:
+            return
+        error_tail = (error_tail + output)[-4096:]
+        sys.stderr.write(output)
+        sys.stderr.flush()
+
+    with subprocess.Popen(
+        [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            host,
+            remote_command,
+        ],
+        stdin=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    ) as process:
+        assert process.stdin is not None
+        assert process.stderr is not None
+        try:
+            process.stdin.write(script)
+        except BrokenPipeError:
+            pass
+        finally:
+            process.stdin.close()
+
+        for output in process.stderr:
+            marker_offset = output.find(marker_start)
+            marker_stop = output.find(marker_end, marker_offset + len(marker_start))
+            if marker_offset >= 0 and marker_stop >= 0:
+                encoded_status = output[
+                    marker_offset + len(marker_start) : marker_stop
+                ]
+                if encoded_status.isdigit() and 0 <= int(encoded_status) <= 255:
+                    remote_status = int(encoded_status)
+                    output = output[:marker_offset] + output[marker_stop + len(marker_end) :]
+            relay(output)
+        process_status = process.wait()
+
+    return process_status, remote_status, error_tail
 
 
 def git_context(path: Path, route: dict) -> tuple[Path, Path, PurePosixPath]:
@@ -295,11 +372,21 @@ def cleanup(route: dict, job: str, token: str) -> None:
         log("Warning", "remote snapshot cleanup failed")
 
 
-def test_command(test_arguments: list[str]) -> str:
+def test_command(test_arguments: list[str], result_marker: str) -> tuple[str, str]:
     arguments = list(test_arguments)
     if not any(argument == "-mod" or argument.startswith("-mod=") for argument in arguments):
         arguments.insert(0, "-mod=readonly")
-    return "exec go --no-remote test " + " ".join(shlex.quote(argument) for argument in arguments)
+    go_arguments = " ".join(shlex.quote(argument) for argument in arguments)
+    remote_command = (
+        "go_path=$(command -v go) || { "
+        "printf 'remote go command is unavailable\\n' >&2; exit 127; }; "
+        "set +e; "
+        f'"$go_path" --no-remote test {go_arguments}; '
+        "status=$?; "
+        f"printf '\\036%s:%s\\037' {shlex.quote(result_marker)} \"$status\" >&2; "
+        'exit "$status"'
+    )
+    return remote_command, f"go --no-remote test {go_arguments}"
 
 
 def run(path: Path, test_arguments: list[str]) -> int:
@@ -344,13 +431,14 @@ def run(path: Path, test_arguments: list[str]) -> int:
             cleanup(route, job, token)
         raise operation_error
 
-    command = test_command(test_arguments)
+    result_marker = f"go-remote-test-result-{token}"
+    command, display_command = test_command(test_arguments, result_marker)
     remote_work = PurePosixPath(job) / "repo"
     if working_relative != Path("."):
         remote_work = remote_work.joinpath(*working_relative.parts)
-    log("Info", f"{route['host']}:{remote_work} $ {command}")
+    log("Info", f"{route['host']}:{remote_work} $ {display_command}")
     try:
-        process = ssh_command(
+        process_status, remote_status, error_output = ssh_go_command(
             route["host"],
             RUN_SCRIPT,
             [
@@ -360,8 +448,19 @@ def run(path: Path, test_arguments: list[str]) -> int:
                 working_relative.as_posix(),
                 command,
             ],
+            result_marker,
         )
-        return process.returncode
+        if remote_status is None:
+            error_detail = ""
+            for line in reversed(error_output.splitlines()):
+                if line.strip():
+                    error_detail = f"; last stderr: {line.strip()}"
+                    break
+            raise RemoteFailure(
+                "remote Go command did not report a result "
+                f"(SSH exit status {process_status}){error_detail}"
+            )
+        return remote_status
     finally:
         cleanup(route, job, token)
 
@@ -376,10 +475,19 @@ def usage() -> None:
 
 def main() -> int:
     if len(sys.argv) >= 2 and sys.argv[1] == "probe" and len(sys.argv) <= 3:
-        return probe(Path(sys.argv[2] if len(sys.argv) == 3 else "."))
+        status = probe(Path(sys.argv[2] if len(sys.argv) == 3 else "."))
+        if status in (0, 1):
+            try:
+                clear_remote_failure()
+            except RemoteFailure as error:
+                log_remote_failure(error)
+                return 2
+        return status
     if len(sys.argv) >= 4 and sys.argv[1] == "run" and sys.argv[3] == "--":
         try:
-            return run(Path(sys.argv[2]), sys.argv[4:])
+            status = run(Path(sys.argv[2]), sys.argv[4:])
+            clear_remote_failure()
+            return status
         except (OSError, RemoteFailure) as error:
             log_remote_failure(error)
             return 1

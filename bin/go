@@ -157,16 +157,68 @@ log() {
 	fi
 }
 
+remote_failure() {
+	printf '%s\n' "[Error] go remote test: If agent reading this, there are some issue with remote execution, DO NOT ATTEMPT to run test on local, instead ask user to confirm then run with --no-remote instead, error: $1" >&2
+}
+
+cleanup_remote_error_file() {
+	if [ -n "${REMOTE_ERROR_FILE:-}" ]; then
+		rm -f -- "$REMOTE_ERROR_FILE"
+		REMOTE_ERROR_FILE=""
+	fi
+}
+
+invoke_remote_test() {
+	printf '%s\n' 'go-remote-test terminated without reporting an outcome' > "$REMOTE_ERROR_FILE"
+	GO_REMOTE_ERROR_FILE="$REMOTE_ERROR_FILE" go-remote-test "$@"
+}
+
 if [ "${1:-}" = "test" ]; then
 	shift
 
-	if [ "$NO_REMOTE" = "0" ] && command -v go-remote-test >/dev/null 2>&1; then
-		go-remote-test probe "$PWD"
+	if [ "$NO_REMOTE" = "0" ]; then
+		if ! command -v go-remote-test >/dev/null 2>&1; then
+			remote_failure 'go-remote-test command is unavailable'
+			exit 2
+		fi
+		REMOTE_ERROR_FILE=$(mktemp "${TMPDIR:-/tmp}/go-remote-test.XXXXXXXX") || {
+			remote_failure 'unable to create remote execution status file'
+			exit 2
+		}
+		trap cleanup_remote_error_file EXIT HUP INT TERM
+
+		invoke_remote_test probe "$PWD"
 		remote_status=$?
+		if [ -s "$REMOTE_ERROR_FILE" ]; then
+			remote_error=$(cat -- "$REMOTE_ERROR_FILE")
+			remote_failure "$remote_error"
+			cleanup_remote_error_file
+			trap - EXIT HUP INT TERM
+			exit 2
+		fi
 		case "$remote_status" in
-			0) exec go-remote-test run "$PWD" -- "$@" ;;
-			1) ;;
-			*) exit "$remote_status" ;;
+			0)
+				invoke_remote_test run "$PWD" -- "$@"
+				remote_status=$?
+				if [ -s "$REMOTE_ERROR_FILE" ]; then
+					remote_error=$(cat -- "$REMOTE_ERROR_FILE")
+					remote_failure "$remote_error"
+					[ "$remote_status" != 0 ] || remote_status=1
+				fi
+				cleanup_remote_error_file
+				trap - EXIT HUP INT TERM
+				exit "$remote_status"
+				;;
+			1)
+				cleanup_remote_error_file
+				trap - EXIT HUP INT TERM
+				;;
+			*)
+				remote_failure "go-remote-test probe failed with exit status $remote_status"
+				cleanup_remote_error_file
+				trap - EXIT HUP INT TERM
+				exit "$remote_status"
+				;;
 		esac
 	fi
 

@@ -84,6 +84,22 @@ if [ "${FAKE_SSH_FAIL:-}" = 1 ]; then
     printf 'fake SSH unavailable\n' >&2
     exit 91
 fi
+if [ "${FAKE_RUN_SSH_FAIL:-}" = 1 ]; then
+    case "$1" in
+        *go-remote-test-result-*)
+            printf 'fake final SSH unavailable\n' >&2
+            exit 255
+            ;;
+    esac
+fi
+if [ "${FAKE_RUN_SETUP_FAIL:-}" = 1 ]; then
+    case "$1" in
+        *go-remote-test-result-*)
+            printf 'fake remote setup failed\n' >&2
+            exit 54
+            ;;
+    esac
+fi
 HOME=$FAKE_REMOTE_HOME SHELL=$FAKE_LOGIN_SHELL PATH="$REMOTE_BIN:$PATH" sh -c "$1"
 SH
 chmod +x "$FAKEBIN/ssh"
@@ -93,6 +109,13 @@ cat > "$FAKE_LOGIN_SHELL" <<'SH'
 set -eu
 [ "$1" = -lic ]
 shift
+if [ "${FAKE_REMOTE_GO_UNAVAILABLE:-}" = 1 ]; then
+    case "$1" in
+        *go-remote-test-result-*)
+            PATH=/nonexistent exec /bin/sh -c "$1"
+            ;;
+    esac
+fi
 exec /bin/sh -c "$1"
 SH
 chmod +x "$FAKE_LOGIN_SHELL"
@@ -209,11 +232,50 @@ fi
 
 : > "$FAKE_LOG"
 status=0
-(
+output=$(
     cd "$LOCAL_ROOT/repo/sub"
-    FAKE_REMOTE_GO_STATUS=7 "$ROOT/bin/go" test ./...
+    FAKE_REMOTE_GO_STATUS=255 "$ROOT/bin/go" test ./... 2>&1
 ) || status=$?
-[ "$status" = 7 ] || fail "expected remote exit 7, got $status"
+[ "$status" = 255 ] || fail "expected remote Go exit 255, got $status"
+if printf '%s\n' "$output" | grep -F 'DO NOT ATTEMPT' >/dev/null; then
+    fail 'remote Go failure was reported as a remote execution failure'
+fi
+if printf '%s\n' "$output" | grep -F 'go-remote-test-result-' >/dev/null; then
+    fail 'remote result marker leaked into command output'
+fi
+assert_not_contains "$FAKE_LOG" 'local-arg:<test>'
+
+: > "$FAKE_LOG"
+status=0
+output=$(
+    cd "$LOCAL_ROOT/repo/sub"
+    FAKE_RUN_SSH_FAIL=1 "$ROOT/bin/go" test ./... 2>&1
+) || status=$?
+[ "$status" != 0 ] || fail 'final SSH failure returned success'
+assert_text_contains "$output" 'DO NOT ATTEMPT to run test on local, instead ask user to confirm then run with --no-remote instead, error: remote Go command did not report a result (SSH exit status 255); last stderr: fake final SSH unavailable'
+assert_not_contains "$FAKE_LOG" 'remote-arg:<test>'
+assert_not_contains "$FAKE_LOG" 'local-arg:<test>'
+
+: > "$FAKE_LOG"
+status=0
+output=$(
+    cd "$LOCAL_ROOT/repo/sub"
+    FAKE_REMOTE_GO_UNAVAILABLE=1 "$ROOT/bin/go" test ./... 2>&1
+) || status=$?
+[ "$status" != 0 ] || fail 'unavailable remote Go command returned success'
+assert_text_contains "$output" 'DO NOT ATTEMPT to run test on local, instead ask user to confirm then run with --no-remote instead, error: remote Go command did not report a result (SSH exit status 127); last stderr: remote go command is unavailable'
+assert_not_contains "$FAKE_LOG" 'remote-arg:<test>'
+assert_not_contains "$FAKE_LOG" 'local-arg:<test>'
+
+: > "$FAKE_LOG"
+status=0
+output=$(
+    cd "$LOCAL_ROOT/repo/sub"
+    FAKE_RUN_SETUP_FAIL=1 "$ROOT/bin/go" test ./... 2>&1
+) || status=$?
+[ "$status" != 0 ] || fail 'remote setup failure returned success'
+assert_text_contains "$output" 'DO NOT ATTEMPT to run test on local, instead ask user to confirm then run with --no-remote instead, error: remote Go command did not report a result (SSH exit status 54); last stderr: fake remote setup failed'
+assert_not_contains "$FAKE_LOG" 'remote-arg:<test>'
 assert_not_contains "$FAKE_LOG" 'local-arg:<test>'
 
 : > "$FAKE_LOG"
