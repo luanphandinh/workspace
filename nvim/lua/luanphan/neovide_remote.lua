@@ -1,14 +1,40 @@
 local M = {}
 
+local remote_open_port = tonumber(vim.env.NEOVIDE_REMOTE_OPEN_PORT)
+local remote_image_port = tonumber(vim.env.NEOVIDE_REMOTE_IMAGE_PORT)
+
 local function log(level, message)
   io.stderr:write(string.format("[%s] [%s] neovide remote bridge: %s\n", os.date("%Y-%m-%d %H:%M:%S"), level, message))
   io.stderr:flush()
 end
 
-function M.setup_url_opener(remote_open_port)
+local function valid_port(port)
+  return type(port) == "number" and port >= 1 and port <= 65535 and port % 1 == 0
+end
+
+function M.set_ports(open_port, image_port)
+  open_port = tonumber(open_port)
+  image_port = tonumber(image_port)
+  if not valid_port(open_port) or not valid_port(image_port) then
+    error("remote bridge ports must be integers between 1 and 65535")
+  end
+
+  remote_open_port = open_port
+  remote_image_port = image_port
+  vim.env.NEOVIDE_REMOTE_OPEN_PORT = tostring(open_port)
+  vim.env.NEOVIDE_REMOTE_IMAGE_PORT = tostring(image_port)
+  log("Success", string.format("callback ports updated: browser %d, image %d", open_port, image_port))
+  return true
+end
+
+function M.setup_url_opener()
   _G.workspace_neovide_remote_open = function(url)
     if type(url) ~= "string" or not url:match("^https?://") then
       vim.notify("Markdown preview returned an invalid URL", vim.log.levels.ERROR)
+      return
+    end
+    if not remote_open_port then
+      vim.notify("Markdown preview has no local browser bridge", vim.log.levels.ERROR)
       return
     end
 
@@ -46,7 +72,7 @@ function M.paste_clipboard_image()
   local bufnr = vim.api.nvim_get_current_buf()
   if vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     or vim.b[bufnr].luanphan_agent_name ~= "codex"
-    or not vim.env.NEOVIDE_REMOTE_IMAGE_PORT
+    or not remote_image_port
   then
     return false
   end
@@ -58,7 +84,7 @@ function M.paste_clipboard_image()
     return true
   end
 
-  log("Info", "requesting clipboard image through 127.0.0.1:" .. vim.env.NEOVIDE_REMOTE_IMAGE_PORT)
+  log("Info", "requesting clipboard image through 127.0.0.1:" .. remote_image_port)
   vim.notify("Reading image from local clipboard...")
   vim.system({ helper }, { text = true }, function(result)
     vim.schedule(function()
