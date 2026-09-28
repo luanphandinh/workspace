@@ -24,6 +24,64 @@ local function resolve_path(cwd, value)
   return path
 end
 
+local function is_web_url(value)
+  return type(value) == "string" and (value:match("^http://") or value:match("^https://"))
+end
+
+local function urls_in_line(text)
+  local result = {}
+  local offset = 1
+  local trailing_punctuation = {
+    ["."] = true,
+    [","] = true,
+    [";"] = true,
+    [":"] = true,
+    ["!"] = true,
+    ["]"] = true,
+    ["}"] = true,
+  }
+  while offset <= #text do
+    local http_first, http_last = text:find("http://[^%s%z<>\"']+", offset)
+    local https_first, https_last = text:find("https://[^%s%z<>\"']+", offset)
+    local first, last = http_first, http_last
+    if https_first and (not first or https_first < first) then
+      first, last = https_first, https_last
+    end
+    if not first then
+      break
+    end
+
+    local scan_end = last
+    while last >= first do
+      local character = text:sub(last, last)
+      if trailing_punctuation[character] then
+        last = last - 1
+      elseif character == ")" then
+        local value = text:sub(first, last)
+        local _, opening_count = value:gsub("%(", "")
+        local _, closing_count = value:gsub("%)", "")
+        if closing_count > opening_count then
+          last = last - 1
+        else
+          break
+        end
+      else
+        break
+      end
+    end
+
+    if last >= first then
+      result[#result + 1] = {
+        first_col = first - 1,
+        last_col = last,
+        url = text:sub(first, last),
+      }
+    end
+    offset = scan_end + 1
+  end
+  return result
+end
+
 local function references_in_line(cwd, text)
   local result = {}
   local offset = 1
@@ -127,6 +185,13 @@ local function target_at(bufnr, row, column)
   end
 
   local current = line_at(row) or ""
+  if vim.g.neovide then
+    for _, reference in ipairs(urls_in_line(current)) do
+      if contains(reference) then
+        return { url = reference.url }
+      end
+    end
+  end
   for _, reference in ipairs(references_in_line(cwd, current)) do
     if contains(reference) then
       return target(reference)
@@ -168,7 +233,11 @@ local function handle_mouse_click(bufnr)
   vim.schedule(function()
     if vim.api.nvim_win_is_valid(mouse.winid) then
       vim.api.nvim_set_current_win(mouse.winid)
-      M.open(target.path, target.line, target.column)
+      if target.url then
+        M.open_url(target.url)
+      else
+        M.open(target.path, target.line, target.column)
+      end
     end
   end)
   return "<Ignore>"
@@ -179,7 +248,7 @@ local function set_click_keymaps(bufnr)
     buffer = bufnr,
     expr = true,
     silent = true,
-    desc = "Open terminal file reference",
+    desc = "Open terminal reference",
   }
   for _, mode in ipairs({ "n", "t" }) do
     vim.keymap.set(mode, "<M-LeftMouse>", function()
@@ -253,6 +322,22 @@ local function find_editor_window(source)
     end
   end
   return nil
+end
+
+function M.open_url(url)
+  if not is_web_url(url) or not vim.g.neovide then
+    return false
+  end
+  if vim.env.NEOVIDE_REMOTE_BRIDGE then
+    return require("luanphan.neovide_remote").open_url(url)
+  end
+
+  local ok, _, error_message = pcall(vim.ui.open, url)
+  if not ok or error_message then
+    vim.notify(error_message or "Could not open URL", vim.log.levels.ERROR)
+    return false
+  end
+  return true
 end
 
 function M.open(path, line, column)

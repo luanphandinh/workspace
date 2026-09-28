@@ -2770,8 +2770,10 @@ local function test_terminal_reference_links()
   local buf = vim.api.nvim_create_buf(false, true)
   local references = require("luanphan.terminal_references")
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-    "line example-repo/main.go:7 plain example-repo/other.go labelled @example-repo/main.go:L11 and missing.go:2",
+    "line example-repo/main.go:7 plain example-repo/other.go labelled @example-repo/main.go:L11 missing.go:2 https://example.com/docs?q=1#part.",
   })
+  local original_neovide = vim.g.neovide
+  vim.g.neovide = true
   local namespace = references.attach(buf, root)
   local previous_buf = vim.api.nvim_get_current_buf()
   vim.api.nvim_win_set_buf(0, buf)
@@ -2792,7 +2794,9 @@ local function test_terminal_reference_links()
   )
 
   local clicked_target = nil
+  local clicked_url = nil
   local original_open = references.open
+  local original_open_url = references.open_url
   local original_getmousepos = vim.fn.getmousepos
   references.open = function(path, line, column)
     clicked_target = { path = path, line = line, column = column }
@@ -2842,7 +2846,25 @@ local function test_terminal_reference_links()
   end)
   assert_true(clicked_target and clicked_target.path == first_path, "L-prefixed terminal reference opened the wrong file")
   assert_true(clicked_target.line == 11 and clicked_target.column == 1, "L-prefixed terminal reference lost its position")
+
+  references.open_url = function(url)
+    clicked_url = url
+    return true
+  end
+  vim.fn.getmousepos = function()
+    return {
+      winid = vim.api.nvim_get_current_win(),
+      line = 1,
+      column = assert((vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] or ""):find("https://", 1, true)),
+    }
+  end
+  assert_true(click_map.callback() == "<Ignore>", "terminal URL click was not consumed")
+  vim.wait(50, function()
+    return clicked_url ~= nil
+  end)
+  assert_true(clicked_url == "https://example.com/docs?q=1#part", "terminal URL click opened the wrong URL")
   references.open = original_open
+  references.open_url = original_open_url
 
   vim.fn.getmousepos = function()
     return { winid = vim.api.nvim_get_current_win(), line = 1, column = 1 }
@@ -2904,6 +2926,7 @@ local function test_terminal_reference_links()
     "enabling terminal references scanned existing output"
   )
   vim.api.nvim_win_set_buf(0, previous_buf)
+  vim.g.neovide = original_neovide
 
   vim.api.nvim_buf_delete(buf, { force = true })
 
@@ -3371,6 +3394,10 @@ local function test_terminal_view_container(repo)
 
     local first_buf = vim.api.nvim_get_current_buf()
     local first_job = vim.b[first_buf].terminal_job_id
+    assert_true(
+      realpath(vim.b[first_buf].luanphan_terminal_reference_cwd) == realpath(repo),
+      "toggle terminal did not attach terminal references"
+    )
     vim.fn.chansend(first_job, "i=1; while [ \"$i\" -le 100 ]; do printf 'first-%03d\\n' \"$i\"; i=$((i+1)); done\n")
     wait_until("first terminal scrollback", function()
       return vim.api.nvim_buf_line_count(first_buf) >= 80

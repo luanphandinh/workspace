@@ -80,6 +80,7 @@ local function new_terminal(cwd)
         vim.b[term.bufnr].luanphan_toggleterm = true
         vim.b[term.bufnr].luanphan_toggleterm_cwd = cwd
       end)
+      require("luanphan.terminal_references").attach(term.bufnr, cwd)
       active_terms[cwd] = term
       terminal_container:attach(term.window, term.bufnr, "terminal:" .. term.id, cwd)
       restore_terminal_view(term)

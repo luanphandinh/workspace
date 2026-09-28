@@ -170,8 +170,8 @@ case "$port" in
 		exit 2
 		;;
 esac
-if [ "$port" -lt 1 ] || [ "$port" -gt 65532 ]; then
-	log Error 'port must be between 1 and 65532'
+if [ "$port" -lt 1 ] || [ "$port" -gt 65534 ]; then
+	log Error 'port must be between 1 and 65534'
 	exit 2
 fi
 
@@ -190,8 +190,6 @@ bridge="$script_dir/.neovide-url-bridge"
 }
 
 preview_port=$((port + 1))
-fixed_open_port=$((port + 2))
-fixed_image_port=$((port + 3))
 client_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/neovide-client.XXXXXX")
 control_socket="$client_tmp_dir/ssh-control"
 "$bridge" allocate --count 3 > "$client_tmp_dir/local-ports"
@@ -258,41 +256,32 @@ log Info "waiting for remote Neovim"
 "$bridge" wait --port "$local_nvim_port" --timeout "${NEOVIDE_CONNECT_TIMEOUT:-15}"
 log Success "remote Neovim is reachable"
 
-port_api=$(nvim --server "127.0.0.1:$local_nvim_port" --remote-expr "luaeval(\"type(require('luanphan.neovide_remote').set_ports)\")" 2>/dev/null || true)
-if [ "$port_api" = function ]; then
-	log Info "allocating dynamic remote callback ports"
-	log_command ssh -S "$control_socket" -O forward -R "127.0.0.1:0:127.0.0.1:$local_open_port" "$ssh_host"
-	open_port=$(ssh -S "$control_socket" -O forward -R "127.0.0.1:0:127.0.0.1:$local_open_port" "$ssh_host")
-	log_command ssh -S "$control_socket" -O forward -R "127.0.0.1:0:127.0.0.1:$local_open_port" "$ssh_host"
-	image_port=$(ssh -S "$control_socket" -O forward -R "127.0.0.1:0:127.0.0.1:$local_open_port" "$ssh_host")
-else
-	log Warning "remote Neovim does not support dynamic callback ports; using fixed ports"
-	open_port=$fixed_open_port
-	image_port=$fixed_image_port
-	log_command ssh -S "$control_socket" -O forward -R "127.0.0.1:$open_port:127.0.0.1:$local_open_port" -R "127.0.0.1:$image_port:127.0.0.1:$local_open_port" "$ssh_host"
-	ssh -S "$control_socket" -O forward \
-		-R "127.0.0.1:$open_port:127.0.0.1:$local_open_port" \
-		-R "127.0.0.1:$image_port:127.0.0.1:$local_open_port" \
-		"$ssh_host"
-fi
-
-case "$open_port:$image_port" in
-	*[!0-9:]*|:*|*:) log Error "SSH returned invalid callback ports: $open_port $image_port"; exit 1 ;;
-esac
-if [ "$open_port" -lt 1 ] || [ "$open_port" -gt 65535 ] || [ "$image_port" -lt 1 ] || [ "$image_port" -gt 65535 ]; then
-	log Error "SSH returned out-of-range callback ports: $open_port $image_port"
+callback_api=$(nvim --server "127.0.0.1:$local_nvim_port" --remote-expr "exists('*WorkspaceNeovideSetCallbackPort')" 2>/dev/null || true)
+if [ "$callback_api" != 1 ]; then
+	log Error "remote Neovim bridge is outdated; update its config and restart neovide-server"
 	exit 1
 fi
 
-log Success "callback ports allocated: browser $open_port, image $image_port"
-log Info "callback: remote 127.0.0.1:$open_port -> local 127.0.0.1:$local_open_port"
-log Info "callback: remote 127.0.0.1:$image_port -> local 127.0.0.1:$local_open_port (image clipboard)"
-if [ "$port_api" = function ]; then
-	port_expression="luaeval(\"require('luanphan.neovide_remote').set_ports(_A[1], _A[2])\", [$open_port, $image_port])"
-	log Command "updating remote Neovim callback ports"
-	nvim --server "127.0.0.1:$local_nvim_port" --remote-expr "$port_expression" >/dev/null
-	log Success "remote Neovim callback ports updated"
+log Info "allocating dynamic remote callback port"
+log_command ssh -S "$control_socket" -O forward -R "127.0.0.1:0:127.0.0.1:$local_open_port" "$ssh_host"
+if ! callback_port=$(ssh -S "$control_socket" -O forward -R "127.0.0.1:0:127.0.0.1:$local_open_port" "$ssh_host"); then
+	log Error "could not allocate a remote callback port"
+	exit 1
 fi
+
+case "$callback_port" in
+	""|*[!0-9]*) log Error "SSH returned an invalid callback port: $callback_port"; exit 1 ;;
+esac
+if [ "$callback_port" -lt 1 ] || [ "$callback_port" -gt 65535 ]; then
+	log Error "SSH returned an out-of-range callback port: $callback_port"
+	exit 1
+fi
+
+log Success "callback port allocated: $callback_port"
+log Info "callback: remote 127.0.0.1:$callback_port -> local 127.0.0.1:$local_open_port"
+log Command "updating remote Neovim callback port"
+nvim --server "127.0.0.1:$local_nvim_port" --remote-expr "WorkspaceNeovideSetCallbackPort($callback_port)" >/dev/null
+log Success "remote Neovim callback port updated"
 
 log Info "launching Neovide"
 log_command neovide --no-fork --server "127.0.0.1:$local_nvim_port" "$@"

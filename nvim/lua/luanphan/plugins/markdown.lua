@@ -6,7 +6,7 @@ return {
     build = "cd app && npx --yes yarn install",
     init = function()
       local preview_port = tonumber(vim.env.NEOVIDE_MARKDOWN_PREVIEW_PORT)
-      local remote_open_port = tonumber(vim.env.NEOVIDE_REMOTE_OPEN_PORT)
+      local remote_bridge = vim.env.NEOVIDE_REMOTE_BRIDGE
 
       vim.g.mkdp_auto_start = 0
       vim.g.mkdp_auto_close = 0
@@ -15,10 +15,10 @@ return {
       vim.g.mkdp_open_to_the_world = 0
       vim.g.mkdp_theme = "light"
       vim.g.mkdp_filetypes = { "markdown", "rmd" }
-      if preview_port and remote_open_port then
+      if preview_port and remote_bridge then
         vim.g.mkdp_port = tostring(preview_port)
         vim.g.mkdp_echo_preview_url = 1
-        vim.g.mkdp_browserfunc = require("luanphan.neovide_remote").setup_url_opener()
+        vim.g.mkdp_browserfunc = "WorkspaceNeovideRemoteOpen"
       end
       vim.g.mkdp_preview_options = {
         disable_sync_scroll = 1,
