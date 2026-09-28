@@ -53,9 +53,21 @@ cat > "$fakebin/nvim" <<'SH'
 #!/bin/sh
 case " $* " in
 	*" --server "*" --remote-expr "*)
+		if [ -n "${NEOVIDE_TEST_NVIM_CLIENT_LOG:-}" ]; then
+			printf '%s\n' "$*" >> "$NEOVIDE_TEST_NVIM_CLIENT_LOG"
+		fi
 		case "$*" in
 			*"exists('*WorkspaceNeovideSetCallbackPort')"*)
-				printf '%s\n' "$NEOVIDE_TEST_CALLBACK_API"
+				if [ "$NEOVIDE_TEST_CALLBACK_API" = retry ] && [ ! -f "$NEOVIDE_TEST_CALLBACK_API_MARKER" ]; then
+					: > "$NEOVIDE_TEST_CALLBACK_API_MARKER"
+					printf 'temporary RPC failure\n' >&2
+					exit 1
+				fi
+				if [ "$NEOVIDE_TEST_CALLBACK_API" = retry ]; then
+					printf '1\n'
+				else
+					printf '%s\n' "$NEOVIDE_TEST_CALLBACK_API"
+				fi
 				;;
 			*"WorkspaceNeovideSetCallbackPort("*)
 				printf '%s\n' "$*" > "$NEOVIDE_TEST_PORT_UPDATE_LOG"
@@ -241,21 +253,24 @@ run_client_test() {
 	operating_system=$1
 	expected_opener=$2
 	expected_clipboard_backend=$3
+	callback_api=${4:-1}
 	: > "$test_tmp_dir/ssh.log"
-	rm -f "$test_tmp_dir/open.log" "$test_tmp_dir/neovide.log" "$test_tmp_dir/image.log" "$test_tmp_dir/port-update.log" "$test_tmp_dir/ssh-listener.pid"
+	rm -f "$test_tmp_dir/open.log" "$test_tmp_dir/neovide.log" "$test_tmp_dir/nvim-client.log" "$test_tmp_dir/image.log" "$test_tmp_dir/port-update.log" "$test_tmp_dir/callback-api-marker" "$test_tmp_dir/ssh-listener.pid"
 	rm -rf "$test_tmp_dir/image-cache"
 
 	NEOVIDE_TEST_SSH_LOG="$test_tmp_dir/ssh.log" \
 	NEOVIDE_TEST_SSH_PID="$test_tmp_dir/ssh-listener.pid" \
 	NEOVIDE_TEST_SSH_LISTENER="$test_tmp_dir/ssh-listener.py" \
 	NEOVIDE_TEST_NEOVIDE_LOG="$test_tmp_dir/neovide.log" \
+	NEOVIDE_TEST_NVIM_CLIENT_LOG="$test_tmp_dir/nvim-client.log" \
 	NEOVIDE_TEST_OPEN_LOG="$test_tmp_dir/open.log" \
 	NEOVIDE_TEST_IMAGE_LOG="$test_tmp_dir/image.log" \
 	NEOVIDE_TEST_IMAGE_CACHE="$test_tmp_dir/image-cache" \
 	NEOVIDE_TEST_PASTE_IMAGE="$repo_root/bin/neovide-paste-image" \
 	NEOVIDE_TEST_PREVIEW_PORT="$preview_port" \
 	NEOVIDE_TEST_PORT_MAP="$test_tmp_dir/port-map" \
-	NEOVIDE_TEST_CALLBACK_API=1 \
+	NEOVIDE_TEST_CALLBACK_API="$callback_api" \
+	NEOVIDE_TEST_CALLBACK_API_MARKER="$test_tmp_dir/callback-api-marker" \
 	NEOVIDE_TEST_PORT_UPDATE_LOG="$test_tmp_dir/port-update.log" \
 	NEOVIDE_TEST_CALLBACK_PORT="$callback_port" \
 	NEOVIDE_TEST_UNAME="$operating_system" \
@@ -285,8 +300,10 @@ PY
 	grep -F -- '-o ServerAliveInterval=15 -o ServerAliveCountMax=3' "$test_tmp_dir/ssh.log" >/dev/null
 	test "$(grep -c -- "-O forward -R 127.0.0.1:0:127.0.0.1:$local_open_port" "$test_tmp_dir/ssh.log")" = 1
 	grep -F "WorkspaceNeovideSetCallbackPort($callback_port)" "$test_tmp_dir/port-update.log" >/dev/null
+	test "$(grep -Fc -- "--headless --server 127.0.0.1:$local_nvim_port --remote-expr" "$test_tmp_dir/nvim-client.log")" -eq "$(wc -l < "$test_tmp_dir/nvim-client.log")"
 	grep -F "[Success] neovide-client: callback port allocated: $callback_port" "$test_tmp_dir/client-$operating_system.log" >/dev/null
 	grep -F "[Success] neovide-client: SSH tunnel established" "$test_tmp_dir/client-$operating_system.log" >/dev/null
+	grep -F "[Success] neovide-client: remote Neovim bridge is ready" "$test_tmp_dir/client-$operating_system.log" >/dev/null
 	grep -F "[Info] neovide-client: launching Neovide" "$test_tmp_dir/client-$operating_system.log" >/dev/null
 	grep -F "[Info] neovide-client: local image clipboard backend: $expected_clipboard_backend" "$test_tmp_dir/client-$operating_system.log" >/dev/null
 	grep -F "[Info] neovide bridge: received preview URL: http://localhost:$preview_port/page/42" "$test_tmp_dir/client-$operating_system.log" >/dev/null
@@ -305,9 +322,12 @@ PY
 	else
 		grep -F -- '-v -o ControlPersist=no' "$test_tmp_dir/ssh.log" >/dev/null
 	fi
+	if [ "$callback_api" = retry ]; then
+		grep -F '[Warning] neovide-client: remote Neovim bridge check failed; retrying (1/5)' "$test_tmp_dir/client-$operating_system.log" >/dev/null
+	fi
 }
 
-run_client_test Darwin open macos
+run_client_test Darwin open macos retry
 run_client_test Linux xdg-open wayland
 
 : > "$test_tmp_dir/ssh.log"
