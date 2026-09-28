@@ -15,11 +15,14 @@ from pathlib import Path, PurePosixPath
 
 SESSION_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 HOST_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
+ENVIRONMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+REMOTE_ENVIRONMENT_PREFIX = "GO_REMOTE_ENV_VALUE_"
 
 PROBE_SCRIPT = r"""
 set -eu
 remote_path=$1
 [ -d "$remote_path" ] && [ ! -L "$remote_path" ]
+unset GOTOOLCHAIN
 login_shell=${SHELL:-/bin/sh}
 "$login_shell" -lic 'go --no-remote version >/dev/null'
 """
@@ -99,6 +102,7 @@ fi
     exit 54
 }
 cd "$work"
+unset GOTOOLCHAIN
 login_shell=${SHELL:-/bin/sh}
 "$login_shell" -lic "$test_command"
 """
@@ -372,16 +376,24 @@ def cleanup(route: dict, job: str, token: str) -> None:
         log("Warning", "remote snapshot cleanup failed")
 
 
-def test_command(test_arguments: list[str], result_marker: str) -> tuple[str, str]:
+def test_command(
+    test_arguments: list[str],
+    result_marker: str,
+    remote_environment: dict[str, str],
+) -> tuple[str, str]:
     arguments = list(test_arguments)
     if not any(argument == "-mod" or argument.startswith("-mod=") for argument in arguments):
         arguments.insert(0, "-mod=readonly")
     go_arguments = " ".join(shlex.quote(argument) for argument in arguments)
+    environment = " ".join(
+        shlex.quote(f"{name}={value}") for name, value in remote_environment.items()
+    )
+    environment_prefix = f"env {environment} " if environment else ""
     remote_command = (
         "go_path=$(command -v go) || { "
         "printf 'remote go command is unavailable\\n' >&2; exit 127; }; "
         "set +e; "
-        f'"$go_path" --no-remote test {go_arguments}; '
+        f'{environment_prefix}"$go_path" --no-remote test {go_arguments}; '
         "status=$?; "
         f"printf '\\036%s:%s\\037' {shlex.quote(result_marker)} \"$status\" >&2; "
         'exit "$status"'
@@ -389,7 +401,11 @@ def test_command(test_arguments: list[str], result_marker: str) -> tuple[str, st
     return remote_command, f"go --no-remote test {go_arguments}"
 
 
-def run(path: Path, test_arguments: list[str]) -> int:
+def run(
+    path: Path,
+    test_arguments: list[str],
+    remote_environment: dict[str, str],
+) -> int:
     try:
         route = resolve_route(path)
         _, working_relative, remote_repository = git_context(path, route)
@@ -432,7 +448,11 @@ def run(path: Path, test_arguments: list[str]) -> int:
         raise operation_error
 
     result_marker = f"go-remote-test-result-{token}"
-    command, display_command = test_command(test_arguments, result_marker)
+    command, display_command = test_command(
+        test_arguments,
+        result_marker,
+        remote_environment,
+    )
     remote_work = PurePosixPath(job) / "repo"
     if working_relative != Path("."):
         remote_work = remote_work.joinpath(*working_relative.parts)
@@ -467,15 +487,55 @@ def run(path: Path, test_arguments: list[str]) -> int:
 
 def usage() -> None:
     print(
-        "usage: go-remote-test probe [path]\n"
-        "       go-remote-test run <path> -- [go-test-arguments...]",
+        "usage: go-remote-test probe [--remote-env-name NAME]... [path]\n"
+        "       go-remote-test run [--remote-env-name NAME]... "
+        "<path> -- [go-test-arguments...]",
         file=sys.stderr,
     )
 
 
+def take_remote_environment(
+    arguments: list[str],
+    index: int,
+) -> tuple[int, dict[str, str]]:
+    remote_environment = {}
+    while index < len(arguments) and arguments[index] == "--remote-env-name":
+        if index + 1 >= len(arguments):
+            raise ValueError
+        name = arguments[index + 1]
+        value_name = REMOTE_ENVIRONMENT_PREFIX + name
+        if not ENVIRONMENT_NAME_RE.fullmatch(name):
+            raise ValueError
+        if name not in remote_environment:
+            if value_name not in os.environ:
+                raise ValueError
+            remote_environment[name] = os.environ.pop(value_name)
+        index += 2
+    return index, remote_environment
+
+
+def parse_probe_arguments(arguments: list[str]) -> Path:
+    index, _ = take_remote_environment(arguments, 2)
+    if len(arguments) - index > 1:
+        raise ValueError
+    return Path(arguments[index] if index < len(arguments) else ".")
+
+
+def parse_run_arguments(arguments: list[str]) -> tuple[Path, list[str], dict[str, str]]:
+    index, remote_environment = take_remote_environment(arguments, 2)
+    if index + 1 >= len(arguments) or arguments[index + 1] != "--":
+        raise ValueError
+    return Path(arguments[index]), arguments[index + 2 :], remote_environment
+
+
 def main() -> int:
-    if len(sys.argv) >= 2 and sys.argv[1] == "probe" and len(sys.argv) <= 3:
-        status = probe(Path(sys.argv[2] if len(sys.argv) == 3 else "."))
+    if len(sys.argv) >= 2 and sys.argv[1] == "probe":
+        try:
+            path = parse_probe_arguments(sys.argv)
+        except ValueError:
+            usage()
+            return 2
+        status = probe(path)
         if status in (0, 1):
             try:
                 clear_remote_failure()
@@ -483,9 +543,14 @@ def main() -> int:
                 log_remote_failure(error)
                 return 2
         return status
-    if len(sys.argv) >= 4 and sys.argv[1] == "run" and sys.argv[3] == "--":
+    if len(sys.argv) >= 2 and sys.argv[1] == "run":
         try:
-            status = run(Path(sys.argv[2]), sys.argv[4:])
+            path, test_arguments, remote_environment = parse_run_arguments(sys.argv)
+        except ValueError:
+            usage()
+            return 2
+        try:
+            status = run(path, test_arguments, remote_environment)
             clear_remote_failure()
             return status
         except (OSError, RemoteFailure) as error:

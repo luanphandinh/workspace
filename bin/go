@@ -20,13 +20,46 @@
 PATCHER="${LOCAL_GO_PATCHER:-}"
 GCFLAGS="${LOCAL_GO_GCFLAGS:-}"
 NO_REMOTE=0
+REMOTE_ENV_NAMES=""
 
-# Wrapper-only escape hatch used by the testbox invocation. It must be the
-# leading argument so it can never collide with a real Go subcommand flag.
-if [ "${1:-}" = "--no-remote" ]; then
-	NO_REMOTE=1
-	shift
-fi
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--no-remote)
+			NO_REMOTE=1
+			shift
+			;;
+		--remote-env)
+			if [ "$#" -lt 2 ]; then
+				printf 'go wrapper: --remote-env requires NAME=VALUE\n' >&2
+				exit 2
+			fi
+			remote_assignment=$2
+			remote_name=${remote_assignment%%=*}
+			remote_value=${remote_assignment#*=}
+			if [ "$remote_name" = "$remote_assignment" ]; then
+				printf 'go wrapper: --remote-env requires NAME=VALUE\n' >&2
+				exit 2
+			fi
+			case "$remote_name" in
+				''|[0-9]*|*[!A-Za-z0-9_]*)
+					printf 'go wrapper: invalid --remote-env name\n' >&2
+					exit 2
+				;;
+		esac
+			if ! export "GO_REMOTE_ENV_VALUE_$remote_name=$remote_value"; then
+				printf 'go wrapper: unable to store --remote-env value\n' >&2
+				exit 2
+			fi
+			if [ -z "$REMOTE_ENV_NAMES" ]; then
+				REMOTE_ENV_NAMES=$remote_name
+			else
+				REMOTE_ENV_NAMES="$REMOTE_ENV_NAMES $remote_name"
+			fi
+			shift 2
+			;;
+		*) break ;;
+	esac
+done
 
 # Canonicalise the wrapper's own directory once so the PATH scrubbing below
 # matches whether $PATH lists a symlink or the real path.
@@ -164,22 +197,24 @@ select_toolchain() {
 	'
 }
 
-REAL_GO="$(find_real_go)"
-if [ -z "$REAL_GO" ]; then
-	echo "go wrapper: real go not found. Set LOCAL_REAL_GO=/path/to/go or install go on PATH." >&2
-	exit 127
-fi
+prepare_go() {
+	REAL_GO="$(find_real_go)"
+	if [ -z "$REAL_GO" ]; then
+		echo "go wrapper: real go not found. Set LOCAL_REAL_GO=/path/to/go or install go on PATH." >&2
+		exit 127
+	fi
 
-if [ -z "${GOTOOLCHAIN:-}" ]; then
-	COMMAND_DIRECTORY=$(command_directory "$@") || COMMAND_DIRECTORY=""
-	if [ -n "$COMMAND_DIRECTORY" ]; then
-		GO_MOD=$(find_go_mod "$COMMAND_DIRECTORY") || GO_MOD=""
-		if [ -n "$GO_MOD" ]; then
-			GOTOOLCHAIN=$(select_toolchain "$GO_MOD") || GOTOOLCHAIN=""
-			[ -z "$GOTOOLCHAIN" ] || export GOTOOLCHAIN
+	if [ -z "${GOTOOLCHAIN:-}" ]; then
+		COMMAND_DIRECTORY=$(command_directory "$@") || COMMAND_DIRECTORY=""
+		if [ -n "$COMMAND_DIRECTORY" ]; then
+			GO_MOD=$(find_go_mod "$COMMAND_DIRECTORY") || GO_MOD=""
+			if [ -n "$GO_MOD" ]; then
+				GOTOOLCHAIN=$(select_toolchain "$GO_MOD") || GOTOOLCHAIN=""
+				[ -z "$GOTOOLCHAIN" ] || export GOTOOLCHAIN
+			fi
 		fi
 	fi
-fi
+}
 
 log() {
 	if [ -n "${GOTOOLCHAIN:-}" ]; then
@@ -205,6 +240,30 @@ invoke_remote_test() {
 	GO_REMOTE_ERROR_FILE="$REMOTE_ERROR_FILE" go-remote-test "$@"
 }
 
+invoke_remote_probe() {
+	set -- "$1"
+	for remote_name in $REMOTE_ENV_NAMES; do
+		set -- --remote-env-name "$remote_name" "$@"
+	done
+	invoke_remote_test probe "$@"
+}
+
+invoke_remote_run() {
+	remote_path=$1
+	shift
+	set -- "$remote_path" -- "$@"
+	for remote_name in $REMOTE_ENV_NAMES; do
+		set -- --remote-env-name "$remote_name" "$@"
+	done
+	invoke_remote_test run "$@"
+}
+
+clear_remote_env_transport() {
+	for remote_name in $REMOTE_ENV_NAMES; do
+		unset "GO_REMOTE_ENV_VALUE_$remote_name"
+	done
+}
+
 if [ "${1:-}" = "test" ]; then
 	shift
 
@@ -219,7 +278,7 @@ if [ "${1:-}" = "test" ]; then
 		}
 		trap cleanup_remote_error_file EXIT HUP INT TERM
 
-		invoke_remote_test probe "$PWD"
+		invoke_remote_probe "$PWD"
 		remote_status=$?
 		if [ -s "$REMOTE_ERROR_FILE" ]; then
 			remote_error=$(cat -- "$REMOTE_ERROR_FILE")
@@ -230,7 +289,7 @@ if [ "${1:-}" = "test" ]; then
 		fi
 		case "$remote_status" in
 			0)
-				invoke_remote_test run "$PWD" -- "$@"
+				invoke_remote_run "$PWD" "$@"
 				remote_status=$?
 				if [ -s "$REMOTE_ERROR_FILE" ]; then
 					remote_error=$(cat -- "$REMOTE_ERROR_FILE")
@@ -251,8 +310,10 @@ if [ "${1:-}" = "test" ]; then
 				trap - EXIT HUP INT TERM
 				exit "$remote_status"
 				;;
-		esac
+			esac
 	fi
+	clear_remote_env_transport
+	prepare_go test "$@"
 
 	# Detect existing flags to avoid double-injection.
 	have_toolexec=0
@@ -274,5 +335,7 @@ if [ "${1:-}" = "test" ]; then
 	exec env GOWORK=off "$REAL_GO" test "$@"
 fi
 
+clear_remote_env_transport
+prepare_go "$@"
 log "$REAL_GO $*"
 exec "$REAL_GO" "$@"

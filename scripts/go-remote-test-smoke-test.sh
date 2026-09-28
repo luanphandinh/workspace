@@ -19,6 +19,7 @@ export REMOTE_BIN
 mkdir -p "$HOME" "$FAKE_REMOTE_HOME" "$LOCAL_ROOT/repo/sub" "$REMOTE_ROOT" "$FAKEBIN" "$REMOTE_BIN"
 
 printf 'package example\n' > "$LOCAL_ROOT/repo/example.go"
+printf 'module example.com/repository\n\ngo 1.22\n' > "$LOCAL_ROOT/repo/go.mod"
 printf 'snapshot-source\n' > "$LOCAL_ROOT/repo/source.txt"
 git -C "$LOCAL_ROOT/repo" init -q
 git -C "$LOCAL_ROOT/repo" config user.email test@example.invalid
@@ -80,6 +81,9 @@ done
 host=$1
 shift
 [ "$host" = testbox ] || exit 90
+[ "${GO_REMOTE_ENV_VALUE_CGO_ENABLED+x}" != x ] || exit 93
+[ "${GO_REMOTE_ENV_VALUE_EXAMPLE_EMPTY+x}" != x ] || exit 93
+[ "${GO_REMOTE_ENV_VALUE_EXAMPLE_MODE+x}" != x ] || exit 93
 if [ "${FAKE_SSH_FAIL:-}" = 1 ]; then
     printf 'fake SSH unavailable\n' >&2
     exit 91
@@ -100,6 +104,7 @@ if [ "${FAKE_RUN_SETUP_FAIL:-}" = 1 ]; then
             ;;
     esac
 fi
+unset CGO_ENABLED EXAMPLE_EMPTY EXAMPLE_MODE
 HOME=$FAKE_REMOTE_HOME SHELL=$FAKE_LOGIN_SHELL PATH="$REMOTE_BIN:$PATH" sh -c "$1"
 SH
 chmod +x "$FAKEBIN/ssh"
@@ -135,6 +140,14 @@ if [ "${1:-}" = version ]; then
 fi
 [ "${1:-}" = test ] || exit 92
 [ "$(cat ../source.txt)" = snapshot-source ]
+printf 'remote-toolchain:<%s>\n' "${GOTOOLCHAIN-unset}" >> "$FAKE_LOG"
+if [ "${FAKE_REQUIRE_REMOTE_ENV:-}" = 1 ]; then
+    [ "${CGO_ENABLED:-}" = 0 ]
+    [ "${EXAMPLE_MODE:-}" = 'value with spaces $HOME;*' ]
+    [ "${EXAMPLE_EMPTY+x}" = x ]
+    [ -z "$EXAMPLE_EMPTY" ]
+    printf 'remote-env-overrides:ok\n' >> "$FAKE_LOG"
+fi
 exit "${FAKE_REMOTE_GO_STATUS:-0}"
 SH
 chmod +x "$REMOTE_BIN/go"
@@ -173,6 +186,19 @@ assert_not_contains() {
 assert_text_contains() {
     printf '%s\n' "$1" | grep -F -- "$2" >/dev/null || fail "expected output to contain: $2"
 }
+
+: > "$FAKE_LOG"
+status=0
+output=$(
+    GO_REMOTE_ENV_VALUE_EXAMPLE_MODE=hidden \
+        "$ROOT/bin/go-remote-test" \
+        run --remote-env-name 9INVALID "$LOCAL_ROOT/repo" -- ./... 2>&1
+) || status=$?
+[ "$status" = 2 ] || fail "expected helper environment validation exit 2, got $status"
+assert_text_contains "$output" 'usage: go-remote-test'
+if printf '%s\n' "$output" | grep -F 'hidden' >/dev/null; then
+    fail 'helper environment validation leaked a value'
+fi
 
 : > "$FAKE_LOG"
 output=$(
@@ -226,8 +252,33 @@ assert_contains "$FAKE_LOG" 'remote-arg:<test>'
 assert_contains "$FAKE_LOG" 'remote-arg:<-mod=readonly>'
 assert_contains "$FAKE_LOG" 'remote-arg:<./...>'
 assert_contains "$FAKE_LOG" 'remote-arg:<Test name>'
+assert_not_contains "$FAKE_LOG" 'local-arg:<env>'
 if find "$FAKE_REMOTE_HOME/.cache/wsync-go/example/jobs" -mindepth 1 -print -quit | grep . >/dev/null; then
     fail 'successful remote test left a snapshot behind'
+fi
+
+: > "$FAKE_LOG"
+remote_value='value with spaces $HOME;*'
+output=$(
+    cd "$LOCAL_ROOT/repo/sub"
+    GOTOOLCHAIN=go9.9.9 \
+        FAKE_REQUIRE_REMOTE_ENV=1 \
+        "$ROOT/bin/go" \
+        --remote-env CGO_ENABLED=0 \
+        --remote-env EXAMPLE_MODE=first \
+        --remote-env "EXAMPLE_MODE=$remote_value" \
+        --remote-env EXAMPLE_EMPTY= \
+        test -short '-gcflags=all=-N -l' '-toolexec=/tmp/example tool' './literal package' 2>&1
+)
+assert_contains "$FAKE_LOG" 'remote-env-overrides:ok'
+assert_contains "$FAKE_LOG" 'remote-toolchain:<unset>'
+assert_contains "$FAKE_LOG" 'remote-arg:<-short>'
+assert_contains "$FAKE_LOG" 'remote-arg:<-gcflags=all=-N -l>'
+assert_contains "$FAKE_LOG" 'remote-arg:<-toolexec=/tmp/example tool>'
+assert_contains "$FAKE_LOG" 'remote-arg:<./literal package>'
+assert_not_contains "$FAKE_LOG" "$remote_value"
+if printf '%s\n' "$output" | grep -F -- "$remote_value" >/dev/null; then
+    fail 'remote environment value leaked into command output'
 fi
 
 : > "$FAKE_LOG"

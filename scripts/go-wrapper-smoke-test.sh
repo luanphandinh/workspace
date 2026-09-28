@@ -33,6 +33,10 @@ if [ "${1:-}" = env ]; then
     done
     exit 0
 fi
+[ "${FAKE_REQUIRE_LOCAL_ENV_CLEAN:-}" != 1 ] || {
+    [ "${EXAMPLE_MODE+x}" != x ]
+    [ "${GO_REMOTE_ENV_VALUE_EXAMPLE_MODE+x}" != x ]
+}
 printf 'toolchain=<%s>\n' "${GOTOOLCHAIN-unset}" >> "$GO_WRAPPER_LOG"
 for argument in "$@"; do
     printf 'argument=<%s>\n' "$argument" >> "$GO_WRAPPER_LOG"
@@ -80,6 +84,12 @@ fail() {
 
 assert_contains() {
     grep -F -- "$2" "$1" >/dev/null || fail "expected $1 to contain: $2"
+}
+
+assert_not_contains() {
+    if grep -F -- "$2" "$1" >/dev/null; then
+        fail "expected $1 not to contain: $2"
+    fi
 }
 
 : > "$LOG"
@@ -153,10 +163,30 @@ assert_contains "$LOG" 'toolchain=<go1.24.13>'
 : > "$LOG"
 (
     cd "$TMP/modules/old"
-    "$ROOT/bin/go" --no-remote test ./...
+    FAKE_REQUIRE_LOCAL_ENV_CLEAN=1 \
+        "$ROOT/bin/go" \
+        --no-remote \
+        --remote-env 'EXAMPLE_MODE=value with spaces $HOME;*' \
+        test ./...
 )
 assert_contains "$LOG" 'toolchain=<go1.22.12+auto>'
 assert_contains "$LOG" 'argument=<test>'
+assert_not_contains "$LOG" 'argument=<--remote-env>'
+assert_not_contains "$LOG" 'value with spaces'
+
+: > "$LOG"
+status=0
+output=$(
+    cd "$TMP/modules/old"
+    "$ROOT/bin/go" --remote-env '9INVALID=hidden' version 2>&1
+) || status=$?
+[ "$status" = 2 ] || fail "expected invalid remote environment exit 2, got $status"
+printf '%s\n' "$output" | grep -F 'invalid --remote-env name' >/dev/null ||
+    fail 'invalid remote environment name was accepted'
+if printf '%s\n' "$output" | grep -F 'hidden' >/dev/null; then
+    fail 'invalid remote environment value leaked into command output'
+fi
+assert_not_contains "$LOG" 'hidden'
 
 : > "$LOG"
 status=0
