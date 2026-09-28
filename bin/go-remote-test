@@ -133,6 +133,10 @@ class RemoteFailure(Exception):
     """A selected remote invocation failed before Go returned."""
 
 
+def log(level: str, message: str) -> None:
+    print(f"[{level}] go remote test: {message}", file=sys.stderr)
+
+
 def resolve_route(path: Path) -> dict:
     process = subprocess.run(
         ["wsync", "resolve", "--path", str(path), "--json"],
@@ -219,7 +223,8 @@ def probe(path: Path) -> int:
         route = resolve_route(path)
         git_context(path, route)
         check_remote(route)
-    except (OSError, RemoteUnavailable):
+    except (OSError, RemoteUnavailable) as error:
+        log("Error", f"remote unavailable; using local: {error}")
         return 1
     return 0
 
@@ -268,7 +273,7 @@ def cleanup(route: dict, job: str, token: str) -> None:
         capture=True,
     )
     if process.returncode != 0:
-        print("go remote test: warning: remote snapshot cleanup failed", file=sys.stderr)
+        log("Warning", "remote snapshot cleanup failed")
 
 
 def test_command(test_arguments: list[str]) -> str:
@@ -294,6 +299,11 @@ def run(path: Path, test_arguments: list[str]) -> int:
     with session_lock(route["name"]):
         try:
             checked_local(["wsync", "push", route["name"]], "wsync flush")
+            log(
+                "Info",
+                f"synchronized session '{route['name']}' to "
+                f"{route['host']}:{route['resolved_remote_root']}",
+            )
             checked_local(["wsync", "pause", route["name"]], "wsync pause")
             paused = True
             job = snapshot(route, remote_repository, token)
@@ -319,10 +329,7 @@ def run(path: Path, test_arguments: list[str]) -> int:
     remote_work = PurePosixPath(job) / "repo"
     if working_relative != Path("."):
         remote_work = remote_work.joinpath(*working_relative.parts)
-    print(
-        f"go remote test: {route['host']}:{remote_work} $ {command}",
-        file=sys.stderr,
-    )
+    log("Info", f"{route['host']}:{remote_work} $ {command}")
     try:
         process = ssh_command(
             route["host"],
@@ -355,7 +362,7 @@ def main() -> int:
         try:
             return run(Path(sys.argv[2]), sys.argv[4:])
         except (OSError, RemoteFailure) as error:
-            print(f"go remote test: {error}", file=sys.stderr)
+            log("Error", str(error))
             return 1
         except KeyboardInterrupt:
             return 130
