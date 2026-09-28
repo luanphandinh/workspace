@@ -7,11 +7,32 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 
 FAKEBIN="$TMP/fakebin"
 LOG="$TMP/go.log"
-mkdir -p "$FAKEBIN" "$TMP/modules/old/sub" "$TMP/modules/current" "$TMP/modules/preferred" "$TMP/modules/future" "$TMP/outside"
+mkdir -p \
+    "$FAKEBIN" \
+    "$TMP/modules/legacy" \
+    "$TMP/modules/old/sub" \
+    "$TMP/modules/current" \
+    "$TMP/modules/preferred" \
+    "$TMP/modules/bundled" \
+    "$TMP/modules/future" \
+    "$TMP/outside"
 
 cat > "$FAKEBIN/real-go" <<'SH'
 #!/bin/sh
 set -eu
+if [ "${1:-}" = env ]; then
+    shift
+    for name in "$@"; do
+        case "$name" in
+            GOMODCACHE) printf '%s\n' "$FAKE_GOMODCACHE" ;;
+            GOHOSTOS) printf '%s\n' linux ;;
+            GOHOSTARCH) printf '%s\n' amd64 ;;
+            GOVERSION) printf '%s\n' go1.26.4 ;;
+            *) exit 91 ;;
+        esac
+    done
+    exit 0
+fi
 printf 'toolchain=<%s>\n' "${GOTOOLCHAIN-unset}" >> "$GO_WRAPPER_LOG"
 for argument in "$@"; do
     printf 'argument=<%s>\n' "$argument" >> "$GO_WRAPPER_LOG"
@@ -27,10 +48,23 @@ exit 1
 SH
 chmod +x "$FAKEBIN/go-remote-test"
 
+printf 'module example.com/legacy\n\ngo 1.20\n' > "$TMP/modules/legacy/go.mod"
 printf 'module example.com/old\n\ngo 1.22\n' > "$TMP/modules/old/go.mod"
 printf 'module example.com/current\n\ngo 1.24\n' > "$TMP/modules/current/go.mod"
 printf 'module example.com/preferred\n\ngo 1.24\n\ntoolchain go1.25.3\n' > "$TMP/modules/preferred/go.mod"
+printf 'module example.com/bundled\n\ngo 1.26\n' > "$TMP/modules/bundled/go.mod"
 printf 'module example.com/future\n\ngo 1.27.1\n' > "$TMP/modules/future/go.mod"
+
+export FAKE_GOMODCACHE="$TMP/modcache"
+mkdir -p \
+    "$FAKE_GOMODCACHE/golang.org/toolchain@v0.0.1-go1.22.4.linux-amd64/bin" \
+    "$FAKE_GOMODCACHE/golang.org/toolchain@v0.0.1-go1.22.12.linux-amd64/bin" \
+    "$FAKE_GOMODCACHE/golang.org/toolchain@v0.0.1-go1.25.2.linux-amd64/bin" \
+    "$FAKE_GOMODCACHE/golang.org/toolchain@v0.0.1-go1.25.12.linux-amd64/bin"
+for cached_toolchain in "$FAKE_GOMODCACHE"/golang.org/toolchain@*; do
+    : > "$cached_toolchain/bin/go"
+    chmod +x "$cached_toolchain/bin/go"
+done
 
 export GO_WRAPPER_LOG="$LOG"
 export LOCAL_REAL_GO="$FAKEBIN/real-go"
@@ -53,9 +87,16 @@ assert_contains() {
     cd "$TMP/modules/old/sub"
     "$ROOT/bin/go" mod tidy
 )
-assert_contains "$LOG" 'toolchain=<go1.23.12+auto>'
+assert_contains "$LOG" 'toolchain=<go1.22.12+auto>'
 assert_contains "$LOG" 'argument=<mod>'
 assert_contains "$LOG" 'argument=<tidy>'
+
+: > "$LOG"
+(
+    cd "$TMP/modules/legacy"
+    "$ROOT/bin/go" build ./...
+)
+assert_contains "$LOG" 'toolchain=<go1.20+auto>'
 
 : > "$LOG"
 (
@@ -69,7 +110,7 @@ assert_contains "$LOG" 'toolchain=<unset>'
     cd "$TMP/modules/current"
     "$ROOT/bin/go" build ./...
 )
-assert_contains "$LOG" 'toolchain=<go1.24.13+auto>'
+assert_contains "$LOG" 'toolchain=<go1.24.0+auto>'
 assert_contains "$LOG" 'argument=<build>'
 
 : > "$LOG"
@@ -82,17 +123,24 @@ assert_contains "$LOG" 'argument=<build>'
 
 : > "$LOG"
 (
+    cd "$TMP/modules/bundled"
+    "$ROOT/bin/go" build ./...
+)
+assert_contains "$LOG" 'toolchain=<go1.26.4+auto>'
+
+: > "$LOG"
+(
     cd "$TMP/modules/future"
     "$ROOT/bin/go" vet ./...
 )
-assert_contains "$LOG" 'toolchain=<go1.26.4+auto>'
+assert_contains "$LOG" 'toolchain=<go1.27.1+auto>'
 
 : > "$LOG"
 (
     cd "$TMP/outside"
     "$ROOT/bin/go" -C "$TMP/modules/old" generate ./...
 )
-assert_contains "$LOG" 'toolchain=<go1.23.12+auto>'
+assert_contains "$LOG" 'toolchain=<go1.22.12+auto>'
 assert_contains "$LOG" 'argument=<-C>'
 
 : > "$LOG"
@@ -105,9 +153,9 @@ assert_contains "$LOG" 'toolchain=<go1.24.13>'
 : > "$LOG"
 (
     cd "$TMP/modules/old"
-    LOCAL_GO_TOOLCHAINS='go1.24.13 go1.26.4' "$ROOT/bin/go" --no-remote test ./...
+    "$ROOT/bin/go" --no-remote test ./...
 )
-assert_contains "$LOG" 'toolchain=<go1.24.13+auto>'
+assert_contains "$LOG" 'toolchain=<go1.22.12+auto>'
 assert_contains "$LOG" 'argument=<test>'
 
 : > "$LOG"

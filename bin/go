@@ -19,8 +19,6 @@
 
 PATCHER="${LOCAL_GO_PATCHER:-}"
 GCFLAGS="${LOCAL_GO_GCFLAGS:-}"
-# Go downloads and caches configured toolchains that are not already on PATH.
-TOOLCHAINS="${LOCAL_GO_TOOLCHAINS:-go1.23.12 go1.24.13 go1.25.12 go1.26.4}"
 NO_REMOTE=0
 
 # Wrapper-only escape hatch used by the testbox invocation. It must be the
@@ -87,13 +85,40 @@ find_go_mod() {
 	done
 }
 
+cached_toolchains() {
+	go_environment=$(GOTOOLCHAIN=local "$REAL_GO" env GOMODCACHE GOHOSTOS GOHOSTARCH GOVERSION 2>/dev/null) || return 0
+	OLD_IFS="$IFS"
+	IFS='
+'
+	set -- $go_environment
+	IFS="$OLD_IFS"
+	[ "$#" = 4 ] || return 0
+	module_cache=$1
+	host_os=$2
+	host_arch=$3
+	bundled_version=${4#go}
+	printf '%s ' "$bundled_version"
+
+	# Downloaded toolchains use v0.0.1-goVERSION.GOOS-GOARCH module directories.
+	toolchain_prefix=$module_cache/golang.org/toolchain@v0.0.1-go
+	toolchain_suffix=.$host_os-$host_arch
+	for directory in "$toolchain_prefix"*"$toolchain_suffix"; do
+		[ -x "$directory/bin/go" ] || continue
+		version=${directory#"$toolchain_prefix"}
+		version=${version%"$toolchain_suffix"}
+		printf '%s ' "$version"
+	done
+	printf '\n'
+}
+
 select_toolchain() {
 	go_mod=$1
 	go_version=$(awk '$1 == "go" { print $2; exit }' "$go_mod")
 	[ -n "$go_version" ] || return 1
 	toolchain_version=$(awk '$1 == "toolchain" { print $2; exit }' "$go_mod")
+	candidates=$(cached_toolchains)
 
-	awk -v go_version="$go_version" -v toolchain_version="$toolchain_version" -v candidates="$TOOLCHAINS" '
+	awk -v go_version="$go_version" -v toolchain_version="$toolchain_version" -v candidates="$candidates" '
 		function score(version, parts, count) {
 			sub(/^go/, "", version)
 			count = split(version, parts, ".")
@@ -106,28 +131,35 @@ select_toolchain() {
 		BEGIN {
 			required = score(go_version)
 			if (required < 0) exit 1
+			required_version = go_version
 			if (toolchain_version != "" && toolchain_version != "default") {
 				toolchain_required = score(toolchain_version)
-				if (toolchain_required > required) required = toolchain_required
+				if (toolchain_required > required) {
+					required = toolchain_required
+					required_version = toolchain_version
+				}
 			}
+			sub(/^go/, "", required_version)
+			required_count = split(required_version, required_parts, ".")
+			required_family = required_parts[1] "." required_parts[2]
 			count = split(candidates, values, /[[:space:]]+/)
 			best_score = -1
-			highest_score = -1
 			for (i = 1; i <= count; i++) {
 				candidate_score = score(values[i])
 				if (candidate_score < 0) continue
-				if (candidate_score > highest_score) {
-					highest_score = candidate_score
-					highest = values[i]
-				}
-				if (candidate_score >= required && (best_score < 0 || candidate_score < best_score)) {
+				split(values[i], candidate_parts, ".")
+				candidate_family = candidate_parts[1] "." candidate_parts[2]
+				if (candidate_family == required_family && candidate_score >= required && candidate_score > best_score) {
 					best_score = candidate_score
 					best = values[i]
 				}
 			}
-			if (best_score >= 0) print best "+auto"
-			else if (highest_score >= 0) print highest "+auto"
-			else exit 1
+			if (best_score >= 0) {
+				print "go" best "+auto"
+				exit
+			}
+			if (required_count == 2 && required_parts[2] >= 21) required_version = required_version ".0"
+			print "go" required_version "+auto"
 		}
 	'
 }
