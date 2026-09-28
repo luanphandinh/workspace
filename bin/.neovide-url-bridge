@@ -89,6 +89,15 @@ def preview_url(value, remote_preview_port, local_preview_port):
     )
 
 
+def browser_url(value):
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("URL scheme must be http or https")
+    if parsed.hostname is None:
+        raise ValueError("URL host is required")
+    return value
+
+
 def serve(args):
     class Handler(socketserver.BaseRequestHandler):
         def handle(self):
@@ -117,9 +126,16 @@ def serve(args):
                 self.request.sendall(f"OK {len(image)}\n".encode() + image)
                 return
 
-            log("Info", f"received preview URL: {value}")
+            kind, separator, value = value.partition(" ")
             try:
-                url = preview_url(value, args.remote_preview_port, args.local_preview_port)
+                if separator == "" or kind not in {"preview-url", "open-url"}:
+                    raise ValueError("unknown callback request")
+                if kind == "preview-url":
+                    log("Info", f"received preview URL: {value}")
+                    url = preview_url(value, args.remote_preview_port, args.local_preview_port)
+                else:
+                    log("Info", f"received browser URL: {value}")
+                    url = browser_url(value)
             except (UnicodeError, ValueError) as error:
                 log("Error", f"rejected callback: {error}")
                 return

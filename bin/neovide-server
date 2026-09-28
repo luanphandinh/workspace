@@ -13,8 +13,8 @@ usage() {
 		'Port bundle:' \
 		'  PORT      Neovim RPC' \
 		'  PORT + 1  Markdown preview' \
-		'  PORT + 2  Local-browser callback' \
-		'  PORT + 3  Local clipboard-image callback'
+		'' \
+		'The client allocates one dynamic callback port for browser and image requests.'
 }
 
 if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -99,8 +99,8 @@ case "$port" in
 		exit 2
 		;;
 esac
-if [ "$port" -lt 1 ] || [ "$port" -gt 65532 ]; then
-	log Error 'port must be between 1 and 65532'
+if [ "$port" -lt 1 ] || [ "$port" -gt 65534 ]; then
+	log Error 'port must be between 1 and 65534'
 	exit 2
 fi
 
@@ -110,12 +110,10 @@ command -v nvim >/dev/null 2>&1 || {
 }
 
 export NEOVIDE_MARKDOWN_PREVIEW_PORT=$((port + 1))
-export NEOVIDE_REMOTE_OPEN_PORT=$((port + 2))
-export NEOVIDE_REMOTE_IMAGE_PORT=$((port + 3))
+export NEOVIDE_REMOTE_BRIDGE=1
 
 log Info "Neovim RPC listening on 127.0.0.1:$port"
 log Info "Markdown preview will use 127.0.0.1:$NEOVIDE_MARKDOWN_PREVIEW_PORT"
-log Info "browser callback will use 127.0.0.1:$NEOVIDE_REMOTE_OPEN_PORT"
-log Info "clipboard-image callback will use 127.0.0.1:$NEOVIDE_REMOTE_IMAGE_PORT"
+log Info "callback port will be allocated by neovide-client"
 log Command "nvim --headless --listen 127.0.0.1:$port"
 exec nvim --headless --listen "127.0.0.1:$port" "$@"

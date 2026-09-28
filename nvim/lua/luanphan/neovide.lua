@@ -28,7 +28,7 @@ local function configure()
     vim.g.neovide_scale_factor = 1.0
   end, { desc = "Reset zoom" })
 
-  local remote = vim.env.NEOVIDE_REMOTE_IMAGE_PORT and require("luanphan.neovide_remote") or nil
+  local remote = vim.env.NEOVIDE_REMOTE_BRIDGE and require("luanphan.neovide_remote") or nil
 
   local function paste_clipboard()
     local ok, text = pcall(vim.fn.getreg, "+")
@@ -51,6 +51,9 @@ local function configure()
 end
 
 function M.setup()
+  if vim.env.NEOVIDE_REMOTE_BRIDGE then
+    require("luanphan.neovide_remote").setup()
+  end
   configure()
   vim.api.nvim_create_autocmd("UIEnter", { callback = configure })
 end

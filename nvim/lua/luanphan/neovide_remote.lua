@@ -1,7 +1,6 @@
 local M = {}
 
-local remote_open_port = tonumber(vim.env.NEOVIDE_REMOTE_OPEN_PORT)
-local remote_image_port = tonumber(vim.env.NEOVIDE_REMOTE_IMAGE_PORT)
+local callback_port = tonumber(vim.env.NEOVIDE_REMOTE_CALLBACK_PORT)
 
 local function log(level, message)
   io.stderr:write(string.format("[%s] [%s] neovide remote bridge: %s\n", os.date("%Y-%m-%d %H:%M:%S"), level, message))
@@ -12,51 +11,61 @@ local function valid_port(port)
   return type(port) == "number" and port >= 1 and port <= 65535 and port % 1 == 0
 end
 
-function M.set_ports(open_port, image_port)
-  open_port = tonumber(open_port)
-  image_port = tonumber(image_port)
-  if not valid_port(open_port) or not valid_port(image_port) then
-    error("remote bridge ports must be integers between 1 and 65535")
+local function is_web_url(value)
+  return type(value) == "string" and (value:match("^http://") or value:match("^https://"))
+end
+
+function M.set_callback_port(port)
+  port = tonumber(port)
+  if not valid_port(port) then
+    error("remote bridge callback port must be an integer between 1 and 65535")
   end
 
-  remote_open_port = open_port
-  remote_image_port = image_port
-  vim.env.NEOVIDE_REMOTE_OPEN_PORT = tostring(open_port)
-  vim.env.NEOVIDE_REMOTE_IMAGE_PORT = tostring(image_port)
-  log("Success", string.format("callback ports updated: browser %d, image %d", open_port, image_port))
+  callback_port = port
+  vim.env.NEOVIDE_REMOTE_CALLBACK_PORT = tostring(port)
+  log("Success", string.format("callback port updated: %d", port))
   return true
+end
+
+local function send_url(kind, url)
+  if not is_web_url(url) then
+    vim.notify("Browser bridge received an invalid URL", vim.log.levels.ERROR)
+    return false
+  end
+  if not callback_port then
+    vim.notify("Browser bridge is unavailable", vim.log.levels.ERROR)
+    return false
+  end
+
+  local client = vim.uv.new_tcp()
+  client:connect("127.0.0.1", callback_port, function(connect_error)
+    if connect_error then
+      client:close()
+      vim.schedule(function()
+        vim.notify("Browser bridge could not reach the local client", vim.log.levels.ERROR)
+      end)
+      return
+    end
+
+    client:write(kind .. " " .. url .. "\n", function(write_error)
+      client:close()
+      if write_error then
+        vim.schedule(function()
+          vim.notify("Browser bridge could not send the URL", vim.log.levels.ERROR)
+        end)
+      end
+    end)
+  end)
+  return true
+end
+
+function M.open_url(url)
+  return send_url("open-url", url)
 end
 
 function M.setup_url_opener()
   _G.workspace_neovide_remote_open = function(url)
-    if type(url) ~= "string" or not url:match("^https?://") then
-      vim.notify("Markdown preview returned an invalid URL", vim.log.levels.ERROR)
-      return
-    end
-    if not remote_open_port then
-      vim.notify("Markdown preview has no local browser bridge", vim.log.levels.ERROR)
-      return
-    end
-
-    local client = vim.uv.new_tcp()
-    client:connect("127.0.0.1", remote_open_port, function(connect_error)
-      if connect_error then
-        client:close()
-        vim.schedule(function()
-          vim.notify("Markdown preview could not reach the local browser bridge", vim.log.levels.ERROR)
-        end)
-        return
-      end
-
-      client:write(url .. "\n", function(write_error)
-        client:close()
-        if write_error then
-          vim.schedule(function()
-            vim.notify("Markdown preview could not send the URL to the local browser", vim.log.levels.ERROR)
-          end)
-        end
-      end)
-    end)
+    return send_url("preview-url", url)
   end
 
   vim.cmd([[
@@ -68,11 +77,21 @@ function M.setup_url_opener()
   return "WorkspaceNeovideRemoteOpen"
 end
 
+function M.setup()
+  _G.workspace_neovide_set_callback_port = M.set_callback_port
+  vim.cmd([[
+    function! WorkspaceNeovideSetCallbackPort(port) abort
+      return v:lua.workspace_neovide_set_callback_port(a:port)
+    endfunction
+  ]])
+  M.setup_url_opener()
+end
+
 function M.paste_clipboard_image()
   local bufnr = vim.api.nvim_get_current_buf()
   if vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     or vim.b[bufnr].luanphan_agent_name ~= "codex"
-    or not remote_image_port
+    or not callback_port
   then
     return false
   end
@@ -84,7 +103,7 @@ function M.paste_clipboard_image()
     return true
   end
 
-  log("Info", "requesting clipboard image through 127.0.0.1:" .. remote_image_port)
+  log("Info", "requesting clipboard image through 127.0.0.1:" .. callback_port)
   vim.notify("Reading image from local clipboard...")
   vim.system({ helper }, { text = true }, function(result)
     vim.schedule(function()
