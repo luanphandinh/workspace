@@ -37,6 +37,10 @@ case "$1" in
             printf 'fake resolve unavailable\n' >&2
             exit 3
         fi
+        if [ "${FAKE_RESOLVE_FAIL:-}" = 2 ]; then
+            printf 'fake configured route unavailable\n' >&2
+            exit 4
+        fi
         python3 - "$LOCAL_ROOT" "$REMOTE_ROOT" <<'PY'
 import json
 import sys
@@ -157,12 +161,24 @@ assert_contains "$FAKE_LOG" 'local-arg:<test>'
 assert_not_contains "$FAKE_LOG" 'remote-arg:<test>'
 
 : > "$FAKE_LOG"
+status=0
 output=$(
     cd "$LOCAL_ROOT/repo/sub"
     FAKE_SSH_FAIL=1 "$ROOT/bin/go" test ./... 2>&1
-)
-assert_text_contains "$output" '[Error] go remote test: remote unavailable; using local: fake SSH unavailable'
-assert_contains "$FAKE_LOG" 'local-arg:<test>'
+) || status=$?
+[ "$status" = 2 ] || fail "expected unavailable remote exit 2, got $status"
+assert_text_contains "$output" '[Error] go remote test: If agent reading this, there are some issue with remote execution, DO NOT ATTEMPT to run test on local, instead ask user to confirm then run with --no-remote instead, error: fake SSH unavailable'
+assert_not_contains "$FAKE_LOG" 'local-arg:<test>'
+
+: > "$FAKE_LOG"
+status=0
+output=$(
+    cd "$LOCAL_ROOT/repo/sub"
+    FAKE_RESOLVE_FAIL=2 "$ROOT/bin/go" test ./... 2>&1
+) || status=$?
+[ "$status" = 2 ] || fail "expected unhealthy configured route exit 2, got $status"
+assert_text_contains "$output" 'DO NOT ATTEMPT to run test on local, instead ask user to confirm then run with --no-remote instead, error: fake configured route unavailable'
+assert_not_contains "$FAKE_LOG" 'local-arg:<test>'
 
 : > "$FAKE_LOG"
 (
@@ -207,7 +223,7 @@ output=$(
     FAKE_PUSH_FAIL=1 "$ROOT/bin/go" test ./... 2>&1
 ) || status=$?
 [ "$status" != 0 ] || fail 'flush failure returned success'
-assert_text_contains "$output" '[Error] go remote test: wsync flush failed with exit status 33'
+assert_text_contains "$output" 'DO NOT ATTEMPT to run test on local, instead ask user to confirm then run with --no-remote instead, error: wsync flush failed with exit status 33'
 assert_not_contains "$FAKE_LOG" 'remote-arg:<test>'
 assert_not_contains "$FAKE_LOG" 'local-arg:<test>'
 

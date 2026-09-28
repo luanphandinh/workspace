@@ -161,9 +161,13 @@ if [ "${1:-}" = "test" ]; then
 	shift
 
 	if [ "$NO_REMOTE" = "0" ] && command -v go-remote-test >/dev/null 2>&1; then
-		if go-remote-test probe "$PWD"; then
-			exec go-remote-test run "$PWD" -- "$@"
-		fi
+		go-remote-test probe "$PWD"
+		remote_status=$?
+		case "$remote_status" in
+			0) exec go-remote-test run "$PWD" -- "$@" ;;
+			1) ;;
+			*) exit "$remote_status" ;;
+		esac
 	fi
 
 	# Detect existing flags to avoid double-injection.

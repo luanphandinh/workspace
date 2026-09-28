@@ -125,8 +125,12 @@ rm -rf -- "$job"
 """
 
 
+class RemoteNotConfigured(Exception):
+    """The current path has no remote route and may use the local Go toolchain."""
+
+
 class RemoteUnavailable(Exception):
-    """The current invocation should use the local Go toolchain."""
+    """A configured remote route is unavailable."""
 
 
 class RemoteFailure(Exception):
@@ -137,6 +141,15 @@ def log(level: str, message: str) -> None:
     print(f"[{level}] go remote test: {message}", file=sys.stderr)
 
 
+def log_remote_failure(error: BaseException) -> None:
+    log(
+        "Error",
+        "If agent reading this, there are some issue with remote execution, "
+        "DO NOT ATTEMPT to run test on local, instead ask user to confirm then "
+        f"run with --no-remote instead, error: {error}",
+    )
+
+
 def resolve_route(path: Path) -> dict:
     process = subprocess.run(
         ["wsync", "resolve", "--path", str(path), "--json"],
@@ -144,7 +157,10 @@ def resolve_route(path: Path) -> dict:
         capture_output=True,
     )
     if process.returncode != 0:
-        raise RemoteUnavailable(process.stderr.strip() or "no ready wsync route")
+        error = process.stderr.strip() or "no ready wsync route"
+        if process.returncode == 3:
+            raise RemoteNotConfigured(error)
+        raise RemoteUnavailable(error)
     try:
         route = json.loads(process.stdout)
     except json.JSONDecodeError as error:
@@ -223,9 +239,12 @@ def probe(path: Path) -> int:
         route = resolve_route(path)
         git_context(path, route)
         check_remote(route)
-    except (OSError, RemoteUnavailable) as error:
+    except RemoteNotConfigured as error:
         log("Error", f"remote unavailable; using local: {error}")
         return 1
+    except (OSError, RemoteUnavailable) as error:
+        log_remote_failure(error)
+        return 2
     return 0
 
 
@@ -288,7 +307,7 @@ def run(path: Path, test_arguments: list[str]) -> int:
         route = resolve_route(path)
         _, working_relative, remote_repository = git_context(path, route)
         check_remote(route)
-    except RemoteUnavailable as error:
+    except (RemoteNotConfigured, RemoteUnavailable) as error:
         raise RemoteFailure(f"remote route became unavailable: {error}") from error
 
     token = secrets.token_hex(16)
@@ -362,7 +381,7 @@ def main() -> int:
         try:
             return run(Path(sys.argv[2]), sys.argv[4:])
         except (OSError, RemoteFailure) as error:
-            log("Error", str(error))
+            log_remote_failure(error)
             return 1
         except KeyboardInterrupt:
             return 130
