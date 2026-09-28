@@ -33,7 +33,10 @@ set -eu
 printf 'wsync:%s\n' "$*" >> "$FAKE_LOG"
 case "$1" in
     resolve)
-        [ "${FAKE_RESOLVE_FAIL:-}" != 1 ] || exit 3
+        if [ "${FAKE_RESOLVE_FAIL:-}" = 1 ]; then
+            printf 'fake resolve unavailable\n' >&2
+            exit 3
+        fi
         python3 - "$LOCAL_ROOT" "$REMOTE_ROOT" <<'PY'
 import json
 import sys
@@ -73,7 +76,10 @@ done
 host=$1
 shift
 [ "$host" = testbox ] || exit 90
-[ "${FAKE_SSH_FAIL:-}" != 1 ] || exit 91
+if [ "${FAKE_SSH_FAIL:-}" = 1 ]; then
+    printf 'fake SSH unavailable\n' >&2
+    exit 91
+fi
 HOME=$FAKE_REMOTE_HOME SHELL=$FAKE_LOGIN_SHELL PATH="$REMOTE_BIN:$PATH" sh -c "$1"
 SH
 chmod +x "$FAKEBIN/ssh"
@@ -137,19 +143,25 @@ assert_not_contains() {
     fi
 }
 
+assert_text_contains() {
+    printf '%s\n' "$1" | grep -F -- "$2" >/dev/null || fail "expected output to contain: $2"
+}
+
 : > "$FAKE_LOG"
-(
+output=$(
     cd "$LOCAL_ROOT/repo/sub"
-    FAKE_RESOLVE_FAIL=1 "$ROOT/bin/go" test ./...
+    FAKE_RESOLVE_FAIL=1 "$ROOT/bin/go" test ./... 2>&1
 )
+assert_text_contains "$output" '[Error] go remote test: remote unavailable; using local: fake resolve unavailable'
 assert_contains "$FAKE_LOG" 'local-arg:<test>'
 assert_not_contains "$FAKE_LOG" 'remote-arg:<test>'
 
 : > "$FAKE_LOG"
-(
+output=$(
     cd "$LOCAL_ROOT/repo/sub"
-    FAKE_SSH_FAIL=1 "$ROOT/bin/go" test ./...
+    FAKE_SSH_FAIL=1 "$ROOT/bin/go" test ./... 2>&1
 )
+assert_text_contains "$output" '[Error] go remote test: remote unavailable; using local: fake SSH unavailable'
 assert_contains "$FAKE_LOG" 'local-arg:<test>'
 
 : > "$FAKE_LOG"
@@ -162,10 +174,11 @@ assert_contains "$FAKE_LOG" 'local-arg:<./literal package>'
 assert_not_contains "$FAKE_LOG" 'wsync:resolve'
 
 : > "$FAKE_LOG"
-(
+output=$(
     cd "$LOCAL_ROOT/repo/sub"
-    "$ROOT/bin/go" test './...' -run 'Test name'
+    "$ROOT/bin/go" test './...' -run 'Test name' 2>&1
 )
+assert_text_contains "$output" "[Info] go remote test: synchronized session 'example' to testbox:$REMOTE_ROOT"
 assert_contains "$FAKE_LOG" 'wsync:push example'
 assert_contains "$FAKE_LOG" 'wsync:pause example'
 assert_contains "$FAKE_LOG" 'wsync:resume example'
@@ -189,11 +202,12 @@ assert_not_contains "$FAKE_LOG" 'local-arg:<test>'
 
 : > "$FAKE_LOG"
 status=0
-(
+output=$(
     cd "$LOCAL_ROOT/repo/sub"
-    FAKE_PUSH_FAIL=1 "$ROOT/bin/go" test ./...
+    FAKE_PUSH_FAIL=1 "$ROOT/bin/go" test ./... 2>&1
 ) || status=$?
 [ "$status" != 0 ] || fail 'flush failure returned success'
+assert_text_contains "$output" '[Error] go remote test: wsync flush failed with exit status 33'
 assert_not_contains "$FAKE_LOG" 'remote-arg:<test>'
 assert_not_contains "$FAKE_LOG" 'local-arg:<test>'
 
