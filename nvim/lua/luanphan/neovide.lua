@@ -9,6 +9,8 @@ local function configure()
 
   configured = true
   vim.g.neovide_scale_factor = 1.0
+  vim.g.neovide_scroll_animation_length = 0.1
+  vim.opt.mousescroll = "ver:6,hor:6"
 
   local function change_scale(multiplier)
     local scale = vim.g.neovide_scale_factor * multiplier
