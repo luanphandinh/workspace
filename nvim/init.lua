@@ -1,6 +1,7 @@
 vim.g.mapleader = " "
 vim.g.maplocalleader = " "
 
+require("luanphan.remote_tunnel").setup()
 require("luanphan.neovide").setup()
 require("luanphan.ssh_clipboard").setup()
 

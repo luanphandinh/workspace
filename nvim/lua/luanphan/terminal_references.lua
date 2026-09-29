@@ -325,11 +325,15 @@ local function find_editor_window(source)
 end
 
 function M.open_url(url)
-  if not is_web_url(url) or not vim.g.neovide then
+  if not is_web_url(url) then
     return false
   end
-  if vim.env.NEOVIDE_REMOTE_BRIDGE then
-    return require("luanphan.neovide_remote").open_url(url)
+  local remote = require("luanphan.remote_tunnel")
+  if remote.enabled() then
+    return remote.open_url(url)
+  end
+  if not vim.g.neovide then
+    return false
   end
 
   local ok, _, error_message = pcall(vim.ui.open, url)

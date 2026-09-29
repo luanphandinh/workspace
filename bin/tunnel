@@ -1,0 +1,404 @@
+#!/bin/sh
+set -eu
+
+# Workspace tunnel architecture
+# =============================
+#
+# This one command is installed on both machines, but it does not run a
+# permanent server daemon. Its role depends on the subcommand:
+#
+#   Local machine                         SSH host
+#   -------------                         --------
+#   tunnel connect <host>                 tunnel _register
+#     starts .tunnel-bridge                 stores port/token in a 0600 file
+#     opens an SSH control connection       tunnel status checks the bridge
+#     allocates a reverse forward            tunnel open sends a URL request
+#     records outgoing status                tunnel paste-image requests a PNG
+#
+# `connect` starts the private Python bridge on a random local loopback port.
+# It then asks OpenSSH for a random reverse-forwarded loopback port on the SSH
+# host. Traffic sent to that remote 127.0.0.1 port travels backward through
+# the existing SSH connection and reaches the local bridge. No public listener
+# or separately opened firewall port is involved.
+#
+# The remote registration contains the reverse port, a random 256-bit token,
+# and the local machine name. The token authenticates every bridge request so
+# another process on a shared SSH host cannot read the client clipboard or ask
+# the client to open a URL merely by discovering the loopback port. One incoming
+# registration is supported per remote user; a new connection replaces a stale
+# one. A local machine may keep multiple outgoing connections, tracked by PID
+# under ~/.cache/workspace-tunnel/outgoing/.
+#
+# URL flow:
+#   tunnel open URL -> remote loopback port -> reverse SSH forward -> local
+#   bridge -> operating-system browser. If URL points at remote localhost, the
+#   bridge adds a normal local SSH forward and rewrites the browser URL to its
+#   allocated local port. This is how remote Markdown previews open locally.
+#
+# Image flow:
+#   tunnel paste-image -> reverse SSH forward -> local bridge -> local system
+#   clipboard -> PNG bytes back through SSH -> remote cache file. Tmux and
+#   Neovim adapters insert `[Image: <remote-path>]` into Codex. Local Codex does
+#   not need this path because it can read the local clipboard directly.
+#
+# `tunnel status` inspects both directions. Outgoing entries are validated
+# against their process and SSH control socket. An incoming entry is validated
+# by an authenticated ping through its registered reverse port. The internal
+# `_register`, `_unregister`, and `_ping-incoming` are internal commands used
+# across SSH by the public commands and integration scripts. They are
+# intentionally omitted from normal help output.
+
+usage() {
+	printf '%s\n' \
+		'Usage: tunnel <command> [args]' \
+		'' \
+		'Commands:' \
+		'  connect [options] <ssh-host>  Connect this machine to an SSH host' \
+		'  status                        Show outgoing and incoming connections' \
+		'  open URL [URL...]             Open URLs on the connected client' \
+		'  paste-image                   Save the client clipboard image remotely' \
+		'  help                          Show this help' \
+		'' \
+		'Connect options:' \
+		'      --trace                   Print every shell command as it executes' \
+		'      --ssh-verbose             Stream verbose SSH diagnostics'
+}
+
+if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
+	color_info=$(printf '\033[34m')
+	color_success=$(printf '\033[32m')
+	color_warning=$(printf '\033[33m')
+	color_error=$(printf '\033[31m')
+	color_reset=$(printf '\033[0m')
+else
+	color_info=
+	color_success=
+	color_warning=
+	color_error=
+	color_reset=
+fi
+
+log() {
+	level=$1
+	shift
+	timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+	case "$level" in
+		Info) color=$color_info ;;
+		Success) color=$color_success ;;
+		Warning) color=$color_warning ;;
+		Error) color=$color_error ;;
+		*) color= ;;
+	esac
+	printf '[%s] %s[%s]%s tunnel: %s\n' "$timestamp" "$color" "$level" "$color_reset" "$*" >&2
+}
+
+state_dir=${XDG_CACHE_HOME:-$HOME/.cache}/workspace-tunnel
+incoming_file=$state_dir/connection
+outgoing_dir=$state_dir/outgoing
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+bridge=$script_dir/.tunnel-bridge
+
+valid_port() {
+	case "$1" in
+		""|*[!0-9]*) return 1 ;;
+	esac
+	[ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+valid_token() {
+	case "$1" in
+		????????????????????????????????????????????????????????????????) ;;
+		*) return 1 ;;
+	esac
+	case "$1" in
+		*[!0-9a-f]*) return 1 ;;
+	esac
+}
+
+load_incoming() {
+	[ -r "$incoming_file" ] || return 1
+	read -r tunnel_port tunnel_token tunnel_client < "$incoming_file"
+	valid_port "$tunnel_port" || return 1
+	valid_token "$tunnel_token" || return 1
+	[ -n "$tunnel_client" ] || return 1
+}
+
+register_incoming() {
+	read -r tunnel_port tunnel_token tunnel_client
+	valid_port "$tunnel_port" || {
+		printf '%s\n' 'tunnel: registration contains an invalid port' >&2
+		exit 2
+	}
+	valid_token "$tunnel_token" || {
+		printf '%s\n' 'tunnel: registration contains an invalid token' >&2
+		exit 2
+	}
+	case "$tunnel_client" in
+		""|*[!A-Za-z0-9._-]*)
+			printf '%s\n' 'tunnel: registration contains an invalid client name' >&2
+			exit 2
+			;;
+	esac
+
+	umask 077
+	mkdir -p "$state_dir"
+	temp_file=$state_dir/connection.$$
+	trap 'rm -f "$temp_file"' EXIT INT TERM HUP
+	printf '%s %s %s\n' "$tunnel_port" "$tunnel_token" "$tunnel_client" > "$temp_file"
+	mv "$temp_file" "$incoming_file"
+	trap - EXIT INT TERM HUP
+}
+
+unregister_incoming() {
+	read -r expected_token
+	if load_incoming && [ "$tunnel_token" = "$expected_token" ]; then
+		rm -f "$incoming_file"
+	fi
+}
+
+incoming_active() {
+	load_incoming || return 1
+	"$bridge" request-ping \
+		--port "$tunnel_port" \
+		--token "$tunnel_token" \
+		--timeout 2 >/dev/null 2>&1
+}
+
+status_connections() {
+	active=0
+	printed_outgoing=0
+	if [ -d "$outgoing_dir" ]; then
+		for outgoing_file in "$outgoing_dir"/*; do
+			[ -f "$outgoing_file" ] || continue
+			outgoing_pid=$(sed -n '1p' "$outgoing_file")
+			outgoing_host=$(sed -n '2p' "$outgoing_file")
+			outgoing_local_port=$(sed -n '3p' "$outgoing_file")
+			outgoing_remote_port=$(sed -n '4p' "$outgoing_file")
+			outgoing_control_socket=$(sed -n '5p' "$outgoing_file")
+			if [ "$printed_outgoing" -eq 0 ]; then
+				printf '%s\n' 'Outgoing connections:'
+				printed_outgoing=1
+			fi
+			if kill -0 "$outgoing_pid" 2>/dev/null \
+				&& ssh -S "$outgoing_control_socket" -O check "$outgoing_host" >/dev/null 2>&1
+			then
+				printf '  %s: active (PID %s, local 127.0.0.1:%s -> remote 127.0.0.1:%s)\n' \
+					"$outgoing_host" "$outgoing_pid" "$outgoing_local_port" "$outgoing_remote_port"
+				active=1
+			else
+				printf '  %s: inactive (PID %s)\n' "$outgoing_host" "$outgoing_pid"
+			fi
+		done
+	fi
+
+	if load_incoming; then
+		printf '%s\n' 'Incoming connection:'
+		if incoming_active; then
+			printf '  %s: active on 127.0.0.1:%s\n' "$tunnel_client" "$tunnel_port"
+			active=1
+		else
+			printf '  %s: inactive on 127.0.0.1:%s\n' "$tunnel_client" "$tunnel_port"
+		fi
+	fi
+
+	if [ "$printed_outgoing" -eq 0 ] && ! load_incoming; then
+		printf '%s\n' 'No tunnel connections.'
+	fi
+	[ "$active" -eq 1 ]
+}
+
+open_urls() {
+	[ "$#" -gt 0 ] || {
+		printf '%s\n' 'Usage: tunnel open URL [URL...]' >&2
+		exit 2
+	}
+	load_incoming || {
+		printf '%s\n' 'tunnel: no client is connected' >&2
+		exit 1
+	}
+	for url in "$@"; do
+		"$bridge" request-open --port "$tunnel_port" --token "$tunnel_token" "$url"
+	done
+}
+
+paste_image() {
+	load_incoming || {
+		printf '%s\n' 'tunnel: no client is connected' >&2
+		exit 1
+	}
+	exec "$bridge" request-image \
+		--port "$tunnel_port" \
+		--token "$tunnel_token" \
+		--output-dir "$state_dir/clipboard-images"
+}
+
+connect_host() {
+	trace=0
+	ssh_verbose=
+	ssh_host=
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+			--trace) trace=1; shift ;;
+			--ssh-verbose) ssh_verbose=-v; shift ;;
+			-h|--help) usage; exit 0 ;;
+			-*) log Error "unknown connect option: $1"; exit 2 ;;
+			*)
+				[ -z "$ssh_host" ] || {
+					log Error 'only one SSH host may be specified'
+					exit 2
+				}
+				ssh_host=$1
+				shift
+				;;
+		esac
+	done
+
+	[ -n "$ssh_host" ] || {
+		log Error 'missing SSH host'
+		exit 2
+	}
+	case "$ssh_host" in
+		-*|*[!A-Za-z0-9._@:-]*) log Error 'SSH host contains unsupported characters'; exit 2 ;;
+	esac
+	if [ "$trace" -eq 1 ]; then
+		set -x
+	fi
+
+	case "$(uname -s)" in
+		Darwin)
+			opener=open
+			if command -v swift >/dev/null 2>&1; then clipboard_backend=macos; else clipboard_backend=none; fi
+			;;
+		Linux)
+			opener=xdg-open
+			if command -v wl-paste >/dev/null 2>&1; then
+				clipboard_backend=wayland
+			elif command -v xclip >/dev/null 2>&1; then
+				clipboard_backend=x11
+			else
+				clipboard_backend=none
+			fi
+			;;
+		*) log Error 'unsupported operating system'; exit 1 ;;
+	esac
+
+	for dependency in python3 ssh "$opener"; do
+		command -v "$dependency" >/dev/null 2>&1 || {
+			log Error "$dependency is not installed"
+			exit 1
+		}
+	done
+	[ -x "$bridge" ] || { log Error "missing $bridge"; exit 1; }
+
+	client_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/tunnel.XXXXXX")
+	control_socket=$client_tmp_dir/ssh-control
+	local_port=$($bridge allocate --count 1)
+	token=$($bridge token)
+	client_name=$(hostname -s 2>/dev/null || hostname)
+	client_name=$(printf '%s' "$client_name" | tr -c 'A-Za-z0-9._-' '-')
+	bridge_pid=
+	tunnel_started=0
+	registered=0
+	outgoing_file=
+
+	cleanup_connect() {
+		if [ "$registered" -eq 1 ]; then
+			printf '%s\n' "$token" | ssh -S "$control_socket" "$ssh_host" '~/bin/tunnel _unregister' >/dev/null 2>&1 || true
+		fi
+		if [ "$tunnel_started" -eq 1 ]; then
+			ssh -S "$control_socket" -O exit "$ssh_host" >/dev/null 2>&1 || true
+		fi
+		if [ -n "$bridge_pid" ]; then
+			kill "$bridge_pid" >/dev/null 2>&1 || true
+			wait "$bridge_pid" 2>/dev/null || true
+		fi
+		if [ -n "$outgoing_file" ]; then
+			rm -f "$outgoing_file"
+		fi
+		rm -rf "$client_tmp_dir"
+	}
+	trap cleanup_connect EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+	trap 'exit 129' HUP
+
+	log Info "starting local bridge on 127.0.0.1:$local_port"
+	if [ "$clipboard_backend" = none ]; then
+		log Warning 'local image clipboard support is unavailable'
+	else
+		log Info "local image clipboard backend: $clipboard_backend"
+	fi
+	"$bridge" serve \
+		--listen-port "$local_port" \
+		--token "$token" \
+		--opener "$opener" \
+		--control-socket "$control_socket" \
+		--ssh-host "$ssh_host" \
+		--clipboard-backend "$clipboard_backend" &
+	bridge_pid=$!
+	"$bridge" wait --port "$local_port" --timeout 3
+
+	log Info "connecting to $ssh_host"
+	ssh -M -S "$control_socket" \
+		${ssh_verbose:+"$ssh_verbose"} \
+		-o ControlPersist=no \
+		-o ExitOnForwardFailure=yes \
+		-o ServerAliveInterval=15 \
+		-o ServerAliveCountMax=3 \
+		-fN \
+		"$ssh_host"
+	tunnel_started=1
+
+	if ! remote_port=$(ssh -S "$control_socket" -O forward -R "127.0.0.1:0:127.0.0.1:$local_port" "$ssh_host"); then
+		log Error 'could not allocate a remote tunnel port'
+		exit 1
+	fi
+	valid_port "$remote_port" || { log Error "SSH returned an invalid tunnel port: $remote_port"; exit 1; }
+
+	if ! printf '%s %s %s\n' "$remote_port" "$token" "$client_name" \
+		| ssh -S "$control_socket" "$ssh_host" '~/bin/tunnel _register'
+	then
+		log Error 'could not register the remote tunnel; install tunnel on the SSH host'
+		exit 1
+	fi
+	registered=1
+
+	umask 077
+	mkdir -p "$outgoing_dir"
+	outgoing_file=$outgoing_dir/$$
+	printf '%s\n%s\n%s\n%s\n%s\n' \
+		"$$" "$ssh_host" "$local_port" "$remote_port" "$control_socket" > "$outgoing_file"
+
+	log Success "connected to $ssh_host on remote 127.0.0.1:$remote_port"
+	log Info 'leave this command running; press Ctrl-C to stop'
+	while ssh -S "$control_socket" -O check "$ssh_host" >/dev/null 2>&1; do
+		sleep 5
+	done
+	log Error "SSH tunnel to $ssh_host disconnected"
+	exit 1
+}
+
+command=${1:-help}
+if [ "$#" -gt 0 ]; then shift; fi
+case "$command" in
+	connect) connect_host "$@" ;;
+	status)
+		[ "$#" -eq 0 ] || { printf '%s\n' 'Usage: tunnel status' >&2; exit 2; }
+		status_connections
+		;;
+	open) open_urls "$@" ;;
+	paste-image)
+		[ "$#" -eq 0 ] || { printf '%s\n' 'Usage: tunnel paste-image' >&2; exit 2; }
+		paste_image
+		;;
+	help|-h|--help) usage ;;
+	_register) register_incoming ;;
+	_unregister) unregister_incoming ;;
+	_ping-incoming) incoming_active ;;
+	http://*|https://*) open_urls "$command" "$@" ;;
+	*)
+		printf 'tunnel: unknown command: %s\n' "$command" >&2
+		usage >&2
+		exit 2
+		;;
+esac

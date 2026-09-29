@@ -1,0 +1,383 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import secrets
+import socket
+import socketserver
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from urllib.parse import urlsplit, urlunsplit
+
+
+MAX_REQUEST_BYTES = 16 * 1024
+MAX_IMAGE_BYTES = 25 * 1024 * 1024
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+MACOS_CLIPBOARD_IMAGE = r"""
+import AppKit
+import Darwin
+import Foundation
+
+let pasteboard = NSPasteboard.general
+var imageData = pasteboard.data(forType: .png)
+if imageData == nil,
+   let tiffData = pasteboard.data(forType: .tiff),
+   let representation = NSBitmapImageRep(data: tiffData) {
+    imageData = representation.representation(using: .png, properties: [:])
+}
+guard let imageData else {
+    FileHandle.standardError.write(Data("clipboard does not contain an image\n".utf8))
+    exit(2)
+}
+FileHandle.standardOutput.write(imageData)
+"""
+
+COLORS = {
+    "Info": "\033[34m",
+    "Success": "\033[32m",
+    "Error": "\033[31m",
+    "Command": "\033[35m",
+}
+
+
+class NoClipboardImage(RuntimeError):
+    pass
+
+
+def log(level, message):
+    color_enabled = sys.stderr.isatty() and not os.environ.get("NO_COLOR")
+    color = COLORS.get(level, "") if color_enabled else ""
+    reset = "\033[0m" if color else ""
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(
+        f"[{timestamp}] {color}[{level}]{reset} workspace tunnel: {message}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def clipboard_image(backend):
+    commands = {
+        "macos": ["swift", "-e", MACOS_CLIPBOARD_IMAGE],
+        "wayland": ["wl-paste", "--no-newline", "--type", "image/png"],
+        "x11": ["xclip", "-selection", "clipboard", "-target", "image/png", "-out"],
+    }
+    command = commands.get(backend)
+    if command is None:
+        raise RuntimeError("local image clipboard support is unavailable")
+
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        if result.returncode == 2 or "does not contain" in detail:
+            raise NoClipboardImage(detail or "clipboard does not contain an image")
+        raise RuntimeError(detail or "could not read the local clipboard")
+    if not result.stdout.startswith(PNG_SIGNATURE):
+        raise NoClipboardImage("clipboard does not contain a PNG image")
+    if len(result.stdout) > MAX_IMAGE_BYTES:
+        raise RuntimeError("clipboard image exceeds 25 MiB")
+    return result.stdout
+
+
+def validate_url(value):
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("URL scheme must be http or https")
+    if parsed.hostname is None:
+        raise ValueError("URL host is required")
+    return parsed
+
+
+def allocate_port():
+    with socket.socket() as current:
+        current.bind(("127.0.0.1", 0))
+        return current.getsockname()[1]
+
+
+def serve(args):
+    forwards = {}
+    forwards_lock = threading.Lock()
+
+    def local_url(value):
+        parsed = validate_url(value)
+        if parsed.hostname not in {"127.0.0.1", "localhost"}:
+            return value
+        try:
+            remote_port = parsed.port
+        except ValueError as error:
+            raise ValueError("URL contains an invalid port") from error
+        if not remote_port:
+            raise ValueError("loopback URL must include a port")
+
+        with forwards_lock:
+            local_port = forwards.get(remote_port)
+            if local_port is None:
+                local_port = allocate_port()
+                specification = f"127.0.0.1:{local_port}:127.0.0.1:{remote_port}"
+                command = [
+                    "ssh",
+                    "-S",
+                    args.control_socket,
+                    "-O",
+                    "forward",
+                    "-L",
+                    specification,
+                    args.ssh_host,
+                ]
+                log("Command", " ".join(command))
+                result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+                if result.returncode != 0:
+                    detail = result.stderr.decode("utf-8", errors="replace").strip()
+                    raise RuntimeError(detail or f"could not forward remote port {remote_port}")
+                forwards[remote_port] = local_port
+                log("Success", f"forwarded remote 127.0.0.1:{remote_port} to local 127.0.0.1:{local_port}")
+
+        return urlunsplit(
+            (parsed.scheme, f"127.0.0.1:{local_port}", parsed.path, parsed.query, parsed.fragment)
+        )
+
+    class Handler(socketserver.BaseRequestHandler):
+        def handle(self):
+            payload = bytearray()
+            while len(payload) < MAX_REQUEST_BYTES:
+                chunk = self.request.recv(min(1024, MAX_REQUEST_BYTES - len(payload)))
+                if not chunk:
+                    break
+                payload.extend(chunk)
+                if b"\n" in chunk:
+                    break
+
+            try:
+                line = bytes(payload).split(b"\n", 1)[0].decode("utf-8", errors="strict")
+                if not line:
+                    return
+                prefix, separator, request = line.partition(" ")
+                if prefix != "AUTH" or not separator:
+                    raise ValueError("authentication is required")
+                token, separator, request = request.partition(" ")
+                if not separator or not secrets.compare_digest(token, args.token):
+                    raise ValueError("authentication failed")
+                kind, separator, value = request.partition(" ")
+
+                if kind == "ping" and not separator:
+                    self.request.sendall(b"OK\n")
+                    return
+                if kind == "clipboard-image" and not separator:
+                    log("Info", "received clipboard image request")
+                    try:
+                        image = clipboard_image(args.clipboard_backend)
+                    except NoClipboardImage as error:
+                        message = str(error).replace("\n", " ")[:512]
+                        self.request.sendall(f"EMPTY {message}\n".encode())
+                        return
+                    log("Success", f"sending clipboard image ({len(image)} bytes)")
+                    self.request.sendall(f"OK {len(image)}\n".encode() + image)
+                    return
+                if kind != "open-url" or not separator:
+                    raise ValueError("unknown tunnel request")
+
+                log("Info", f"received browser URL: {value}")
+                url = local_url(value)
+                log("Info", f"opening local URL: {url}")
+                log("Command", f"{args.opener} {url}")
+                subprocess.Popen(
+                    [args.opener, url],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                self.request.sendall(b"OK\n")
+            except (OSError, RuntimeError, UnicodeError, ValueError) as error:
+                message = str(error).replace("\n", " ")[:512]
+                log("Error", f"rejected request: {message}")
+                try:
+                    self.request.sendall(f"ERROR {message}\n".encode())
+                except OSError:
+                    pass
+
+    class Server(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
+    with Server(("127.0.0.1", args.listen_port), Handler) as server:
+        log("Success", f"listening on 127.0.0.1:{args.listen_port}")
+        server.serve_forever()
+
+
+def authenticated_connection(args, request):
+    connection = socket.create_connection(("127.0.0.1", args.port), timeout=args.timeout)
+    try:
+        connection.sendall(f"AUTH {args.token} {request}\n".encode())
+    except OSError:
+        connection.close()
+        raise
+    return connection
+
+
+def request_open(args):
+    try:
+        validate_url(args.url)
+        with authenticated_connection(args, f"open-url {args.url}") as connection:
+            response = connection.makefile("rb").readline(1024).decode("utf-8", errors="replace").strip()
+        if response != "OK":
+            raise RuntimeError(response.removeprefix("ERROR ") or "invalid tunnel response")
+    except (OSError, RuntimeError, ValueError) as error:
+        log("Error", str(error))
+        raise SystemExit(1)
+
+
+def request_ping(args):
+    try:
+        with authenticated_connection(args, "ping") as connection:
+            response = connection.makefile("rb").readline(1024).decode("utf-8", errors="replace").strip()
+        if response != "OK":
+            raise RuntimeError(response.removeprefix("ERROR ") or "invalid tunnel response")
+    except (OSError, RuntimeError) as error:
+        log("Error", str(error))
+        raise SystemExit(1)
+
+
+def request_image(args):
+    output_path = None
+    try:
+        with authenticated_connection(args, "clipboard-image") as connection:
+            with connection.makefile("rb") as response:
+                header = response.readline(1024).decode("utf-8", errors="replace").strip()
+                if header.startswith("EMPTY "):
+                    print(header[6:], file=sys.stderr)
+                    raise SystemExit(2)
+                if header.startswith("ERROR "):
+                    raise RuntimeError(header[6:])
+                fields = header.split()
+                if len(fields) != 2 or fields[0] != "OK" or not fields[1].isdigit():
+                    raise RuntimeError("invalid clipboard image response")
+                size = int(fields[1])
+                if size < len(PNG_SIGNATURE) or size > MAX_IMAGE_BYTES:
+                    raise RuntimeError("invalid clipboard image size")
+
+                os.makedirs(args.output_dir, mode=0o700, exist_ok=True)
+                descriptor, output_path = tempfile.mkstemp(
+                    prefix="clipboard-",
+                    suffix=".png",
+                    dir=args.output_dir,
+                )
+                remaining = size
+                with os.fdopen(descriptor, "wb") as output:
+                    while remaining > 0:
+                        chunk = response.read(min(64 * 1024, remaining))
+                        if not chunk:
+                            raise RuntimeError("clipboard image transfer ended early")
+                        output.write(chunk)
+                        remaining -= len(chunk)
+
+        with open(output_path, "rb") as image_file:
+            if image_file.read(len(PNG_SIGNATURE)) != PNG_SIGNATURE:
+                raise RuntimeError("received clipboard data is not a PNG image")
+        log("Success", f"saved clipboard image to {output_path}")
+        print(os.path.abspath(output_path))
+    except SystemExit:
+        raise
+    except (OSError, RuntimeError) as error:
+        if output_path:
+            try:
+                os.unlink(output_path)
+            except OSError:
+                pass
+        log("Error", str(error))
+        raise SystemExit(1)
+
+
+def wait_for_port(args):
+    deadline = time.monotonic() + args.timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", args.port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.1)
+    log("Error", f"timed out waiting for local port {args.port}")
+    raise SystemExit(1)
+
+
+def allocate_ports(args):
+    sockets = []
+    try:
+        for _ in range(args.count):
+            current = socket.socket()
+            current.bind(("127.0.0.1", 0))
+            sockets.append(current)
+        print(" ".join(str(current.getsockname()[1]) for current in sockets))
+    finally:
+        for current in sockets:
+            current.close()
+
+
+def add_request_arguments(parser):
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--token", required=True)
+    parser.add_argument("--timeout", type=float, default=10)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    serve_parser = commands.add_parser("serve")
+    serve_parser.add_argument("--listen-port", type=int, required=True)
+    serve_parser.add_argument("--token", required=True)
+    serve_parser.add_argument("--opener", required=True)
+    serve_parser.add_argument("--control-socket", required=True)
+    serve_parser.add_argument("--ssh-host", required=True)
+    serve_parser.add_argument(
+        "--clipboard-backend",
+        choices=("macos", "wayland", "x11", "none"),
+        default="none",
+    )
+
+    wait_parser = commands.add_parser("wait")
+    wait_parser.add_argument("--port", type=int, required=True)
+    wait_parser.add_argument("--timeout", type=float, required=True)
+
+    allocate_parser = commands.add_parser("allocate")
+    allocate_parser.add_argument("--count", type=int, required=True)
+
+    token_parser = commands.add_parser("token")
+    token_parser.set_defaults(token=True)
+
+    ping_parser = commands.add_parser("request-ping")
+    add_request_arguments(ping_parser)
+
+    open_parser = commands.add_parser("request-open")
+    add_request_arguments(open_parser)
+    open_parser.add_argument("url")
+
+    image_parser = commands.add_parser("request-image")
+    add_request_arguments(image_parser)
+    image_parser.add_argument("--output-dir", required=True)
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    if args.command == "serve":
+        serve(args)
+    elif args.command == "wait":
+        wait_for_port(args)
+    elif args.command == "allocate":
+        allocate_ports(args)
+    elif args.command == "token":
+        print(secrets.token_hex(32))
+    elif args.command == "request-ping":
+        request_ping(args)
+    elif args.command == "request-open":
+        request_open(args)
+    else:
+        request_image(args)
+
+
+if __name__ == "__main__":
+    main()

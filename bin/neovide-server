@@ -14,7 +14,7 @@ usage() {
 		'  PORT      Neovim RPC' \
 		'  PORT + 1  Markdown preview' \
 		'' \
-		'The client allocates one dynamic callback port for browser and image requests.'
+		'Run tunnel connect separately for browser and image requests.'
 }
 
 if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -110,10 +110,10 @@ command -v nvim >/dev/null 2>&1 || {
 }
 
 export NEOVIDE_MARKDOWN_PREVIEW_PORT=$((port + 1))
-export NEOVIDE_REMOTE_BRIDGE=1
+export WORKSPACE_REMOTE_TUNNEL=1
 
 log Info "Neovim RPC listening on 127.0.0.1:$port"
 log Info "Markdown preview will use 127.0.0.1:$NEOVIDE_MARKDOWN_PREVIEW_PORT"
-log Info "callback port will be allocated by neovide-client"
+log Info "browser and image requests use the independent workspace tunnel"
 log Command "nvim --headless --listen 127.0.0.1:$port"
 exec nvim --headless --listen "127.0.0.1:$port" "$@"

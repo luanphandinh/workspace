@@ -75,32 +75,24 @@ local function configure()
     vim.g.neovide_scale_factor = 1.0
   end, { desc = "Reset zoom" })
 
-  local remote = vim.env.NEOVIDE_REMOTE_BRIDGE and require("luanphan.neovide_remote") or nil
+  local remote = require("luanphan.remote_tunnel")
+
+  local function paste_text()
+    local ok, text = pcall(vim.fn.getreg, "+")
+    vim.api.nvim_paste(ok and text or "", true, -1)
+  end
 
   local function paste_clipboard()
-    local ok, text = pcall(vim.fn.getreg, "+")
-    if ok and text ~= "" then
-      vim.api.nvim_paste(text, true, -1)
-    elseif not remote or not remote.paste_clipboard_image() then
-      vim.api.nvim_paste("", true, -1)
+    if remote.enabled() and remote.paste_clipboard_image({ quiet = true, fallback = paste_text }) then
+      return
     end
+    paste_text()
   end
 
   vim.keymap.set({ "n", "i", "v", "c", "t" }, "<D-v>", paste_clipboard, { silent = true, desc = "Paste" })
-  if remote then
-    vim.keymap.set("t", "<C-v>", paste_clipboard, { silent = true, desc = "Paste" })
-    vim.keymap.set("t", "<D-S-v>", function()
-      if not remote.paste_clipboard_image() then
-        vim.notify("Clipboard image paste is available in a remote Codex terminal", vim.log.levels.WARN)
-      end
-    end, { silent = true, desc = "Paste clipboard image" })
-  end
 end
 
 function M.setup()
-  if vim.env.NEOVIDE_REMOTE_BRIDGE then
-    require("luanphan.neovide_remote").setup()
-  end
   configure()
   local group = vim.api.nvim_create_augroup("LuanphanNeovideLifecycle", { clear = true })
   vim.api.nvim_create_autocmd("UIEnter", { group = group, callback = configure })
