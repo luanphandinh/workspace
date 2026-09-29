@@ -2760,6 +2760,60 @@ local function test_agent_cli_commands_available()
   end
 end
 
+local function test_neovide_detach_clears_option_callbacks()
+  local original_neovide = vim.g.neovide
+  local original_channel = vim.g.neovide_channel_id
+  local original_mousemoveevent = vim.o.mousemoveevent
+  local group = vim.api.nvim_create_augroup("NvimSmokeNeovideDetach", { clear = true })
+  local unrelated_id = vim.api.nvim_create_autocmd("OptionSet", {
+    group = group,
+    pattern = "mousemoveevent",
+    callback = function() end,
+  })
+
+  vim.g.neovide = true
+  vim.g.neovide_channel_id = 424242
+  local injected = assert(loadstring([[
+    local option_setting = "mousemoveevent"
+    local function rpcnotify(method, ...)
+      vim.rpcnotify(vim.g.neovide_channel_id, method, ...)
+    end
+    return vim.api.nvim_create_autocmd("OptionSet", {
+      pattern = option_setting,
+      callback = function()
+        rpcnotify("option_changed", option_setting, vim.o[option_setting])
+      end,
+    })
+  ]], "<nvim>"))
+  local injected_id = injected()
+
+  vim.api.nvim_exec_autocmds("UILeave", { data = { chan = 434343 } })
+  local other_ui_preserved = vim.g.neovide
+    and vim.g.neovide_channel_id == 424242
+    and #vim.api.nvim_get_autocmds({ id = injected_id }) == 1
+  vim.api.nvim_exec_autocmds("UILeave", { data = { chan = 424242 } })
+  local lifecycle_cleared = not vim.g.neovide and vim.g.neovide_channel_id == nil
+  local injected_removed = #vim.api.nvim_get_autocmds({ id = injected_id }) == 0
+  local unrelated_survived = #vim.api.nvim_get_autocmds({ id = unrelated_id }) == 1
+  local changed, change_error = pcall(function()
+    vim.o.mousemoveevent = not original_mousemoveevent
+  end)
+  pcall(function()
+    vim.o.mousemoveevent = original_mousemoveevent
+  end)
+
+  pcall(vim.api.nvim_del_autocmd, injected_id)
+  pcall(vim.api.nvim_del_augroup_by_id, group)
+  vim.g.neovide = original_neovide
+  vim.g.neovide_channel_id = original_channel
+
+  assert_true(other_ui_preserved, "another UI detach cleared the active Neovide callbacks")
+  assert_true(lifecycle_cleared, "Neovide detach left stale UI state")
+  assert_true(injected_removed, "Neovide detach left its OptionSet callback registered")
+  assert_true(changed, "detached Neovide callback survived: " .. tostring(change_error))
+  assert_true(unrelated_survived, "Neovide detach removed an unrelated OptionSet callback")
+end
+
 local function test_terminal_reference_links()
   local root = temp_root .. "/terminal-references"
   local first_path = root .. "/example-repo/main.go"
@@ -5264,6 +5318,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("agent cli commands are executable", function()
     agent_tests.cli_commands()
+  end)
+
+  test("Neovide detach clears stale option callbacks", function()
+    test_neovide_detach_clears_option_callbacks()
   end)
 
   test("agent terminal paths become editor reference links", function()
