@@ -75,18 +75,9 @@ local function configure()
     vim.g.neovide_scale_factor = 1.0
   end, { desc = "Reset zoom" })
 
-  local remote = require("luanphan.remote_tunnel")
-
-  local function paste_text()
+  local function paste_clipboard()
     local ok, text = pcall(vim.fn.getreg, "+")
     vim.api.nvim_paste(ok and text or "", true, -1)
-  end
-
-  local function paste_clipboard()
-    if remote.enabled() and remote.paste_clipboard_image({ quiet = true, fallback = paste_text }) then
-      return
-    end
-    paste_text()
   end
 
   vim.keymap.set({ "n", "i", "v", "c", "t" }, "<D-v>", paste_clipboard, { silent = true, desc = "Paste" })

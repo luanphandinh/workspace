@@ -2760,6 +2760,43 @@ local function test_agent_cli_commands_available()
   end
 end
 
+local function test_neovide_command_v_pastes_text_without_image_probe()
+  local original_neovide = vim.g.neovide
+  local original_getreg = vim.fn.getreg
+  local original_paste = vim.api.nvim_paste
+  local remote = require("luanphan.remote_tunnel")
+  local original_image_paste = remote.paste_clipboard_image
+  local pasted
+
+  local ok, err = xpcall(function()
+    vim.g.neovide = true
+    vim.api.nvim_exec_autocmds("UIEnter", {})
+    remote.paste_clipboard_image = function()
+      fail("Cmd+V attempted an image tunnel request")
+    end
+    vim.fn.getreg = function(register)
+      assert_true(register == "+", "Cmd+V read the wrong clipboard register")
+      return "clipboard text"
+    end
+    vim.api.nvim_paste = function(text, crlf, phase)
+      pasted = { text = text, crlf = crlf, phase = phase }
+      return true
+    end
+
+    local mapping = vim.fn.maparg("<D-v>", "n", false, true)
+    assert_true(type(mapping.callback) == "function", "Cmd+V mapping is missing")
+    mapping.callback()
+    assert_true(pasted and pasted.text == "clipboard text", "Cmd+V did not paste clipboard text")
+    assert_true(pasted.crlf == true and pasted.phase == -1, "Cmd+V used unexpected paste semantics")
+  end, debug.traceback)
+
+  vim.g.neovide = original_neovide
+  vim.fn.getreg = original_getreg
+  vim.api.nvim_paste = original_paste
+  remote.paste_clipboard_image = original_image_paste
+  assert_true(ok, err)
+end
+
 local function test_neovide_detach_clears_option_callbacks()
   local original_neovide = vim.g.neovide
   local original_channel = vim.g.neovide_channel_id
@@ -5318,6 +5355,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("agent cli commands are executable", function()
     agent_tests.cli_commands()
+  end)
+
+  test("Neovide Cmd+V pastes text without probing images", function()
+    test_neovide_command_v_pastes_text_without_image_probe()
   end)
 
   test("Neovide detach clears stale option callbacks", function()
