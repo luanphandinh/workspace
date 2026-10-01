@@ -6,6 +6,8 @@ test_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/tunnel-test.XXXXXX")
 fakebin=$test_tmp_dir/bin
 fakehome=$test_tmp_dir/home
 mkdir -p "$fakebin" "$fakehome/bin"
+clipboard_path_file=$test_tmp_dir/clipboard-path
+: > "$clipboard_path_file"
 
 cleanup() {
 	if [ -n "${connect_pid:-}" ]; then
@@ -22,13 +24,21 @@ trap cleanup EXIT INT TERM HUP
 
 cat > "$fakebin/swift" <<'SH'
 #!/bin/sh
-printf '\211PNG\r\n\032\nclipboard-image'
+case "${2:-}" in
+	*urlReadingFileURLsOnly*)
+		[ -s "$TUNNEL_TEST_CLIPBOARD_PATH_FILE" ] || exit 2
+		path=$(sed -n '1p' "$TUNNEL_TEST_CLIPBOARD_PATH_FILE")
+		printf '%s\0' "$path"
+		;;
+	*) printf '\211PNG\r\n\032\nclipboard-image' ;;
+esac
 SH
 
 cat > "$fakebin/open" <<'SH'
 #!/bin/sh
 printf '%s\n' "$1" >> "$TUNNEL_TEST_OPEN_LOG"
 SH
+ln -s open "$fakebin/xdg-open"
 
 cat > "$fakebin/ssh" <<'SH'
 #!/bin/sh
@@ -47,6 +57,7 @@ token=$($repo_root/bin/.tunnel-bridge token)
 
 TUNNEL_TEST_OPEN_LOG=$test_tmp_dir/open.log \
 TUNNEL_TEST_SSH_LOG=$test_tmp_dir/ssh.log \
+TUNNEL_TEST_CLIPBOARD_PATH_FILE=$clipboard_path_file \
 PATH="$fakebin:/usr/bin:/bin" \
 "$repo_root/bin/.tunnel-bridge" serve \
 	--listen-port "$port" \
@@ -67,9 +78,37 @@ HOME="$fakehome" "$fakehome/bin/tunnel" open https://example.com/docs
 HOME="$fakehome" "$fakehome/bin/tunnel" https://example.com/guide
 HOME="$fakehome" "$fakehome/bin/tunnel" open http://127.0.0.1:4321/page/7
 
-image_path=$(HOME="$fakehome" "$fakehome/bin/tunnel" paste-image)
-test -f "$image_path"
-python3 - "$image_path" <<'PY'
+source_root="$test_tmp_dir/source items"
+source_file="$source_root/example file.txt"
+source_dir="$source_root/example directory"
+mkdir -p "$source_dir/nested"
+printf '%s\n' 'clipboard file' > "$source_file"
+printf '%s\n' 'nested clipboard file' > "$source_dir/nested/item.txt"
+ln -s nested/item.txt "$source_dir/item-link.txt"
+chmod +x "$source_file"
+
+printf '%s\n' "$source_file" > "$clipboard_path_file"
+clipboard_result=$(HOME="$fakehome" "$fakehome/bin/tunnel" paste)
+tab=$(printf '\t')
+test "${clipboard_result%%"$tab"*}" = file
+remote_file=${clipboard_result#*"$tab"}
+cmp "$source_file" "$remote_file"
+test -x "$remote_file"
+
+printf '%s\n' "$source_dir" > "$clipboard_path_file"
+clipboard_result=$(HOME="$fakehome" "$fakehome/bin/tunnel" paste)
+test "${clipboard_result%%"$tab"*}" = directory
+remote_dir=${clipboard_result#*"$tab"}
+test -d "$remote_dir"
+cmp "$source_dir/nested/item.txt" "$remote_dir/nested/item.txt"
+test "$(readlink "$remote_dir/item-link.txt")" = nested/item.txt
+
+: > "$clipboard_path_file"
+clipboard_result=$(HOME="$fakehome" "$fakehome/bin/tunnel" paste)
+test "${clipboard_result%%"$tab"*}" = image
+clipboard_image_path=${clipboard_result#*"$tab"}
+test -f "$clipboard_image_path"
+python3 - "$clipboard_image_path" <<'PY'
 import pathlib
 import sys
 
@@ -111,6 +150,64 @@ rm -f "$fakehome/.cache/workspace-tunnel/outgoing/$$"
 if HOME="$fakehome" "$fakehome/bin/tunnel" status >/dev/null 2>&1; then
 	exit 1
 fi
+
+kill "$bridge_pid"
+wait "$bridge_pid" 2>/dev/null || true
+bridge_pid=
+
+cat > "$fakebin/wl-paste" <<'SH'
+#!/bin/sh
+case "$1" in
+	--list-types)
+		[ ! -s "$TUNNEL_TEST_CLIPBOARD_PATH_FILE" ] || printf '%s\n' 'x-special/gnome-copied-files'
+		printf '%s\n' 'image/png'
+		;;
+	--no-newline)
+		case "$3" in
+			x-special/gnome-copied-files)
+				[ -s "$TUNNEL_TEST_CLIPBOARD_PATH_FILE" ] || exit 2
+				python3 - "$(sed -n '1p' "$TUNNEL_TEST_CLIPBOARD_PATH_FILE")" <<'PY'
+import sys
+from urllib.parse import quote
+
+print("copy")
+print("file://" + quote(sys.argv[1]))
+PY
+				;;
+			image/png) printf '\211PNG\r\n\032\nclipboard-image' ;;
+			*) exit 2 ;;
+		esac
+		;;
+	*) exit 2 ;;
+esac
+SH
+chmod +x "$fakebin/wl-paste"
+
+linux_port=$($repo_root/bin/.tunnel-bridge allocate --count 1)
+linux_token=$($repo_root/bin/.tunnel-bridge token)
+TUNNEL_TEST_CLIPBOARD_PATH_FILE=$clipboard_path_file \
+PATH="$fakebin:/usr/bin:/bin" \
+"$repo_root/bin/.tunnel-bridge" serve \
+	--listen-port "$linux_port" \
+	--token "$linux_token" \
+	--opener open \
+	--control-socket "$test_tmp_dir/control" \
+	--ssh-host example-host \
+	--clipboard-backend wayland \
+	2> "$test_tmp_dir/linux-bridge.log" &
+bridge_pid=$!
+"$repo_root/bin/.tunnel-bridge" wait --port "$linux_port" --timeout 3
+printf '%s %s %s\n' "$linux_port" "$linux_token" example-client \
+	| HOME="$fakehome" "$fakehome/bin/tunnel" _register
+printf '%s\n' "$source_file" > "$clipboard_path_file"
+clipboard_result=$(HOME="$fakehome" "$fakehome/bin/tunnel" paste)
+test "${clipboard_result%%"$tab"*}" = file
+linux_remote_file=${clipboard_result#*"$tab"}
+cmp "$source_file" "$linux_remote_file"
+printf '%s\n' "$linux_token" | HOME="$fakehome" "$fakehome/bin/tunnel" _unregister
+kill "$bridge_pid"
+wait "$bridge_pid" 2>/dev/null || true
+bridge_pid=
 
 connect_home=$test_tmp_dir/connect-home
 remote_home=$test_tmp_dir/remote-home
@@ -183,7 +280,7 @@ test ! -e "$remote_home/.cache/workspace-tunnel/connection"
 
 cat > "$fakehome/bin/tunnel" <<'SH'
 #!/bin/sh
-printf '%s\n' /tmp/clipboard-test.png
+printf 'image\t%s\n' /tmp/clipboard-test.png
 SH
 cat > "$fakebin/tmux" <<'SH'
 #!/bin/sh
@@ -192,8 +289,18 @@ SH
 chmod +x "$fakehome/bin/tunnel" "$fakebin/tmux"
 : > "$test_tmp_dir/tmux.log"
 HOME="$fakehome" TUNNEL_TEST_TMUX_LOG=$test_tmp_dir/tmux.log PATH="$fakebin:/usr/bin:/bin" \
-	"$repo_root/bin/tmux-paste-image" %7
+	"$repo_root/bin/tmux-paste-clipboard" %7
 grep -Fx 'send-keys -l -t %7 [Image: /tmp/clipboard-test.png] ' "$test_tmp_dir/tmux.log" >/dev/null
+
+cat > "$fakehome/bin/tunnel" <<'SH'
+#!/bin/sh
+printf 'directory\t%s\n' '/tmp/clipboard directory'
+SH
+chmod +x "$fakehome/bin/tunnel"
+: > "$test_tmp_dir/tmux.log"
+HOME="$fakehome" TUNNEL_TEST_TMUX_LOG=$test_tmp_dir/tmux.log PATH="$fakebin:/usr/bin:/bin" \
+	"$repo_root/bin/tmux-paste-clipboard" %7
+grep -Fx 'send-keys -l -t %7 /tmp/clipboard directory ' "$test_tmp_dir/tmux.log" >/dev/null
 
 cat > "$fakehome/bin/tunnel" <<'SH'
 #!/bin/sh
@@ -202,7 +309,7 @@ SH
 chmod +x "$fakehome/bin/tunnel"
 : > "$test_tmp_dir/tmux.log"
 HOME="$fakehome" TUNNEL_TEST_TMUX_LOG=$test_tmp_dir/tmux.log PATH="$fakebin:/usr/bin:/bin" \
-	"$repo_root/bin/tmux-paste-image" %7
+	"$repo_root/bin/tmux-paste-clipboard" %7
 grep -Fx 'send-keys -t %7 C-v' "$test_tmp_dir/tmux.log" >/dev/null
 
 printf 'PASS workspace tunnel smoke test\n'

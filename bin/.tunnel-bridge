@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 import argparse
+import base64
 import os
+import posixpath
 import secrets
+import shutil
 import socket
 import socketserver
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 
 MAX_REQUEST_BYTES = 16 * 1024
@@ -35,6 +39,26 @@ guard let imageData else {
 FileHandle.standardOutput.write(imageData)
 """
 
+MACOS_CLIPBOARD_PATH = r"""
+import AppKit
+import Darwin
+import Foundation
+
+let pasteboard = NSPasteboard.general
+let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+guard let objects = pasteboard.readObjects(forClasses: [NSURL.self], options: options),
+      !objects.isEmpty else {
+    FileHandle.standardError.write(Data("clipboard does not contain a file or directory\n".utf8))
+    exit(2)
+}
+guard objects.count == 1, let url = objects[0] as? URL else {
+    FileHandle.standardError.write(Data("copy exactly one file or directory\n".utf8))
+    exit(3)
+}
+FileHandle.standardOutput.write(Data(url.path.utf8))
+FileHandle.standardOutput.write(Data([0]))
+"""
+
 COLORS = {
     "Info": "\033[34m",
     "Success": "\033[32m",
@@ -44,6 +68,10 @@ COLORS = {
 
 
 class NoClipboardImage(RuntimeError):
+    pass
+
+
+class NoClipboardPath(RuntimeError):
     pass
 
 
@@ -80,6 +108,174 @@ def clipboard_image(backend):
     if len(result.stdout) > MAX_IMAGE_BYTES:
         raise RuntimeError("clipboard image exceeds 25 MiB")
     return result.stdout
+
+
+def clipboard_uri_path(payload):
+    lines = payload.decode("utf-8", errors="strict").splitlines()
+    if lines and lines[0].strip().lower() in {"copy", "cut"}:
+        lines = lines[1:]
+    values = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+    if not values:
+        raise NoClipboardPath("clipboard does not contain a file or directory")
+    if len(values) != 1:
+        raise RuntimeError("copy exactly one file or directory")
+
+    parsed = urlsplit(values[0])
+    if parsed.scheme != "file" or parsed.hostname not in {None, "", "localhost"}:
+        raise RuntimeError("clipboard contains an unsupported file reference")
+    return unquote(parsed.path)
+
+
+def clipboard_path(backend):
+    if backend == "macos":
+        result = subprocess.run(
+            ["swift", "-e", MACOS_CLIPBOARD_PATH],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if result.returncode == 2:
+            return None
+        if result.returncode != 0:
+            detail = result.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(detail or "could not read the local clipboard")
+        values = [value for value in result.stdout.split(b"\0") if value]
+        if len(values) != 1:
+            raise RuntimeError("copy exactly one file or directory")
+        path = values[0].decode("utf-8", errors="strict")
+    elif backend in {"wayland", "x11"}:
+        if backend == "wayland":
+            result = subprocess.run(
+                ["wl-paste", "--list-types"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            targets = result.stdout.decode("utf-8", errors="replace").split() if result.returncode == 0 else []
+            command_for = lambda target: ["wl-paste", "--no-newline", "--type", target]
+        else:
+            result = subprocess.run(
+                ["xclip", "-selection", "clipboard", "-target", "TARGETS", "-out"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            targets = result.stdout.decode("utf-8", errors="replace").split() if result.returncode == 0 else []
+            command_for = lambda target: ["xclip", "-selection", "clipboard", "-target", target, "-out"]
+
+        target = next(
+            (candidate for candidate in ("x-special/gnome-copied-files", "text/uri-list") if candidate in targets),
+            None,
+        )
+        if target is None:
+            return None
+        result = subprocess.run(command_for(target), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        if result.returncode != 0:
+            detail = result.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(detail or "could not read the copied file or directory")
+        path = clipboard_uri_path(result.stdout)
+    else:
+        return None
+
+    path = os.path.abspath(os.path.expanduser(path))
+    if not os.path.exists(path):
+        raise RuntimeError("copied file or directory no longer exists")
+    if not os.path.isfile(path) and not os.path.isdir(path):
+        raise RuntimeError("clipboard entry is not a regular file or directory")
+    return path
+
+
+def safe_entry_name(path):
+    name = os.path.basename(os.path.normpath(path)) or "clipboard-item"
+    return "".join("_" if ord(character) < 32 or ord(character) == 127 else character for character in name)
+
+
+def encoded_name(name):
+    return base64.urlsafe_b64encode(name.encode("utf-8")).decode("ascii")
+
+
+def decoded_name(value):
+    try:
+        name = base64.urlsafe_b64decode(value.encode("ascii")).decode("utf-8")
+    except (UnicodeError, ValueError) as error:
+        raise RuntimeError("invalid clipboard entry name") from error
+    if not name or name in {".", ".."} or os.path.basename(name) != name:
+        raise RuntimeError("invalid clipboard entry name")
+    return name
+
+
+def send_file(connection, input_file):
+    while True:
+        chunk = input_file.read(64 * 1024)
+        if not chunk:
+            return
+        connection.sendall(chunk)
+
+
+def send_clipboard_path(connection, path):
+    name = safe_entry_name(path)
+    kind = "directory" if os.path.isdir(path) else "file"
+    descriptor, archive_path = tempfile.mkstemp(prefix="workspace-clipboard-", suffix=".tar")
+    os.close(descriptor)
+    try:
+        with tarfile.open(archive_path, "w", dereference=False) as archive:
+            archive.add(path, arcname=name, recursive=True)
+        size = os.path.getsize(archive_path)
+        connection.sendall(f"OK {kind} {size} {encoded_name(name)}\n".encode())
+        with open(archive_path, "rb") as archive_file:
+            send_file(connection, archive_file)
+    finally:
+        try:
+            os.unlink(archive_path)
+        except OSError:
+            pass
+
+
+def receive_file(response, output, size):
+    remaining = size
+    while remaining > 0:
+        chunk = response.read(min(64 * 1024, remaining))
+        if not chunk:
+            raise RuntimeError("clipboard transfer ended early")
+        output.write(chunk)
+        remaining -= len(chunk)
+
+
+def validate_archive(archive, name):
+    for member in archive.getmembers():
+        normalized = posixpath.normpath(member.name)
+        if member.name.startswith("/") or normalized == ".." or normalized.startswith("../"):
+            raise RuntimeError("clipboard archive contains an unsafe path")
+        if normalized != name and not normalized.startswith(name + "/"):
+            raise RuntimeError("clipboard archive contains an unexpected path")
+        if member.ischr() or member.isblk() or member.isfifo():
+            raise RuntimeError("clipboard archive contains an unsupported special file")
+        if member.issym():
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(normalized), member.linkname))
+            if member.linkname.startswith("/") or (target != name and not target.startswith(name + "/")):
+                raise RuntimeError("clipboard archive contains an unsafe symbolic link")
+        if member.islnk():
+            target = posixpath.normpath(member.linkname)
+            if member.linkname.startswith("/") or (target != name and not target.startswith(name + "/")):
+                raise RuntimeError("clipboard archive contains an unsafe hard link")
+
+
+def extract_archive(archive_path, output_dir, name):
+    destination = tempfile.mkdtemp(prefix="clipboard-", dir=output_dir)
+    try:
+        with tarfile.open(archive_path, "r:") as archive:
+            validate_archive(archive, name)
+            if hasattr(tarfile, "data_filter"):
+                archive.extractall(destination, filter="data")
+            else:
+                archive.extractall(destination)
+        output_path = os.path.join(destination, name)
+        if not os.path.exists(output_path):
+            raise RuntimeError("clipboard archive did not contain the expected entry")
+        return output_path
+    except Exception:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise
 
 
 def validate_url(value):
@@ -165,8 +361,13 @@ def serve(args):
                 if kind == "ping" and not separator:
                     self.request.sendall(b"OK\n")
                     return
-                if kind == "clipboard-image" and not separator:
-                    log("Info", "received clipboard image request")
+                if kind == "clipboard-entry" and not separator:
+                    log("Info", "received clipboard entry request")
+                    path = clipboard_path(args.clipboard_backend)
+                    if path is not None:
+                        log("Success", f"sending copied path: {path}")
+                        send_clipboard_path(self.request, path)
+                        return
                     try:
                         image = clipboard_image(args.clipboard_backend)
                     except NoClipboardImage as error:
@@ -174,7 +375,9 @@ def serve(args):
                         self.request.sendall(f"EMPTY {message}\n".encode())
                         return
                     log("Success", f"sending clipboard image ({len(image)} bytes)")
-                    self.request.sendall(f"OK {len(image)}\n".encode() + image)
+                    self.request.sendall(
+                        f"OK image {len(image)} {encoded_name('clipboard.png')}\n".encode() + image
+                    )
                     return
                 if kind != "open-url" or not separator:
                     raise ValueError("unknown tunnel request")
@@ -241,10 +444,13 @@ def request_ping(args):
         raise SystemExit(1)
 
 
-def request_image(args):
+def request_clipboard(args):
     output_path = None
+    staging_dir = None
+    transfer_path = None
     try:
-        with authenticated_connection(args, "clipboard-image") as connection:
+        with authenticated_connection(args, "clipboard-entry") as connection:
+            connection.settimeout(None)
             with connection.makefile("rb") as response:
                 header = response.readline(1024).decode("utf-8", errors="replace").strip()
                 if header.startswith("EMPTY "):
@@ -253,42 +459,66 @@ def request_image(args):
                 if header.startswith("ERROR "):
                     raise RuntimeError(header[6:])
                 fields = header.split()
-                if len(fields) != 2 or fields[0] != "OK" or not fields[1].isdigit():
-                    raise RuntimeError("invalid clipboard image response")
-                size = int(fields[1])
-                if size < len(PNG_SIGNATURE) or size > MAX_IMAGE_BYTES:
+                if len(fields) != 4 or fields[0] != "OK" or not fields[2].isdigit():
+                    raise RuntimeError("invalid clipboard response")
+                kind = fields[1]
+                size = int(fields[2])
+                name = decoded_name(fields[3])
+                if kind not in {"file", "directory", "image"} or size < 0:
+                    raise RuntimeError("invalid clipboard response")
+                if kind == "image" and (size < len(PNG_SIGNATURE) or size > MAX_IMAGE_BYTES):
                     raise RuntimeError("invalid clipboard image size")
 
                 os.makedirs(args.output_dir, mode=0o700, exist_ok=True)
-                descriptor, output_path = tempfile.mkstemp(
-                    prefix="clipboard-",
-                    suffix=".png",
-                    dir=args.output_dir,
-                )
-                remaining = size
-                with os.fdopen(descriptor, "wb") as output:
-                    while remaining > 0:
-                        chunk = response.read(min(64 * 1024, remaining))
-                        if not chunk:
-                            raise RuntimeError("clipboard image transfer ended early")
-                        output.write(chunk)
-                        remaining -= len(chunk)
+                if kind == "image":
+                    descriptor, output_path = tempfile.mkstemp(
+                        prefix="clipboard-",
+                        suffix=".png",
+                        dir=args.output_dir,
+                    )
+                    with os.fdopen(descriptor, "wb") as output:
+                        receive_file(response, output, size)
+                else:
+                    descriptor, transfer_path = tempfile.mkstemp(
+                        prefix="clipboard-transfer-",
+                        suffix=".tar",
+                        dir=args.output_dir,
+                    )
+                    with os.fdopen(descriptor, "wb") as output:
+                        receive_file(response, output, size)
 
-        with open(output_path, "rb") as image_file:
-            if image_file.read(len(PNG_SIGNATURE)) != PNG_SIGNATURE:
-                raise RuntimeError("received clipboard data is not a PNG image")
-        log("Success", f"saved clipboard image to {output_path}")
-        print(os.path.abspath(output_path))
+        if kind == "image":
+            with open(output_path, "rb") as image_file:
+                if image_file.read(len(PNG_SIGNATURE)) != PNG_SIGNATURE:
+                    raise RuntimeError("received clipboard data is not a PNG image")
+        else:
+            output_path = extract_archive(transfer_path, args.output_dir, name)
+            staging_dir = os.path.dirname(output_path)
+            if kind == "file" and not os.path.isfile(output_path):
+                raise RuntimeError("clipboard entry is not a file")
+            if kind == "directory" and not os.path.isdir(output_path):
+                raise RuntimeError("clipboard entry is not a directory")
+
+        log("Success", f"saved clipboard {kind} to {output_path}")
+        print(f"{kind}\t{os.path.abspath(output_path)}")
     except SystemExit:
         raise
-    except (OSError, RuntimeError) as error:
-        if output_path:
+    except (OSError, RuntimeError, tarfile.TarError) as error:
+        if staging_dir:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+        elif output_path:
             try:
                 os.unlink(output_path)
             except OSError:
                 pass
         log("Error", str(error))
         raise SystemExit(1)
+    finally:
+        if transfer_path:
+            try:
+                os.unlink(transfer_path)
+            except OSError:
+                pass
 
 
 def wait_for_port(args):
@@ -355,9 +585,9 @@ def parse_args():
     add_request_arguments(open_parser)
     open_parser.add_argument("url")
 
-    image_parser = commands.add_parser("request-image")
-    add_request_arguments(image_parser)
-    image_parser.add_argument("--output-dir", required=True)
+    clipboard_parser = commands.add_parser("request-clipboard")
+    add_request_arguments(clipboard_parser)
+    clipboard_parser.add_argument("--output-dir", required=True)
     return parser.parse_args()
 
 
@@ -376,7 +606,7 @@ def main():
     elif args.command == "request-open":
         request_open(args)
     else:
-        request_image(args)
+        request_clipboard(args)
 
 
 if __name__ == "__main__":

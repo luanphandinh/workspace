@@ -2765,14 +2765,14 @@ local function test_neovide_command_v_pastes_text_without_image_probe()
   local original_getreg = vim.fn.getreg
   local original_paste = vim.api.nvim_paste
   local remote = require("luanphan.remote_tunnel")
-  local original_image_paste = remote.paste_clipboard_image
+  local original_clipboard_paste = remote.paste_clipboard_item
   local pasted
 
   local ok, err = xpcall(function()
     vim.g.neovide = true
     vim.api.nvim_exec_autocmds("UIEnter", {})
-    remote.paste_clipboard_image = function()
-      fail("Cmd+V attempted an image tunnel request")
+    remote.paste_clipboard_item = function()
+      fail("Cmd+V attempted a tunnel clipboard request")
     end
     vim.fn.getreg = function(register)
       assert_true(register == "+", "Cmd+V read the wrong clipboard register")
@@ -2793,8 +2793,20 @@ local function test_neovide_command_v_pastes_text_without_image_probe()
   vim.g.neovide = original_neovide
   vim.fn.getreg = original_getreg
   vim.api.nvim_paste = original_paste
-  remote.paste_clipboard_image = original_image_paste
+  remote.paste_clipboard_item = original_clipboard_paste
   assert_true(ok, err)
+end
+
+local function test_remote_clipboard_references()
+  local remote = require("luanphan.remote_tunnel")
+  local image, image_kind, image_path = remote.clipboard_reference("image\t/tmp/clipboard.png\n")
+  assert_true(image == "[Image: /tmp/clipboard.png] ", "remote image reference is malformed")
+  assert_true(image_kind == "image" and image_path == "/tmp/clipboard.png", "remote image metadata is malformed")
+
+  local path, path_kind, remote_path = remote.clipboard_reference("directory\t/tmp/example directory\r\n")
+  assert_true(path == "/tmp/example directory ", "remote directory reference is malformed")
+  assert_true(path_kind == "directory" and remote_path == "/tmp/example directory", "remote path metadata is malformed")
+  assert_true(remote.clipboard_reference("unknown\t/tmp/item\n") == nil, "unknown clipboard kind was accepted")
 end
 
 local function test_neovide_detach_clears_option_callbacks()
@@ -5359,6 +5371,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("Neovide Cmd+V pastes text without probing images", function()
     test_neovide_command_v_pastes_text_without_image_probe()
+  end)
+
+  test("remote clipboard references preserve paths", function()
+    test_remote_clipboard_references()
   end)
 
   test("Neovide detach clears stale option callbacks", function()

@@ -13,7 +13,7 @@ set -eu
 #     starts .tunnel-bridge                 stores port/token in a 0600 file
 #     opens an SSH control connection       tunnel status checks the bridge
 #     allocates a reverse forward            tunnel open sends a URL request
-#     records outgoing status                tunnel paste-image requests a PNG
+#     records outgoing status                tunnel paste requests clipboard data
 #
 # `connect` starts the private Python bridge on a random local loopback port.
 # It then asks OpenSSH for a random reverse-forwarded loopback port on the SSH
@@ -35,11 +35,14 @@ set -eu
 #   bridge adds a normal local SSH forward and rewrites the browser URL to its
 #   allocated local port. This is how remote Markdown previews open locally.
 #
-# Image flow:
-#   tunnel paste-image -> reverse SSH forward -> local bridge -> local system
-#   clipboard -> PNG bytes back through SSH -> remote cache file. Tmux and
-#   Neovim adapters insert `[Image: <remote-path>]` into Codex. Local Codex does
-#   not need this path because it can read the local clipboard directly.
+# Clipboard flow:
+#   tunnel paste -> reverse SSH forward -> local bridge -> local system
+#   clipboard. A copied file or directory is packaged into a temporary tar file
+#   without changing the original, streamed back through SSH, and safely
+#   extracted under the remote cache. Only the temporary tar file is deleted.
+#   If the clipboard has no copied path, a raw image is converted to PNG instead.
+#   Tmux and Neovim adapters paste the remote path into Codex, using
+#   `[Image: <remote-path>]` for raw images.
 #
 # `tunnel status` inspects both directions. Outgoing entries are validated
 # against their process and SSH control socket. An incoming entry is validated
@@ -56,7 +59,7 @@ usage() {
 		'  connect [options] <ssh-host>  Connect this machine to an SSH host' \
 		'  status                        Show outgoing and incoming connections' \
 		'  open URL [URL...]             Open URLs on the connected client' \
-		'  paste-image                   Save the client clipboard image remotely' \
+		'  paste                         Save a copied file, directory, or image remotely' \
 		'  help                          Show this help' \
 		'' \
 		'Connect options:' \
@@ -221,15 +224,15 @@ open_urls() {
 	done
 }
 
-paste_image() {
+paste_clipboard() {
 	load_incoming || {
 		printf '%s\n' 'tunnel: no client is connected' >&2
 		exit 1
 	}
-	exec "$bridge" request-image \
+	exec "$bridge" request-clipboard \
 		--port "$tunnel_port" \
 		--token "$tunnel_token" \
-		--output-dir "$state_dir/clipboard-images"
+		--output-dir "$state_dir/clipboard-items"
 }
 
 connect_host() {
@@ -387,9 +390,9 @@ case "$command" in
 		status_connections
 		;;
 	open) open_urls "$@" ;;
-	paste-image)
-		[ "$#" -eq 0 ] || { printf '%s\n' 'Usage: tunnel paste-image' >&2; exit 2; }
-		paste_image
+	paste)
+		[ "$#" -eq 0 ] || { printf '%s\n' 'Usage: tunnel paste' >&2; exit 2; }
+		paste_clipboard
 		;;
 	help|-h|--help) usage ;;
 	_register) register_incoming ;;

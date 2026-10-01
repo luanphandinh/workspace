@@ -59,7 +59,19 @@ function M.setup_url_opener()
   return "WorkspaceRemoteTunnelOpen"
 end
 
-function M.paste_clipboard_image(opts)
+function M.clipboard_reference(output)
+  output = (output or ""):gsub("\n$", ""):gsub("\r$", "")
+  local separator = output:find("\t", 1, true)
+  local kind = separator and output:sub(1, separator - 1) or ""
+  local path = separator and output:sub(separator + 1) or ""
+  if not vim.tbl_contains({ "file", "directory", "image" }, kind) or path == "" then
+    return nil
+  end
+  local reference = kind == "image" and "[Image: " .. path .. "] " or path .. " "
+  return reference, kind, path
+end
+
+function M.paste_clipboard_item(opts)
   opts = opts or {}
   local bufnr = current_codex_terminal()
   if not bufnr then
@@ -77,9 +89,9 @@ function M.paste_clipboard_image(opts)
   end
 
   if not opts.quiet then
-    vim.notify("Reading image from the client clipboard...")
+    vim.notify("Reading from the client clipboard...")
   end
-  vim.system({ command, "paste-image" }, { text = true }, function(result)
+  vim.system({ command, "paste" }, { text = true }, function(result)
     vim.schedule(function()
       if result.code ~= 0 then
         if opts.fallback then
@@ -87,30 +99,34 @@ function M.paste_clipboard_image(opts)
           return
         end
         local message = vim.trim(result.stderr or "")
-        log("Error", "clipboard image request failed with exit status " .. result.code)
-        vim.notify(message ~= "" and message or "Could not paste clipboard image", vim.log.levels.ERROR)
+        log("Error", "clipboard request failed with exit status " .. result.code)
+        vim.notify(message ~= "" and message or "Could not paste the clipboard item", vim.log.levels.ERROR)
         return
       end
 
-      local path = vim.trim(result.stdout or "")
+      local reference, kind, path = M.clipboard_reference(result.stdout)
       if not vim.api.nvim_buf_is_valid(bufnr) then
         vim.notify("Codex terminal is no longer available", vim.log.levels.ERROR)
         return
       end
       local job = vim.b[bufnr].terminal_job_id
-      if path == "" or type(job) ~= "number" or job <= 0 then
+      if not reference then
+        vim.notify("Tunnel returned an invalid clipboard item", vim.log.levels.ERROR)
+        return
+      end
+      if type(job) ~= "number" or job <= 0 then
         vim.notify("Codex terminal is no longer available", vim.log.levels.ERROR)
         return
       end
 
-      local sent = pcall(vim.fn.chansend, job, "[Image: " .. path .. "] ")
+      local sent = pcall(vim.fn.chansend, job, reference)
       if not sent then
-        vim.notify("Could not send the image path to Codex", vim.log.levels.ERROR)
+        vim.notify("Could not send the clipboard path to Codex", vim.log.levels.ERROR)
         return
       end
-      log("Success", "saved clipboard image to " .. path)
+      log("Success", "saved clipboard " .. kind .. " to " .. path)
       if not opts.quiet then
-        vim.notify("Clipboard image copied to the Codex prompt")
+        vim.notify("Clipboard item copied to the Codex prompt")
       end
     end)
   end)
@@ -124,14 +140,14 @@ function M.setup()
 
   M.setup_url_opener()
   vim.keymap.set("t", "<C-v>", function()
-    if M.paste_clipboard_image() then
+    if M.paste_clipboard_item() then
       return
     end
     local job = vim.b.terminal_job_id
     if type(job) == "number" and job > 0 then
       vim.fn.chansend(job, "\022")
     end
-  end, { silent = true, desc = "Paste clipboard image" })
+  end, { silent = true, desc = "Paste clipboard item" })
 end
 
 return M
