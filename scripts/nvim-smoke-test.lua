@@ -2966,6 +2966,37 @@ local function test_terminal_reference_links()
     return clicked_url ~= nil
   end)
   assert_true(clicked_url == "https://example.com/docs?q=1#part", "terminal URL click opened the wrong URL")
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "wrapped https://example.com/a/very/long/",
+    "  path/to/resource?query=value&",
+    "  other=yes#part.   ",
+  })
+  clicked_url = nil
+  vim.fn.getmousepos = function()
+    return { winid = vim.api.nvim_get_current_win(), line = 1, column = 9 }
+  end
+  assert_true(click_map.callback() == "<Ignore>", "wrapped URL first line was not consumed")
+  vim.wait(50, function()
+    return clicked_url ~= nil
+  end)
+  assert_true(
+    clicked_url == "https://example.com/a/very/long/path/to/resource?query=value&other=yes#part",
+    "wrapped URL first line opened the wrong URL: " .. tostring(clicked_url)
+  )
+
+  clicked_url = nil
+  vim.fn.getmousepos = function()
+    return { winid = vim.api.nvim_get_current_win(), line = 2, column = 4 }
+  end
+  assert_true(click_map.callback() == "<Ignore>", "wrapped URL continuation was not consumed")
+  vim.wait(50, function()
+    return clicked_url ~= nil
+  end)
+  assert_true(
+    clicked_url == "https://example.com/a/very/long/path/to/resource?query=value&other=yes#part",
+    "wrapped URL continuation opened the wrong URL: " .. tostring(clicked_url)
+  )
   references.open = original_open
   references.open_url = original_open_url
 
