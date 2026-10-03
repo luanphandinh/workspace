@@ -10,6 +10,9 @@ hash -r 2>/dev/null || true
 export COLORTERM=truecolor
 unset NO_COLOR
 export FORCE_COLOR=1
+if [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ] && [ -x "$HOME/bin/tunnel" ]; then
+  export BROWSER="$HOME/bin/tunnel"
+fi
 if [ -n "${ZSH_VERSION:-}" ]; then
   HISTFILE=${HISTFILE:-"$HOME/.zsh_history"}
   HISTSIZE=2000

@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+pane=${1:-}
+case "$pane" in
+	%[0-9]*) ;;
+	*) exit 2 ;;
+esac
+
+if result=$("$HOME/bin/tunnel" paste 2>/dev/null); then
+	tab=$(printf '\t')
+	kind=${result%%"$tab"*}
+	path=${result#*"$tab"}
+	case "$kind" in
+		image) reference="[Image: $path] " ;;
+		file|directory) reference="$path " ;;
+		*) exit 1 ;;
+	esac
+	tmux send-keys -l -t "$pane" "$reference"
+else
+	tmux send-keys -t "$pane" C-v
+fi

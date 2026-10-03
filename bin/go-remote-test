@@ -394,9 +394,9 @@ def test_command(
         "printf 'remote go command is unavailable\\n' >&2; exit 127; }; "
         "set +e; "
         f'{environment_prefix}"$go_path" --no-remote test {go_arguments}; '
-        "status=$?; "
-        f"printf '\\036%s:%s\\037' {shlex.quote(result_marker)} \"$status\" >&2; "
-        'exit "$status"'
+        "go_test_status=$?; "
+        f"printf '\\036%s:%s\\037' {shlex.quote(result_marker)} \"$go_test_status\" >&2; "
+        'exit "$go_test_status"'
     )
     return remote_command, f"go --no-remote test {go_arguments}"
 

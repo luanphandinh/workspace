@@ -14,8 +14,15 @@ from pathlib import Path, PurePosixPath
 
 
 SESSION_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
-IGNORE_PATHS = (
+DEFAULT_IGNORE_PATHS = (
     ".*",
+)
+GIT_IGNORE_PATHS = (
+    ".*",
+    "!.git",
+    "**/.git/hooks/",
+    "**/.git/logs/",
+    "**/.git/**/*.lock",
 )
 
 REMOTE_SCRIPT = r"""
@@ -236,7 +243,14 @@ def yaml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def project_yaml(name: str, local_root: Path, endpoint: str) -> str:
+def project_yaml(
+    name: str,
+    local_root: Path,
+    endpoint: str,
+    include_git: bool = False,
+    tracked_dot_ignores: tuple[str, ...] = (),
+) -> str:
+    ignore_paths = GIT_IGNORE_PATHS + tracked_dot_ignores if include_git else DEFAULT_IGNORE_PATHS
     lines = [
         "sync:",
         f"  {name}:",
@@ -247,10 +261,10 @@ def project_yaml(name: str, local_root: Path, endpoint: str) -> str:
         "      mode: portable",
         "    scanMode: accelerated",
         "    ignore:",
-        "      vcs: true",
+        f"      vcs: {'false' if include_git else 'true'}",
         "      paths:",
     ]
-    lines.extend(f"        - {yaml_string(path)}" for path in IGNORE_PATHS)
+    lines.extend(f"        - {yaml_string(path)}" for path in ignore_paths)
     lines.extend(
         [
             "    symlink:",
@@ -271,7 +285,7 @@ def write_private(path: Path, content: str) -> None:
 
 def write_session(name: str, metadata: dict, yaml: str) -> Path:
     directory = session_dir(name)
-    directory.mkdir(parents=True, mode=0o700)
+    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
     directory.chmod(0o700)
     project_file = directory / "mutagen.yml"
     write_private(project_file, yaml)
@@ -432,6 +446,19 @@ def confirm_create(name: str, local_root: Path, endpoint: str, resolved_remote: 
         die("cancelled")
 
 
+def confirm_reconfigure(name: str, yes: bool) -> None:
+    print(f"Session:      {name}")
+    print("Change:       include Git metadata and tracked dot entries")
+    print("Exclusions:   Git hooks, reflogs, and lock files")
+    print("Warning: the synchronization session will be restarted.")
+    if yes:
+        return
+    if not sys.stdin.isatty():
+        die("confirmation required; rerun interactively or pass --yes")
+    if input("Reconfigure this synchronization session? [y/N] ").strip().lower() not in ("y", "yes"):
+        die("cancelled")
+
+
 def command_create(args) -> None:
     require_command("ssh")
     require_command("mutagen")
@@ -487,12 +514,145 @@ def verify_session(metadata: dict) -> None:
     remote_call(metadata["host"], "verify", metadata["remote_root"], metadata["marker"])
 
 
+def validate_git_sync(metadata: dict) -> None:
+    local_root = Path(metadata["local_root"])
+    remote_root = PurePosixPath(metadata["resolved_remote_root"])
+
+    for current, directories, files in os.walk(local_root, followlinks=False):
+        if ".git" in directories and (Path(current) / ".git").is_symlink():
+            die(f"refusing symbolic-link Git metadata: {Path(current) / '.git'}")
+        if ".git" not in files:
+            continue
+
+        git_file = Path(current) / ".git"
+        if git_file.is_symlink():
+            die(f"refusing symbolic-link Git metadata: {git_file}")
+        try:
+            first_line = git_file.read_text().splitlines()[0]
+        except (OSError, UnicodeError, IndexError) as error:
+            die(f"unable to read Git worktree pointer {git_file}: {error}")
+        prefix = "gitdir: "
+        if not first_line.startswith(prefix):
+            die(f"invalid Git worktree pointer: {git_file}")
+
+        raw_target = first_line[len(prefix):]
+        target = Path(raw_target)
+        if not target.is_absolute():
+            target = git_file.parent / target
+        try:
+            target = target.resolve(strict=True)
+            relative_target = target.relative_to(local_root)
+        except (FileNotFoundError, RuntimeError, ValueError) as error:
+            die(f"Git worktree pointer escapes or is missing from the synchronized root: {git_file}: {error}")
+
+        if Path(raw_target).is_absolute():
+            expected_remote_target = remote_root.joinpath(*relative_target.parts)
+            if PurePosixPath(raw_target) != expected_remote_target:
+                die(
+                    "absolute Git worktree pointers require identical local and remote root paths: "
+                    f"{git_file}"
+                )
+
+
+def tracked_dot_ignores(local_root: Path) -> tuple[str, ...]:
+    repositories = set()
+    for current, directories, files in os.walk(local_root, followlinks=False):
+        if ".git" in directories:
+            repositories.add(Path(current))
+            directories.remove(".git")
+        if ".git" in files:
+            repositories.add(Path(current))
+
+    patterns = set()
+    environment = os.environ.copy()
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+    for repository in sorted(repositories):
+        process = subprocess.run(
+            ["git", "-C", str(repository), "ls-files", "-z"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=environment,
+        )
+        if process.returncode != 0:
+            continue
+
+        repository_relative = repository.relative_to(local_root)
+        for encoded_path in process.stdout.split(b"\0"):
+            if not encoded_path:
+                continue
+            tracked_path = PurePosixPath(os.fsdecode(encoded_path))
+            prefix = []
+            for index, part in enumerate(tracked_path.parts):
+                prefix.append(part)
+                if not part.startswith(".") or part in (".", ".."):
+                    continue
+                relative = PurePosixPath(*repository_relative.parts, *prefix)
+                if any(character in relative.as_posix() for character in "*?[]\\"):
+                    die(f"tracked dot path uses unsupported ignore-pattern characters: {relative}")
+                is_directory = index < len(tracked_path.parts) - 1 or (repository / tracked_path).is_dir()
+                patterns.add(f"!/{relative.as_posix()}{'/' if is_directory else ''}")
+    return tuple(sorted(patterns))
+
+
 def command_push(args) -> None:
     require_command("ssh")
     require_command("mutagen")
     metadata, project_file = load_session(args.name)
     verify_session(metadata)
     run_mutagen("flush", project_file)
+
+
+def command_reconfigure(args) -> None:
+    if not args.include_git:
+        die("no configuration change requested; pass --include-git")
+
+    require_command("ssh")
+    require_command("mutagen")
+    metadata, project_file = load_session(args.name)
+    verify_session(metadata)
+    mutagen_session(metadata)
+    validate_git_sync(metadata)
+
+    local_root = Path(metadata["local_root"])
+    updated_project = project_yaml(
+        args.name,
+        local_root,
+        metadata["endpoint"],
+        include_git=True,
+        tracked_dot_ignores=tracked_dot_ignores(local_root),
+    )
+    if metadata.get("include_git") is True and project_file.read_text() == updated_project:
+        print(f"wsync session already includes current Git metadata: {args.name}")
+        return
+
+    confirm_reconfigure(args.name, args.yes)
+
+    metadata_file = session_dir(args.name) / "session.json"
+    previous_project = project_file.read_text()
+    previous_metadata = metadata_file.read_text()
+    updated_metadata = dict(metadata)
+    updated_metadata["include_git"] = True
+
+    run_mutagen("flush", project_file)
+    run_mutagen("terminate", project_file)
+    try:
+        write_session(args.name, updated_metadata, updated_project)
+        run_mutagen("start", project_file)
+    except BaseException:
+        write_private(project_file, previous_project)
+        write_private(metadata_file, previous_metadata)
+        try:
+            run_mutagen("start", project_file)
+        except BaseException as rollback_error:
+            print(
+                f"error: previous synchronization configuration could not be restarted: {rollback_error}",
+                file=sys.stderr,
+            )
+        else:
+            print("note: previous synchronization configuration was restored", file=sys.stderr)
+        raise
+
+    print(f"wsync session reconfigured to include Git metadata: {args.name}")
 
 
 def command_status(args) -> None:
@@ -554,6 +714,12 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("remote")
     create.add_argument("--yes", action="store_true", help="skip the interactive confirmation")
     create.set_defaults(handler=command_create)
+
+    reconfigure = commands.add_parser("reconfigure", help="replace a session configuration safely")
+    reconfigure.add_argument("name")
+    reconfigure.add_argument("--include-git", action="store_true", help="synchronize Git metadata")
+    reconfigure.add_argument("--yes", action="store_true", help="skip the interactive confirmation")
+    reconfigure.set_defaults(handler=command_reconfigure)
 
     for name, help_text, handler in (
         ("push", "flush pending changes and wait", command_push),

@@ -28,18 +28,41 @@ local function is_web_url(value)
   return type(value) == "string" and (value:match("^http://") or value:match("^https://"))
 end
 
+local trailing_url_punctuation = {
+  ["."] = true,
+  [","] = true,
+  [";"] = true,
+  [":"] = true,
+  ["!"] = true,
+  ["]"] = true,
+  ["}"] = true,
+}
+
+local function trim_url(value)
+  local last = #value
+  while last > 0 do
+    local character = value:sub(last, last)
+    if trailing_url_punctuation[character] then
+      last = last - 1
+    elseif character == ")" then
+      local candidate = value:sub(1, last)
+      local _, opening_count = candidate:gsub("%(", "")
+      local _, closing_count = candidate:gsub("%)", "")
+      if closing_count > opening_count then
+        last = last - 1
+      else
+        break
+      end
+    else
+      break
+    end
+  end
+  return value:sub(1, last)
+end
+
 local function urls_in_line(text)
   local result = {}
   local offset = 1
-  local trailing_punctuation = {
-    ["."] = true,
-    [","] = true,
-    [";"] = true,
-    [":"] = true,
-    ["!"] = true,
-    ["]"] = true,
-    ["}"] = true,
-  }
   while offset <= #text do
     local http_first, http_last = text:find("http://[^%s%z<>\"']+", offset)
     local https_first, https_last = text:find("https://[^%s%z<>\"']+", offset)
@@ -52,34 +75,96 @@ local function urls_in_line(text)
     end
 
     local scan_end = last
-    while last >= first do
-      local character = text:sub(last, last)
-      if trailing_punctuation[character] then
-        last = last - 1
-      elseif character == ")" then
-        local value = text:sub(first, last)
-        local _, opening_count = value:gsub("%(", "")
-        local _, closing_count = value:gsub("%)", "")
-        if closing_count > opening_count then
-          last = last - 1
-        else
-          break
-        end
-      else
-        break
-      end
-    end
+    local raw_url = text:sub(first, scan_end)
+    local url = trim_url(raw_url)
+    last = first + #url - 1
 
     if last >= first then
       result[#result + 1] = {
         first_col = first - 1,
         last_col = last,
-        url = text:sub(first, last),
+        raw_last_col = scan_end,
+        raw_url = raw_url,
+        url = url,
       }
     end
     offset = scan_end + 1
   end
   return result
+end
+
+local function leading_url_fragment(text)
+  local first, last = text:find("[^%s%z<>\"']+")
+  if not first or text:sub(1, first - 1):find("%S") then
+    return nil
+  end
+  return {
+    first_col = first - 1,
+    last_col = last,
+    raw_last_col = last,
+    value = text:sub(first, last),
+  }
+end
+
+local function wrapped_url_at(line_at, row, column)
+  local max_wrapped_lines = 32
+  for start_row = row, math.max(0, row - max_wrapped_lines + 1), -1 do
+    local start_text = line_at(start_row) or ""
+    local meaningful_end = #(start_text:gsub("%s+$", ""))
+    for _, reference in ipairs(urls_in_line(start_text)) do
+      if reference.raw_last_col == meaningful_end then
+        local segments = {
+          {
+            row = start_row,
+            first_col = reference.first_col,
+            last_col = reference.raw_last_col,
+          },
+        }
+        local parts = { reference.raw_url }
+        local next_row = start_row + 1
+
+        while next_row < start_row + max_wrapped_lines do
+          local next_text = line_at(next_row)
+          if not next_text then
+            break
+          end
+          local fragment = leading_url_fragment(next_text)
+          if not fragment then
+            break
+          end
+
+          segments[#segments + 1] = {
+            row = next_row,
+            first_col = fragment.first_col,
+            last_col = fragment.last_col,
+          }
+          parts[#parts + 1] = fragment.value
+
+          local next_meaningful_end = #(next_text:gsub("%s+$", ""))
+          local joined = table.concat(parts)
+          if fragment.raw_last_col < next_meaningful_end or trim_url(joined) ~= joined then
+            break
+          end
+          next_row = next_row + 1
+        end
+
+        if #segments > 1 then
+          local joined = table.concat(parts)
+          local url = trim_url(joined)
+          local removed = #joined - #url
+          local last_segment = segments[#segments]
+          last_segment.last_col = math.max(last_segment.first_col, last_segment.last_col - removed)
+
+          for _, segment in ipairs(segments) do
+            if segment.row == row and column >= segment.first_col and column < segment.last_col then
+              return url
+            end
+          end
+        end
+      end
+    end
+  end
+  return nil
 end
 
 local function references_in_line(cwd, text)
@@ -186,6 +271,10 @@ local function target_at(bufnr, row, column)
 
   local current = line_at(row) or ""
   if vim.g.neovide then
+    local wrapped_url = wrapped_url_at(line_at, row, column)
+    if wrapped_url then
+      return { url = wrapped_url }
+    end
     for _, reference in ipairs(urls_in_line(current)) do
       if contains(reference) then
         return { url = reference.url }
@@ -325,11 +414,15 @@ local function find_editor_window(source)
 end
 
 function M.open_url(url)
-  if not is_web_url(url) or not vim.g.neovide then
+  if not is_web_url(url) then
     return false
   end
-  if vim.env.NEOVIDE_REMOTE_BRIDGE then
-    return require("luanphan.neovide_remote").open_url(url)
+  local remote = require("luanphan.remote_tunnel")
+  if remote.enabled() then
+    return remote.open_url(url)
+  end
+  if not vim.g.neovide then
+    return false
   end
 
   local ok, _, error_message = pcall(vim.ui.open, url)

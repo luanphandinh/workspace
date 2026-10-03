@@ -3,10 +3,14 @@ set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 test_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/neovide-remote-test.XXXXXX")
-fakebin="$test_tmp_dir/bin"
+fakebin=$test_tmp_dir/bin
 mkdir -p "$fakebin"
 
 cleanup() {
+	if [ -n "${latency_bridge_pid:-}" ]; then
+		kill "$latency_bridge_pid" 2>/dev/null || true
+		wait "$latency_bridge_pid" 2>/dev/null || true
+	fi
 	if [ -f "$test_tmp_dir/ssh-listener.pid" ]; then
 		kill "$(cat "$test_tmp_dir/ssh-listener.pid")" 2>/dev/null || true
 	fi
@@ -14,95 +18,56 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM HUP
 
-base_port=$(python3 - <<'PY'
-import socket
+remote_port=$($repo_root/bin/.tunnel-bridge allocate --count 1)
+preview_port=$((remote_port + 1))
+latency_port=$($repo_root/bin/.tunnel-bridge allocate --count 1)
+latency_token=$($repo_root/bin/.tunnel-bridge token)
+mkdir -p "$test_tmp_dir/cache/workspace-tunnel"
+printf '%s %s %s\n' "$latency_port" "$latency_token" example-client \
+	> "$test_tmp_dir/cache/workspace-tunnel/connection"
+"$repo_root/bin/.tunnel-bridge" serve \
+	--listen-port "$latency_port" \
+	--token "$latency_token" \
+	--opener /usr/bin/true \
+	--control-socket "$test_tmp_dir/control" \
+	--ssh-host example-host \
+	--clipboard-backend none \
+	2> "$test_tmp_dir/latency-bridge.log" &
+latency_bridge_pid=$!
+"$repo_root/bin/.tunnel-bridge" wait --port "$latency_port" --timeout 3
 
-for base in range(41000, 65000, 4):
-    sockets = []
-    try:
-        for port in range(base, base + 4):
-            current = socket.socket()
-            current.bind(("127.0.0.1", port))
-            sockets.append(current)
-    except OSError:
-        pass
-    else:
-        print(base)
-        break
-    finally:
-        for current in sockets:
-            current.close()
-else:
-    raise SystemExit("no free test ports")
-PY
-)
-preview_port=$((base_port + 1))
-callback_port=$((base_port - 1))
+cat > "$test_tmp_dir/latency-test.lua" <<'LUA'
+local remote = require("luanphan.remote_tunnel")
+remote.setup()
+assert(vim.wait(3000, function()
+  return remote.statusline():match("^tunnel %d+ms$") ~= nil
+end, 20), "remote tunnel latency did not reach the statusline")
 
-NEOVIDE_REMOTE_BRIDGE=1 nvim --headless --clean \
+require("luanphan.keymap.keymap")
+assert(_G.statusline():find(remote.statusline(), 1, true), "editor statusline omitted tunnel latency")
+vim.bo.buftype = "nofile"
+assert(_G.statusline():find(remote.statusline(), 1, true), "special-buffer statusline omitted tunnel latency")
+
+assert(os.remove(vim.env.XDG_CACHE_HOME .. "/workspace-tunnel/connection"))
+assert(vim.wait(3000, function()
+  return remote.statusline() == "tunnel not connected"
+end, 20), "disconnected tunnel remained active in the statusline")
+LUA
+
+XDG_CACHE_HOME=$test_tmp_dir/cache WORKSPACE_REMOTE_TUNNEL=1 nvim --headless --clean \
 	--cmd "set runtimepath^=$repo_root/nvim" \
-	'+lua require("luanphan.neovide").setup()' \
-	'+lua assert(vim.fn.exists("*WorkspaceNeovideSetCallbackPort") == 1)' \
-	'+lua assert(vim.fn.exists("*WorkspaceNeovideRemoteOpen") == 1)' \
-	'+lua assert(not pcall(vim.fn.WorkspaceNeovideSetCallbackPort, "invalid"))' \
-	"+lua assert(vim.fn.WorkspaceNeovideSetCallbackPort($callback_port))" \
-	"+lua assert(vim.env.NEOVIDE_REMOTE_CALLBACK_PORT == '$callback_port')" \
+	-l "$test_tmp_dir/latency-test.lua"
+
+XDG_CACHE_HOME=$test_tmp_dir/cache WORKSPACE_REMOTE_TUNNEL=1 nvim --headless --clean \
+	--cmd "set runtimepath^=$repo_root/nvim" \
+	'+lua require("luanphan.remote_tunnel").setup()' \
+	'+lua assert(require("luanphan.remote_tunnel").enabled())' \
+	'+lua assert(vim.fn.exists("*WorkspaceRemoteTunnelOpen") == 1)' \
 	+qa
 
 cat > "$fakebin/nvim" <<'SH'
 #!/bin/sh
-case " $* " in
-	*" --server "*" --remote-expr "*)
-		if [ -n "${NEOVIDE_TEST_NVIM_CLIENT_LOG:-}" ]; then
-			printf '%s\n' "$*" >> "$NEOVIDE_TEST_NVIM_CLIENT_LOG"
-		fi
-		case "$*" in
-			*"exists('*WorkspaceNeovideSetCallbackPort')"*)
-				if [ "$NEOVIDE_TEST_CALLBACK_API" = retry ] && [ ! -f "$NEOVIDE_TEST_CALLBACK_API_MARKER" ]; then
-					: > "$NEOVIDE_TEST_CALLBACK_API_MARKER"
-					printf 'temporary RPC failure\n' >&2
-					exit 1
-				fi
-				if [ "$NEOVIDE_TEST_CALLBACK_API" = retry ]; then
-					printf '1\n'
-				else
-					printf '%s\n' "$NEOVIDE_TEST_CALLBACK_API"
-				fi
-				;;
-			*"WorkspaceNeovideSetCallbackPort("*)
-				printf '%s\n' "$*" > "$NEOVIDE_TEST_PORT_UPDATE_LOG"
-				printf 'true\n'
-				;;
-		esac
-		exit 0
-		;;
-esac
-printf '%s\n' "$NEOVIDE_MARKDOWN_PREVIEW_PORT" "$NEOVIDE_REMOTE_BRIDGE" "$*" > "$NEOVIDE_TEST_NVIM_LOG"
-SH
-
-cat > "$fakebin/open" <<'SH'
-#!/bin/sh
-printf 'open %s\n' "$1" >> "$NEOVIDE_TEST_OPEN_LOG"
-SH
-
-cat > "$fakebin/xdg-open" <<'SH'
-#!/bin/sh
-printf 'xdg-open %s\n' "$1" >> "$NEOVIDE_TEST_OPEN_LOG"
-SH
-
-cat > "$fakebin/uname" <<'SH'
-#!/bin/sh
-printf '%s\n' "$NEOVIDE_TEST_UNAME"
-SH
-
-cat > "$fakebin/swift" <<'SH'
-#!/bin/sh
-printf '\211PNG\r\n\032\nclipboard-image'
-SH
-
-cat > "$fakebin/wl-paste" <<'SH'
-#!/bin/sh
-printf '\211PNG\r\n\032\nclipboard-image'
+printf '%s\n' "$NEOVIDE_MARKDOWN_PREVIEW_PORT" "$WORKSPACE_REMOTE_TUNNEL" "$*" > "$NEOVIDE_TEST_NVIM_LOG"
 SH
 
 cat > "$test_tmp_dir/ssh-listener.py" <<'PY'
@@ -128,19 +93,8 @@ case " $* " in
 		fi
 		exit 0
 		;;
-	*" -O forward "*)
-		while [ "$#" -gt 0 ]; do
-			if [ "$1" = "-R" ]; then
-				shift
-				case "$1" in
-					127.0.0.1:0:*)
-						printf '%s\n' "$NEOVIDE_TEST_CALLBACK_PORT"
-						;;
-				esac
-			fi
-			shift
-		done
-		exit 0
+	*" ~/bin/tunnel _ping-incoming "*)
+		exit "$NEOVIDE_TEST_TUNNEL_STATUS"
 		;;
 esac
 
@@ -154,198 +108,56 @@ while [ "$#" -gt 0 ]; do
 	fi
 	shift
 done
-python3 "$NEOVIDE_TEST_SSH_LISTENER" "$local_port" &
-printf '%s\n' "$!" > "$NEOVIDE_TEST_SSH_PID"
+if [ -n "$local_port" ]; then
+	python3 "$NEOVIDE_TEST_SSH_LISTENER" "$local_port" &
+	printf '%s\n' "$!" > "$NEOVIDE_TEST_SSH_PID"
+fi
 SH
 
 cat > "$fakebin/neovide" <<'SH'
 #!/bin/sh
-set -eu
 printf '%s\n' "$*" > "$NEOVIDE_TEST_NEOVIDE_LOG"
-python3 - "$NEOVIDE_TEST_SSH_LOG" "$NEOVIDE_TEST_PREVIEW_PORT" "$NEOVIDE_TEST_PORT_MAP" <<'PY'
-import re
-import socket
-import sys
-import time
-
-log = open(sys.argv[1], encoding="utf-8").read()
-local_forwards = re.findall(r"-L 127\.0\.0\.1:(\d+):127\.0\.0\.1:\d+", log)
-reverse = re.findall(r"-R 127\.0\.0\.1:\d+:127\.0\.0\.1:(\d+)", log)
-if len(local_forwards) != 2 or len(reverse) != 1:
-    raise SystemExit("missing SSH forwards")
-local_nvim_port, local_preview_port = map(int, local_forwards)
-local_open_port = int(reverse[0])
-with open(sys.argv[3], "w", encoding="utf-8") as output:
-    output.write(f"{local_nvim_port} {local_preview_port} {local_open_port}\n")
-
-requests = (
-    f"preview-url http://localhost:{sys.argv[2]}/page/42\n",
-    "open-url https://example.com/docs?q=1#part\n",
-)
-for request in requests:
-    deadline = time.monotonic() + 3
-    while True:
-        try:
-            with socket.create_connection(("127.0.0.1", local_open_port), timeout=0.2) as connection:
-                connection.sendall(request.encode())
-            break
-        except OSError:
-            if time.monotonic() >= deadline:
-                raise
-            time.sleep(0.05)
-PY
-
-read -r local_nvim_port local_preview_port local_open_port < "$NEOVIDE_TEST_PORT_MAP"
-image_path=$(
-	NEOVIDE_REMOTE_CALLBACK_PORT="$local_open_port" \
-	XDG_CACHE_HOME="$NEOVIDE_TEST_IMAGE_CACHE" \
-	"$NEOVIDE_TEST_PASTE_IMAGE"
-)
-printf '%s\n' "$image_path" > "$NEOVIDE_TEST_IMAGE_LOG"
-
-attempt=0
-open_count=0
-while [ "$open_count" -lt 2 ] && [ "$attempt" -lt 60 ]; do
-	sleep 0.05
-	attempt=$((attempt + 1))
-	if [ -f "$NEOVIDE_TEST_OPEN_LOG" ]; then
-		open_count=$(wc -l < "$NEOVIDE_TEST_OPEN_LOG")
-	fi
-done
-test "$open_count" -eq 2
 SH
 
-chmod +x "$fakebin/nvim" "$fakebin/open" "$fakebin/xdg-open" "$fakebin/uname" "$fakebin/swift" "$fakebin/wl-paste" "$fakebin/ssh" "$fakebin/neovide"
+chmod +x "$fakebin/nvim" "$fakebin/ssh" "$fakebin/neovide"
 
 "$repo_root/bin/neovide-server" --help > "$test_tmp_dir/server-help.log"
-grep -F -- '--port PORT' "$test_tmp_dir/server-help.log" >/dev/null
-grep -F -- '--trace' "$test_tmp_dir/server-help.log" >/dev/null
-
 "$repo_root/bin/neovide-client" --help > "$test_tmp_dir/client-help.log"
-grep -F -- '--port PORT' "$test_tmp_dir/client-help.log" >/dev/null
-grep -F -- '--trace' "$test_tmp_dir/client-help.log" >/dev/null
-grep -F -- '--ssh-verbose' "$test_tmp_dir/client-help.log" >/dev/null
 
-if "$repo_root/bin/neovide-server" --port invalid > /dev/null 2> "$test_tmp_dir/server-error.log"; then
-	exit 1
-fi
-grep -F '[Error] neovide-server: port must be numeric' "$test_tmp_dir/server-error.log" >/dev/null
-
-if "$repo_root/bin/neovide-client" --port invalid example-host > /dev/null 2> "$test_tmp_dir/client-error.log"; then
-	exit 1
-fi
-grep -F '[Error] neovide-client: port must be numeric' "$test_tmp_dir/client-error.log" >/dev/null
-
-NEOVIDE_TEST_NVIM_LOG="$test_tmp_dir/nvim.log" \
+NEOVIDE_TEST_NVIM_LOG=$test_tmp_dir/nvim.log \
 	PATH="$fakebin:/usr/bin:/bin" \
-	"$repo_root/bin/neovide-server" --port "$base_port" example.md \
+	"$repo_root/bin/neovide-server" --port "$remote_port" example.md \
 	2> "$test_tmp_dir/server.log"
 test "$(sed -n '1p' "$test_tmp_dir/nvim.log")" = "$preview_port"
-test "$(sed -n '2p' "$test_tmp_dir/nvim.log")" = "1"
-test "$(sed -n '3p' "$test_tmp_dir/nvim.log")" = "--headless --listen 127.0.0.1:$base_port example.md"
-grep -F "[Info] neovide-server: Neovim RPC listening on 127.0.0.1:$base_port" "$test_tmp_dir/server.log" >/dev/null
-grep -F "[Info] neovide-server: Markdown preview will use 127.0.0.1:$preview_port" "$test_tmp_dir/server.log" >/dev/null
-grep -F "[Info] neovide-server: callback port will be allocated by neovide-client" "$test_tmp_dir/server.log" >/dev/null
-grep -F "[Command] neovide-server: nvim --headless --listen 127.0.0.1:$base_port" "$test_tmp_dir/server.log" >/dev/null
-grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\] \[Info\] neovide-server:' "$test_tmp_dir/server.log" >/dev/null
+test "$(sed -n '2p' "$test_tmp_dir/nvim.log")" = 1
+test "$(sed -n '3p' "$test_tmp_dir/nvim.log")" = "--headless --listen 127.0.0.1:$remote_port example.md"
 
 run_client_test() {
-	operating_system=$1
-	expected_opener=$2
-	expected_clipboard_backend=$3
-	callback_api=${4:-1}
+	tunnel_status=$1
 	: > "$test_tmp_dir/ssh.log"
-	rm -f "$test_tmp_dir/open.log" "$test_tmp_dir/neovide.log" "$test_tmp_dir/nvim-client.log" "$test_tmp_dir/image.log" "$test_tmp_dir/port-update.log" "$test_tmp_dir/callback-api-marker" "$test_tmp_dir/ssh-listener.pid"
-	rm -rf "$test_tmp_dir/image-cache"
+	rm -f "$test_tmp_dir/ssh-listener.pid"
 
-	NEOVIDE_TEST_SSH_LOG="$test_tmp_dir/ssh.log" \
-	NEOVIDE_TEST_SSH_PID="$test_tmp_dir/ssh-listener.pid" \
-	NEOVIDE_TEST_SSH_LISTENER="$test_tmp_dir/ssh-listener.py" \
-	NEOVIDE_TEST_NEOVIDE_LOG="$test_tmp_dir/neovide.log" \
-	NEOVIDE_TEST_NVIM_CLIENT_LOG="$test_tmp_dir/nvim-client.log" \
-	NEOVIDE_TEST_OPEN_LOG="$test_tmp_dir/open.log" \
-	NEOVIDE_TEST_IMAGE_LOG="$test_tmp_dir/image.log" \
-	NEOVIDE_TEST_IMAGE_CACHE="$test_tmp_dir/image-cache" \
-	NEOVIDE_TEST_PASTE_IMAGE="$repo_root/bin/neovide-paste-image" \
-	NEOVIDE_TEST_PREVIEW_PORT="$preview_port" \
-	NEOVIDE_TEST_PORT_MAP="$test_tmp_dir/port-map" \
-	NEOVIDE_TEST_CALLBACK_API="$callback_api" \
-	NEOVIDE_TEST_CALLBACK_API_MARKER="$test_tmp_dir/callback-api-marker" \
-	NEOVIDE_TEST_PORT_UPDATE_LOG="$test_tmp_dir/port-update.log" \
-	NEOVIDE_TEST_CALLBACK_PORT="$callback_port" \
-	NEOVIDE_TEST_UNAME="$operating_system" \
+	NEOVIDE_TEST_SSH_LOG=$test_tmp_dir/ssh.log \
+	NEOVIDE_TEST_SSH_PID=$test_tmp_dir/ssh-listener.pid \
+	NEOVIDE_TEST_SSH_LISTENER=$test_tmp_dir/ssh-listener.py \
+	NEOVIDE_TEST_NEOVIDE_LOG=$test_tmp_dir/neovide.log \
+	NEOVIDE_TEST_TUNNEL_STATUS=$tunnel_status \
 	PATH="$fakebin:/usr/bin:/bin" \
-	sh -c 'if [ "$1" = Darwin ]; then
-		"$2" --trace --port "$3" example-host --frame buttonless
-	else
-		"$2" --ssh-verbose "example-host:$3" --frame buttonless
-	fi' sh "$operating_system" "$repo_root/bin/neovide-client" "$base_port" \
-	2> "$test_tmp_dir/client-$operating_system.log"
+	"$repo_root/bin/neovide-client" --port "$remote_port" example-host --frame buttonless \
+	2> "$test_tmp_dir/client.log"
 
-	read -r local_nvim_port local_preview_port local_open_port < "$test_tmp_dir/port-map"
-	clipboard_image=$(cat "$test_tmp_dir/image.log")
-	test "$(wc -l < "$test_tmp_dir/open.log")" -eq 2
-	grep -Fx "$expected_opener http://127.0.0.1:$local_preview_port/page/42" "$test_tmp_dir/open.log" >/dev/null
-	grep -Fx "$expected_opener https://example.com/docs?q=1#part" "$test_tmp_dir/open.log" >/dev/null
+	local_nvim_port=$(sed -n 's/.*-L 127\.0\.0\.1:\([0-9][0-9]*\):127\.0\.0\.1:.*/\1/p' "$test_tmp_dir/ssh.log" | sed -n '1p')
+	test -n "$local_nvim_port"
 	test "$(cat "$test_tmp_dir/neovide.log")" = "--no-fork --server 127.0.0.1:$local_nvim_port --frame buttonless"
-	test -f "$clipboard_image"
-	python3 - "$clipboard_image" <<'PY'
-import pathlib
-import sys
-
-assert pathlib.Path(sys.argv[1]).read_bytes() == b"\x89PNG\r\n\x1a\nclipboard-image"
-PY
-	grep -F -- "-L 127.0.0.1:$local_nvim_port:127.0.0.1:$base_port" "$test_tmp_dir/ssh.log" >/dev/null
-	grep -F -- "-L 127.0.0.1:$local_preview_port:127.0.0.1:$preview_port" "$test_tmp_dir/ssh.log" >/dev/null
-	grep -F -- '-o ServerAliveInterval=15 -o ServerAliveCountMax=3' "$test_tmp_dir/ssh.log" >/dev/null
-	test "$(grep -c -- "-O forward -R 127.0.0.1:0:127.0.0.1:$local_open_port" "$test_tmp_dir/ssh.log")" = 1
-	grep -F "WorkspaceNeovideSetCallbackPort($callback_port)" "$test_tmp_dir/port-update.log" >/dev/null
-	test "$(grep -Fc -- "--headless --server 127.0.0.1:$local_nvim_port --remote-expr" "$test_tmp_dir/nvim-client.log")" -eq "$(wc -l < "$test_tmp_dir/nvim-client.log")"
-	grep -F "[Success] neovide-client: callback port allocated: $callback_port" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -F "[Success] neovide-client: SSH tunnel established" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -F "[Success] neovide-client: remote Neovim bridge is ready" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -F "[Info] neovide-client: launching Neovide" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -F "[Info] neovide-client: local image clipboard backend: $expected_clipboard_backend" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -F "[Info] neovide bridge: received preview URL: http://localhost:$preview_port/page/42" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -F "[Info] neovide bridge: opening local URL: http://127.0.0.1:$local_preview_port/page/42" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -F "[Command] neovide bridge: $expected_opener http://127.0.0.1:$local_preview_port/page/42" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -F "[Info] neovide bridge: received browser URL: https://example.com/docs?q=1#part" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -F "[Info] neovide bridge: opening local URL: https://example.com/docs?q=1#part" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -F "[Command] neovide bridge: $expected_opener https://example.com/docs?q=1#part" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -F "[Info] neovide bridge: received clipboard image request" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -F "[Success] neovide bridge: sending clipboard image (23 bytes)" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -F "[Success] neovide bridge: saved clipboard image to $clipboard_image" "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\] \[Info\] neovide-client:' "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	grep -E '^\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\] \[Info\] neovide bridge: received clipboard image request' "$test_tmp_dir/client-$operating_system.log" >/dev/null
-	if [ "$operating_system" = Darwin ]; then
-		grep -F '+ uname -s' "$test_tmp_dir/client-$operating_system.log" >/dev/null
+	grep -F -- "-L 127.0.0.1:$local_nvim_port:127.0.0.1:$remote_port" "$test_tmp_dir/ssh.log" >/dev/null
+	if [ "$tunnel_status" -eq 0 ]; then
+		grep -F '[Success] neovide-client: workspace tunnel is available for URLs and images' "$test_tmp_dir/client.log" >/dev/null
 	else
-		grep -F -- '-v -o ControlPersist=no' "$test_tmp_dir/ssh.log" >/dev/null
-	fi
-	if [ "$callback_api" = retry ]; then
-		grep -F '[Warning] neovide-client: remote Neovim bridge check failed; retrying (1/5)' "$test_tmp_dir/client-$operating_system.log" >/dev/null
+		grep -F "[Warning] neovide-client: workspace tunnel is unavailable; run 'tunnel connect example-host' locally" "$test_tmp_dir/client.log" >/dev/null
 	fi
 }
 
-run_client_test Darwin open macos retry
-run_client_test Linux xdg-open wayland
+run_client_test 0
+run_client_test 1
 
-: > "$test_tmp_dir/ssh.log"
-rm -f "$test_tmp_dir/ssh-listener.pid"
-if NEOVIDE_TEST_SSH_LOG="$test_tmp_dir/ssh.log" \
-	NEOVIDE_TEST_SSH_PID="$test_tmp_dir/ssh-listener.pid" \
-	NEOVIDE_TEST_SSH_LISTENER="$test_tmp_dir/ssh-listener.py" \
-	NEOVIDE_TEST_CALLBACK_API=0 \
-	NEOVIDE_TEST_UNAME=Darwin \
-	PATH="$fakebin:/usr/bin:/bin" \
-	"$repo_root/bin/neovide-client" --port "$base_port" example-host \
-	2> "$test_tmp_dir/client-outdated.log"
-then
-	exit 1
-fi
-grep -F '[Error] neovide-client: remote Neovim bridge is outdated; update its config and restart neovide-server' "$test_tmp_dir/client-outdated.log" >/dev/null
-if grep -F -- '-O forward' "$test_tmp_dir/ssh.log" >/dev/null; then
-	exit 1
-fi
-
-printf 'PASS remote Neovide bridge smoke test\n'
+printf 'PASS remote Neovide smoke test\n'

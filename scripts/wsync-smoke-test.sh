@@ -42,6 +42,10 @@ operation=$2
 if [ "${FAKE_MUTAGEN_FAIL:-}" = "$operation" ]; then
 	exit 42
 fi
+if [ "${FAKE_MUTAGEN_FAIL_ONCE:-}" = "$operation" ] && [ ! -e "$FAKE_MUTAGEN_FAIL_MARKER" ]; then
+	: > "$FAKE_MUTAGEN_FAIL_MARKER"
+	exit 42
+fi
 if [ "$1" = sync ] && [ "$operation" = list ]; then
 	python3 - "$XDG_CONFIG_HOME/wsync/$3/session.json" "${FAKE_MUTAGEN_PAUSED:-false}" <<'PY'
 import json
@@ -98,10 +102,16 @@ expect_fail_contains() {
 	}
 }
 
-mkdir -p "$HOME/source/.cache"
+mkdir -p "$HOME/source/.cache" "$HOME/source/.review"
 printf 'source\n' > "$HOME/source/file.txt"
 printf 'secret\n' > "$HOME/source/.env"
 printf 'cache\n' > "$HOME/source/.cache/value"
+printf 'tracked\n' > "$HOME/source/.review/config.yml"
+git -C "$HOME/source" init -q
+git -C "$HOME/source" -c user.name=Test -c user.email=test@example.com add file.txt .review/config.yml
+git -C "$HOME/source" -c user.name=Test -c user.email=test@example.com commit -qm initial
+printf 'hook\n' > "$HOME/source/.git/hooks/pre-commit"
+printf 'lock\n' > "$HOME/source/.git/index.lock"
 
 expect_fail_contains "refusing dangerous local root" wsync create unsafe "$HOME" 'testbox:~/unsafe' --yes
 
@@ -124,6 +134,60 @@ assert_contains "$PROJECT" 'vcs: true'
 assert_contains "$PROJECT" 'maxEntryCount: 500000'
 assert_contains "$PROJECT" 'beta: "testbox:~/mirror"'
 assert_contains "$MUTAGEN_LOG" 'project start --project-file'
+
+expect_fail_contains 'no configuration change requested; pass --include-git' wsync reconfigure example --yes
+expect_fail_contains 'confirmation required; rerun interactively or pass --yes' wsync reconfigure example --include-git
+wsync reconfigure example --include-git --yes > "$TMP/reconfigure.out"
+assert_contains "$TMP/reconfigure.out" 'wsync session reconfigured to include Git metadata: example'
+assert_contains "$PROJECT" 'vcs: false'
+assert_contains "$PROJECT" '- "!.git"'
+assert_contains "$PROJECT" '- "**/.git/hooks/"'
+assert_contains "$PROJECT" '- "**/.git/logs/"'
+assert_contains "$PROJECT" '- "**/.git/**/*.lock"'
+assert_contains "$PROJECT" '- "!/.review/"'
+python3 - "$XDG_CONFIG_HOME/wsync/example/session.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+metadata = json.loads(Path(sys.argv[1]).read_text())
+assert metadata["include_git"] is True, metadata
+PY
+tail -n 3 "$MUTAGEN_LOG" > "$TMP/reconfigure-mutagen.log"
+assert_contains "$TMP/reconfigure-mutagen.log" 'project flush --project-file'
+assert_contains "$TMP/reconfigure-mutagen.log" 'project terminate --project-file'
+assert_contains "$TMP/reconfigure-mutagen.log" 'project start --project-file'
+before_idempotent=$(grep -c 'project start --project-file' "$MUTAGEN_LOG")
+wsync reconfigure example --include-git --yes > "$TMP/reconfigure-idempotent.out"
+after_idempotent=$(grep -c 'project start --project-file' "$MUTAGEN_LOG")
+[ "$before_idempotent" = "$after_idempotent" ] || fail "idempotent reconfigure restarted Mutagen"
+assert_contains "$TMP/reconfigure-idempotent.out" 'wsync session already includes current Git metadata: example'
+
+mkdir -p "$HOME/pointer-source/.git/worktrees/review" "$HOME/pointer-source/worktree"
+printf 'gitdir: %s\n' "$HOME/pointer-source/.git/worktrees/review" > "$HOME/pointer-source/worktree/.git"
+wsync create pointer "$HOME/pointer-source" 'testbox:~/pointer-mirror' --yes >/dev/null
+expect_fail_contains 'absolute Git worktree pointers require identical local and remote root paths' \
+	wsync reconfigure pointer --include-git --yes
+assert_contains "$XDG_CONFIG_HOME/wsync/pointer/mutagen.yml" 'vcs: true'
+wsync remove pointer >/dev/null
+
+mkdir -p "$HOME/rollback-source/.git"
+printf 'index\n' > "$HOME/rollback-source/.git/index"
+wsync create rollback "$HOME/rollback-source" 'testbox:~/rollback-mirror' --yes >/dev/null
+cp "$XDG_CONFIG_HOME/wsync/rollback/mutagen.yml" "$TMP/rollback-project.before"
+FAKE_MUTAGEN_FAIL_ONCE=start FAKE_MUTAGEN_FAIL_MARKER="$TMP/reconfigure-start-failed" \
+	expect_fail_contains 'mutagen project start failed' wsync reconfigure rollback --include-git --yes
+cmp "$TMP/rollback-project.before" "$XDG_CONFIG_HOME/wsync/rollback/mutagen.yml" >/dev/null \
+	|| fail "failed reconfigure did not restore the project file"
+python3 - "$XDG_CONFIG_HOME/wsync/rollback/session.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+metadata = json.loads(Path(sys.argv[1]).read_text())
+assert metadata.get("include_git") is not True, metadata
+PY
+wsync remove rollback >/dev/null
 
 mkdir -p "$HOME/source/pkg" "$HOME/source/.hidden"
 ROUTE=$(wsync resolve --path "$HOME/source/pkg" --json)
@@ -161,6 +225,12 @@ MUTAGEN_DATA_DIRECTORY="$REAL_MUTAGEN_DATA" "$REAL_MUTAGEN" project flush --proj
 [ -f "$REAL_BETA/file.txt" ] || fail "visible file was not synchronized"
 [ ! -e "$REAL_BETA/.env" ] || fail ".env was synchronized"
 [ ! -e "$REAL_BETA/.cache" ] || fail "dot-directory was synchronized"
+[ -f "$REAL_BETA/.review/config.yml" ] || fail "tracked dot-directory was not synchronized"
+[ -f "$REAL_BETA/.git/index" ] || fail "Git index was not synchronized"
+[ -n "$(find "$REAL_BETA/.git/objects" -type f -print -quit)" ] || fail "Git objects were not synchronized"
+[ ! -e "$REAL_BETA/.git/hooks" ] || fail "Git hooks were synchronized"
+[ ! -e "$REAL_BETA/.git/logs" ] || fail "Git reflogs were synchronized"
+[ ! -e "$REAL_BETA/.git/index.lock" ] || fail "Git lock file was synchronized"
 MUTAGEN_DATA_DIRECTORY="$REAL_MUTAGEN_DATA" "$REAL_MUTAGEN" project terminate --project-file "$REAL_PROJECT" >/dev/null
 MUTAGEN_DATA_DIRECTORY="$REAL_MUTAGEN_DATA" "$REAL_MUTAGEN" daemon stop >/dev/null
 

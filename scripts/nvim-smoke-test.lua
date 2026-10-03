@@ -2760,6 +2760,109 @@ local function test_agent_cli_commands_available()
   end
 end
 
+local function test_neovide_command_v_pastes_text_without_image_probe()
+  local original_neovide = vim.g.neovide
+  local original_getreg = vim.fn.getreg
+  local original_paste = vim.api.nvim_paste
+  local remote = require("luanphan.remote_tunnel")
+  local original_clipboard_paste = remote.paste_clipboard_item
+  local pasted
+
+  local ok, err = xpcall(function()
+    vim.g.neovide = true
+    vim.api.nvim_exec_autocmds("UIEnter", {})
+    remote.paste_clipboard_item = function()
+      fail("Cmd+V attempted a tunnel clipboard request")
+    end
+    vim.fn.getreg = function(register)
+      assert_true(register == "+", "Cmd+V read the wrong clipboard register")
+      return "clipboard text"
+    end
+    vim.api.nvim_paste = function(text, crlf, phase)
+      pasted = { text = text, crlf = crlf, phase = phase }
+      return true
+    end
+
+    local mapping = vim.fn.maparg("<D-v>", "n", false, true)
+    assert_true(type(mapping.callback) == "function", "Cmd+V mapping is missing")
+    mapping.callback()
+    assert_true(pasted and pasted.text == "clipboard text", "Cmd+V did not paste clipboard text")
+    assert_true(pasted.crlf == true and pasted.phase == -1, "Cmd+V used unexpected paste semantics")
+  end, debug.traceback)
+
+  vim.g.neovide = original_neovide
+  vim.fn.getreg = original_getreg
+  vim.api.nvim_paste = original_paste
+  remote.paste_clipboard_item = original_clipboard_paste
+  assert_true(ok, err)
+end
+
+local function test_remote_clipboard_references()
+  local remote = require("luanphan.remote_tunnel")
+  local image, image_kind, image_path = remote.clipboard_reference("image\t/tmp/clipboard.png\n")
+  assert_true(image == "[Image: /tmp/clipboard.png] ", "remote image reference is malformed")
+  assert_true(image_kind == "image" and image_path == "/tmp/clipboard.png", "remote image metadata is malformed")
+
+  local path, path_kind, remote_path = remote.clipboard_reference("directory\t/tmp/example directory\r\n")
+  assert_true(path == "/tmp/example directory ", "remote directory reference is malformed")
+  assert_true(path_kind == "directory" and remote_path == "/tmp/example directory", "remote path metadata is malformed")
+  assert_true(remote.clipboard_reference("unknown\t/tmp/item\n") == nil, "unknown clipboard kind was accepted")
+end
+
+local function test_neovide_detach_clears_option_callbacks()
+  local original_neovide = vim.g.neovide
+  local original_channel = vim.g.neovide_channel_id
+  local original_mousemoveevent = vim.o.mousemoveevent
+  local group = vim.api.nvim_create_augroup("NvimSmokeNeovideDetach", { clear = true })
+  local unrelated_id = vim.api.nvim_create_autocmd("OptionSet", {
+    group = group,
+    pattern = "mousemoveevent",
+    callback = function() end,
+  })
+
+  vim.g.neovide = true
+  vim.g.neovide_channel_id = 424242
+  local injected = assert(loadstring([[
+    local option_setting = "mousemoveevent"
+    local function rpcnotify(method, ...)
+      vim.rpcnotify(vim.g.neovide_channel_id, method, ...)
+    end
+    return vim.api.nvim_create_autocmd("OptionSet", {
+      pattern = option_setting,
+      callback = function()
+        rpcnotify("option_changed", option_setting, vim.o[option_setting])
+      end,
+    })
+  ]], "<nvim>"))
+  local injected_id = injected()
+
+  vim.api.nvim_exec_autocmds("UILeave", { data = { chan = 434343 } })
+  local other_ui_preserved = vim.g.neovide
+    and vim.g.neovide_channel_id == 424242
+    and #vim.api.nvim_get_autocmds({ id = injected_id }) == 1
+  vim.api.nvim_exec_autocmds("UILeave", { data = { chan = 424242 } })
+  local lifecycle_cleared = not vim.g.neovide and vim.g.neovide_channel_id == nil
+  local injected_removed = #vim.api.nvim_get_autocmds({ id = injected_id }) == 0
+  local unrelated_survived = #vim.api.nvim_get_autocmds({ id = unrelated_id }) == 1
+  local changed, change_error = pcall(function()
+    vim.o.mousemoveevent = not original_mousemoveevent
+  end)
+  pcall(function()
+    vim.o.mousemoveevent = original_mousemoveevent
+  end)
+
+  pcall(vim.api.nvim_del_autocmd, injected_id)
+  pcall(vim.api.nvim_del_augroup_by_id, group)
+  vim.g.neovide = original_neovide
+  vim.g.neovide_channel_id = original_channel
+
+  assert_true(other_ui_preserved, "another UI detach cleared the active Neovide callbacks")
+  assert_true(lifecycle_cleared, "Neovide detach left stale UI state")
+  assert_true(injected_removed, "Neovide detach left its OptionSet callback registered")
+  assert_true(changed, "detached Neovide callback survived: " .. tostring(change_error))
+  assert_true(unrelated_survived, "Neovide detach removed an unrelated OptionSet callback")
+end
+
 local function test_terminal_reference_links()
   local root = temp_root .. "/terminal-references"
   local first_path = root .. "/example-repo/main.go"
@@ -2863,6 +2966,37 @@ local function test_terminal_reference_links()
     return clicked_url ~= nil
   end)
   assert_true(clicked_url == "https://example.com/docs?q=1#part", "terminal URL click opened the wrong URL")
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "wrapped https://example.com/a/very/long/",
+    "  path/to/resource?query=value&",
+    "  other=yes#part.   ",
+  })
+  clicked_url = nil
+  vim.fn.getmousepos = function()
+    return { winid = vim.api.nvim_get_current_win(), line = 1, column = 9 }
+  end
+  assert_true(click_map.callback() == "<Ignore>", "wrapped URL first line was not consumed")
+  vim.wait(50, function()
+    return clicked_url ~= nil
+  end)
+  assert_true(
+    clicked_url == "https://example.com/a/very/long/path/to/resource?query=value&other=yes#part",
+    "wrapped URL first line opened the wrong URL: " .. tostring(clicked_url)
+  )
+
+  clicked_url = nil
+  vim.fn.getmousepos = function()
+    return { winid = vim.api.nvim_get_current_win(), line = 2, column = 4 }
+  end
+  assert_true(click_map.callback() == "<Ignore>", "wrapped URL continuation was not consumed")
+  vim.wait(50, function()
+    return clicked_url ~= nil
+  end)
+  assert_true(
+    clicked_url == "https://example.com/a/very/long/path/to/resource?query=value&other=yes#part",
+    "wrapped URL continuation opened the wrong URL: " .. tostring(clicked_url)
+  )
   references.open = original_open
   references.open_url = original_open_url
 
@@ -5264,6 +5398,18 @@ local setup_ok, setup_err = xpcall(function()
 
   test("agent cli commands are executable", function()
     agent_tests.cli_commands()
+  end)
+
+  test("Neovide Cmd+V pastes text without probing images", function()
+    test_neovide_command_v_pastes_text_without_image_probe()
+  end)
+
+  test("remote clipboard references preserve paths", function()
+    test_remote_clipboard_references()
+  end)
+
+  test("Neovide detach clears stale option callbacks", function()
+    test_neovide_detach_clears_option_callbacks()
   end)
 
   test("agent terminal paths become editor reference links", function()

@@ -121,6 +121,9 @@ if [ "${FAKE_REMOTE_GO_UNAVAILABLE:-}" = 1 ]; then
             ;;
     esac
 fi
+if [ "${FAKE_REMOTE_LOGIN_ZSH:-}" = 1 ]; then
+    exec zsh -f -c "$1"
+fi
 exec /bin/sh -c "$1"
 SH
 chmod +x "$FAKE_LOGIN_SHELL"
@@ -255,6 +258,16 @@ assert_contains "$FAKE_LOG" 'remote-arg:<Test name>'
 assert_not_contains "$FAKE_LOG" 'local-arg:<env>'
 if find "$FAKE_REMOTE_HOME/.cache/wsync-go/example/jobs" -mindepth 1 -print -quit | grep . >/dev/null; then
     fail 'successful remote test left a snapshot behind'
+fi
+
+: > "$FAKE_LOG"
+output=$(
+    cd "$LOCAL_ROOT/repo/sub"
+    FAKE_REMOTE_LOGIN_ZSH=1 "$ROOT/bin/go" test ./... 2>&1
+)
+assert_contains "$FAKE_LOG" 'remote-arg:<test>'
+if printf '%s\n' "$output" | grep -F 'DO NOT ATTEMPT' >/dev/null; then
+    fail 'successful remote zsh test was reported as a remote execution failure'
 fi
 
 : > "$FAKE_LOG"
