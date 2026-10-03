@@ -7,6 +7,10 @@ fakebin=$test_tmp_dir/bin
 mkdir -p "$fakebin"
 
 cleanup() {
+	if [ -n "${latency_bridge_pid:-}" ]; then
+		kill "$latency_bridge_pid" 2>/dev/null || true
+		wait "$latency_bridge_pid" 2>/dev/null || true
+	fi
 	if [ -f "$test_tmp_dir/ssh-listener.pid" ]; then
 		kill "$(cat "$test_tmp_dir/ssh-listener.pid")" 2>/dev/null || true
 	fi
@@ -16,8 +20,45 @@ trap cleanup EXIT INT TERM HUP
 
 remote_port=$($repo_root/bin/.tunnel-bridge allocate --count 1)
 preview_port=$((remote_port + 1))
+latency_port=$($repo_root/bin/.tunnel-bridge allocate --count 1)
+latency_token=$($repo_root/bin/.tunnel-bridge token)
+mkdir -p "$test_tmp_dir/cache/workspace-tunnel"
+printf '%s %s %s\n' "$latency_port" "$latency_token" example-client \
+	> "$test_tmp_dir/cache/workspace-tunnel/connection"
+"$repo_root/bin/.tunnel-bridge" serve \
+	--listen-port "$latency_port" \
+	--token "$latency_token" \
+	--opener /usr/bin/true \
+	--control-socket "$test_tmp_dir/control" \
+	--ssh-host example-host \
+	--clipboard-backend none \
+	2> "$test_tmp_dir/latency-bridge.log" &
+latency_bridge_pid=$!
+"$repo_root/bin/.tunnel-bridge" wait --port "$latency_port" --timeout 3
 
-WORKSPACE_REMOTE_TUNNEL=1 nvim --headless --clean \
+cat > "$test_tmp_dir/latency-test.lua" <<'LUA'
+local remote = require("luanphan.remote_tunnel")
+remote.setup()
+assert(vim.wait(3000, function()
+  return remote.statusline():match("^tunnel %d+ms$") ~= nil
+end, 20), "remote tunnel latency did not reach the statusline")
+
+require("luanphan.keymap.keymap")
+assert(_G.statusline():find(remote.statusline(), 1, true), "editor statusline omitted tunnel latency")
+vim.bo.buftype = "nofile"
+assert(_G.statusline():find(remote.statusline(), 1, true), "special-buffer statusline omitted tunnel latency")
+
+assert(os.remove(vim.env.XDG_CACHE_HOME .. "/workspace-tunnel/connection"))
+assert(vim.wait(3000, function()
+  return remote.statusline() == "tunnel not connected"
+end, 20), "disconnected tunnel remained active in the statusline")
+LUA
+
+XDG_CACHE_HOME=$test_tmp_dir/cache WORKSPACE_REMOTE_TUNNEL=1 nvim --headless --clean \
+	--cmd "set runtimepath^=$repo_root/nvim" \
+	-l "$test_tmp_dir/latency-test.lua"
+
+XDG_CACHE_HOME=$test_tmp_dir/cache WORKSPACE_REMOTE_TUNNEL=1 nvim --headless --clean \
 	--cmd "set runtimepath^=$repo_root/nvim" \
 	'+lua require("luanphan.remote_tunnel").setup()' \
 	'+lua assert(require("luanphan.remote_tunnel").enabled())' \

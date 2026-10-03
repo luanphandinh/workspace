@@ -1,5 +1,6 @@
 -- Basic keymaps and options
 local lsp_restart = require("luanphan.lsp_restart")
+local remote_tunnel = require("luanphan.remote_tunnel")
 
 vim.g.mapleader = " "
 vim.g.maplocalleader = " "
@@ -78,8 +79,9 @@ vim.api.nvim_create_autocmd({ "DirChangedPre", "DirChanged" }, {
 
 function _G.statusline()
   local bt = vim.bo.buftype
+  local tunnel = remote_tunnel.statusline()
   if bt == "nofile" or bt == "prompt" or bt == "terminal" then
-    return " %f"
+    return " %f" .. (tunnel ~= "" and ("%=" .. tunnel .. " ") or "")
   end
   -- show the most recent active progress token
   local progress = ""
@@ -93,6 +95,7 @@ function _G.statusline()
     "%r",                   -- readonly flag
     "  %{&filetype}",       -- filetype
     "%=",                   -- right align
+    tunnel ~= "" and (tunnel .. "  ") or "",
     copilot ~= "" and (copilot .. "  ") or "",
     progress ~= "" and (progress .. "  ") or "",
     "%l:%c ",               -- line:col
