@@ -46,7 +46,7 @@ assert(summary.failures == 1 and summary.attempts == 5, "rolling latency loss is
 
 remote.setup()
 assert(vim.wait(3000, function()
-  return remote.statusline():match("^tunnel avg %d+±0ms p95 %d+ms loss 0/1$") ~= nil
+  return remote.statusline():match("^latency avg %d+±0ms p95 %d+ms loss 0/1$") ~= nil
 end, 20), "remote tunnel latency did not reach the statusline")
 
 require("luanphan.keymap.keymap")

@@ -108,7 +108,7 @@ local function probe_status(connected)
     return string.format("tunnel not connected loss %d/%d", summary.failures, summary.attempts)
   end
   return string.format(
-    "tunnel avg %d±%dms p95 %dms loss %d/%d",
+    "latency avg %d±%dms p95 %dms loss %d/%d",
     summary.average_ms,
     summary.deviation_ms,
     summary.p95_ms,
