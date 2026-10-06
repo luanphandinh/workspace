@@ -8,6 +8,10 @@ local cancel_probe = nil
 local probe_in_flight = false
 local setup_complete = false
 local status_text = ""
+local probe_window_size = math.floor(60000 / probe_interval_ms)
+local probe_samples = {}
+local probe_port = nil
+local probe_token = nil
 
 local function log(level, message)
   io.stderr:write(string.format("[%s] [%s] remote tunnel: %s\n", os.date("%Y-%m-%d %H:%M:%S"), level, message))
@@ -46,6 +50,73 @@ local function read_connection()
   return port, token
 end
 
+function M.latency_summary(samples)
+  local latencies = {}
+  local sum = 0
+  local failures = 0
+  for _, sample in ipairs(samples) do
+    if type(sample) == "number" then
+      latencies[#latencies + 1] = sample
+      sum = sum + sample
+    else
+      failures = failures + 1
+    end
+  end
+
+  if #latencies == 0 then
+    return {
+      average_ms = nil,
+      deviation_ms = nil,
+      p95_ms = nil,
+      failures = failures,
+      attempts = #samples,
+    }
+  end
+
+  local average = sum / #latencies
+  local squared_deviations = 0
+  for _, latency in ipairs(latencies) do
+    squared_deviations = squared_deviations + (latency - average) ^ 2
+  end
+  table.sort(latencies)
+
+  return {
+    average_ms = math.floor(average + 0.5),
+    deviation_ms = math.floor(math.sqrt(squared_deviations / #latencies) + 0.5),
+    p95_ms = latencies[math.ceil(#latencies * 0.95)],
+    failures = failures,
+    attempts = #samples,
+  }
+end
+
+local function reset_probe_samples(port, token)
+  probe_samples = {}
+  probe_port = port
+  probe_token = token
+end
+
+local function record_probe(sample)
+  probe_samples[#probe_samples + 1] = sample
+  if #probe_samples > probe_window_size then
+    table.remove(probe_samples, 1)
+  end
+end
+
+local function probe_status(connected)
+  local summary = M.latency_summary(probe_samples)
+  if not connected or not summary.average_ms then
+    return string.format("tunnel not connected loss %d/%d", summary.failures, summary.attempts)
+  end
+  return string.format(
+    "tunnel avg %d±%dms p95 %dms loss %d/%d",
+    summary.average_ms,
+    summary.deviation_ms,
+    summary.p95_ms,
+    summary.failures,
+    summary.attempts
+  )
+end
+
 local function set_status(value)
   if status_text == value then
     return
@@ -67,8 +138,12 @@ local function probe_latency()
 
   local port, token = read_connection()
   if not port then
+    reset_probe_samples(nil, nil)
     set_status("tunnel not connected")
     return
+  end
+  if port ~= probe_port or token ~= probe_token then
+    reset_probe_samples(port, token)
   end
 
   probe_in_flight = true
@@ -92,7 +167,8 @@ local function probe_latency()
 
     local elapsed_ms = math.floor((uv.hrtime() - started) / 1000000 + 0.5)
     vim.schedule(function()
-      set_status(connected and string.format("tunnel %dms", elapsed_ms) or "tunnel not connected")
+      record_probe(connected and elapsed_ms or false)
+      set_status(probe_status(connected))
     end)
   end
 

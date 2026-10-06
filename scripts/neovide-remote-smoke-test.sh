@@ -38,9 +38,15 @@ latency_bridge_pid=$!
 
 cat > "$test_tmp_dir/latency-test.lua" <<'LUA'
 local remote = require("luanphan.remote_tunnel")
+local summary = remote.latency_summary({ 100, 110, 120, 130, false })
+assert(summary.average_ms == 115, "rolling latency average is incorrect")
+assert(summary.deviation_ms == 11, "rolling latency deviation is incorrect")
+assert(summary.p95_ms == 130, "rolling latency p95 is incorrect")
+assert(summary.failures == 1 and summary.attempts == 5, "rolling latency loss is incorrect")
+
 remote.setup()
 assert(vim.wait(3000, function()
-  return remote.statusline():match("^tunnel %d+ms$") ~= nil
+  return remote.statusline():match("^tunnel avg %d+±0ms p95 %d+ms loss 0/1$") ~= nil
 end, 20), "remote tunnel latency did not reach the statusline")
 
 require("luanphan.keymap.keymap")
