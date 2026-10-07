@@ -23,24 +23,16 @@ if [ "$current_shell" = "$zsh_path" ]; then
 	exit 0
 fi
 
-if [ -f "$shells_file" ] && ! grep -Fxq "$zsh_path" "$shells_file"; then
-	if [ "$(id -u)" -eq 0 ]; then
-		printf '%s\n' "$zsh_path" >> "$shells_file"
-	elif command -v sudo >/dev/null 2>&1; then
-		printf '%s\n' "$zsh_path" | sudo tee -a "$shells_file" >/dev/null
-	else
-		echo "default-shell: $zsh_path is not listed in $shells_file and sudo is unavailable" >&2
-		exit 1
-	fi
+if [ "$(id -u)" -ne 0 ]; then
+	printf 'default-shell: keeping the current login shell; changing it requires an administrator\n'
+	printf 'default-shell: run exec zsh -l to use the installed shell now\n'
+	exit 0
 fi
 
-if [ "$(id -u)" -eq 0 ]; then
-	chsh -s "$zsh_path" "$target_user"
-elif command -v sudo >/dev/null 2>&1; then
-	sudo chsh -s "$zsh_path" "$target_user"
-else
-	echo "default-shell: failed to set $target_user shell to $zsh_path" >&2
-	exit 1
+if [ -f "$shells_file" ] && ! grep -Fxq "$zsh_path" "$shells_file"; then
+	printf '%s\n' "$zsh_path" >> "$shells_file"
 fi
+
+chsh -s "$zsh_path" "$target_user"
 
 printf 'default-shell: updated %s to %s\n' "$target_user" "$zsh_path"

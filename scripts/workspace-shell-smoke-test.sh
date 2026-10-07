@@ -121,6 +121,10 @@ cat > "$fakebin/zsh" <<'SH'
 #!/bin/sh
 exit 0
 SH
+cat > "$fakebin/id" <<'SH'
+#!/bin/sh
+printf '%s\n' 1000
+SH
 cat > "$fakebin/getent" <<SH
 #!/bin/sh
 printf '%s:x:1000:1000::/home/%s:/bin/bash\n' "\$2" "\$2"
@@ -133,15 +137,14 @@ SH
 cat > "$fakebin/sudo" <<SH
 #!/bin/sh
 printf 'sudo %s\n' "\$*" >> "$tmp/chsh.log"
-"\$@"
+exit 1
 SH
-chmod +x "$fakebin/uname" "$fakebin/zsh" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
+chmod +x "$fakebin/uname" "$fakebin/zsh" "$fakebin/id" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
 printf '%s\n' "$fakebin/zsh" > "$tmp/shells"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" USER=example-user WORKSPACE_SHELLS_FILE="$tmp/shells" \
 	sh "$repo_root/scripts/configure-default-zsh.sh"
-grep -qx -- 'sudo chsh -s '"$fakebin"'/zsh example-user' "$tmp/chsh.log"
-grep -qx -- '-s '"$fakebin"'/zsh example-user' "$tmp/chsh.log"
-rm -f "$fakebin/uname" "$fakebin/zsh" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
+test ! -f "$tmp/chsh.log"
+rm -f "$fakebin/uname" "$fakebin/zsh" "$fakebin/id" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" NO_COLOR=1 sh -c ". '$repo_root/bin/shell/workspace.sh'; test -z \"\${NO_COLOR+x}\"; test \"\$FORCE_COLOR\" = 1; test \"\$GOPATH\" = \"\$HOME/go\"; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:/usr/local/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:\"*) ;; *) exit 1 ;; esac; case \":\$PATH:\" in *\":\$GOPATH/bin:\"*) ;; *) exit 1 ;; esac"
 
