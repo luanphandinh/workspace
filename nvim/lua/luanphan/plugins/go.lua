@@ -50,22 +50,13 @@ local function go_bin()
   return "go"
 end
 
---- Open a vertical split and run {shell_cmd} in a |jobstart({ term = true })| terminal.
---- |jobstart| with |term| attaches to the *current* buffer — after |:vsplit| that is still the editor
---- buffer unless we use |:enew|, so without |enew| the Go file buffer would be replaced (looks "blank").
---- Prints the exact command in the terminal first, then runs it.
+---Run the command in a persistent workspace terminal tab.
 ---@param shell_cmd string full shell command (passed to &shell like |:terminal|)
 ---@param cwd string directory containing the tested Go package
 local function run_in_test_terminal(shell_cmd, cwd)
-  vim.cmd("rightbelow vsplit | enew")
   local line = "$ " .. shell_cmd
   local full = string.format("printf '%%s\\n\\n' %s && %s", vim.fn.shellescape(line), shell_cmd)
-  local jid = vim.fn.jobstart(full, { term = true, cwd = cwd })
-  if jid == 0 or jid == -1 then
-    vim.notify("Failed to start test in terminal", vim.log.levels.ERROR)
-    return
-  end
-  -- Insert mode is entered by the TermOpen autocommand in |terminal.lua|.
+  require("luanphan.terminal").run_command(full, cwd, "Go test")
 end
 
 ---Run the Go test / example function name under (or above) the cursor.

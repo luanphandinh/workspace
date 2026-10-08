@@ -830,8 +830,10 @@ local function test_go_test_runs_from_nested_module()
   local workspace = temp_root .. "/go-test-workspace"
   local module = workspace .. "/example-module"
   local fake_bin = workspace .. "/bin"
+  local other_workspace = temp_root .. "/go-test-other-workspace"
   local marker = workspace .. "/test-cwd"
   local script = workspace .. "/go-test-cwd.lua"
+  vim.fn.mkdir(other_workspace, "p")
 
   write(module .. "/go.mod", {
     "module example.com/example-module",
@@ -851,6 +853,7 @@ local function test_go_test_runs_from_nested_module()
     "fi",
     "if [ \"$1\" = \"test\" ]; then",
     "  pwd > \"$GO_TEST_CWD_FILE\"",
+    "  printf 'Go test output\\n'",
     "  exit 0",
     "fi",
     "exit 1",
@@ -862,10 +865,33 @@ local function test_go_test_runs_from_nested_module()
     "vim.cmd('cd ' .. vim.fn.fnameescape(" .. string.format("%q", workspace) .. "))",
     "vim.cmd('noautocmd edit ' .. vim.fn.fnameescape(" .. string.format("%q", module .. "/example_test.go") .. "))",
     "vim.api.nvim_win_set_cursor(0, { 3, 0 })",
+    "local editor_buf = vim.api.nvim_get_current_buf()",
+    "require('lazy').load({ plugins = { 'toggleterm.nvim' } })",
+    "vim.fn.maparg('<leader>tt', 'n', false, true).callback()",
+    "local shell_buf = vim.api.nvim_get_current_buf()",
+    "vim.api.nvim_set_current_win(vim.fn.bufwinid(editor_buf))",
     "require('luanphan.plugins.go').run_go_test_at_cursor()",
+    "local test_buf = vim.api.nvim_get_current_buf()",
+    "assert_true(test_buf ~= shell_buf and vim.b[test_buf].luanphan_persist_term, 'Go test did not create a persistent tab')",
+    "assert_true(vim.uv.fs_realpath(vim.b[test_buf].luanphan_toggleterm_cwd) == vim.uv.fs_realpath(" .. string.format("%q", workspace) .. "), 'Go test tab was scoped to its package instead of workspace')",
+    "assert_true(vim.api.nvim_get_option_value('winbar', { win = 0 }):find('Go test', 1, true), 'Go test tab label is missing')",
     "assert_true(vim.wait(5000, function() return vim.fn.filereadable(" .. string.format("%q", marker) .. ") == 1 end, 50), 'Go test did not run')",
     "local cwd = vim.fn.readfile(" .. string.format("%q", marker) .. ")[1]",
     "assert_true(vim.uv.fs_realpath(cwd) == vim.uv.fs_realpath(" .. string.format("%q", module) .. "), 'Go test ran from ' .. tostring(cwd))",
+    "local job = vim.b[test_buf].terminal_job_id",
+    "assert_true(vim.wait(5000, function() return vim.fn.jobwait({ job }, 0)[1] ~= -1 end, 50), 'Go test did not finish')",
+    "vim.cmd('stopinsert')",
+    "vim.fn.maparg('<Tab>', 'n', false, true).callback()",
+    "assert_true(vim.api.nvim_get_current_buf() == shell_buf, 'Go test replaced the shell tab')",
+    "vim.fn.maparg('<Tab>', 'n', false, true).callback()",
+    "assert_true(vim.api.nvim_get_current_buf() == test_buf, 'completed Go test tab is inaccessible')",
+    "require('lazy').load({ plugins = { 'luanphan-worktree' } })",
+    "_G._luanphan_wt_test.switch_to(" .. string.format("%q", other_workspace) .. ")",
+    "assert_true(vim.api.nvim_buf_is_valid(test_buf), 'workspace switch deleted Go test output')",
+    "_G._luanphan_wt_test.switch_to(" .. string.format("%q", workspace) .. ")",
+    "vim.fn.maparg('<leader>tt', 'n', false, true).callback()",
+    "assert_true(vim.api.nvim_get_current_buf() == test_buf, 'Go test tab did not reopen after returning')",
+    "assert_true(table.concat(vim.api.nvim_buf_get_lines(test_buf, 0, -1, false), '\\n'):find('Go test output', 1, true), 'Go test output was lost')",
   })
 
   local cmd = child_nvim_luafile_command(workspace, script)
