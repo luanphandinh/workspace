@@ -32,7 +32,6 @@ meta-hub -r <git-repository>
 meta-hub index
 meta-hub index -p <workstation-folder>
 meta-hub pull [pick]
-meta-hub sync_tech_doc [pick]
 meta-hub push [pick]
 meta-hub project
 meta-hub p
@@ -52,7 +51,6 @@ meta-hub r
 - `meta-hub index` — pulls each metadata repository first, reads its `registry.yml`, resolves each listed workstation path under the registered local root, and refreshes metadata for every listed workstation folder that exists locally. It prints per-workstation repo status (`added`, `updated`, `already indexed`, missing upstream warnings), indexed metadata paths (`workstation.yml` plus every copied `local_workspaces/*/workspace.yml`), and resolved metadata conflict paths. It does not write `workstation.yml` into local workstation folders.
 - `meta-hub index -p <workstation-folder>` — targeted form. Pulls the metadata repository first, rejects the workstation folder unless it is under a registered root from `~/.meta-hub/info.yml`, scans immediate source repos in that workstation folder, prints per-repo status and indexed metadata paths, writes `<metadata-repo>/<relative-workstation-path>/workstation.yml`, updates `<metadata-repo>/registry.yml`, replaces the centralized snapshot of every visible workspace file outside nested git repositories, syncs optional home-scoped metadata, and commits changed metadata with `sync from <machineusername>@<machinename>`. Hidden workspace files and directories are excluded. The designated documentation folder remains snapshot-eligible when it contains a hidden `.git`; the hidden metadata is preserved locally and excluded from the snapshot.
 - `meta-hub pull [pick]` — from any folder, pulls each metadata repository first, resolves supported metadata conflicts, merges `.skills-hub/execute_plugins` and `.cmds-hub/cmd_history` into the local home directory, reads `<metadata-repo>/registry.yml`, overlays visible non-repository workspace files from the centralized snapshots, and clones missing workstation source repos from both `repos` and `_external.repos` in `<metadata-repo>/<relative-workstation-path>/workstation.yml`. Snapshot files overwrite matching local paths, while local-only files, nested git repositories, and hidden workspace paths are preserved. Hidden workspace files and directories are never copied to metadata or removed during pull. Clone output streams live with an overall repository counter plus Git's transfer progress. It does not write local `workstation.yml` or create workspace worktrees. With `pick`, choose one registered mapping through `fzf`; without it, pull all. `meta-hub sync` remains a deprecated compatibility alias.
-- `meta-hub sync_tech_doc [pick]` — from any folder, reads indexed workstations from the metadata repository, then mirrors local workspace tech docs into each workstation's `tech_doc/<workspace-name>/tech_doc` symlink index. With `pick`, choose one registered mapping through `fzf`; without it, sync all.
 - `meta-hub push [pick]` — pushes registered metadata repositories explicitly to `main` or `master`. With `pick`, choose one registered mapping through `fzf`; without it, push all.
 - `meta-hub project` / `meta-hub p` — from any folder, lists every registered workstation workspace folder under `local_workspaces/` in `fzf`, then changes the current shell to the selected workspace folder. This shell jump works through `~/bin/shell/workspace.sh`; direct executable use prints the selected path.
 - `meta-hub repo` / `meta-hub r` — from any folder, lists registered workstation source repos plus git repos directly under registered `local_workspaces/<workspace>/` folders in `fzf`, then changes the current shell to the selected repo. This shell jump works through `~/bin/shell/workspace.sh`; direct executable use prints the selected path.
@@ -172,18 +170,6 @@ meta-hub pull       # all registered metadata repos
 meta-hub pull pick  # choose one with fzf
 ```
 The command can run from any folder. For each selected entry, it pulls `origin/main` or `origin/master` first, resolves supported metadata conflicts, merges the synced skill execution and command histories into the local home files without dropping local lines, reads the metadata clone's `registry.yml`, overlays non-repository workspace files from the centralized snapshots, and clones missing source and `_external` repos recorded in each metadata `workstation.yml`. Matching paths are overwritten, while local-only files, nested git repositories, and hidden files are preserved. Each repository prints `[current/total]`, while Git streams authentication and object-transfer progress. Workspace-level worktrees remain managed by `mkws`; restoring workspace files does not create worktrees listed by `workspace.yml`.
-
-## Sync workspace tech docs
-User intent: "preview all tech docs per workstation", "refresh the tech doc index", "link every workspace tech doc under each workstation".
-```
-meta-hub sync_tech_doc       # all registered source roots
-meta-hub sync_tech_doc pick  # choose one with fzf
-```
-The command can run from any folder. For each indexed workstation in the metadata repository, it processes local workspaces that already exist on disk. For every workspace in a workstation that has a `tech_doc/` folder, it creates or updates:
-```
-<workstation-root>/tech_doc/<workspace-name>/tech_doc -> <workstation-root>/local_workspaces/<workspace-name>/tech_doc
-```
-If a workspace `tech_doc/` folder is removed, the matching generated symlink is removed on the next run. Real files and real directories are never deleted.
 
 ## Jump to a workspace or repo
 User intent: "jump to a project", "open a workspace folder", "jump to a repo from anywhere".

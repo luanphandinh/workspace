@@ -21,7 +21,7 @@ endif
 lazy_command ?= restore
 shortcut_names ?=
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock nvim-test-linux agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config neovide neovide-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test tunnel-test neovide-remote-test wsync-test go-remote-test go-wrapper-test
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config neovide neovide-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test tunnel-test neovide-remote-test wsync-test go-remote-test go-wrapper-test
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -153,9 +153,6 @@ nvim-lock: ## Refresh nvim/lazy-lock.json from the installed Neovim config.
 
 nvim-test: verify-agent-clis ## Run headless Neovim smoke tests
 	GOWORK=off nvim --headless "+luafile scripts/nvim-smoke-test.lua" +qa
-
-nvim-test-linux: ## Run the Ubuntu Neovim pipeline in a native container
-	./scripts/nvim-test-linux-container.sh
 
 agent-clis: ## Install terminal agent CLIs used by Neovim
 	chmod +x ./scripts/install-agent-clis.sh

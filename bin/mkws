@@ -2123,8 +2123,6 @@ def parse_args(argv):
         elif sub == "skill-sync":
             mode = "skill-sync"
             argv.pop(0)
-        elif sub == "sync_tech_doc":
-            die("`mkws sync_tech_doc` moved to `meta-hub sync_tech_doc`")
         elif sub == "open":
             mode = "open"
             argv.pop(0)

@@ -56,23 +56,6 @@ assert_not_exists() {
 	}
 }
 
-assert_symlink_target() {
-	test -L "$1" || {
-		printf 'expected symlink: %s\n' "$1" >&2
-		exit 1
-	}
-	python3 - "$1" "$2" <<'PY'
-from pathlib import Path
-import sys
-
-link = Path(sys.argv[1])
-target = Path(sys.argv[2])
-if link.resolve() != target.resolve():
-    print(f"expected {link} to point at {target}, got {link.resolve()}", file=sys.stderr)
-    raise SystemExit(1)
-PY
-}
-
 assert_git_repo() {
 	git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
 		printf 'expected git repo: %s\n' "$1" >&2
@@ -187,7 +170,7 @@ test_mkws() {
 	mkws --help >/dev/null
 	EXPECT='unknown subcommand: index' expect_fail_contains mkws index
 	EXPECT='unknown subcommand: setup' expect_fail_contains mkws setup
-	EXPECT='`mkws sync_tech_doc` moved to `meta-hub sync_tech_doc`' expect_fail_contains mkws sync_tech_doc
+	EXPECT='unknown subcommand: sync_tech_doc' expect_fail_contains mkws sync_tech_doc
 
 	(
 		cd "$root"
@@ -694,25 +677,8 @@ EOF
 	repo_path=$(FZF_SELECT="$root/station-b/local_workspaces/feature-b/repo-b" meta_hub r)
 	assert_eq "$root/station-b/local_workspaces/feature-b/repo-b" "$repo_path"
 
-	(
-		cd "$TMP"
-		meta_hub sync_tech_doc >/dev/null
-	)
-	assert_symlink_target \
-		"$root/station-a/tech_doc/feature-a/tech_doc" \
-		"$root/station-a/local_workspaces/feature-a/tech_doc"
-	assert_symlink_target \
-		"$root/station-b/tech_doc/feature-b/tech_doc" \
-		"$root/station-b/local_workspaces/feature-b/tech_doc"
-	rm -rf "$root/station-a/local_workspaces/feature-a/tech_doc"
-	(
-		cd "$TMP"
-		meta_hub sync_tech_doc >/dev/null
-	)
-	assert_not_exists "$root/station-a/tech_doc/feature-a/tech_doc"
-	assert_symlink_target \
-		"$root/station-b/tech_doc/feature-b/tech_doc" \
-		"$root/station-b/local_workspaces/feature-b/tech_doc"
+	EXPECT='unknown argument: sync_tech_doc' expect_fail_contains meta_hub sync_tech_doc
+	assert_contains "$root/station-a/local_workspaces/feature-a/tech_doc/notes.md" "design notes"
 
 	msg=$(git -C "$clone" log -1 --format=%s)
 	case "$msg" in
