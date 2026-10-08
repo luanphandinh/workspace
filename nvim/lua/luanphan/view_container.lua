@@ -3,8 +3,15 @@ local M = {}
 local Container = {}
 Container.__index = Container
 
-local function escape_statusline(value)
-	return tostring(value):gsub("%%", "%%%%")
+function M.tab_label(bufnr)
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return ""
+	end
+	local label = vim.b[bufnr].term_title
+	if type(label) ~= "string" or label == "" or label == vim.api.nvim_buf_get_name(bufnr) then
+		label = vim.b[bufnr].luanphan_view_label or ""
+	end
+	return (label:gsub("[%c]", " "))
 end
 
 local function select_item(title, items, on_select, picker_opts)
@@ -105,9 +112,11 @@ function Container:render(win, context)
 	local parts = {}
 	for _, tab in ipairs(tabs) do
 		local selected = active and tab.id == active.id and tab.bufnr == active.bufnr
-		local label = selected and ("[" .. tab.label .. "]") or tab.label
+		vim.b[tab.bufnr].luanphan_view_label = tab.label
+		local label = string.format("%%{v:lua.require'luanphan.view_container'.tab_label(%d)}", tab.bufnr)
+		label = selected and ("[" .. label .. "]") or label
 		parts[#parts + 1] = selected and "%#TabLineSel#" or "%#TabLine#"
-		parts[#parts + 1] = " " .. escape_statusline(label) .. " "
+		parts[#parts + 1] = " " .. label .. " "
 	end
 	parts[#parts + 1] = "%#TabLineFill#"
 	vim.api.nvim_set_option_value("winbar", table.concat(parts), { win = win, scope = "local" })

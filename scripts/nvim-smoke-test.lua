@@ -37,6 +37,12 @@ local function assert_true(value, message)
   end
 end
 
+local function rendered_winbar(win)
+  win = win or vim.api.nvim_get_current_win()
+  local format = vim.api.nvim_get_option_value("winbar", { win = win })
+  return vim.api.nvim_eval_statusline(format, { winid = win, use_winbar = true, maxwidth = 10000 }).str
+end
+
 local function realpath(path)
   return uv.fs_realpath(path) or path
 end
@@ -874,7 +880,7 @@ local function test_go_test_runs_from_nested_module()
     "local test_buf = vim.api.nvim_get_current_buf()",
     "assert_true(test_buf ~= shell_buf and vim.b[test_buf].luanphan_persist_term, 'Go test did not create a persistent tab')",
     "assert_true(vim.uv.fs_realpath(vim.b[test_buf].luanphan_toggleterm_cwd) == vim.uv.fs_realpath(" .. string.format("%q", workspace) .. "), 'Go test tab was scoped to its package instead of workspace')",
-    "assert_true(vim.api.nvim_get_option_value('winbar', { win = 0 }):find('Go test', 1, true), 'Go test tab label is missing')",
+    "assert_true(vim.api.nvim_eval_statusline(vim.wo.winbar, { use_winbar = true }).str:find('Go test', 1, true), 'Go test tab label is missing')",
     "assert_true(vim.wait(5000, function() return vim.fn.filereadable(" .. string.format("%q", marker) .. ") == 1 end, 50), 'Go test did not run')",
     "local cwd = vim.fn.readfile(" .. string.format("%q", marker) .. ")[1]",
     "assert_true(vim.uv.fs_realpath(cwd) == vim.uv.fs_realpath(" .. string.format("%q", module) .. "), 'Go test ran from ' .. tostring(cwd))",
@@ -3408,7 +3414,7 @@ local function test_agent_view_container(repo)
     local codex_buf = agent_bufnr("codex_agent_bufnr")
     local agent_win = vim.api.nvim_get_current_win()
     local agent_height = vim.api.nvim_win_get_height(agent_win)
-    local winbar = vim.api.nvim_get_option_value("winbar", { win = agent_win })
+    local winbar = rendered_winbar(agent_win)
     assert_true(
       winbar:find("[codex]", 1, true) ~= nil,
       "single agent did not reserve its tab bar: " .. vim.inspect(winbar)
@@ -3440,7 +3446,7 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "opening another agent resized the container")
     assert_right_agent_position(agent_win, "switched agent container")
     assert_terminal_grid_matches(cursor_buf, agent_win, "second agent")
-    winbar = vim.api.nvim_get_option_value("winbar", { win = agent_win })
+    winbar = rendered_winbar(agent_win)
     assert_true(winbar:find("codex", 1, true) ~= nil, "agent tab bar omitted the first terminal")
     assert_true(winbar:find("[cursor]", 1, true) ~= nil, "agent tab bar did not select the current terminal")
 
@@ -3540,7 +3546,7 @@ local function test_agent_view_container(repo)
         and vim.api.nvim_get_current_buf() == agent_bufnr("claude_agent_bufnr")
     end, 3000)
 
-    winbar = vim.api.nvim_get_option_value("winbar", { win = vim.api.nvim_get_current_win() })
+    winbar = rendered_winbar()
     for _, label in ipairs({ "codex 1", "codex 2", "cursor 1", "cursor 2", "claude 1", "claude 2" }) do
       assert_true(winbar:find(label, 1, true) ~= nil, "agent tab bar omitted " .. label)
     end
@@ -3582,8 +3588,23 @@ local function test_agent_view_container(repo)
     local reopened_win = vim.api.nvim_get_current_win()
     assert_true(vim.api.nvim_win_get_height(reopened_win) == agent_height, "reopened agent container changed height")
     assert_right_agent_position(reopened_win, "toggled agent container")
-    winbar = vim.api.nvim_get_option_value("winbar", { win = reopened_win })
+    winbar = rendered_winbar(reopened_win)
     assert_true(winbar:find("[cursor", 1, true) ~= nil, "reopened agent container did not reserve its tab bar")
+
+    vim.fn.chansend(vim.b[codex_buf].terminal_job_id, "\27]2;Background agent thread\7")
+    wait_until("background agent title", function()
+      return vim.b[codex_buf].term_title == "Background agent thread"
+    end, 3000)
+    assert_true(rendered_winbar(reopened_win):find("Background agent thread", 1, true), "hidden agent title was not updated")
+    local cursor_job = vim.b[cursor_buf].terminal_job_id
+    for _, title in ipairs({ "Agent thread title", "Renamed agent thread" }) do
+      vim.fn.chansend(cursor_job, "\27]2;" .. title .. "\7")
+      wait_until("agent terminal title", function()
+        return vim.b[cursor_buf].term_title == title
+      end, 3000)
+      assert_true(rendered_winbar(reopened_win):find("[" .. title .. "]", 1, true), "agent tab ignored its updated terminal title")
+      assert_true(vim.api.nvim_get_current_buf() == cursor_buf, "renaming changed the active agent tab")
+    end
 
     vim.cmd("quit")
     wait_until("agent close focuses another tab", function()
@@ -3653,9 +3674,22 @@ local function test_terminal_view_container(repo)
 
     local second_buf = vim.api.nvim_get_current_buf()
     local second_job = vim.b[second_buf].terminal_job_id
-    local winbar = vim.api.nvim_get_option_value("winbar", { win = vim.api.nvim_get_current_win() })
+    local winbar = rendered_winbar()
     assert_true(winbar:find("terminal 1", 1, true) ~= nil, "terminal tab bar omitted the first terminal")
     assert_true(winbar:find("[terminal 2]", 1, true) ~= nil, "terminal tab bar did not select the new terminal")
+
+    vim.fn.chansend(first_job, "printf '\\033]2;Background shell\\007'\n")
+    wait_until("background shell title", function()
+      return vim.b[first_buf].term_title == "Background shell"
+    end, 3000)
+    assert_true(rendered_winbar():find("Background shell", 1, true), "hidden shell title was not updated")
+    for _, title in ipairs({ "Shell 100% %{1+1}", "Renamed shell" }) do
+      vim.fn.chansend(second_job, "printf '\\033]2;%s\\007' " .. vim.fn.shellescape(title) .. "\n")
+      wait_until("shell terminal title", function()
+        return vim.b[second_buf].term_title == title
+      end, 3000)
+      assert_true(rendered_winbar():find("[" .. title .. "]", 1, true), "shell tab did not render its title literally")
+    end
 
     vim.fn.chansend(second_job, "i=1; while [ \"$i\" -le 100 ]; do printf 'second-%03d\\n' \"$i\"; i=$((i+1)); done\n")
     wait_until("second terminal scrollback", function()
@@ -3687,6 +3721,7 @@ local function test_terminal_view_container(repo)
 
     vim.cmd("stopinsert")
     local next_map = vim.fn.maparg("<Tab>", "n", false, true)
+    assert_true(rendered_winbar():find("[Renamed shell]", 1, true), "reopening lost the terminal title")
     assert_true(type(next_map) == "table" and type(next_map.callback) == "function", "terminal view mode is missing tab cycling")
     next_map.callback()
     wait_until("first terminal view restored", function()
