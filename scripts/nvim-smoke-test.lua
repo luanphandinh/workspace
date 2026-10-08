@@ -2863,6 +2863,77 @@ local function test_neovide_detach_clears_option_callbacks()
   assert_true(unrelated_survived, "Neovide detach removed an unrelated OptionSet callback")
 end
 
+local function test_neovide_detach_restores_tmux_clipboard()
+  local original_clipboard = vim.g.clipboard
+  local original_neovide = vim.g.neovide
+  local original_channel = vim.g.neovide_channel_id
+  local original_env = {}
+  for _, name in ipairs({ "HOME", "PATH", "SSH_CONNECTION", "TMUX" }) do
+    original_env[name] = vim.env[name]
+  end
+  local fixture = temp_root .. "/clipboard-detach"
+  local copied = fixture .. "/copied"
+  write_executable(fixture .. "/bin/tmux-copy-osc52", {
+    "#!/bin/sh",
+    "cat > " .. vim.fn.shellescape(copied),
+  })
+  write_executable(fixture .. "/bin/tmux", {
+    "#!/bin/sh",
+    '[ "$1" = save-buffer ] || exit 1',
+    "printf 'terminal clipboard\\n'",
+  })
+
+  local ok, err = xpcall(function()
+    vim.env.HOME = fixture
+    vim.env.PATH = fixture .. "/bin:" .. original_env.PATH
+    vim.env.SSH_CONNECTION = "127.0.0.1 10000 127.0.0.1 22"
+    vim.env.TMUX = fixture .. "/socket,1,0"
+    local gui_copies = 0
+    local function attach()
+      vim.g.neovide = true
+      vim.g.neovide_channel_id = 424242
+      local function copy()
+        assert_true(vim.g.neovide_channel_id == 424242, "copy called a detached Neovide channel")
+        gui_copies = gui_copies + 1
+      end
+      vim.g.clipboard = {
+        name = "neovide",
+        copy = { ["+"] = copy, ["*"] = copy },
+        paste = { ["+"] = function() return { "GUI clipboard" } end, ["*"] = function() return {} end },
+        cache_enabled = 0,
+      }
+      vim.g.loaded_clipboard_provider = nil
+      vim.cmd.runtime("autoload/provider/clipboard.vim")
+      vim.api.nvim_exec_autocmds("UIEnter", { data = { chan = 424242 } })
+    end
+
+    for cycle = 1, 2 do
+      attach()
+      vim.api.nvim_exec_autocmds("UILeave", { data = { chan = 434343 } })
+      vim.fn.setreg("+", "GUI yank")
+      assert_true(gui_copies == cycle, "another UI detach replaced the Neovide provider")
+      vim.api.nvim_exec_autocmds("UILeave", { data = { chan = 424242 } })
+      for _, register in ipairs({ "+", "*" }) do
+        local text = "terminal yank " .. cycle .. register
+        vim.fn.setreg(register, text)
+        assert_true(table.concat(read_lines(copied), "\n") == text, "terminal yank did not reach the copy helper")
+      end
+      assert_true(vim.trim(vim.fn.getreg("+")) == "terminal clipboard", "terminal paste retained the GUI callback")
+      assert_true(gui_copies == cycle, "terminal yank called the stale Neovide provider")
+    end
+  end, debug.traceback)
+
+  for _, name in ipairs({ "HOME", "PATH", "SSH_CONNECTION", "TMUX" }) do
+    vim.env[name] = original_env[name]
+  end
+  vim.g.clipboard = original_clipboard
+  vim.g.neovide = original_neovide
+  vim.g.neovide_channel_id = original_channel
+  vim.g.loaded_clipboard_provider = nil
+  vim.cmd.runtime("autoload/provider/clipboard.vim")
+  assert_true(ok, err)
+end
+
 local function test_terminal_reference_links()
   local root = temp_root .. "/terminal-references"
   local first_path = root .. "/example-repo/main.go"
@@ -5410,6 +5481,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("Neovide detach clears stale option callbacks", function()
     test_neovide_detach_clears_option_callbacks()
+  end)
+
+  test("Neovide detach restores tmux clipboard across reconnects", function()
+    test_neovide_detach_restores_tmux_clipboard()
   end)
 
   test("agent terminal paths become editor reference links", function()

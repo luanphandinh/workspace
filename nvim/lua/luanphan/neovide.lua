@@ -47,6 +47,13 @@ local function on_ui_leave(args)
   clear_neovide_option_autocmds()
   vim.g.neovide_channel_id = nil
   vim.g.neovide = false
+  if type(vim.g.clipboard) == "table" and vim.g.clipboard.name == "neovide" then
+    vim.g.clipboard = nil
+    require("luanphan.ssh_clipboard").setup()
+    -- The provider caches callbacks independently of g:clipboard.
+    vim.g.loaded_clipboard_provider = nil
+    vim.cmd.runtime("autoload/provider/clipboard.vim")
+  end
 end
 
 local function configure()
