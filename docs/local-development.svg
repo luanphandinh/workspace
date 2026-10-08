@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450" role="img" aria-labelledby="title description">
+  <title id="title">Editor and agent</title>
+  <desc id="description">Neovide connects to Neovim through RPC. Neovim runs mcodex in a terminal buffer, which connects to the Codex app-server through a Unix socket. Optional tmux panes can host Neovim or mcodex.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    </marker>
+    <style>
+      text { font-family: sans-serif; font-size: 16px; fill: #333; text-anchor: middle; }
+      .machine { fill: #ffffde; stroke: #aaaa33; }
+      .component { fill: #ececff; stroke: #9370db; }
+      .connection { fill: none; stroke: #333; stroke-width: 1.5; marker-end: url(#arrow); }
+      .both { marker-start: url(#arrow); }
+      .optional { stroke-dasharray: 4 4; }
+      .label { font-size: 14px; }
+    </style>
+  </defs>
+
+  <rect class="machine" x="12" y="12" width="776" height="426"/>
+  <text x="400" y="39">Local development</text>
+  <rect class="component" x="35" y="100" width="150" height="50"/>
+  <text x="110" y="130">Neovide</text>
+  <rect class="component" x="315" y="100" width="140" height="50"/>
+  <text x="385" y="130">nvim</text>
+  <rect class="component" x="615" y="100" width="140" height="50"/>
+  <text x="685" y="130">tmux</text>
+  <rect class="component" x="315" y="260" width="140" height="50"/>
+  <text x="385" y="290">mcodex</text>
+  <rect class="component" x="285" y="365" width="200" height="55"/>
+  <text x="385" y="398">Codex app-server</text>
+
+  <path class="connection both" d="M 185 125 H 315"/>
+  <text class="label" x="250" y="111">Neovim RPC</text>
+  <path class="connection" d="M 385 150 V 260"/>
+  <text class="label" x="460" y="201">terminal</text>
+  <text class="label" x="460" y="221">buffer</text>
+  <path class="connection both" d="M 385 310 V 365"/>
+  <text class="label" x="460" y="343">Unix socket</text>
+  <path class="connection optional" d="M 615 125 H 455"/>
+  <text class="label" x="535" y="111">optional editor pane</text>
+  <path class="connection optional" d="M 685 150 V 285 H 455"/>
+  <text class="label" x="570" y="272">optional agent pane</text>
+</svg>

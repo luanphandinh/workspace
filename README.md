@@ -61,14 +61,7 @@ and `<leader>ww` a worktree.
 
 ## Editor and agent
 
-```mermaid
-flowchart TB
-    neovide["Neovide"] <-->|"Neovim RPC"| nvim["nvim"]
-    nvim -->|"terminal buffer"| mcodex["mcodex"]
-    mcodex <-->|"Unix socket"| codex["Codex app-server"]
-    tmux["tmux"] -.->|"optional editor pane"| nvim
-    tmux -.->|"optional agent pane"| mcodex
-```
+![Local editor and agent connections](docs/local-development.svg)
 
 Neovide is the graphical UI for Neovim. Neovim runs [`mcodex`](bin/mcodex) in a
 terminal buffer scoped to the working directory. `mcodex` starts or reuses the
@@ -88,27 +81,7 @@ alongside them. New panes inherit the current directory. `Ctrl-b a` pins a sessi
 
 ## Remote development
 
-```mermaid
-%%{init: {"flowchart": {"nodeSpacing": 20, "rankSpacing": 20, "padding": 8}}}%%
-flowchart LR
-    subgraph local["Local machine"]
-        neovide["Neovide"]
-        client["tunnel connect"]
-        desktop["Browser /<br/>clipboard"]
-        client <-->|"URLs /<br/>clipboard"| desktop
-    end
-    subgraph remote["Remote machine"]
-        tmux["tmux"] -.->|"neovide-server"| nvim["nvim"]
-        nvim -->|"terminal<br/>buffer"| mcodex["mcodex"]
-        mcodex <-->|"Unix<br/>socket"| codex["Codex<br/>app-server"]
-        nvim <-->|"URLs /<br/>clipboard"| tunnel["tunnel<br/>open / paste"]
-    end
-    neovide <-->|"neovide-client<br/>SSH / RPC"| nvim
-    client <-->|"reverse SSH"| tunnel
-    %% Invisible links keep local components left of the remote tmux pane.
-    desktop ~~~ tmux
-    neovide ~~~ tmux
-```
+![Remote development: local and remote component connections](docs/remote-development.svg)
 
 ```sh
 # Remote machine, from the workspace directory:
