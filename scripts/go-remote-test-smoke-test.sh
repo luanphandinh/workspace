@@ -18,6 +18,20 @@ REMOTE_BIN="$TMP/remote-bin"
 export REMOTE_BIN
 mkdir -p "$HOME" "$FAKE_REMOTE_HOME" "$LOCAL_ROOT/repo/sub" "$REMOTE_ROOT" "$FAKEBIN" "$REMOTE_BIN"
 
+if [ "$(uname -s)" = Darwin ]; then
+	export GO_REMOTE_TEST_CP="$(command -v cp)"
+	cat > "$REMOTE_BIN/cp" <<'SH'
+#!/bin/sh
+set -eu
+if [ "${1:-}" = -a ] && [ "${2:-}" = --reflink=auto ]; then
+    shift 2
+    exec "$GO_REMOTE_TEST_CP" -a "$@"
+fi
+exec "$GO_REMOTE_TEST_CP" "$@"
+SH
+	chmod +x "$REMOTE_BIN/cp"
+fi
+
 printf 'package example\n' > "$LOCAL_ROOT/repo/example.go"
 printf 'module example.com/repository\n\ngo 1.22\n' > "$LOCAL_ROOT/repo/go.mod"
 printf 'snapshot-source\n' > "$LOCAL_ROOT/repo/source.txt"

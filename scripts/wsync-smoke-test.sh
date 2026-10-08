@@ -2,7 +2,9 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-TMP=$(mktemp -d)
+# Keep the daemon's Unix socket path within macOS limits.
+TMP=$(mktemp -d /tmp/wsync-test.XXXXXX)
+TMP=$(CDPATH= cd -- "$TMP" && pwd -P)
 REAL_MUTAGEN=$(command -v mutagen)
 REAL_MUTAGEN_DATA="$TMP/real-mutagen-data"
 
@@ -33,6 +35,18 @@ shift
 HOME=$FAKE_REMOTE_HOME sh -c "$1"
 SH
 chmod +x "$FAKEBIN/ssh"
+
+if [ "$(uname -s)" = Darwin ]; then
+	cat > "$FAKEBIN/realpath" <<'PY'
+#!/usr/bin/env python3
+import os
+import sys
+
+assert sys.argv[1:3] == ["-m", "--"] and len(sys.argv) == 4
+print(os.path.realpath(sys.argv[3]))
+PY
+	chmod +x "$FAKEBIN/realpath"
+fi
 
 cat > "$FAKEBIN/mutagen" <<'SH'
 #!/bin/sh

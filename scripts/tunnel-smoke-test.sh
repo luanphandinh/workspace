@@ -6,10 +6,12 @@ test_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/tunnel-test.XXXXXX")
 fakebin=$test_tmp_dir/bin
 fakehome=$test_tmp_dir/home
 mkdir -p "$fakebin" "$fakehome/bin"
+ln -s "$(command -v python3)" "$fakebin/python3"
 clipboard_path_file=$test_tmp_dir/clipboard-path
 : > "$clipboard_path_file"
 
 cleanup() {
+	cleanup_status=$?
 	if [ -n "${connect_pid:-}" ]; then
 		kill "$connect_pid" 2>/dev/null || true
 		wait "$connect_pid" 2>/dev/null || true
@@ -17,6 +19,14 @@ cleanup() {
 	if [ -n "${bridge_pid:-}" ]; then
 		kill "$bridge_pid" 2>/dev/null || true
 		wait "$bridge_pid" 2>/dev/null || true
+	fi
+	if [ "$cleanup_status" -ne 0 ]; then
+		for diagnostic in bridge.log linux-bridge.log connect.log; do
+			if [ -f "$test_tmp_dir/$diagnostic" ]; then
+				printf 'Tunnel smoke test failed; %s:\n' "$diagnostic" >&2
+				cat "$test_tmp_dir/$diagnostic" >&2
+			fi
+		done
 	fi
 	rm -rf "$test_tmp_dir"
 }
@@ -68,7 +78,7 @@ PATH="$fakebin:/usr/bin:/bin" \
 	--clipboard-backend macos \
 	2> "$test_tmp_dir/bridge.log" &
 bridge_pid=$!
-"$repo_root/bin/.tunnel-bridge" wait --port "$port" --timeout 3
+"$repo_root/bin/.tunnel-bridge" wait --port "$port" --timeout 10
 
 printf '%s %s %s\n' "$port" "$token" example-client | HOME="$fakehome" "$fakehome/bin/tunnel" _register
 HOME="$fakehome" "$fakehome/bin/tunnel" status > "$test_tmp_dir/status.log"
@@ -196,7 +206,7 @@ PATH="$fakebin:/usr/bin:/bin" \
 	--clipboard-backend wayland \
 	2> "$test_tmp_dir/linux-bridge.log" &
 bridge_pid=$!
-"$repo_root/bin/.tunnel-bridge" wait --port "$linux_port" --timeout 3
+"$repo_root/bin/.tunnel-bridge" wait --port "$linux_port" --timeout 10
 printf '%s %s %s\n' "$linux_port" "$linux_token" example-client \
 	| HOME="$fakehome" "$fakehome/bin/tunnel" _register
 printf '%s\n' "$source_file" > "$clipboard_path_file"

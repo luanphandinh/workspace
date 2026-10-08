@@ -3649,6 +3649,12 @@ end
 local function test_terminal_view_container(repo)
   local old_cwd = vim.fn.getcwd()
   close_toggleterm_terminals()
+  require("lazy").load({ plugins = { "toggleterm.nvim" } })
+  local terminal_config = require("toggleterm.config").get()
+  local original_shell = terminal_config.shell
+  local original_env = vim.env.ENV
+  terminal_config.shell = "/bin/sh"
+  vim.env.ENV = nil
 
   local ok, err = xpcall(function()
     vim.cmd("cd " .. vim.fn.fnameescape(repo))
@@ -3751,6 +3757,8 @@ local function test_terminal_view_container(repo)
   end, debug.traceback)
 
   close_toggleterm_terminals()
+  terminal_config.shell = original_shell
+  vim.env.ENV = original_env
   if vim.fn.isdirectory(old_cwd) == 1 then
     pcall(vim.cmd, "cd " .. vim.fn.fnameescape(old_cwd))
   end

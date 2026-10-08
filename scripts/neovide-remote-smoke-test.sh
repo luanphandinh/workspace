@@ -5,14 +5,24 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 test_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/neovide-remote-test.XXXXXX")
 fakebin=$test_tmp_dir/bin
 mkdir -p "$fakebin"
+ln -s "$(command -v python3)" "$fakebin/python3"
 
 cleanup() {
+	cleanup_status=$?
 	if [ -n "${latency_bridge_pid:-}" ]; then
 		kill "$latency_bridge_pid" 2>/dev/null || true
 		wait "$latency_bridge_pid" 2>/dev/null || true
 	fi
 	if [ -f "$test_tmp_dir/ssh-listener.pid" ]; then
 		kill "$(cat "$test_tmp_dir/ssh-listener.pid")" 2>/dev/null || true
+	fi
+	if [ "$cleanup_status" -ne 0 ]; then
+		for diagnostic in latency-bridge.log server.log client.log; do
+			if [ -f "$test_tmp_dir/$diagnostic" ]; then
+				printf 'Neovide smoke test failed; %s:\n' "$diagnostic" >&2
+				cat "$test_tmp_dir/$diagnostic" >&2
+			fi
+		done
 	fi
 	rm -rf "$test_tmp_dir"
 }
