@@ -3,13 +3,13 @@ local M = {}
 local Container = {}
 Container.__index = Container
 
-function M.tab_label(bufnr)
+function M.tab_label(bufnr, fallback)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return ""
 	end
 	local label = vim.b[bufnr].term_title
 	if type(label) ~= "string" or label == "" or label == vim.api.nvim_buf_get_name(bufnr) then
-		label = vim.b[bufnr].luanphan_view_label or ""
+		label = fallback or vim.b[bufnr].luanphan_view_label or ""
 	end
 	return (label:gsub("[%c]", " "))
 end

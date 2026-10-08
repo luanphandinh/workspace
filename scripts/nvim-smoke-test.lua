@@ -2446,10 +2446,14 @@ local function test_active_agent_discovery(repo, worktree)
   local buffers = {}
   local agents_module = nil
   local original_focus = nil
-  local function start_terminal(cwd)
+  local function start_terminal(cwd, title)
     vim.cmd("enew")
     local buf = vim.api.nvim_get_current_buf()
-    local job = vim.fn.termopen({ "sh", "-c", "sleep 30" }, { cwd = cwd })
+    local command = "sleep 30"
+    if title then
+      command = "printf '\\033]2;%s\\007' " .. vim.fn.shellescape(title) .. "; " .. command
+    end
+    local job = vim.fn.termopen({ "sh", "-c", command }, { cwd = cwd })
     assert_true(type(job) == "number" and job > 0, "failed to start active agent fixture")
     jobs[#jobs + 1] = job
     buffers[#buffers + 1] = buf
@@ -2457,8 +2461,8 @@ local function test_active_agent_discovery(repo, worktree)
   end
 
   local ok, err = xpcall(function()
-    local repo_codex_buf = start_terminal(repo)
-    local worktree_codex_buf = start_terminal(worktree)
+    local repo_codex_buf = start_terminal(repo, "Review example parser")
+    local worktree_codex_buf = start_terminal(worktree, "Fix test failures")
     local worktree_cursor_buf = start_terminal(worktree)
     vim.b[repo_codex_buf].luanphan_agent_last_used = 3
     vim.b[worktree_codex_buf].luanphan_agent_last_used = 2
@@ -2468,10 +2472,21 @@ local function test_active_agent_discovery(repo, worktree)
     vim.g.claude_agent_bufnr = { [repo] = 999999 }
     assert_true(agent_status.write("codex", repo, "running"), "failed to record first agent state")
     assert_true(agent_status.write("cursor", worktree, "idle"), "failed to record second agent state")
+    wait_until("agent picker terminal titles", function()
+      return vim.b[repo_codex_buf].term_title == "Review example parser"
+        and vim.b[worktree_codex_buf].term_title == "Fix test failures"
+    end, 3000)
 
     local instances = api.list_active_agents()
     assert_true(#instances == 3, "active agent discovery returned an unexpected instance count")
     assert_true(instances[1].bufnr == repo_codex_buf, "active agent was not first in recency order")
+    assert_true(instances[1].agent_label == "Review example parser", "agent picker ignored the thread title")
+    assert_true(instances[1].display:find("Review example parser", 1, true), "agent picker display omitted the title")
+    assert_true(instances[1].ordinal:find("Review example parser", 1, true), "thread title is not searchable")
+    assert_true(instances[3].agent_label == "cursor", "untitled agent did not retain its fallback label")
+    vim.b[repo_codex_buf].term_title = "Renamed parser review"
+    instances = api.list_active_agents()
+    assert_true(instances[1].bufnr == repo_codex_buf and instances[1].agent_label == "Renamed parser review", "renaming changed picker identity or left a stale title")
     local switch_targets = api.agent_switch_targets(instances)
     assert_true(#switch_targets == 3, "agent switch targets discarded an active agent")
     assert_true(switch_targets[1].bufnr == worktree_codex_buf, "previous agent was not the first suggestion")
