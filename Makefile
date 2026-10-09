@@ -21,7 +21,7 @@ endif
 lazy_command ?= restore
 shortcut_names ?=
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-menu-bar macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config neovide neovide-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test tunnel-test neovide-remote-test wsync-test go-remote-test go-wrapper-test
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config neovide neovide-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test tunnel-test neovide-remote-test wsync-test go-remote-test go-wrapper-test
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -59,38 +59,13 @@ ifeq ($(UNAME),Darwin)
 		echo "apps: Homebrew is required on macOS" >&2; \
 		exit 1; \
 	fi
-	@for app in maccy arc stats codexbar; do brew install --cask "$$app" || true; done
+	@for app in maccy arc stats codexbar monitorcontrol; do brew install --cask "$$app" || true; done
 	@if command -v codexbar >/dev/null 2>&1; then \
 		codexbar config enable --provider codex; \
 		codexbar config enable --provider cursor; \
 	fi
-	@pkill -x Stats >/dev/null 2>&1 || true
-	@sleep 1
-	@defaults write eu.exelban.Stats version -string "$$(plutil -extract CFBundleShortVersionString raw -o - /Applications/Stats.app/Contents/Info.plist)"
-	@$(MAKE) macos-menu-bar
 else
 	@echo "apps: skipped; macOS-only"
-endif
-
-macos-menu-bar: ## Restore the preferred macOS menu bar layout
-ifeq ($(UNAME),Darwin)
-	@defaults -currentHost write com.apple.Spotlight MenuItemHidden -int 1
-	@for module in CPU RAM Battery; do defaults write eu.exelban.Stats "$${module}_state" -bool true; done
-	@for module in GPU Disk Sensors Network Bluetooth Clock Remote; do defaults write eu.exelban.Stats "$${module}_state" -bool false; done
-	@defaults write eu.exelban.Stats setupProcess -bool true
-	@defaults write com.steipete.codexbar "NSStatusItem Preferred Position codexbar-merged" -int 489
-	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position CPU_mini" -int 442
-	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position RAM_mini" -int 395
-	@defaults write eu.exelban.Stats "NSStatusItem Preferred Position Battery_battery" -int 289
-	@defaults write org.p0deje.Maccy "NSStatusItem Preferred Position Item-0" -int 363
-	@for process in CodexBar Stats Maccy; do pkill -x "$$process" >/dev/null 2>&1 || true; done
-	@killall SystemUIServer >/dev/null 2>&1 || true
-	@sleep 1
-	@for app in /Applications/CodexBar.app /Applications/Stats.app /Applications/Maccy.app; do \
-		test ! -d "$$app" || open -gj "$$app"; \
-	done
-else
-	@echo "macos-menu-bar: skipped; macOS-only"
 endif
 
 macos-keyboard: ## Map Caps Lock to Escape at login on macOS
