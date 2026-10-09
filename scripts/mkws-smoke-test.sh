@@ -11,24 +11,7 @@ trap cleanup EXIT INT TERM
 
 export HOME="$TMP/home"
 export PYTHONPYCACHEPREFIX="$TMP/pycache"
-FAKEBIN="$TMP/fakebin"
-FZF_INPUT="$TMP/fzf-input"
-FZF_ARGS="$TMP/fzf-args"
-export FZF_INPUT FZF_ARGS
-mkdir -p "$HOME" "$FAKEBIN"
-export PATH="$FAKEBIN:$PATH"
-
-cat > "$FAKEBIN/fzf" <<'SH'
-#!/bin/sh
-printf '%s\n' "$*" >> "$FZF_ARGS"
-cat > "$FZF_INPUT"
-if [ -n "${FZF_SELECT:-}" ]; then
-	grep -F "$FZF_SELECT" "$FZF_INPUT" | head -n 1
-else
-	sed -n '1p' "$FZF_INPUT"
-fi
-SH
-chmod +x "$FAKEBIN/fzf"
+mkdir -p "$HOME"
 
 mkws() {
 	python3 "$ROOT/bin/mkws" "$@"
@@ -644,15 +627,6 @@ EOF
 	meta_hub index -p "$root/station-a" >/dev/null
 	assert_not_exists "$clone/workstations.yml"
 
-	: > "$FZF_ARGS"
-	project_path=$(FZF_SELECT="feature-b" meta_hub project)
-	assert_eq "$root/station-b/local_workspaces/feature-b" "$project_path"
-	assert_contains "$FZF_INPUT" "$root/station-a/local_workspaces/feature-a"
-	assert_contains "$FZF_INPUT" "$root/station-b/local_workspaces/feature-b"
-	assert_contains "$FZF_ARGS" "--height ~100% --prompt meta-project> "
-	project_path=$(FZF_SELECT="feature-b" meta_hub p)
-	assert_eq "$root/station-b/local_workspaces/feature-b" "$project_path"
-
 	mkdir -p "$root/station-c"
 	init_repo "$root/station-c/repo-c"
 	add_origin_remote "$root/station-c/repo-c" "$TMP/repo-c.git"
@@ -663,19 +637,12 @@ EOF
 	assert_not_exists "$clone/station-c/workstation.yml"
 	assert_not_contains "$clone/registry.yml" "station-c/workstation.yml"
 	meta_hub index -p "$root/station-c" >/dev/null
-	FZF_SELECT="feature-b" meta_hub project >/dev/null
-	assert_contains "$FZF_INPUT" "$root/station-c/local_workspaces/feature-c"
 	assert_contains "$clone/registry.yml" "station-c/workstation.yml"
-	project_path=$(FZF_SELECT="feature-c" meta_hub project)
-	assert_eq "$root/station-c/local_workspaces/feature-c" "$project_path"
+	assert_exists "$clone/station-c/local_workspaces/feature-c/workspace.yml"
 
-	repo_path=$(FZF_SELECT="$root/station-b/local_workspaces/feature-b/repo-b" meta_hub repo)
-	assert_eq "$root/station-b/local_workspaces/feature-b/repo-b" "$repo_path"
-	assert_contains "$FZF_INPUT" "$root/station-a/repo-a"
-	assert_contains "$FZF_INPUT" "$root/station-b/local_workspaces/feature-b/repo-b"
-	assert_contains "$FZF_INPUT" "$root/station-c/local_workspaces/feature-c/repo-c"
-	repo_path=$(FZF_SELECT="$root/station-b/local_workspaces/feature-b/repo-b" meta_hub r)
-	assert_eq "$root/station-b/local_workspaces/feature-b/repo-b" "$repo_path"
+	for mode in project p repo r; do
+		EXPECT="unknown argument: $mode" expect_fail_contains meta_hub "$mode"
+	done
 
 	EXPECT='unknown argument: sync_tech_doc' expect_fail_contains meta_hub sync_tech_doc
 	assert_contains "$root/station-a/local_workspaces/feature-a/tech_doc/notes.md" "design notes"

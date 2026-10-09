@@ -91,25 +91,9 @@ exec /bin/ps "$@"
 SH
 chmod +x "$fakebin/ps"
 
-project_jump="$tmp/project-jump"
-repo_jump="$tmp/repo-jump"
-mkdir -p "$project_jump" "$repo_jump"
-project_jump=$(CDPATH= cd -- "$project_jump" && pwd -P)
-repo_jump=$(CDPATH= cd -- "$repo_jump" && pwd -P)
 cat > "$fakebin/meta-hub" <<SH
 #!/bin/sh
 printf '%s\n' "\$*" >> "$tmp/meta-hub.log"
-case "\${1:-}" in
-  project|p)
-    printf '%s\n' "$project_jump"
-    ;;
-  repo|r)
-    printf '%s\n' "$repo_jump"
-    ;;
-  *)
-    exit 0
-    ;;
-esac
 SH
 chmod +x "$fakebin/meta-hub"
 
@@ -221,19 +205,12 @@ test ! -e "$duplicate_home/app-server-daemon/daemon-updater.pid"
 test ! -e "$duplicate_home/app-server-daemon/daemon-updater.sock"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/bin/shell/workspace.sh'; ! command -v mcodex >/dev/null 2>&1"
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; meta-hub project; test \"\$PWD\" = '$project_jump'"
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; meta-hub repo; test \"\$PWD\" = '$repo_jump'"
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; meta-hub p; test \"\$PWD\" = '$project_jump'"
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; meta-hub r; test \"\$PWD\" = '$repo_jump'"
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; before=\$PWD; meta-hub pull; test \"\$PWD\" = \"\$before\""
-grep -Fxq 'project' "$tmp/meta-hub.log"
-grep -Fxq 'repo' "$tmp/meta-hub.log"
-grep -Fxq 'p' "$tmp/meta-hub.log"
-grep -Fxq 'r' "$tmp/meta-hub.log"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c "meta-hub() { cd '$tmp'; }; . '$repo_root/bin/shell/workspace.sh'; before=\$PWD; meta-hub pull; test \"\$PWD\" = \"\$before\""
 grep -Fxq 'pull' "$tmp/meta-hub.log"
 
 zsh_bin=$(command -v zsh || true)
 if [ -n "$zsh_bin" ]; then
+  PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc "meta-hub() { cd '$tmp'; }; . '$repo_root/bin/shell/workspace.sh'; before=\$PWD; meta-hub pull; test \"\$PWD\" = \"\$before\""
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/bin/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = zsh"
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/bin/shell/workspace.sh'; test \"\$FZF_INIT_SHELL\" = zsh"
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/bin/shell/workspace.sh'; test \"\$PROMPT\" = '%1~ %# '"

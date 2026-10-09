@@ -366,120 +366,6 @@ def read_cached_workstations(entry: dict, required: bool = True) -> list:
     return []
 
 
-def registered_workstation_contexts(entries: list = None, required: bool = True) -> list:
-    entries = read_registry() if entries is None else entries
-    if not entries:
-        die("no info entries; run `meta-hub -f . -r <git-repository>` first")
-    out = []
-    for entry in entries:
-        root = Path(entry["root"]).resolve()
-        clone = Path(entry["clone"]).expanduser().resolve()
-        ensure_clone(entry["repo"], clone)
-        workstations = read_cached_workstations(entry, required=required)
-        for workstation in workstations:
-            rel_root = workstation.get("root") or "."
-            station_root = safe_source_path(root, rel_root)
-            metadata_prefix = Path() if rel_root == "." else Path(rel_root)
-            out.append({
-                "entry": entry,
-                "root": root,
-                "clone": clone,
-                "workstation": workstation,
-                "station_root": station_root,
-                "metadata_prefix": metadata_prefix,
-            })
-    return out
-
-
-def workspace_name(workspace_yml: Path) -> str:
-    data = read_workspace_manifest_text(workspace_yml.read_text())
-    return data.get("name") or workspace_yml.parent.name
-
-
-def add_candidate(candidates: list, seen_paths: set, label: str, path: Path) -> None:
-    resolved = path.resolve()
-    key = str(resolved)
-    if key in seen_paths:
-        return
-    seen_paths.add(key)
-    candidates.append({"label": f"{label} | {resolved}", "path": key})
-
-
-def project_candidates() -> list:
-    candidates = []
-    seen_paths = set()
-    for ctx in registered_workstation_contexts(required=True):
-        workstation = ctx["workstation"]
-        station_root = ctx["station_root"]
-        metadata_root = ctx["clone"] / ctx["metadata_prefix"]
-        station_name = workstation.get("name") or station_root.name
-        for workspace_yml in sorted((metadata_root / WS_CONTAINER).glob(f"*/{WORKSPACE_FILE}")):
-            name = workspace_name(workspace_yml)
-            local_workspace = station_root / WS_CONTAINER / workspace_yml.parent.name
-            if local_workspace.is_dir():
-                add_candidate(candidates, seen_paths, f"{name} | {station_name}", local_workspace)
-    return sorted(candidates, key=lambda item: item["label"])
-
-
-def repo_candidates() -> list:
-    candidates = []
-    seen_paths = set()
-    for ctx in registered_workstation_contexts(required=True):
-        workstation = ctx["workstation"]
-        station_root = ctx["station_root"]
-        metadata_root = ctx["clone"] / ctx["metadata_prefix"]
-        station_name = workstation.get("name") or station_root.name
-        manifest_rel = workstation.get("manifest") or WORKSTATION_FILE
-        manifest = ctx["clone"] / manifest_rel
-        if manifest.is_file():
-            data = read_workstation_manifest_text(manifest.read_text())
-            for repo in data.get("repos", []):
-                repo_data = normalize_repo_record(repo)
-                repo_path = station_root / (repo_data["path"] or repo_data["name"])
-                if (repo_path / ".git").exists():
-                    add_candidate(candidates, seen_paths, f"{repo_data['name']} | {station_name} | source", repo_path)
-        for workspace_yml in sorted((metadata_root / WS_CONTAINER).glob(f"*/{WORKSPACE_FILE}")):
-            project_name = workspace_name(workspace_yml)
-            workspace_dir = station_root / WS_CONTAINER / workspace_yml.parent.name
-            if not workspace_dir.is_dir():
-                continue
-            for child in sorted(p for p in workspace_dir.iterdir() if p.is_dir()):
-                if (child / ".git").exists():
-                    add_candidate(candidates, seen_paths, f"{child.name} | {station_name}/{project_name} | workspace", child)
-    return sorted(candidates, key=lambda item: item["label"])
-
-
-def pick_path(candidates: list, prompt: str) -> str:
-    if not candidates:
-        die(f"no {prompt.rstrip('> ')} candidates found")
-    if shutil.which("fzf") is None:
-        die("fzf is required")
-    labels = [item["label"] for item in candidates]
-    paths = {item["label"]: item["path"] for item in candidates}
-    proc = subprocess.run(
-        ["fzf", "--height", "~100%", "--prompt", prompt],
-        input="\n".join(labels) + "\n",
-        stdout=subprocess.PIPE,
-        text=True,
-    )
-    selected = proc.stdout.strip()
-    if proc.returncode != 0 or not selected:
-        die(f"no {prompt.rstrip('> ')} selected")
-    if selected not in paths:
-        die("selected path was not found")
-    return paths[selected]
-
-
-def cmd_project() -> int:
-    print(pick_path(project_candidates(), "meta-project> "))
-    return 0
-
-
-def cmd_repo() -> int:
-    print(pick_path(repo_candidates(), "meta-repo> "))
-    return 0
-
-
 def read_synced_registry_text(text: str) -> dict:
     data = {"version": "v2", "remote": "", "workstations": []}
     section = ""
@@ -1585,10 +1471,6 @@ Usage:
   meta-hub index -p <workstation-folder>
   meta-hub pull [pick]
   meta-hub push [pick]
-  meta-hub project
-  meta-hub p
-  meta-hub repo
-  meta-hub r
 
 Options:
   -f <folder>          source folder containing workstation metadata; defaults to .
@@ -1636,14 +1518,6 @@ def main() -> None:
         elif argv:
             die(f"unexpected args for {mode}: {' '.join(argv)}\n\n{USAGE}")
         sys.exit(run_entries(mode, pick))
-
-    if argv[0] in ("project", "p", "repo", "r"):
-        mode = argv.pop(0)
-        if argv:
-            die(f"unexpected args for {mode}: {' '.join(argv)}\n\n{USAGE}")
-        if mode in ("project", "p"):
-            sys.exit(cmd_project())
-        sys.exit(cmd_repo())
 
     folder = "."
     repo = ""
