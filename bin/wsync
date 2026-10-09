@@ -249,8 +249,10 @@ def project_yaml(
     endpoint: str,
     include_git: bool = False,
     tracked_dot_ignores: tuple[str, ...] = (),
+    extra_ignores: tuple[str, ...] = (),
 ) -> str:
     ignore_paths = GIT_IGNORE_PATHS + tracked_dot_ignores if include_git else DEFAULT_IGNORE_PATHS
+    ignore_paths += extra_ignores
     lines = [
         "sync:",
         f"  {name}:",
@@ -317,7 +319,35 @@ def load_session(name: str) -> tuple[dict, Path]:
         die(f"invalid session metadata: {metadata_file}")
     if metadata["version"] != 1 or metadata["name"] != name:
         die(f"session metadata does not match: {metadata_file}")
+    ignores = metadata.get("ignore_paths", [])
+    if not isinstance(ignores, list) or not all(isinstance(path, str) for path in ignores):
+        die(f"invalid ignore paths: {metadata_file}")
+    for path in ignores:
+        normalize_ignore_path(path)
     return metadata, project_file
+
+
+def normalize_ignore_path(value: str) -> str:
+    path = value.rstrip("/")
+    if (
+        not path
+        or any(character in path for character in "\r\n\0*?[]\\!")
+        or any(part in ("", ".", "..") for part in path.lstrip("/").split("/"))
+        or path.startswith(("~", "//"))
+    ):
+        die(f"ignore path must be a literal directory path relative to the sync root: {value!r}")
+    return path + "/"
+
+
+def path_ignored(relative: PurePosixPath, ignores: list[str] | tuple[str, ...]) -> bool:
+    for pattern in ignores:
+        parts = PurePosixPath(pattern.lstrip("/")).parts
+        if not pattern.startswith("/") and len(parts) == 1:
+            if parts[0] in relative.parts:
+                return True
+        elif relative.parts[:len(parts)] == parts:
+            return True
+    return False
 
 
 def configured_sessions() -> list[tuple[dict, Path]]:
@@ -400,6 +430,8 @@ def resolve_session(local_path: Path) -> dict:
     _, metadata, project_file, relative = matches[0]
     if any(part.startswith(".") for part in relative.parts):
         die(f"local path is ignored by the wsync dot-entry rule: {resolved_path}", 3)
+    if path_ignored(relative, metadata.get("ignore_paths", [])):
+        die(f"local path is ignored by the wsync directory rule: {resolved_path}", 3)
 
     require_command("mutagen")
     mutagen_session(metadata)
@@ -446,10 +478,12 @@ def confirm_create(name: str, local_root: Path, endpoint: str, resolved_remote: 
         die("cancelled")
 
 
-def confirm_reconfigure(name: str, yes: bool) -> None:
+def confirm_reconfigure(name: str, include_git: bool, ignores: tuple[str, ...], yes: bool) -> None:
     print(f"Session:      {name}")
-    print("Change:       include Git metadata and tracked dot entries")
-    print("Exclusions:   Git hooks, reflogs, and lock files")
+    print(f"Git metadata: {'included' if include_git else 'excluded'}")
+    if ignores:
+        print(f"Ignore paths: {', '.join(ignores)}")
+        print("Ignored directories will be left intact on both endpoints.")
     print("Warning: the synchronization session will be restarted.")
     if yes:
         return
@@ -463,6 +497,7 @@ def command_create(args) -> None:
     require_command("ssh")
     require_command("mutagen")
     validate_name(args.name)
+    ignores = tuple(dict.fromkeys(normalize_ignore_path(path) for path in args.ignore))
     directory = session_dir(args.name)
     if directory.exists():
         die(f"wsync session already exists: {args.name}")
@@ -482,12 +517,13 @@ def command_create(args) -> None:
         "remote_root": remote_root,
         "resolved_remote_root": remote["resolved"],
         "marker": marker,
+        "ignore_paths": list(ignores),
     }
     remote_call(host, "initialize", remote_root, marker)
     project_file = write_session(
         args.name,
         metadata,
-        project_yaml(args.name, local_root, args.remote),
+        project_yaml(args.name, local_root, args.remote, extra_ignores=ignores),
     )
     try:
         run_mutagen("start", project_file)
@@ -519,6 +555,10 @@ def validate_git_sync(metadata: dict) -> None:
     remote_root = PurePosixPath(metadata["resolved_remote_root"])
 
     for current, directories, files in os.walk(local_root, followlinks=False):
+        directories[:] = [
+            directory for directory in directories
+            if not path_ignored((Path(current) / directory).relative_to(local_root), metadata.get("ignore_paths", []))
+        ]
         if ".git" in directories and (Path(current) / ".git").is_symlink():
             die(f"refusing symbolic-link Git metadata: {Path(current) / '.git'}")
         if ".git" not in files:
@@ -544,6 +584,8 @@ def validate_git_sync(metadata: dict) -> None:
             relative_target = target.relative_to(local_root)
         except (FileNotFoundError, RuntimeError, ValueError) as error:
             die(f"Git worktree pointer escapes or is missing from the synchronized root: {git_file}: {error}")
+        if path_ignored(relative_target, metadata.get("ignore_paths", [])):
+            die(f"Git worktree pointer targets ignored metadata: {git_file}")
 
         if Path(raw_target).is_absolute():
             expected_remote_target = remote_root.joinpath(*relative_target.parts)
@@ -554,9 +596,13 @@ def validate_git_sync(metadata: dict) -> None:
                 )
 
 
-def tracked_dot_ignores(local_root: Path) -> tuple[str, ...]:
+def tracked_dot_ignores(local_root: Path, ignores: tuple[str, ...] = ()) -> tuple[str, ...]:
     repositories = set()
     for current, directories, files in os.walk(local_root, followlinks=False):
+        directories[:] = [
+            directory for directory in directories
+            if not path_ignored((Path(current) / directory).relative_to(local_root), ignores)
+        ]
         if ".git" in directories:
             repositories.add(Path(current))
             directories.remove(".git")
@@ -581,6 +627,8 @@ def tracked_dot_ignores(local_root: Path) -> tuple[str, ...]:
             if not encoded_path:
                 continue
             tracked_path = PurePosixPath(os.fsdecode(encoded_path))
+            if path_ignored(repository.relative_to(local_root) / tracked_path, ignores):
+                continue
             prefix = []
             for index, part in enumerate(tracked_path.parts):
                 prefix.append(part)
@@ -603,35 +651,39 @@ def command_push(args) -> None:
 
 
 def command_reconfigure(args) -> None:
-    if not args.include_git:
-        die("no configuration change requested; pass --include-git")
+    if not args.include_git and not args.ignore:
+        die("no configuration change requested; pass --include-git or --ignore PATH")
+    requested_ignores = tuple(normalize_ignore_path(path) for path in args.ignore)
 
     require_command("ssh")
     require_command("mutagen")
     metadata, project_file = load_session(args.name)
     verify_session(metadata)
     mutagen_session(metadata)
-    validate_git_sync(metadata)
+    include_git = args.include_git or metadata.get("include_git") is True
+    ignores = tuple(dict.fromkeys((*metadata.get("ignore_paths", []), *requested_ignores)))
+    updated_metadata = dict(metadata, include_git=include_git, ignore_paths=list(ignores))
+    if include_git:
+        validate_git_sync(updated_metadata)
 
     local_root = Path(metadata["local_root"])
     updated_project = project_yaml(
         args.name,
         local_root,
         metadata["endpoint"],
-        include_git=True,
-        tracked_dot_ignores=tracked_dot_ignores(local_root),
+        include_git=include_git,
+        tracked_dot_ignores=tracked_dot_ignores(local_root, ignores) if include_git else (),
+        extra_ignores=ignores,
     )
-    if metadata.get("include_git") is True and project_file.read_text() == updated_project:
-        print(f"wsync session already includes current Git metadata: {args.name}")
+    if project_file.read_text() == updated_project:
+        print(f"wsync session configuration is already current: {args.name}")
         return
 
-    confirm_reconfigure(args.name, args.yes)
+    confirm_reconfigure(args.name, include_git, ignores, args.yes)
 
     metadata_file = session_dir(args.name) / "session.json"
     previous_project = project_file.read_text()
     previous_metadata = metadata_file.read_text()
-    updated_metadata = dict(metadata)
-    updated_metadata["include_git"] = True
 
     run_mutagen("flush", project_file)
     run_mutagen("terminate", project_file)
@@ -652,7 +704,7 @@ def command_reconfigure(args) -> None:
             print("note: previous synchronization configuration was restored", file=sys.stderr)
         raise
 
-    print(f"wsync session reconfigured to include Git metadata: {args.name}")
+    print(f"wsync session reconfigured: {args.name}")
 
 
 def command_status(args) -> None:
@@ -712,12 +764,14 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("name")
     create.add_argument("local_root")
     create.add_argument("remote")
+    create.add_argument("--ignore", action="append", default=[], metavar="PATH", help="ignore a directory; a single name matches at any depth, /PATH anchors to the root (repeatable)")
     create.add_argument("--yes", action="store_true", help="skip the interactive confirmation")
     create.set_defaults(handler=command_create)
 
     reconfigure = commands.add_parser("reconfigure", help="replace a session configuration safely")
     reconfigure.add_argument("name")
     reconfigure.add_argument("--include-git", action="store_true", help="synchronize Git metadata")
+    reconfigure.add_argument("--ignore", action="append", default=[], metavar="PATH", help="add a directory ignore without replacing existing rules (repeatable)")
     reconfigure.add_argument("--yes", action="store_true", help="skip the interactive confirmation")
     reconfigure.set_defaults(handler=command_reconfigure)
 

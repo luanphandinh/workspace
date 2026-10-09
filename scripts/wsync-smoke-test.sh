@@ -117,6 +117,14 @@ expect_fail_contains() {
 }
 
 mkdir -p "$HOME/source/.cache" "$HOME/source/.review"
+mkdir -p "$HOME/source/_external/repo" "$HOME/source/nested/_external/repo" \
+	"$HOME/source/cache" "$HOME/source/nested/cache" "$HOME/source/generated/output"
+printf 'external\n' > "$HOME/source/_external/repo/file.txt"
+printf 'nested external\n' > "$HOME/source/nested/_external/repo/file.txt"
+printf 'gitdir: /missing/metadata\n' > "$HOME/source/_external/repo/.git"
+printf 'cache\n' > "$HOME/source/cache/value"
+printf 'nested cache\n' > "$HOME/source/nested/cache/value"
+printf 'output\n' > "$HOME/source/generated/output/value"
 printf 'source\n' > "$HOME/source/file.txt"
 printf 'secret\n' > "$HOME/source/.env"
 printf 'cache\n' > "$HOME/source/.cache/value"
@@ -134,7 +142,9 @@ FAKE_MUTAGEN_FAIL=start expect_fail_contains 'mutagen project start failed' wsyn
 wsync create retry "$HOME/source" 'testbox:~/retry' --yes >/dev/null
 wsync remove retry >/dev/null
 
-wsync create example "$HOME/source" 'testbox:~/mirror' --yes > "$TMP/create.out"
+expect_fail_contains 'literal directory path' wsync create invalid "$HOME/source" 'testbox:~/invalid' --ignore '../outside' --yes
+expect_fail_contains 'literal directory path' wsync create invalid "$HOME/source" 'testbox:~/invalid' --ignore '*' --yes
+wsync create example "$HOME/source" 'testbox:~/mirror' --ignore _external --ignore /cache --yes > "$TMP/create.out"
 [ -f "$XDG_CONFIG_HOME/wsync/example/mutagen.yml" ] || fail "missing project file"
 [ -f "$XDG_CONFIG_HOME/wsync/example/session.json" ] || fail "missing session metadata"
 [ -f "$FAKE_REMOTE_HOME/mirror/.wsync-managed" ] || fail "missing remote marker"
@@ -149,10 +159,10 @@ assert_contains "$PROJECT" 'maxEntryCount: 500000'
 assert_contains "$PROJECT" 'beta: "testbox:~/mirror"'
 assert_contains "$MUTAGEN_LOG" 'project start --project-file'
 
-expect_fail_contains 'no configuration change requested; pass --include-git' wsync reconfigure example --yes
+expect_fail_contains 'no configuration change requested; pass --include-git or --ignore PATH' wsync reconfigure example --yes
 expect_fail_contains 'confirmation required; rerun interactively or pass --yes' wsync reconfigure example --include-git
 wsync reconfigure example --include-git --yes > "$TMP/reconfigure.out"
-assert_contains "$TMP/reconfigure.out" 'wsync session reconfigured to include Git metadata: example'
+assert_contains "$TMP/reconfigure.out" 'wsync session reconfigured: example'
 assert_contains "$PROJECT" 'vcs: false'
 assert_contains "$PROJECT" '- "!.git"'
 assert_contains "$PROJECT" '- "**/.git/hooks/"'
@@ -175,7 +185,12 @@ before_idempotent=$(grep -c 'project start --project-file' "$MUTAGEN_LOG")
 wsync reconfigure example --include-git --yes > "$TMP/reconfigure-idempotent.out"
 after_idempotent=$(grep -c 'project start --project-file' "$MUTAGEN_LOG")
 [ "$before_idempotent" = "$after_idempotent" ] || fail "idempotent reconfigure restarted Mutagen"
-assert_contains "$TMP/reconfigure-idempotent.out" 'wsync session already includes current Git metadata: example'
+assert_contains "$TMP/reconfigure-idempotent.out" 'wsync session configuration is already current: example'
+wsync reconfigure example --ignore generated/output --yes >/dev/null
+before_idempotent=$(grep -c 'project start --project-file' "$MUTAGEN_LOG")
+wsync reconfigure example --ignore generated/output/ --ignore _external/ --yes >/dev/null
+after_idempotent=$(grep -c 'project start --project-file' "$MUTAGEN_LOG")
+[ "$before_idempotent" = "$after_idempotent" ] || fail "duplicate ignores restarted Mutagen"
 
 mkdir -p "$HOME/pointer-source/.git/worktrees/review" "$HOME/pointer-source/worktree"
 printf 'gitdir: %s\n' "$HOME/pointer-source/.git/worktrees/review" > "$HOME/pointer-source/worktree/.git"
@@ -185,9 +200,17 @@ expect_fail_contains 'absolute Git worktree pointers require identical local and
 assert_contains "$XDG_CONFIG_HOME/wsync/pointer/mutagen.yml" 'vcs: true'
 wsync remove pointer >/dev/null
 
+mkdir -p "$HOME/ignored-pointer-source/_external/.git/worktrees/review" "$HOME/ignored-pointer-source/worktree"
+printf 'gitdir: ../_external/.git/worktrees/review\n' > "$HOME/ignored-pointer-source/worktree/.git"
+wsync create ignored-pointer "$HOME/ignored-pointer-source" 'testbox:~/ignored-pointer-mirror' --yes >/dev/null
+expect_fail_contains 'Git worktree pointer targets ignored metadata' \
+	wsync reconfigure ignored-pointer --include-git --ignore _external --yes
+wsync remove ignored-pointer >/dev/null
+
 mkdir -p "$HOME/rollback-source/.git"
 printf 'index\n' > "$HOME/rollback-source/.git/index"
 wsync create rollback "$HOME/rollback-source" 'testbox:~/rollback-mirror' --yes >/dev/null
+wsync reconfigure rollback --ignore _external --yes >/dev/null
 cp "$XDG_CONFIG_HOME/wsync/rollback/mutagen.yml" "$TMP/rollback-project.before"
 FAKE_MUTAGEN_FAIL_ONCE=start FAKE_MUTAGEN_FAIL_MARKER="$TMP/reconfigure-start-failed" \
 	expect_fail_contains 'mutagen project start failed' wsync reconfigure rollback --include-git --yes
@@ -200,6 +223,7 @@ import sys
 
 metadata = json.loads(Path(sys.argv[1]).read_text())
 assert metadata.get("include_git") is not True, metadata
+assert metadata["ignore_paths"] == ["_external/"], metadata
 PY
 wsync remove rollback >/dev/null
 
@@ -215,6 +239,11 @@ assert route["relative_path"] == "pkg", route
 assert route["remote_path"] == sys.argv[2], route
 PY
 expect_fail_contains 'ignored by the wsync dot-entry rule' wsync resolve --path "$HOME/source/.hidden" --json
+expect_fail_contains 'ignored by the wsync directory rule' wsync resolve --path "$HOME/source/_external/repo" --json
+expect_fail_contains 'ignored by the wsync directory rule' wsync resolve --path "$HOME/source/nested/_external/repo" --json
+expect_fail_contains 'ignored by the wsync directory rule' wsync resolve --path "$HOME/source/cache" --json
+expect_fail_contains 'ignored by the wsync directory rule' wsync resolve --path "$HOME/source/generated/output" --json
+wsync resolve --path "$HOME/source/nested/cache" --json >/dev/null
 FAKE_MUTAGEN_PAUSED=true expect_fail_contains 'Mutagen session is not ready' wsync resolve --path "$HOME/source/pkg" --json
 
 printf 'nested\n' > "$HOME/source/pkg/nested.txt"
@@ -233,10 +262,19 @@ wsync remove nested >/dev/null
 REAL_PROJECT="$TMP/real-mutagen.yml"
 REAL_BETA="$TMP/real-beta"
 mkdir -p "$REAL_BETA"
+mkdir -p "$REAL_BETA/_external"
+printf 'keep remote content\n' > "$REAL_BETA/_external/keep.txt"
 sed "s#beta: \"testbox:~/mirror\"#beta: \"$REAL_BETA\"#" "$PROJECT" > "$REAL_PROJECT"
 MUTAGEN_DATA_DIRECTORY="$REAL_MUTAGEN_DATA" "$REAL_MUTAGEN" project start --project-file "$REAL_PROJECT" --no-global-configuration >/dev/null
 MUTAGEN_DATA_DIRECTORY="$REAL_MUTAGEN_DATA" "$REAL_MUTAGEN" project flush --project-file "$REAL_PROJECT" >/dev/null
 [ -f "$REAL_BETA/file.txt" ] || fail "visible file was not synchronized"
+[ ! -e "$REAL_BETA/_external/repo" ] || fail "external directory was synchronized"
+[ ! -e "$REAL_BETA/nested/_external" ] || fail "nested external directory was synchronized"
+[ ! -e "$REAL_BETA/cache" ] || fail "root-anchored directory was synchronized"
+[ -f "$REAL_BETA/nested/cache/value" ] || fail "root-anchored ignore excluded a nested directory"
+[ ! -e "$REAL_BETA/generated/output" ] || fail "relative directory path was synchronized"
+[ "$(cat "$REAL_BETA/_external/keep.txt")" = 'keep remote content' ] || fail "ignored remote content was modified"
+[ "$(cat "$HOME/source/_external/repo/file.txt")" = external ] || fail "ignored local content was modified"
 [ ! -e "$REAL_BETA/.env" ] || fail ".env was synchronized"
 [ ! -e "$REAL_BETA/.cache" ] || fail "dot-directory was synchronized"
 [ -f "$REAL_BETA/.review/config.yml" ] || fail "tracked dot-directory was not synchronized"
