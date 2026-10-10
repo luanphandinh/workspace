@@ -49,8 +49,8 @@ Use only the subsections that carry information:
 
 - `## 3.1 Main changes`: required when multiple components or user-visible results are affected.
 - `## 3.2 Model delta`: current/future table or data example. No prose recap.
-- `## 3.3 Architecture flowchart`: Mermaid flowchart. Diagram only.
-- `## 3.4 Cross-service sequence`: one Mermaid sequence per non-trivial flow. Use short H3 names only when there are multiple diagrams.
+- `## 3.3 Architecture flowchart`: an embedded SVG asset. Diagram only.
+- `## 3.4 Cross-service sequence`: one embedded SVG sequence diagram per non-trivial flow. Use short H3 names only when there are multiple diagrams.
 
 In `Main changes`:
 

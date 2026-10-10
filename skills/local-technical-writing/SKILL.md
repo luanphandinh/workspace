@@ -63,6 +63,6 @@ Do not use a table for prose or an inventory that does not compare anything.
 Normalize findings into nodes and labeled edges before drawing. The diagram is the flow source of truth. Text below it contains evidence or exceptions only.
 
 - Terminal exploration: read [references/terminal-diagrams.md](references/terminal-diagrams.md).
-- Technical documents: read [references/mermaid-diagrams.md](references/mermaid-diagrams.md).
+- Technical documents: use SVG assets and read [references/svg-diagrams.md](references/svg-diagrams.md).
 
 When both forms exist, derive them from the same graph and update them together.

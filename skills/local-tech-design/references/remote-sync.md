@@ -19,6 +19,8 @@ Use `--remote-file <export.md>` when the remote was already exported and `--json
 
 Update the deepest changed heading only. Treat each `<details>` block as one implementation artifact.
 
+The helper compares section text, not SVG asset bytes. Compare each referenced SVG with the remote asset before declaring it unchanged, even when the Markdown image link has not changed.
+
 ## Outbound Markdown
 
 - Pass every non-diagram section through `scripts/tech_doc_compare.py prepare` before writing it remotely. Use `--local <file>` or pipe section Markdown through stdin.
@@ -69,16 +71,16 @@ A normal sync request authorizes exact-text updates, new unprotected sections, a
 
 For an empty remote, create sections selectively; omit Links and Release Checklist until their policies are satisfied.
 
-## Native whiteboards
+## SVG diagram sync
 
-- Resolve wiki URLs to their document and use the matching `lark-cli` skill before choosing commands.
-- Fetch the outline, then the target section with IDs, and prefer exact `str_replace`.
-- Keep diagrams native. Pipe local Mermaid through stdin to `lark-cli whiteboard +update`; do not create or upload SVG/PNG intermediates.
-- Keep each rendered label line within 40 characters in both local and remote Mermaid. Break at meaningful phrase or syntax boundaries; never split a word arbitrarily.
-- Preserve the title, whiteboard block, and whiteboard token. Replace board contents only after diagram authorization.
-- Represent each node as one native shape containing its label. Attach connector endpoints to source and target object IDs.
-- After update, query with both `--output_as code` and `--output_as raw`. Verify Mermaid syntax, shape text, connector attachments, and unchanged unrelated content.
-- If OpenAPI conversion is needed, pipe converter output directly into `lark-cli`.
+- Resolve wiki URLs to their document and read the matching document skill's media/upload references before choosing commands. Confirm SVG support for the intended block type; do not infer it from generic image-upload support.
+- Sync the same verified SVG asset used by the local document. Do not send diagram-language fences for automatic whiteboard conversion or generate PNG alternatives.
+- Fetch the target section and block IDs. List the exact diagram changes and obtain separate replacement authorization before modifying an existing diagram or migrating a whiteboard to SVG.
+- Upload the SVG and use the returned media token or remote asset URL at the authorized location. A local filesystem image link is not a remote upload. Do not publish private assets at public URLs.
+- Check current CLI help for targeted insertion. The media-insert shortcut defaults to document end, but can insert relative to a text selection; nested selections may place media at a top-level ancestor. Verify the exact insertion location, and use a targeted block operation or stop when selection-based placement cannot preserve the section.
+- If inline SVG is unsupported, report that limit and ask before attaching or linking the SVG instead. Never silently rasterize it, change format, or claim inline preview succeeded.
+- Keep existing whiteboards, tokens, section titles, and unrelated content intact unless their exact replacement was authorized. Preserve the old diagram until the uploaded SVG and its placement are verified.
+- Re-fetch the updated section, verify the asset token or URL and unchanged unrelated blocks, and inspect the remote preview when supported. Verify uploaded asset bytes separately; do not treat unchanged Markdown or a successful upload as proof of a correct diagram.
 
 ## Rich-text fidelity
 
