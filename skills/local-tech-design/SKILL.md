@@ -33,10 +33,18 @@ For two or more independent repositories, explore them concurrently when sub-age
 
 Read [references/document-contract.md](references/document-contract.md). Use its eight-section skeleton, but remove optional content that adds no information.
 
-- Lead with models, examples, diagrams, and diffs. Prose fills only gaps between those artifacts.
-- Use short bullets by default. Number only rollout or migration steps whose order changes the result.
+Before drafting, read the closest complete example:
+
+- [Small change: hide an address](references/examples/hide-address.md) for one setting, handler, or output change.
+- [Multi-step change: shared collections](references/examples/shared-collections.md) for several APIs, access states, transactions, retries, or asynchronous work.
+
+Match their directness, not their fictional APIs or architecture. Each fact has one home; add detail only for a changed contract, meaningful failure, or deployment dependency. Examples are invented teaching material, never evidence for a real repository. Do not invent facts in a real design unless the user explicitly requests a hypothetical example.
+
+- Lead with models, examples, diagrams, and diffs. All explanatory prose uses bullets, including rationale, `N/A`, and notes inside folded code blocks; no standalone paragraphs.
+- Group logic into two list levels: a parent method or shared condition, then one operation or rule per child bullet. Do not pack several sentences into one bullet or nest a third level. Number only rollout or migration steps whose order changes the result.
+- Keep all eight top-level sections, with a short `N/A` for inapplicable sections. Do not fill them with boilerplate, repeat a diagram in prose, or add subsections merely to match a larger example.
 - In Overview & Background, label the result `Target` or `Expected outcome`. Never use `Success`.
-- Put a decision in the document only when it changes architecture, contracts, ownership, reliability, or rollout risk.
+- Include critical chosen decisions as well as unresolved choices when they affect architecture, contracts, ownership, reliability, or rollout risk. Explain the reason and material trade-off in nested bullets; settled choices are not automatically `N/A`.
 - Never invent alternatives. Ask only about unresolved choices that block a sound design.
 - Document only the requested change and its necessary consequences. Do not add optional decisions, adjacent behavior, or correction history.
 - Keep architecture in the overview, trade-offs in decisions, external contracts in external design, implementation in internal design artifacts, and production actions in the release checklist.

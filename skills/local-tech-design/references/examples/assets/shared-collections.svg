@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 985" role="img" aria-labelledby="title desc">
+  <title id="title">Shared collection architecture</title>
+  <desc id="desc">The Go CollectionService checks friendships and item visibility over HTTP, stores collection state and invitations atomically, and delivers invitations through an outbox worker.</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#475569"/></marker></defs>
+  <rect width="900" height="985" fill="#ffffff"/>
+  <g font-family="sans-serif" fill="#0f172a" font-size="14">
+    <text x="30" y="35" font-size="22" font-weight="bold">Shared collections · HTTP + Go</text>
+    <rect x="320" y="65" width="260" height="55" rx="10" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="450" y="98" text-anchor="middle">Owner / invited friend</text>
+    <path d="M450 120 V255" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="470" y="140">POST /v1/collections</text>
+    <text x="470" y="158">PUT /v1/collections/{id}/items/{feed_id}</text>
+    <text x="470" y="176">PUT / DELETE /v1/collections/{id}/</text>
+    <text x="470" y="194">members/{user_id}</text>
+    <text x="470" y="212">POST /v1/collections/{id}/</text>
+    <text x="470" y="230">membership/accept</text>
+    <text x="470" y="248">GET /v1/collections/{id}/items</text>
+    <rect x="320" y="255" width="260" height="80" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="450" y="284" text-anchor="middle" font-weight="bold">CollectionService (NEW)</text>
+    <text x="450" y="309" text-anchor="middle">Go net/http handlers + service</text>
+    <path d="M320 285 H165 V435" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="185" y="366">HTTP: FriendService.AreFriends</text>
+    <text x="185" y="390">GET /internal/friendships/</text>
+    <text x="185" y="412">{owner_id}/{user_id}</text>
+    <path d="M580 285 H735 V435" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="475" y="366">HTTP: FeedService.ListVisibleItems</text>
+    <text x="475" y="390">POST /internal/feed/visible-items</text>
+    <rect x="45" y="435" width="240" height="65" rx="10" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="165" y="462" text-anchor="middle" font-weight="bold">Go FriendService</text>
+    <text x="165" y="484" text-anchor="middle">Current friendship check</text>
+    <rect x="615" y="435" width="240" height="65" rx="10" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="735" y="462" text-anchor="middle" font-weight="bold">Go FeedService</text>
+    <text x="735" y="484" text-anchor="middle">Viewer visibility + address privacy</text>
+    <path d="M450 335 V605" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="470" y="530">SQL: SELECT / INSERT collections</text>
+    <text x="470" y="550">SQL: INSERT collection_items</text>
+    <text x="470" y="570">Invite TX: UPSERT collection_members</text>
+    <text x="470" y="590">SQL: INSERT invitation_outbox</text>
+    <rect x="305" y="605" width="290" height="85" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="450" y="635" text-anchor="middle" font-weight="bold">PostgreSQL (NEW tables)</text>
+    <text x="450" y="658" text-anchor="middle">Collections · items · members · outbox</text>
+    <path d="M450 690 V790" fill="none" stroke="#475569" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <text x="470" y="728">SQL: SELECT invitation_outbox</text>
+    <text x="470" y="753">Lease + attempts; then COMMIT</text>
+    <rect x="305" y="790" width="290" height="65" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="450" y="817" text-anchor="middle" font-weight="bold">Go InvitationWorker (NEW)</text>
+    <text x="450" y="840" text-anchor="middle">Retry persisted event_id</text>
+    <path d="M595 820 H760 V952 H595" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="30" y="884">HTTP: NotificationService.SendInvitation</text>
+    <text x="30" y="906">POST /internal/notifications/invitations</text>
+    <rect x="305" y="935" width="290" height="35" rx="10" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="450" y="958" text-anchor="middle">Go NotificationService · dedupe event_id</text>
+  </g>
+</svg>

@@ -16,6 +16,8 @@ Stop at the first form that carries the fact:
 3. Prefer an exact identifier or artifact over prose.
 4. Use a short bullet; use a paragraph only for necessary rationale.
 
+For technical design documents, explanatory prose is strictly bullet-pointed, including rationale and notes inside folded blocks. Tables, diagrams, code and headings remain artifacts, not list items.
+
 One fact has one home. Never add a prose recap after a clear artifact.
 
 ## Pick the carrier
@@ -37,9 +39,10 @@ Do not use a table for prose or an inventory that does not compare anything.
 - Start with the useful artifact. No preamble or process narration.
 - Use short bullets by default. Number only steps whose order changes the result.
 - Put a shared condition in a parent bullet and one operation in each child bullet. Never print `Condition:` or `Action:` labels.
+- In technical designs, use exactly two list levels for grouped logic: method/condition → operations. Use flat bullets for independent facts; no third-level lists or multi-sentence prose bullets. Number only rollout or migration steps whose order matters.
 - Split compound operations. Do not use prose semicolons, vague section references, or labels invented to explain structure.
 - Keep at most three summary bullets per subsection.
-- Keep visible paragraphs under three source lines.
+- In technical designs, replace every standalone explanatory paragraph with bullets. Elsewhere, keep visible paragraphs under three source lines.
 - Shorten table cells and diagram labels. Remove optional content and repeated mappings.
 - Preserve validation, failure behavior, security, compatibility, and explicit requirements.
 - End with only unresolved questions, evidence, or verification that changes a decision.

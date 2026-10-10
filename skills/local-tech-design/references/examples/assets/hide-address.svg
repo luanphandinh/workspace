@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 630" role="img" aria-labelledby="title desc">
+  <title id="title">Hide an author's address in feed responses</title>
+  <desc id="desc">An HTTP server delegates privacy updates and feed reads to the Go FeedService. Current user settings control response serialization.</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#475569"/></marker></defs>
+  <rect width="880" height="630" fill="#ffffff"/>
+  <g font-family="sans-serif" fill="#0f172a" font-size="15">
+    <text x="32" y="35" font-size="22" font-weight="bold">Account privacy → feed response</text>
+    <rect x="245" y="60" width="310" height="60" rx="10" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="400" y="96" text-anchor="middle">Authenticated client</text>
+    <path d="M400 120 V205" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="425" y="150">PATCH /v1/me/feed-privacy (NEW)</text>
+    <text x="425" y="177">GET /v1/feed</text>
+    <rect x="245" y="205" width="310" height="70" rx="10" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="400" y="235" text-anchor="middle" font-weight="bold">Go HTTP server</text>
+    <text x="400" y="258" text-anchor="middle">Actor ID from auth context</text>
+    <path d="M400 275 V360" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="425" y="309">Go: FeedService.SetPrivacy (NEW)</text>
+    <text x="425" y="336">Go: FeedService.List</text>
+    <rect x="245" y="360" width="310" height="85" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+    <text x="400" y="391" text-anchor="middle" font-weight="bold">FeedService</text>
+    <text x="400" y="416" text-anchor="middle">toAuthor: omit address (NEW)</text>
+    <path d="M400 445 V540" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="425" y="481">UPDATE users.hide_address (NEW)</text>
+    <text x="425" y="507">SELECT feeds JOIN users</text>
+    <rect x="245" y="540" width="310" height="60" rx="10" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="400" y="576" text-anchor="middle">PostgreSQL · users / feeds</text>
+  </g>
+</svg>

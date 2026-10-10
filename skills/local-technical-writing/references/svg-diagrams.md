@@ -14,7 +14,7 @@ Build diagrams from the verified graph produced during code exploration. Keep th
 
 ## Architecture flowchart
 
-- Show 5-10 primary nodes and the main data flow.
+- Show only the primary nodes needed for the changed flow; do not pad a simple diagram to meet a node count.
 - Default to top-down layout.
 - Use left-to-right layout only for one linear path with at most five primary nodes, no branches, merges, or shared stores, short edge labels, and a readable render at normal document width.
 - Use top-down layout for multiple paths, branches, shared stores, or long labels.

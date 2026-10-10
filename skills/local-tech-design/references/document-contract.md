@@ -2,6 +2,8 @@
 
 Start directly at `# 1. Overview & Background`. Use these eight numbered H1 sections in order.
 
+Use the complete [small-change example](examples/hide-address.md) or [multi-step example](examples/shared-collections.md) as the writing reference. Keep the same directness as complexity grows; grow only the contracts, affected services, failure handling, and rollout dependencies that actually change. Their domains and code paths are fictional, not implementation defaults.
+
 ## Section ownership
 
 | Section | Content |
@@ -9,13 +11,19 @@ Start directly at `# 1. Overview & Background`. Use these eight numbered H1 sect
 | 1. Overview & Background | Problem, trigger, target or expected outcome |
 | 2. Links | URLs only |
 | 3. Solution Overview | Selected model and end-to-end flow |
-| 4. Design Decisions | Unresolved high-impact choices |
+| 4. Design Decisions | Critical chosen decisions and unresolved high-impact choices |
 | 5. External Technical Design | External contract changes |
 | 6. Internal Technical Design | Per-service implementation |
 | 7. Rollout Plan | Sequencing and exposure gates |
 | 8. Release Checklist | Production actions |
 
 One fact belongs to one section.
+
+## Bullet-point prose
+
+- All explanatory prose uses bullets, including rationale, `N/A`, and notes inside `<details>` blocks. No standalone paragraphs.
+- Group related logic in two levels: parent method or shared condition, then one operation or rule per child bullet. Split compound prose; do not add a third level.
+- Keep independent facts as flat bullets. Keep headings, tables, SVG links, and code outside lists. Use numbered lists only for ordered rollout or migration steps.
 
 ## Cross-service call naming
 
@@ -62,23 +70,15 @@ Every arrow names the exact RPC method, HTTP method/path, SQL operation/table, c
 
 ## 4. Design Decisions
 
-Only unresolved choices with at least two viable options and material architectural impact. Zero choices is preferred:
-
-`N/A — no unresolved high-impact architectural choices.`
-
-When needed, use at most four rows:
-
-| **Choice** | **Options / material trade-offs** | **Verdict** |
-| --- | --- | --- |
-| <choice> | <option A: benefit/cost><br><option B: benefit/cost> | <option or unresolved> |
-
-Use a compact model table or data example above the row only when the data shape itself is the decision. Never add a forced or obvious alternative.
+- Include critical chosen decisions, not just open questions, when the choice affects architecture, contracts, ownership, reliability, or rollout risk.
+- Use the choice as a parent bullet, with its reason and material cost/trade-off as child bullets. Keep implementation steps in Internal Technical Design; do not invent alternatives or pad this section with routine details.
+- Use `- N/A.` only when there is no consequential choice worth explaining. A design with no unresolved questions can still have important decisions.
 
 ## 5. External Technical Design
 
 If no external contract changes:
 
-`N/A — no external contract change.`
+`- No API changes.`
 
 Otherwise, one H2 per changed API with only changed request/response fields, behavior, and schema diff. For a new API, show the complete contract. Do not discuss internal libraries or module versions.
 
@@ -170,7 +170,7 @@ Required form:
 
 ## 7. Rollout Plan
 
-At most four ordered steps covering only deployment order, compatibility gates, exposure gates, and end-to-end verification order. Do not repeat configuration values or expected outputs. Use `N/A — direct rollout.` when staging adds no value.
+At most four ordered steps covering only deployment order, compatibility gates, exposure gates, and end-to-end verification order. Do not repeat configuration values or expected outputs. Use `- N/A — direct rollout.` when staging adds no value.
 
 ## 8. Release Checklist
 
@@ -195,5 +195,5 @@ Before every presentation or sync:
 - Remove optional headings, tables, alternatives, and examples that add no decision value. Do not explain their removal.
 - Keep rollout to sequencing and the release checklist to production actions. Every runtime fact must have one primary home.
 - Keep visible non-code prose below 200 source lines.
-- Replace every visible paragraph over three lines with a shorter artifact or bullet.
+- Replace every explanatory paragraph with bullets, including notes inside folded blocks. Verify grouped logic has two list levels and each child carries one operation or rule.
 - Check that sections own distinct facts and that every proposed new symbol passes the `local-coding` minimum-solution gate.
