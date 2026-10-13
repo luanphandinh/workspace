@@ -68,11 +68,42 @@ install_windows_fonts_from_wsl() {
 	powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '
 $ErrorActionPreference = "Stop"
 $fontDir = Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Fonts"
-Get-ChildItem $fontDir -Filter "FiraCodeNerdFont*.ttf" | ForEach-Object {
+$fontKey = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
+$registered = Get-ItemProperty $fontKey
+$registered.PSObject.Properties |
+  Where-Object { $_.Name -like "FiraCodeNerdFont* (TrueType)" } |
+  ForEach-Object {
+    Remove-ItemProperty -Path $fontKey -Name $_.Name -ErrorAction SilentlyContinue
+  }
+$fonts = @{
+  "FiraCodeNerdFont-Regular.ttf" = "FiraCode Nerd Font (TrueType)"
+  "FiraCodeNerdFont-Bold.ttf" = "FiraCode Nerd Font Bold (TrueType)"
+  "FiraCodeNerdFont-Light.ttf" = "FiraCode Nerd Font Light (TrueType)"
+  "FiraCodeNerdFont-Medium.ttf" = "FiraCode Nerd Font Medium (TrueType)"
+  "FiraCodeNerdFont-Retina.ttf" = "FiraCode Nerd Font Retina (TrueType)"
+  "FiraCodeNerdFont-SemiBold.ttf" = "FiraCode Nerd Font SemiBold (TrueType)"
+  "FiraCodeNerdFontMono-Regular.ttf" = "FiraCode Nerd Font Mono (TrueType)"
+  "FiraCodeNerdFontMono-Bold.ttf" = "FiraCode Nerd Font Mono Bold (TrueType)"
+  "FiraCodeNerdFontMono-Light.ttf" = "FiraCode Nerd Font Mono Light (TrueType)"
+  "FiraCodeNerdFontMono-Medium.ttf" = "FiraCode Nerd Font Mono Medium (TrueType)"
+  "FiraCodeNerdFontMono-Retina.ttf" = "FiraCode Nerd Font Mono Retina (TrueType)"
+  "FiraCodeNerdFontMono-SemiBold.ttf" = "FiraCode Nerd Font Mono SemiBold (TrueType)"
+  "FiraCodeNerdFontPropo-Regular.ttf" = "FiraCode Nerd Font Propo (TrueType)"
+  "FiraCodeNerdFontPropo-Bold.ttf" = "FiraCode Nerd Font Propo Bold (TrueType)"
+  "FiraCodeNerdFontPropo-Light.ttf" = "FiraCode Nerd Font Propo Light (TrueType)"
+  "FiraCodeNerdFontPropo-Medium.ttf" = "FiraCode Nerd Font Propo Medium (TrueType)"
+  "FiraCodeNerdFontPropo-Retina.ttf" = "FiraCode Nerd Font Propo Retina (TrueType)"
+  "FiraCodeNerdFontPropo-SemiBold.ttf" = "FiraCode Nerd Font Propo SemiBold (TrueType)"
+}
+$fonts.GetEnumerator() | ForEach-Object {
+  $fontPath = Join-Path $fontDir $_.Key
+  if (!(Test-Path $fontPath)) {
+    return
+  }
   New-ItemProperty `
-    -Path "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts" `
-    -Name "$($_.BaseName) (TrueType)" `
-    -Value $_.FullName `
+    -Path $fontKey `
+    -Name $_.Value `
+    -Value $fontPath `
     -PropertyType String `
     -Force | Out-Null
 }
