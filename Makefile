@@ -68,10 +68,15 @@ else
 	@echo "apps: skipped; macOS-only"
 endif
 
-macos-keyboard: ## Map Caps Lock to Escape and configure keyboard repeat on macOS
+macos-keyboard: ## Configure keyboard repeat, Caps Lock, and trackpad tap to click
 ifeq ($(UNAME),Darwin)
 	@defaults write -g KeyRepeat -int 2
 	@defaults write -g InitialKeyRepeat -int 10
+	@defaults write com.apple.AppleMultitouchTrackpad Clicking -bool true
+	@defaults write com.apple.driver.AppleBluetoothMultitouch.trackpad Clicking -bool true
+	@defaults write -g com.apple.mouse.tapBehavior -int 1
+	@defaults -currentHost write -g com.apple.mouse.tapBehavior -int 1
+	@/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u
 	@mkdir -p "$(HOME)/Library/LaunchAgents"
 	@cp ./macos/local.workspace.keyboard-remap.plist "$(HOME)/Library/LaunchAgents/local.workspace.keyboard-remap.plist"
 	@launchctl bootout "gui/$$(id -u)" "$(HOME)/Library/LaunchAgents/local.workspace.keyboard-remap.plist" >/dev/null 2>&1 || true
