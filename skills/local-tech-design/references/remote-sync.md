@@ -24,7 +24,7 @@ The helper compares section text, not SVG asset bytes. Compare each referenced S
 ## Outbound Markdown
 
 - Pass every non-diagram section through `scripts/tech_doc_compare.py prepare` before writing it remotely. Use `--local <file>` or pipe section Markdown through stdin.
-- The prepared form removes manual numeric prefixes from Markdown headings only, replaces each HTML disclosure wrapper with an H6 heading, and removes its closing tag. Never send numbered heading text, `<details>`, or `<summary>` tags to Lark.
+- The prepared form removes the local `[toc]` preview marker and manual numeric prefixes from Markdown headings, replaces each HTML disclosure wrapper with an H6 heading, and removes its closing tag. Never send `[toc]`, numbered heading text, `<details>`, or `<summary>` tags to Lark.
 - Scan the exact outbound payload before writing and the fetched section afterward. If either disclosure tag remains, stop and correct that section.
 
 ## Native heading numbering

@@ -28,6 +28,7 @@ MANUAL_HEADING_TITLE_NUMBER_RE = re.compile(
 MANUAL_HEADING_NUMBER_RE = re.compile(
     r"(?m)^([ \t]{0,3}#{1,6}[ \t]+)[1-9]\d?(?:\.\d+)*\.?[ \t]+"
 )
+LOCAL_TOC_RE = re.compile(r"(?im)^[ \t]{0,3}\[toc\][ \t]*(?:\r?\n|$)")
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$")
 MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
@@ -233,6 +234,7 @@ def transform_outside_fences(text: str, transform: Callable[[str], str]) -> str:
 
 def prepare_remote_markdown(text: str) -> str:
     def prepare_plain(chunk: str) -> str:
+        chunk = LOCAL_TOC_RE.sub("", chunk)
         chunk = MANUAL_HEADING_NUMBER_RE.sub(r"\1", chunk)
 
         def replace_open(match: re.Match[str]) -> str:
