@@ -258,8 +258,9 @@ go-remote-test: ## Run automatic remote Go test routing smoke tests
 go-wrapper-test: ## Run Go wrapper toolchain-selection smoke tests
 	sh ./scripts/go-wrapper-smoke-test.sh
 
-workspace-shell-test: ## Run workspace shell smoke tests
+workspace-shell-test: ## Run workspace shell and npm global-install smoke tests
 	sh ./scripts/workspace-shell-smoke-test.sh
+	bash ./scripts/npm-global-smoke-test.sh
 
 nix-test: ## Run Nix smoke tests
 	sh ./scripts/nix-smoke-test.sh

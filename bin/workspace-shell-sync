@@ -8,6 +8,11 @@ workspace_file="${1:-$HOME/bin/shell/workspace.sh}"
 }
 source_line='[ -f "$HOME/bin/shell/workspace.sh" ] && . "$HOME/bin/shell/workspace.sh"'
 
+# Persist the prefix for tools that invoke npm without sourcing shell startup.
+if command -v npm >/dev/null 2>&1; then
+	npm config set prefix "${NPM_CONFIG_PREFIX:-$HOME/.local}" --location=user
+fi
+
 for profile in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
 	touch "$profile"
 	tmp="$(mktemp -t workspace-shell-profile.XXXXXX)"

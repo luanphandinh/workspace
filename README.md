@@ -17,6 +17,7 @@ make help
 - **Linux:** Run setup as your normal user. Fresh installations use single-user Nix and require a writable `/nix`. Reuse shared installations without changing ownership.
 - **macOS:** Uses the Nix daemon installer.
 - **Shell:** Setup keeps your login shell without administrator access. Run `exec zsh -l` to start the installed shell.
+- **npm:** `make workspace-bin` configures global installs under `~/.local`, with commands in `~/.local/bin` on PATH. Install global tools with `npm install -g <package>` as your normal user. Existing global packages must be reinstalled to move them. Project dependencies remain local; run their tools through npm scripts or `npx`.
 
 ## Local workspaces
 
