@@ -3435,6 +3435,8 @@ local function test_agent_view_container(repo)
       "single agent did not reserve its tab bar: " .. vim.inspect(winbar)
     )
     assert_terminal_grid_matches(codex_buf, agent_win, "first agent")
+    invoke_map("<S-Tab>")
+    assert_true(vim.api.nvim_get_current_buf() == codex_buf, "backward cycling changed a single agent tab")
 
     assert_true(agents.set_agent_position("left"), "could not move the agent container left")
     assert_true(visible_agent_window_count() == 1, "moving the agent container changed its visibility")
@@ -3532,6 +3534,18 @@ local function test_agent_view_container(repo)
     assert_true(second_codex_buf ~= codex_buf, "new-tab picker reused the existing Codex terminal")
     assert_true(vim.api.nvim_get_current_win() == agent_win, "new agent tab replaced the container window")
     assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "new agent tab resized the container")
+
+    vim.cmd("stopinsert")
+    for _, expected_buf in ipairs({ codex_buf, cursor_buf, second_codex_buf }) do
+      invoke_map("<S-Tab>")
+      wait_until("backward agent tab cycle", function()
+        return visible_agent_window_count() == 1
+          and vim.api.nvim_get_current_buf() == expected_buf
+          and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+      end, 3000)
+      assert_true(vim.api.nvim_get_current_win() == agent_win, "backward cycling replaced the agent container window")
+      assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "backward cycling resized the agent container")
+    end
 
     assert_true(agents.open("codex", codex_buf, { view_mode = true }), "could not switch to the first Codex tab")
     wait_until("same-agent tab cycle", function()
@@ -3667,6 +3681,8 @@ local function test_terminal_view_container(repo)
 
     local first_buf = vim.api.nvim_get_current_buf()
     local first_job = vim.b[first_buf].terminal_job_id
+    invoke_map("<S-Tab>")
+    assert_true(vim.api.nvim_get_current_buf() == first_buf, "backward cycling changed a single terminal tab")
     assert_true(
       realpath(vim.b[first_buf].luanphan_terminal_reference_cwd) == realpath(repo),
       "toggle terminal did not attach terminal references"
@@ -3754,6 +3770,18 @@ local function test_terminal_view_container(repo)
         and view.topline == first_view.topline
         and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
     end, 3000)
+    for _, expected in ipairs({ { second_buf, second_view }, { first_buf, first_view } }) do
+      invoke_map("<S-Tab>")
+      wait_until("backward terminal view restored", function()
+        if vim.api.nvim_get_current_buf() ~= expected[1] then
+          return false
+        end
+        local view = vim.api.nvim_win_call(vim.api.nvim_get_current_win(), vim.fn.winsaveview)
+        return view.lnum == expected[2].lnum
+          and view.topline == expected[2].topline
+          and vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t"
+      end, 3000)
+    end
   end, debug.traceback)
 
   close_toggleterm_terminals()

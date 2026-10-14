@@ -122,7 +122,7 @@ function Container:render(win, context)
 	vim.api.nvim_set_option_value("winbar", table.concat(parts), { win = win, scope = "local" })
 end
 
-function Container:cycle(context)
+function Container:cycle(context, step)
 	context = context or self:context()
 	local tabs = self:tabs(context)
 	if #tabs < 2 then
@@ -137,7 +137,7 @@ function Container:cycle(context)
 			break
 		end
 	end
-	self.opts.activate(tabs[(index % #tabs) + 1], { view_mode = true })
+	self.opts.activate(tabs[((index - 1 + (step or 1)) % #tabs) + 1], { view_mode = true })
 end
 
 function Container:pick(context)
@@ -172,6 +172,9 @@ function Container:attach(win, bufnr, id, context)
 	vim.keymap.set("n", "<Tab>", function()
 		self:cycle(context)
 	end, vim.tbl_extend("force", opts, { desc = self.opts.cycle_desc or "Next view" }))
+	vim.keymap.set("n", "<S-Tab>", function()
+		self:cycle(context, -1)
+	end, vim.tbl_extend("force", opts, { desc = "Previous view" }))
 	vim.keymap.set("n", "<leader>fn", function()
 		self:create(context)
 	end, vim.tbl_extend("force", opts, { desc = self.opts.new_desc or "New view" }))
