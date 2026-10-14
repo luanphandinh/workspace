@@ -25,7 +25,7 @@ shortcut_names ?=
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
-setup:  ## Install all workspace tools, configs, and terminal agent CLIs using Nix.
+setup:  ## Install workspace tools, configs, and terminal agent CLIs.
 setup: setup-deps
 	$(MAKE) setup-runtime
 
@@ -165,7 +165,20 @@ alacritty-config: ## Install alacritty + config + theme
 kitty: ## Install kitty and config
 kitty: kitty-config
 
+.PHONY: kitty-install
+kitty-install: ## Install the terminal with the platform package manager
+ifeq ($(UNAME),Darwin)
+	@if ! command -v brew >/dev/null 2>&1; then \
+		echo "Homebrew is required on macOS" >&2; \
+		exit 1; \
+	fi
+	brew install --cask kitty
+else
+kitty-install: setup-deps
+endif
+
 kitty-config: ## Install kitty config
+kitty-config: kitty-install
 	test -d "$(kitty_config_dir)" || mkdir -p "$(kitty_config_dir)"
 	cp -r ./kitty/. "$(kitty_config_dir)/"
 	kitten themes --dump-theme 'Gruvbox Dark' > "$(kitty_config_dir)/current-theme.conf"

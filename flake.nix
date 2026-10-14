@@ -83,7 +83,6 @@
             git-lfs
             gnumake
             jq
-            kitty
             mosh
             mutagen
             ripgrep
@@ -94,6 +93,7 @@
           ];
           linuxPackages = with pkgs; [
             curl
+            kitty
           ];
           darwinPackages = with pkgs; [
             neovide
