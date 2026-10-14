@@ -305,18 +305,18 @@ local function target_at(bufnr, row, column)
   return nil
 end
 
-local function handle_mouse_click(bufnr)
+local function handle_mouse_click(bufnr, key)
   local mouse = vim.fn.getmousepos()
   if not mouse or not mouse.winid or not vim.api.nvim_win_is_valid(mouse.winid) then
-    return "<M-LeftMouse>"
+    return key
   end
   if vim.api.nvim_win_get_buf(mouse.winid) ~= bufnr then
-    return "<M-LeftMouse>"
+    return key
   end
 
   local target = target_at(bufnr, (mouse.line or 0) - 1, (mouse.column or 0) - 1)
   if not target then
-    return "<M-LeftMouse>"
+    return key
   end
 
   vim.schedule(function()
@@ -340,9 +340,11 @@ local function set_click_keymaps(bufnr)
     desc = "Open terminal reference",
   }
   for _, mode in ipairs({ "n", "t" }) do
-    vim.keymap.set(mode, "<M-LeftMouse>", function()
-      return handle_mouse_click(bufnr)
-    end, opts)
+    for _, key in ipairs({ "<M-LeftMouse>", "<D-LeftMouse>" }) do
+      vim.keymap.set(mode, key, function()
+        return handle_mouse_click(bufnr, key)
+      end, opts)
+    end
   end
 end
 
