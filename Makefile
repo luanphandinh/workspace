@@ -68,8 +68,10 @@ else
 	@echo "apps: skipped; macOS-only"
 endif
 
-macos-keyboard: ## Map Caps Lock to Escape at login on macOS
+macos-keyboard: ## Map Caps Lock to Escape and maximize keyboard repeat speed on macOS
 ifeq ($(UNAME),Darwin)
+	@defaults write -g KeyRepeat -int 1
+	@defaults write -g InitialKeyRepeat -int 10
 	@mkdir -p "$(HOME)/Library/LaunchAgents"
 	@cp ./macos/local.workspace.keyboard-remap.plist "$(HOME)/Library/LaunchAgents/local.workspace.keyboard-remap.plist"
 	@launchctl bootout "gui/$$(id -u)" "$(HOME)/Library/LaunchAgents/local.workspace.keyboard-remap.plist" >/dev/null 2>&1 || true
