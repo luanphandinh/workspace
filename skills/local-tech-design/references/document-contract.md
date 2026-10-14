@@ -1,6 +1,6 @@
 # Technical Design Contract
 
-Start directly at `# 1. Overview & Background`. Use these eight numbered H1 sections in order.
+Start with a standalone `[toc]` line, followed by a blank line and `# 1. Overview & Background`. The marker is required for the local browser preview's heading sidebar. Use these eight numbered H1 sections in order.
 
 Use the complete [small-change example](examples/hide-address.md) or [multi-step example](examples/shared-collections.md) as the writing reference. Keep the same directness as complexity grows; grow only the contracts, affected services, failure handling, and rollout dependencies that actually change. Their domains and code paths are fictional, not implementation defaults.
 

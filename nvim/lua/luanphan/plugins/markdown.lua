@@ -26,9 +26,19 @@ return {
         hide_yaml_meta = 1,
         content_editable = false,
         disable_filename = 0,
+        toc = { containerClass = "preview-toc", level = { 1, 2, 3, 4, 5, 6 } },
       }
     end,
     config = function()
+      local base_css = vim.api.nvim_get_runtime_file("app/_static/markdown.css", false)[1]
+      local sidebar_css = vim.fn.stdpath("config") .. "/markdown-preview/sidebar.css"
+      local styles = vim.fn.readfile(base_css)
+      vim.list_extend(styles, vim.fn.readfile(sidebar_css))
+      local preview_css = vim.fn.stdpath("cache") .. "/markdown-preview.css"
+      vim.fn.mkdir(vim.fn.stdpath("cache"), "p")
+      vim.fn.writefile(styles, preview_css)
+      vim.g.mkdp_markdown_css = preview_css
+
       local group = vim.api.nvim_create_augroup("LuanphanMarkdownPreviewRefresh", { clear = true })
       vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP", "BufWritePost" }, {
         group = group,

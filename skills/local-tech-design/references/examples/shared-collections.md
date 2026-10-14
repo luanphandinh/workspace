@@ -1,3 +1,5 @@
+[toc]
+
 # 1. Overview & Background
 
 - Let a user save feed items in a collection and invite friends to follow it.

@@ -1,3 +1,5 @@
+[toc]
+
 # 1. Overview & Background
 
 - `author.address`:

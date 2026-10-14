@@ -36,6 +36,7 @@ Do not use a table for prose or an inventory that does not compare anything.
 
 ## Writing rules
 
+- Every generated or substantially revised Markdown document must start with a standalone `[toc]` line, followed by a blank line before the first heading. If YAML frontmatter exists, put the marker immediately after it. Keep the marker outside code fences, lists, and folded blocks. This supplies the local browser preview's clickable heading sidebar; do not duplicate it with a manually maintained contents list.
 - Start with the useful artifact. No preamble or process narration.
 - Use short bullets by default. Number only steps whose order changes the result.
 - Put a shared condition in a parent bullet and one operation in each child bullet. Never print `Condition:` or `Action:` labels.
