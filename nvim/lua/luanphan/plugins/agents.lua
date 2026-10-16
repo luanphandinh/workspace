@@ -376,6 +376,7 @@ function M.toggle_agent(name)
 end
 
 function M.toggle()
+  require("luanphan.recent_paths").touch(vim.fn.getcwd())
   if visible_agent() then
     close_visible_agents()
     return

@@ -1,7 +1,5 @@
 local M = {}
 
-local MAX_ENTRIES = 256
-
 local function state_path()
   return vim.g.luanphan_recent_paths_file
     or (vim.fn.stdpath("state") .. "/workspace-recent-paths.json")
@@ -33,11 +31,15 @@ local function read_entries()
 
   local entries = {}
   local seen = {}
+  local max_entries = require("luanphan.global_settings").max_recent_folders()
   for _, value in ipairs(decoded) do
     local key = normalize(value)
     if key and not seen[key] then
       seen[key] = true
       entries[#entries + 1] = key
+      if #entries >= max_entries then
+        break
+      end
     end
   end
   return entries
@@ -66,12 +68,17 @@ function M.touch(path)
   end
 
   local updated = { key }
+  local max_entries = require("luanphan.global_settings").max_recent_folders()
   for _, value in ipairs(read_entries()) do
-    if value ~= key and #updated < MAX_ENTRIES then
+    if value ~= key and #updated < max_entries then
       updated[#updated + 1] = value
     end
   end
   return write_entries(updated)
+end
+
+function M.entries()
+  return vim.deepcopy(read_entries())
 end
 
 function M.sort(items, path_of, fallback)

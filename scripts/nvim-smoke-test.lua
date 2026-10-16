@@ -118,6 +118,7 @@ local function make_fixture()
   vim.fn.delete(temp_root, "rf")
   vim.fn.mkdir(temp_root, "p")
   vim.g.luanphan_recent_paths_file = temp_root .. "/recent-paths.json"
+  vim.g.luanphan_global_settings_path = temp_root .. "/global-settings.toml"
 
   local repo = temp_root .. "/example-repo"
   local worktree = temp_root .. "/example-worktree"
@@ -1442,6 +1443,11 @@ local function test_worktree_plugin_starts_lazy()
     type(folder_map) == "table" and type(folder_map.callback) == "function",
     "<leader>wf is not a lazy callback mapping"
   )
+  local global_settings_map = vim.fn.maparg("<leader>sg", "n", false, true)
+  assert_true(
+    type(global_settings_map) == "table" and type(global_settings_map.callback) == "function",
+    "<leader>sg is not a lazy callback mapping"
+  )
   local add_repository_map = vim.fn.maparg("<leader>wa", "n", false, true)
   assert_true(
     type(add_repository_map) == "table" and type(add_repository_map.callback) == "function",
@@ -1976,6 +1982,20 @@ local function test_recent_navigation_ordering(repo, worktree)
   vim.fn.delete(state_file)
 
   local ok, err = xpcall(function()
+    local settings = require("luanphan.global_settings")
+    local settings_path = vim.g.luanphan_global_settings_path
+    assert_true(settings.max_recent_folders(settings_path) == 5, "global settings did not create recent-folder default")
+    write(settings_path, { "[recent_folder]", "max_cache_entry = 2" })
+    recent_paths.touch(temp_root .. "/first")
+    recent_paths.touch(temp_root .. "/second")
+    recent_paths.touch(temp_root .. "/third")
+    local cached = recent_paths.entries()
+    assert_true(#cached == 2, "recent folder cache did not enforce max_cache_entry")
+    assert_true(cached[1]:match("/third$") ~= nil, "recent folder cache did not keep last visit first")
+    assert_true(cached[2]:match("/second$") ~= nil, "recent folder cache did not retain second-last visit")
+    write(settings_path, { "[recent_folder]", "max_cache_entry = 5" })
+    vim.fn.delete(state_file)
+
     local items = {
       { name = "example-a", path = repo },
       { name = "example-b", path = worktree },
@@ -2209,6 +2229,21 @@ local function test_workspace_folder_browser()
   vim.fn.mkdir(hidden, "p")
   write(station .. "/example-file.txt", { "not a directory" })
 
+  local recent_a = temp_root .. "/recent-folder-a"
+  local recent_b = temp_root .. "/recent-folder-b"
+  vim.fn.mkdir(recent_a, "p")
+  vim.fn.mkdir(recent_b, "p")
+  vim.fn.delete(vim.g.luanphan_recent_paths_file)
+  local recent_paths = require("luanphan.recent_paths")
+  recent_paths.touch(recent_a)
+  recent_paths.touch(recent_b)
+
+  local picker_entries = api.folder_picker_entries(station, "")
+  assert_true(picker_entries[1].header and picker_entries[1].display == "[recent folders]", "folder picker omitted recent section")
+  assert_true(realpath(picker_entries[2].path) == realpath(recent_b), "folder picker did not put latest folder first")
+  assert_true(realpath(picker_entries[3].path) == realpath(recent_a), "folder picker did not preserve recent folder order")
+  assert_true(picker_entries[4].header and picker_entries[4].display:find("[folders]", 1, true), "folder picker omitted folder section")
+
   local entries = api.list_folder_entries(station)
   local by_name = {}
   for _, entry in ipairs(entries) do
@@ -2241,24 +2276,34 @@ local function test_workspace_folder_browser()
   write(script, {
     "local function assert_true(value, message) if not value then error(message, 0) end end",
     "local function realpath(path) return (vim.uv or vim.loop).fs_realpath(path) or path end",
+    "vim.g.luanphan_recent_paths_file = " .. string.format("%q", temp_root .. "/child-recent-paths.json"),
+    "vim.g.luanphan_global_settings_path = " .. string.format("%q", vim.g.luanphan_global_settings_path),
     "require('lazy').load({ plugins = { 'luanphan-worktree' } })",
     "local api = _G._luanphan_wt_test",
+    "local recent = require('luanphan.recent_paths')",
+    "recent.touch(" .. string.format("%q", recent_a) .. ")",
+    "recent.touch(" .. string.format("%q", recent_b) .. ")",
     "api.pick_folder(" .. string.format("%q", station) .. ")",
     "local prompt_bufnr = vim.api.nvim_get_current_buf()",
     "local action_state = require('telescope.actions.state')",
     "local actions = require('telescope.actions')",
     "local picker = action_state.get_current_picker(prompt_bufnr)",
     "assert_true(picker ~= nil, 'folder picker did not open')",
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.recent and realpath(selection.value.path) == realpath(" .. string.format("%q", recent_b) .. ") end, 20), 'latest recent folder was not selected first')",
+    "picker:set_prompt('recent-folder-a')",
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.recent and realpath(selection.value.path) == realpath(" .. string.format("%q", recent_a) .. ") end, 20), 'recent folder did not match fuzzy search')",
+    "picker:set_prompt('')",
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.recent and realpath(selection.value.path) == realpath(" .. string.format("%q", recent_b) .. ") end, 20), 'clearing search did not restore recent order')",
     "local target = " .. string.format("%q", station .. "/local_workspaces"),
     "picker:set_prompt(target)",
     "assert_true(vim.wait(3000, function() return action_state.get_current_line() == target end, 20), 'absolute folder input did not reach the prompt')",
-    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return picker.manager and picker.manager:num_results() == 3 and selection and selection.value and selection.value.current and realpath(selection.value.path) == realpath(target) end, 20), 'resolved folder and children did not populate the picker')",
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.exact and realpath(selection.value.path) == realpath(target) end, 20), 'absolute folder match was not selected first')",
     "assert_true(picker:get_selection().display == target, 'resolved folder was not displayed first')",
     "actions.move_selection_next(prompt_bufnr)",
     "local child = picker:get_selection().value.path",
     "assert_true(realpath(child) ~= realpath(target), 'resolved folder child was not selectable')",
     "actions.select_default(prompt_bufnr)",
-    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return action_state.get_current_line() == '' and selection and selection.value and selection.value.current and realpath(selection.value.path) == realpath(child) end, 20), 'resolved folder child did not open in the picker')",
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return action_state.get_current_line() == child and selection and selection.value and selection.value.exact and realpath(selection.value.path) == realpath(child) end, 20), 'resolved folder child did not open in the picker')",
     "picker:set_prompt(target)",
     "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return action_state.get_current_line() == target and selection and selection.value and selection.value.current and realpath(selection.value.path) == realpath(target) end, 20), 'resolved folder did not repopulate after child navigation')",
     "actions.select_default(prompt_bufnr)",
@@ -3292,6 +3337,8 @@ local function test_agent_keys_invoke_cli_commands()
   local old_log = vim.env.NVIM_AGENT_SMOKE_LOG
   vim.env.PATH = shim_dir .. ":" .. old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = log
+  vim.fn.delete(vim.g.luanphan_recent_paths_file)
+  local expected_recent_folder = vim.fn.getcwd()
 
   local ok, err = xpcall(function()
     for _, item in ipairs(agent_cli_commands) do
@@ -3302,6 +3349,11 @@ local function test_agent_keys_invoke_cli_commands()
       assert_true(plugin_loaded(item.plugin), item.plugin .. " did not lazy-load")
       close_agent_terminals()
     end
+    local recent = require("luanphan.recent_paths").entries()
+    assert_true(
+      recent[1] and realpath(recent[1]) == realpath(expected_recent_folder),
+      "<leader>; did not cache current folder"
+    )
     local cursor_regular = false
     for _, line in ipairs(read_log(log)) do
       local command, _, args = line:match("^([^|]+)|([^|]*)|(.*)$")

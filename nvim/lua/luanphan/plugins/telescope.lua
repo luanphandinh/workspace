@@ -20,6 +20,10 @@ local function search_settings()
   require("luanphan.search_priority").open_editor()
 end
 
+local function global_settings()
+  require("luanphan.global_settings").open_editor()
+end
+
 local function buffers()
   require("telescope.builtin").buffers()
 end
@@ -77,6 +81,7 @@ return {
       { "<leader>p", find_files, desc = "Telescope: find files" },
       { "g/", live_grep, desc = "Telescope: live grep" },
       { "g/", live_grep_selection, mode = "x", desc = "Telescope: live grep selection" },
+      { "<leader>sg", global_settings, desc = "Global settings" },
       { "<leader>ss", search_settings, desc = "Search settings" },
       { "<leader>fl", buffers, desc = "List open files" },
       { "gs", document_symbols, desc = "Telescope: document symbols" },

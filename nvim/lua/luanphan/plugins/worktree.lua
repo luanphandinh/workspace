@@ -798,6 +798,102 @@ local function setup()
     return dir_exists(path) and path or nil, true
   end
 
+  local function folder_picker_entries(current, prompt)
+    local resolved, path_input = resolve_folder_input(prompt, current)
+    local browse_path = resolved or current
+    local browser = list_folder_entries(browse_path)
+    local entries = {}
+    local seen = {}
+
+    local function append(entry)
+      if entry.path then
+        local path = normalize_directory(entry.path)
+        if seen[path] then
+          return
+        end
+        seen[path] = true
+        entry.path = path
+      end
+      entry.order = #entries + 1
+      entries[#entries + 1] = entry
+    end
+
+    if resolved then
+      append({
+        name = ".",
+        path = resolved,
+        current = true,
+        exact = true,
+        path_prompt = prompt,
+        display = prompt,
+        ordinal = resolved,
+        group_order = 0,
+      })
+    end
+
+    local recents = {}
+    for _, path in ipairs(recent_paths.entries()) do
+      path = normalize_directory(path)
+      if dir_exists(path) and not seen[path] then
+        recents[#recents + 1] = path
+      end
+    end
+    if #recents > 0 then
+      append({ header = true, display = "[recent folders]", ordinal = "recent folders", group_order = 1 })
+      for _, path in ipairs(recents) do
+        append({
+          name = vim.fn.fnamemodify(path, ":t"),
+          path = path,
+          recent = true,
+          display = path,
+          ordinal = path .. " " .. vim.fn.fnamemodify(path, ":t"),
+          group_order = 1,
+        })
+      end
+    end
+
+    append({
+      header = true,
+      display = "[folders]  " .. browse_path,
+      ordinal = "folders " .. browse_path,
+      group_order = 2,
+    })
+    for _, entry in ipairs(browser) do
+      if not (resolved and entry.current) then
+        append(vim.tbl_extend("force", entry, {
+          display = entry.current and (".  " .. entry.path) or entry.name,
+          ordinal = entry.path .. " " .. entry.name,
+          group_order = 2,
+          path_input = path_input,
+        }))
+      end
+    end
+    return entries
+  end
+
+  local function make_folder_sorter(base_sorter, sorters)
+    return sorters.Sorter:new({
+      scoring_function = function(_, prompt, line, entry)
+        local value = entry.value
+        if value.exact and value.path_prompt == prompt then
+          return 0
+        end
+        if value.header then
+          return prompt == "" and value.group_order * 10 or -1
+        end
+
+        local score = base_sorter:scoring_function(prompt, line, entry)
+        if not score or score < 0 then
+          return -1
+        end
+        return value.group_order * 10 + score + value.order / 10000
+      end,
+      highlighter = function(_, prompt, display)
+        return base_sorter:highlighter(prompt, display)
+      end,
+    })
+  end
+
   local function list_sibling_repos()
     local root = git_root(safe_getcwd())
     if not root then
@@ -1445,59 +1541,38 @@ local function setup()
     end
 
     local function folder_results(prompt)
-      local resolved, path_input = resolve_folder_input(prompt, current)
-      if path_input and not resolved then
-        return {}
-      end
-
-      local results = list_folder_entries(resolved or current)
-      for index, entry in ipairs(results) do
-        entry.order = index
-        entry.path_prompt = resolved and prompt or nil
-      end
-      return results
+      return folder_picker_entries(current, prompt)
     end
 
     local function finder()
       return finders.new_dynamic({
         fn = folder_results,
         entry_maker = function(entry)
-          local display = entry.current and (entry.path_prompt or (".  " .. entry.path)) or entry.name
           return {
             value = entry,
-            display = display,
-            ordinal = entry.name,
+            display = entry.display,
+            ordinal = entry.ordinal,
           }
         end,
       })
     end
 
     local base_sorter = conf.generic_sorter({})
-    local sorter = require("telescope.sorters").Sorter:new({
-      scoring_function = function(_, prompt, line, entry)
-        if entry.value.path_prompt then
-          return entry.value.order / 10000
-        end
-        return base_sorter:scoring_function(prompt, line, entry)
-      end,
-      highlighter = function(_, prompt, display)
-        return base_sorter:highlighter(prompt, display)
-      end,
-    })
+    local sorter = make_folder_sorter(base_sorter, require("telescope.sorters"))
 
     pickers.new({}, {
       prompt_title = "Workspace Folder",
       finder = finder(),
       sorter = sorter,
       attach_mappings = function(prompt_bufnr, _map)
+        actions.move_selection_next:replace(function(bufnr)
+          move_project_selection(action_state.get_current_picker(bufnr), 1)
+        end)
+        actions.move_selection_previous:replace(function(bufnr)
+          move_project_selection(action_state.get_current_picker(bufnr), -1)
+        end)
         actions.select_default:replace(function()
           local input_path, path_input = resolve_folder_input(action_state.get_current_line(), current)
-          if path_input then
-            if not input_path then
-              vim.notify("folder path not found", vim.log.levels.WARN)
-              return
-            end
-          end
           local selection = action_state.get_selected_entry()
           if not selection or not selection.value or not selection.value.path then
             if input_path then
@@ -1507,10 +1582,13 @@ local function setup()
               end)
               return
             end
-            vim.notify("folder picker: no selection", vim.log.levels.WARN)
+            vim.notify(path_input and "folder path not found" or "folder picker: no selection", vim.log.levels.WARN)
             return
           end
-          if selection.value.current then
+          if selection.value.header then
+            return
+          end
+          if selection.value.current or selection.value.recent then
             actions.close(prompt_bufnr)
             vim.schedule(function()
               activate_folder(selection.value.path)
@@ -1520,9 +1598,18 @@ local function setup()
           current = selection.value.path
           local picker = action_state.get_current_picker(prompt_bufnr)
           picker:refresh(finder(), { reset_prompt = true })
+          picker:set_prompt(current)
         end)
         return true
       end,
+      on_complete = {
+        function(picker)
+          local selection = picker:get_selection()
+          if selection and selection.value and selection.value.header then
+            move_project_selection(picker, 1)
+          end
+        end,
+      },
     }):find()
   end
 
@@ -1873,6 +1960,8 @@ local function setup()
     activate_agent = activate_agent,
     list_sibling_repos = list_sibling_repos,
     list_folder_entries = list_folder_entries,
+    folder_picker_entries = folder_picker_entries,
+    make_folder_sorter = make_folder_sorter,
     resolve_folder_input = resolve_folder_input,
     list_worktrees = list_worktrees,
     list_all_project_repos = list_all_project_repos,
