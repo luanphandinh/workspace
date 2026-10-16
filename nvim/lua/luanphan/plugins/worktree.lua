@@ -845,7 +845,7 @@ local function setup()
           name = vim.fn.fnamemodify(path, ":t"),
           path = path,
           recent = true,
-          display = path,
+          display = "  " .. path,
           ordinal = path .. " " .. vim.fn.fnamemodify(path, ":t"),
           group_order = 1,
         })
@@ -861,7 +861,7 @@ local function setup()
     for _, entry in ipairs(browser) do
       if not (resolved and entry.current) then
         append(vim.tbl_extend("force", entry, {
-          display = entry.current and (".  " .. entry.path) or entry.name,
+          display = "  " .. (entry.current and (".  " .. entry.path) or entry.name),
           ordinal = entry.path .. " " .. entry.name,
           group_order = 2,
           path_input = path_input,

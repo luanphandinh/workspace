@@ -2241,8 +2241,10 @@ local function test_workspace_folder_browser()
   local picker_entries = api.folder_picker_entries(station, "")
   assert_true(picker_entries[1].header and picker_entries[1].display == "[recent folders]", "folder picker omitted recent section")
   assert_true(realpath(picker_entries[2].path) == realpath(recent_b), "folder picker did not put latest folder first")
+  assert_true(vim.startswith(picker_entries[2].display, "  "), "recent folder row is not indented")
   assert_true(realpath(picker_entries[3].path) == realpath(recent_a), "folder picker did not preserve recent folder order")
   assert_true(picker_entries[4].header and picker_entries[4].display:find("[folders]", 1, true), "folder picker omitted folder section")
+  assert_true(vim.startswith(picker_entries[5].display, "  "), "folder row is not indented")
 
   local entries = api.list_folder_entries(station)
   local by_name = {}
