@@ -34,7 +34,7 @@ local function read_entries()
   local max_entries = require("luanphan.global_settings").max_recent_folders()
   for _, value in ipairs(decoded) do
     local key = normalize(value)
-    if key and not seen[key] then
+    if key and vim.fn.isdirectory(key) == 1 and not seen[key] then
       seen[key] = true
       entries[#entries + 1] = key
       if #entries >= max_entries then
@@ -63,7 +63,7 @@ end
 
 function M.touch(path)
   local key = normalize(path)
-  if not key then
+  if not key or vim.fn.isdirectory(key) ~= 1 then
     return false
   end
 

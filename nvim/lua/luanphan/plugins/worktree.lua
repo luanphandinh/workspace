@@ -785,22 +785,37 @@ local function setup()
     return entries
   end
 
-  local function resolve_folder_input(input, base)
+  local function folder_path_context(input, base)
     input = vim.trim(input or "")
     local explicit = input:sub(1, 1) == "/" or input:sub(1, 1) == "~" or input:sub(1, 1) == "."
     if not explicit then
-      return nil, false
+      return nil, false, nil, nil
     end
 
     local expanded = vim.fn.expand(input)
     local path = expanded:sub(1, 1) == "/" and expanded or (base .. "/" .. expanded)
     path = normalize_directory(path)
-    return dir_exists(path) and path or nil, true
+    local resolved = dir_exists(path) and path or nil
+    local browse_path = path
+    while not dir_exists(browse_path) do
+      local parent = vim.fn.fnamemodify(browse_path, ":h")
+      if parent == browse_path then
+        browse_path = base
+        break
+      end
+      browse_path = parent
+    end
+    return resolved, true, path, normalize_directory(browse_path)
+  end
+
+  local function resolve_folder_input(input, base)
+    local resolved, explicit = folder_path_context(input, base)
+    return resolved, explicit
   end
 
   local function folder_picker_entries(current, prompt)
-    local resolved, path_input = resolve_folder_input(prompt, current)
-    local browse_path = resolved or current
+    local resolved, path_input, search_prompt, path_browse = folder_path_context(prompt, current)
+    local browse_path = path_input and path_browse or current
     local browser = list_folder_entries(browse_path)
     local entries = {}
     local seen = {}
@@ -828,26 +843,32 @@ local function setup()
         display = prompt,
         ordinal = resolved,
         group_order = 0,
+        search_prompt = search_prompt,
       })
     end
 
     local recents = {}
+    local recent_name_width = 0
     for _, path in ipairs(recent_paths.entries()) do
       path = normalize_directory(path)
       if dir_exists(path) and not seen[path] then
-        recents[#recents + 1] = path
+        local name = vim.fn.fnamemodify(path, ":t")
+        recent_name_width = math.max(recent_name_width, vim.fn.strdisplaywidth(name))
+        recents[#recents + 1] = { name = name, path = path }
       end
     end
     if #recents > 0 then
       append({ header = true, display = "[recent folders]", ordinal = "recent folders", group_order = 1 })
-      for _, path in ipairs(recents) do
+      for _, recent in ipairs(recents) do
+        local padding = string.rep(" ", recent_name_width - vim.fn.strdisplaywidth(recent.name))
         append({
-          name = vim.fn.fnamemodify(path, ":t"),
-          path = path,
+          name = recent.name,
+          path = recent.path,
           recent = true,
-          display = "  " .. path,
-          ordinal = path .. " " .. vim.fn.fnamemodify(path, ":t"),
+          display = "  " .. recent.name .. padding .. "  |  " .. recent.path,
+          ordinal = recent.path .. " " .. recent.name,
           group_order = 1,
+          search_prompt = path_input and search_prompt or nil,
         })
       end
     end
@@ -865,6 +886,7 @@ local function setup()
           ordinal = entry.path .. " " .. entry.name,
           group_order = 2,
           path_input = path_input,
+          search_prompt = path_input and search_prompt or nil,
         }))
       end
     end
@@ -882,7 +904,7 @@ local function setup()
           return prompt == "" and value.group_order * 10 or -1
         end
 
-        local score = base_sorter:scoring_function(prompt, line, entry)
+        local score = base_sorter:scoring_function(value.search_prompt or prompt, line, entry)
         if not score or score < 0 then
           return -1
         end
@@ -1963,6 +1985,7 @@ local function setup()
     folder_picker_entries = folder_picker_entries,
     make_folder_sorter = make_folder_sorter,
     resolve_folder_input = resolve_folder_input,
+    folder_path_context = folder_path_context,
     list_worktrees = list_worktrees,
     list_all_project_repos = list_all_project_repos,
     list_addable_repositories = list_addable_repositories,

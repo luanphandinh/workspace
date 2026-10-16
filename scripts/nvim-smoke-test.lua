@@ -1986,6 +1986,9 @@ local function test_recent_navigation_ordering(repo, worktree)
     local settings_path = vim.g.luanphan_global_settings_path
     assert_true(settings.max_recent_folders(settings_path) == 5, "global settings did not create recent-folder default")
     write(settings_path, { "[recent_folder]", "max_cache_entry = 2" })
+    vim.fn.mkdir(temp_root .. "/first", "p")
+    vim.fn.mkdir(temp_root .. "/second", "p")
+    vim.fn.mkdir(temp_root .. "/third", "p")
     recent_paths.touch(temp_root .. "/first")
     recent_paths.touch(temp_root .. "/second")
     recent_paths.touch(temp_root .. "/third")
@@ -1993,6 +1996,9 @@ local function test_recent_navigation_ordering(repo, worktree)
     assert_true(#cached == 2, "recent folder cache did not enforce max_cache_entry")
     assert_true(cached[1]:match("/third$") ~= nil, "recent folder cache did not keep last visit first")
     assert_true(cached[2]:match("/second$") ~= nil, "recent folder cache did not retain second-last visit")
+    vim.fn.delete(temp_root .. "/third", "rf")
+    cached = recent_paths.entries()
+    assert_true(#cached == 1 and cached[1]:match("/second$") ~= nil, "recent folder cache retained a missing folder")
     write(settings_path, { "[recent_folder]", "max_cache_entry = 5" })
     vim.fn.delete(state_file)
 
@@ -2243,6 +2249,17 @@ local function test_workspace_folder_browser()
   assert_true(realpath(picker_entries[2].path) == realpath(recent_b), "folder picker did not put latest folder first")
   assert_true(vim.startswith(picker_entries[2].display, "  "), "recent folder row is not indented")
   assert_true(realpath(picker_entries[3].path) == realpath(recent_a), "folder picker did not preserve recent folder order")
+  local first_separator = picker_entries[2].display:find("|", 1, true)
+  local second_separator = picker_entries[3].display:find("|", 1, true)
+  assert_true(first_separator ~= nil and first_separator == second_separator, "recent folder columns are not aligned")
+  assert_true(
+    picker_entries[2].display:find("recent-folder-b", 1, true) < first_separator,
+    "recent folder name is not in the first column"
+  )
+  assert_true(
+    picker_entries[2].display:find(recent_b, 1, true) > first_separator,
+    "recent folder path is not in the second column"
+  )
   assert_true(picker_entries[4].header and picker_entries[4].display:find("[folders]", 1, true), "folder picker omitted folder section")
   assert_true(vim.startswith(picker_entries[5].display, "  "), "folder row is not indented")
 
@@ -2274,6 +2291,41 @@ local function test_workspace_folder_browser()
   resolved, path_input = api.resolve_folder_input("local_workspaces", station)
   assert_true(resolved == nil and path_input == false, "fuzzy folder input was treated as a path")
 
+  local partial = station .. "/local"
+  local _, explicit, normalized, browse_path = api.folder_path_context(partial, station)
+  assert_true(explicit and normalized == partial, "partial absolute folder input was not normalized")
+  assert_true(realpath(browse_path) == realpath(station), "partial folder input did not use its existing parent")
+  local partial_entries = api.folder_picker_entries(station, partial)
+  local partial_child = nil
+  for _, entry in ipairs(partial_entries) do
+    if entry.path and realpath(entry.path) == realpath(station .. "/local_workspaces") then
+      partial_child = entry
+      break
+    end
+  end
+  assert_true(partial_child ~= nil, "partial folder input did not list a matching child")
+  assert_true(partial_child.search_prompt == partial, "partial folder input did not expand its search prompt")
+
+  local original_home = vim.env.HOME
+  local test_home = temp_root .. "/folder-picker-home"
+  local home_child = test_home .. "/example-folder"
+  vim.fn.mkdir(home_child, "p")
+  vim.env.HOME = test_home
+  local tilde_entries = api.folder_picker_entries(station, "~/example")
+  vim.env.HOME = original_home
+  local tilde_child = nil
+  for _, entry in ipairs(tilde_entries) do
+    if entry.path and realpath(entry.path) == realpath(home_child) then
+      tilde_child = entry
+      break
+    end
+  end
+  assert_true(tilde_child ~= nil, "partial home-relative folder input did not list its matching child")
+  assert_true(
+    tilde_child.search_prompt:sub(1, 1) == "/" and not tilde_child.search_prompt:find("~", 1, true),
+    "home-relative search prompt was not expanded"
+  )
+
   local script = temp_root .. "/workspace-folder-picker.lua"
   write(script, {
     "local function assert_true(value, message) if not value then error(message, 0) end end",
@@ -2296,7 +2348,15 @@ local function test_workspace_folder_browser()
     "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.recent and realpath(selection.value.path) == realpath(" .. string.format("%q", recent_a) .. ") end, 20), 'recent folder did not match fuzzy search')",
     "picker:set_prompt('')",
     "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.recent and realpath(selection.value.path) == realpath(" .. string.format("%q", recent_b) .. ") end, 20), 'clearing search did not restore recent order')",
+    "local original_home = vim.env.HOME",
+    "vim.env.HOME = " .. string.format("%q", test_home),
+    "picker:set_prompt('~/example')",
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and realpath(selection.value.path) == realpath(" .. string.format("%q", home_child) .. ") end, 20), 'partial home-relative path did not select its matching child')",
+    "vim.env.HOME = original_home",
     "local target = " .. string.format("%q", station .. "/local_workspaces"),
+    "local partial = " .. string.format("%q", station .. "/local"),
+    "picker:set_prompt(partial)",
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and not selection.value.exact and realpath(selection.value.path) == realpath(target) end, 20), 'partial folder path did not select its matching child')",
     "picker:set_prompt(target)",
     "assert_true(vim.wait(3000, function() return action_state.get_current_line() == target end, 20), 'absolute folder input did not reach the prompt')",
     "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.exact and realpath(selection.value.path) == realpath(target) end, 20), 'absolute folder match was not selected first')",
