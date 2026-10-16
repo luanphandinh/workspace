@@ -1,8 +1,10 @@
 # Technical Design Contract
 
-Start with a standalone `[toc]` line, followed by a blank line and `# 1. Overview & Background`. The marker is required for the local browser preview's heading sidebar. Use these eight numbered H1 sections in order.
+Use a user-supplied tech doc, template, or example as the primary style reference. Preserve its useful structure, ordering, density, and artifact style. This contract fills gaps in correctness, clarity, and safe synchronization; it does not override an explicit user example merely to impose the default layout.
 
-Use the complete [small-change example](examples/hide-address.md) or [multi-step example](examples/shared-collections.md) as the writing reference. Keep the same directness as complexity grows; grow only the contracts, affected services, failure handling, and rollout dependencies that actually change. Their domains and code paths are fictional, not implementation defaults.
+Start with a standalone `[toc]` line followed by a blank line. The marker drives local preview navigation. When no user reference exists, use relevant numbered H1 sections below in standard order. Omit empty sections; retain standard numbers for included sections.
+
+When no user reference exists, use the complete [small-change example](examples/hide-address.md) or [multi-step example](examples/shared-collections.md) as the writing reference. Keep the same directness as complexity grows; grow only the contracts, affected services, failure handling, and rollout dependencies that actually change. Their domains and code paths are fictional, not implementation defaults.
 
 ## Section ownership
 
@@ -17,13 +19,16 @@ Use the complete [small-change example](examples/hide-address.md) or [multi-step
 | 7. Rollout Plan | Sequencing and exposure gates |
 | 8. Release Checklist | Production actions |
 
-One fact belongs to one section.
+One fact belongs to one section. Initial draft contains minimum facts needed to implement, release, and verify requested change.
 
 ## Bullet-point prose
 
-- All explanatory prose uses bullets, including rationale, `N/A`, and notes inside `<details>` blocks. No standalone paragraphs.
-- Group related logic in two levels: parent method or shared condition, then one operation or rule per child bullet. Split compound prose; do not add a third level.
+- All explanatory prose uses bullets, including rationale and notes inside `<details>` blocks. No standalone paragraphs.
+- Group related logic in 2–4 levels as needed: component → method → condition → outcome. Each level names a real grouping.
 - Keep independent facts as flat bullets. Keep headings, tables, SVG links, and code outside lists. Use numbered lists only for ordered rollout or migration steps.
+- Use natural sentence order for descriptive bullets. Ordered actions and checklists start with imperative verbs.
+- Remove filler articles and connectives when meaning stays clear.
+- Never write `The config ... below`, `This section describes`, `we will`, `in order to`, `after that`, or `then`. Use heading, identifier, direct action, or numbered step.
 
 ## Cross-service call naming
 
@@ -35,18 +40,15 @@ One fact belongs to one section.
 
 ## 1. Overview & Background
 
-At most three short bullets: problem, trigger, and `Target` or `Expected outcome`. Never use `Success` as a label. Skip missing items. No system history.
+At most three short bullets: problem, trigger, target. Skip missing items. No system history.
 
 ## 2. Links
 
-Links only:
+Include available URLs only. Omit empty labels and omit section when no URL exists.
 
 ```text
-- Tracking ticket:
-- Requirement:
-- Related changes:
-- Monitoring:
-- Other:
+- Requirement: <url>
+- Monitoring: <url>
 ```
 
 Repository mapping and code evidence stay in `<name>_mapping.md`.
@@ -63,24 +65,22 @@ Use only the subsections that carry information:
 In `Main changes`:
 
 - Use one short bold parent bullet per component or user-visible result: `- **<name>:**`.
-- Put a shared condition in the parent bullet and each resulting operation in its own child bullet.
+- Put shared condition in parent bullet and related operations beneath it. Use deeper grouping when several methods or conditions share one parent.
 - Name exact fields, handlers, statuses, templates, tables, and messages. Do not add a prose recap.
 
 Every arrow names the exact RPC method, HTTP method/path, SQL operation/table, cache command/key, or message topic.
 
 ## 4. Design Decisions
 
-- Include critical chosen decisions, not just open questions, when the choice affects architecture, contracts, ownership, reliability, or rollout risk.
-- Use the choice as a parent bullet, with its reason and material cost/trade-off as child bullets. Keep implementation steps in Internal Technical Design; do not invent alternatives or pad this section with routine details.
-- Use `- N/A.` only when there is no consequential choice worth explaining. A design with no unresolved questions can still have important decisions.
+- Include only choices affecting architecture, contracts, ownership, reliability, or rollout risk.
+- Use choice as parent bullet; include at most one reason and one material trade-off.
+- Omit section when no consequential choice exists.
 
 ## 5. External Technical Design
 
-If no external contract changes:
+Omit section when no external contract changes.
 
-`- No API changes.`
-
-Otherwise, one H2 per changed API with only changed request/response fields, behavior, and schema diff. For a new API, show the complete contract. Do not discuss internal libraries or module versions.
+Use one H2 per changed API with only changed request/response fields, behavior, and schema diff. For a new API, show complete contract. Do not discuss internal libraries or module versions.
 
 Existing fields without an IDL or schema change are not external design. Do not add request/response tables or per-API `N/A` statements; put changed handling in `Logic change` and implementation in `Code changes`.
 
@@ -101,8 +101,9 @@ Do not repeat architecture, external contracts, or production actions here.
 
 ### Code changes
 
-- Put every implementation artifact in its own closed-by-default `<details>` block, including diffs, code, schemas, request-field tables, and code-path tables. Never add `open`.
-- Every block has exactly one `<summary>` named `Code change — <symbol> (<path>)`. Keep its supporting text and artifact inside the same wrapper:
+- Include an implementation artifact only when exact shape affects implementation or removes ambiguity. Omit obvious wiring and code that repeats contracts or `Logic change`.
+- Put each included artifact in its own closed-by-default `<details>` block. Never add `open`.
+- Give each block one `<summary>` named `Code change — <symbol> (<path>)`. Keep supporting text and artifact inside same wrapper:
 
 ````markdown
 <details>
@@ -123,7 +124,7 @@ Do not repeat architecture, external contracts, or production actions here.
 
 ### Config changes
 
-Apply this structure to every changed configuration.
+Use this structure for each changed configuration.
 
 #### Subsection heading
 
@@ -133,16 +134,18 @@ Apply this structure to every changed configuration.
 
 #### Content order
 
-1. List each changed value as `<config_name>.<nested_key> = <value>`, including the complete dotted path.
-2. Describe only the configuration-specific read/use behavior needed to connect the path to exact handlers and outputs. Do not repeat it in `Logic change`.
-3. Add one fenced `diff` block containing the actual configuration change immediately after the runtime behavior.
+1. Name changed namespace or key once: `Namespace/key: <config_name>.<nested_key>`. For nearby keys, name nearest shared namespace and list keys without values.
+2. Add only read/use behavior absent from diff. Do not repeat `Logic change`.
+3. Add one concise fenced `diff` block.
 
 #### Configuration diff
 
-- Expand dotted paths into their full nested JSON object structure. Never use dotted keys inside the JSON diff.
-- Include only changed keys and the complete parent object hierarchy needed to locate them.
-- Prefix additions with `+`; use `-` and `+` for replacements; include deletions only when the design removes configuration.
-- Keep placeholders identical to the dotted assignments. Do not repeat runtime behavior in the diff.
+- Expand dotted paths into their nested object structure. Never use dotted keys inside a structured configuration diff.
+- Include enough unchanged parent, sibling, and array context to locate change.
+- Keep unchanged lines unmarked. Prefix only actual additions with `+`, removals with `-`, and replacements with paired `-` and `+` lines.
+- Use `...` at omitted boundaries. Never present a partial configuration as a complete replacement.
+- Keep unchanged array entries visible when they provide useful context. Compact unchanged or wholly added/removed scalar arrays onto one line when readable; expand partially changed arrays so unchanged entries remain unmarked.
+- Keep placeholders consistent between namespace label and diff. Do not repeat runtime behavior in diff.
 - Use one short diff per configuration. Exclude unrelated values, inventory tables, and metadata columns for readers, outputs, sub-keys, or owners.
 
 Required form:
@@ -152,29 +155,33 @@ Required form:
 
 #### <config_name> (service: <exact_service_name>)
 
-- `<config_name>.<parent_key>.<child_key>.<nested_key> = <value>`
-- When `<verified_condition>`:
-  - `<exact_handler>` reads `<config_name>.<parent_key>.<child_key>.<nested_key>`.
-  - `<exact_handler>` sets `<exact_output_field>`.
+- Namespace/key: `<config_name>.<parent_key>.<child_key>` (`<nested_key>`, `<other_key>`).
 
 ```diff
 {
-+  "<parent_key>": {
-+    "<child_key>": {
-+      "<nested_key>": "<value>"
-+    }
-+  }
+  "<parent_key>": {
+    "<unchanged_sibling>": true,
+    "<unchanged_array>": ["<item-a>", "<item-b>"],
+    "<child_key>": {
+      "<nested_key>": [
+        "<item-a>",
++        "<item-b>"
+      ],
++      "<other_key>": "<value>"
+    },
+    ...
+  }
 }
 ```
 ````
 
 ## 7. Rollout Plan
 
-At most four ordered steps covering only deployment order, compatibility gates, exposure gates, and end-to-end verification order. Do not repeat configuration values or expected outputs. Use `- N/A — direct rollout.` when staging adds no value.
+Use shortest ordered list covering deployment order, compatibility gates, exposure gates, and end-to-end verification. One imperative action per step. Omit section when no sequencing or gate exists.
 
 ## 8. Release Checklist
 
-Production actions only: register configuration, publish templates, set values, deploy services, and verify production constraints. Write each as `verb + target`:
+Manual production actions absent from Rollout Plan only. Never repeat rollout steps. Write each as `verb + target`:
 
 ```text
 - [ ] Register <configuration>
@@ -184,7 +191,7 @@ Production actions only: register configuration, publish templates, set values, 
 - [ ] Verify <production-constraint>
 ```
 
-No implementation requirements, design behavior, tests, reviews, or ordinary CI/CD steps.
+Omit section when no manual production action exists. Exclude implementation requirements, design behavior, tests, reviews, and routine automation.
 
 ## Compactness gate
 
@@ -194,6 +201,8 @@ Before every presentation or sync:
 - Move only unique reliability behavior into the relevant `Logic change`; keep exceptional tests grouped by behavior.
 - Remove optional headings, tables, alternatives, and examples that add no decision value. Do not explain their removal.
 - Keep rollout to sequencing and the release checklist to production actions. Every runtime fact must have one primary home.
-- Keep visible non-code prose below 200 source lines.
-- Replace every explanatory paragraph with bullets, including notes inside folded blocks. Verify grouped logic has two list levels and each child carries one operation or rule.
+- Keep visible non-code prose below 120 source lines.
+- Replace every explanatory paragraph with bullets, including notes inside folded blocks. Verify grouped logic uses 2–4 meaningful levels without repeated subject prefixes.
+- Delete any line whose removal changes no decision, contract, implementation, rollout order, or verification step.
+- Search for filler: `the ... below`, `this section`, `we will`, `in order to`, `after that`, `then`. Rewrite as direct statements or ordered actions.
 - Check that sections own distinct facts and that every proposed new symbol passes the `local-coding` minimum-solution gate.

@@ -52,35 +52,31 @@ lark-cli docs +update \
 - In batches of at most 200, update only those blocks through the Docx block batch-update API with `style.folded=true` and `fields=[3]`. Preserve all text and content; never modify other headings.
 - Re-read the blocks, verify every match is folded, and report matched and folded counts. Use the API, never desktop or browser UI.
 
-## Protected sections
+## Remote-owned sections
 
 - `Links`: remote source of truth. Never create, replace, reorder, delete, or pull it during normal sync.
-- `Release Checklist`: show the proposed change and obtain separate explicit confirmation.
-- Diagrams/whiteboards: list changed diagram sections and obtain separate explicit replacement authorization.
 
-A normal sync request authorizes exact-text updates, new unprotected sections, and text-preserving H1/H2 block replacement for native numbering. It does not authorize other block replacement or protected updates.
+A sync request authorizes exact-text updates, new sections, text-preserving H1/H2 block replacement for native numbering, and native import of every SVG referenced within the requested source scope. A complete-document sync includes every referenced diagram. Preserve remote-owned sections and ask separately only before a destructive change outside the requested source scope.
 
 ## Write strategy
 
 1. Fetch the exact current section.
 2. Use exact text replacement for an existing section.
 3. Insert only when the section is new.
-4. If exact replacement fails, stop and ask before block replacement, except for the required text-preserving H1/H2 native-numbering update.
+4. If exact replacement fails, stop and ask before block replacement, except for required text-preserving H1/H2 native-numbering updates and in-scope native diagram imports.
 5. Never silently fall back to delete/recreate or whole-document overwrite.
 6. Re-fetch changed sections and verify unrelated content is unchanged.
 
-For an empty remote, create sections selectively; omit Links and Release Checklist until their policies are satisfied.
+For an empty remote, create sections selectively and omit Links.
 
 ## SVG diagram sync
 
-- Resolve wiki URLs to their document and read the matching document skill's media/upload references before choosing commands. Confirm SVG support for the intended block type; do not infer it from generic image-upload support.
-- Sync the same verified SVG asset used by the local document. Do not send diagram-language fences for automatic whiteboard conversion or generate PNG alternatives.
-- Fetch the target section and block IDs. List the exact diagram changes and obtain separate replacement authorization before modifying an existing diagram or migrating a whiteboard to SVG.
-- Upload the SVG and use the returned media token or remote asset URL at the authorized location. A local filesystem image link is not a remote upload. Do not publish private assets at public URLs.
-- Check current CLI help for targeted insertion. The media-insert shortcut defaults to document end, but can insert relative to a text selection; nested selections may place media at a top-level ancestor. Verify the exact insertion location, and use a targeted block operation or stop when selection-based placement cannot preserve the section.
-- If inline SVG is unsupported, report that limit and ask before attaching or linking the SVG instead. Never silently rasterize it, change format, or claim inline preview succeeded.
-- Keep existing whiteboards, tokens, section titles, and unrelated content intact unless their exact replacement was authorized. Preserve the old diagram until the uploaded SVG and its placement are verified.
-- Re-fetch the updated section, verify the asset token or URL and unchanged unrelated blocks, and inspect the remote preview when supported. Verify uploaded asset bytes separately; do not treat unchanged Markdown or a successful upload as proof of a correct diagram.
+- Treat every SVG referenced within the requested source scope as part of the sync. Use the same verified SVG asset embedded by the local document.
+- Read the matching document integration skill's native SVG-to-whiteboard instructions before writing. Use its native import path instead of a generic media upload, attachment, public link, raster image, or diagram-language conversion.
+- Fetch the target section and block IDs. Import each SVG at its corresponding diagram location; replacing that corresponding diagram is within the requested sync scope.
+- Preserve unrelated diagrams, section titles, tokens, and blocks. Ask separately only for destructive changes outside the requested source scope.
+- Re-fetch the updated section and inspect the rendered preview. Verify the whiteboard is at the intended location, labels and edges are legible, no stale duplicate remains, and unrelated blocks are unchanged.
+- If native SVG-to-whiteboard import is unavailable, stop and report the limitation. Do not silently change formats or claim that the diagram was synchronized.
 
 ## Rich-text fidelity
 

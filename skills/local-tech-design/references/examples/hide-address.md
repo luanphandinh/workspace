@@ -2,13 +2,8 @@
 
 # 1. Overview & Background
 
-- `author.address`:
-  - Let the author hide it in feed responses.
-  - Post text is unchanged.
-- Target: one account setting applies to old and new feed items.
-- Fictional example:
-  - HTTP server and Go `FeedService` in one `example-api` binary, backed by PostgreSQL.
-  - Paths below are illustrative.
+- `author.address`: user-controlled omission from feed responses.
+- Account setting applies to existing and new feed items.
 
 # 2. Links
 
@@ -16,23 +11,19 @@
 
 # 3. Solution Overview
 
-![Set account privacy, then apply it when building feed responses](assets/hide-address.svg)
-
-# 4. Design Decisions
-
-- N/A.
+![Set account privacy and build feed responses](assets/hide-address.svg)
 
 # 5. External Technical Design
 
 | API | Change |
 | --- | --- |
-| `PATCH /v1/me/feed-privacy` | New. Body `{"hide_address":true}`; `204` after persistence. |
-| `GET /v1/feed` | Existing. `author.address` becomes optional; hidden means omitted, not an empty string. |
+| `PATCH /v1/me/feed-privacy` | New. Body `{"hide_address":true}`. `204` after persistence. |
+| `GET /v1/feed` | `author.address` optional. Hidden value omitted. |
 
 - `PATCH /v1/me/feed-privacy`:
-  - Return `400` unless `hide_address` is a boolean.
-  - Use the authenticated user ID, not a caller-selected account.
-  - Repeating the same patch is safe.
+  - Return `400` unless `hide_address` is boolean.
+  - Use authenticated user ID.
+  - Return `204` for same-value retries.
 
 # 6. Internal Technical Design
 
@@ -41,15 +32,15 @@
 ### Logic change
 
 - `FeedService.SetPrivacy`:
-  - Update only the authenticated user's setting.
+  - Update only authenticated user's setting.
   - Default `false` preserves existing behavior.
 - `FeedService.List`:
   - Join current author settings.
-  - Call `toAuthor` to build the author response.
-  - Never serialize an address from a stored feed snapshot or cached response.
-  - Fail the request if author settings cannot be read.
-  - Do not cache the personalized response.
-  - Hiding an address does not erase data already downloaded by a client.
+  - Build response with `toAuthor`.
+  - Ignore addresses from snapshots and cached responses.
+  - Fail request when author settings cannot be read.
+  - Disable personalized response caching.
+  - Previously downloaded addresses remain visible.
 
 ### Code changes
 
@@ -66,11 +57,11 @@ ALTER TABLE users
 <details>
 <summary><strong>Code change — toAuthor (internal/feed/response.go)</strong></summary>
 
-```go
+```diff
 type AuthorRow struct {
     ID          string
     Address     string
-    HideAddress bool
++    HideAddress bool
 }
 
 type Author struct {
@@ -79,29 +70,25 @@ type Author struct {
 }
 
 func toAuthor(row AuthorRow) Author {
-    author := Author{ID: row.ID}
-    if !row.HideAddress {
-        author.Address = &row.Address
-    }
+-    return Author{ID: row.ID, Address: &row.Address}
++    author := Author{ID: row.ID}
++    if !row.HideAddress {
++        author.Address = &row.Address
++    }
     return author
 }
 ```
 
-- Wire `PATCH /v1/me/feed-privacy` to `FeedService.SetPrivacy`.
-- Select `users.hide_address` in the existing feed query.
-- Verify JSON field absence, not just an empty address.
+- Route `PATCH /v1/me/feed-privacy` to `FeedService.SetPrivacy`.
+- Select `users.hide_address` in feed query.
+- Assert JSON `author.address` is absent.
 
 </details>
 
 # 7. Rollout Plan
 
-1. Add the column and deploy readers that understand missing addresses.
-2. Deploy all server instances with the read filter, then expose the setting.
+1. Add `users.hide_address`.
+2. Deploy `example-api` readers.
+3. Expose privacy setting.
 
-- After users opt in, do not roll back to an address-disclosing reader.
-
-# 8. Release Checklist
-
-- [ ] Apply the migration and deploy the server.
-- [ ] Enable the setting after all readers enforce it.
-- [ ] Verify old and new feed items omit hidden addresses.
+- Rollback: keep address filter after first opt-in.

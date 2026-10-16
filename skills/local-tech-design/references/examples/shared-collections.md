@@ -2,13 +2,9 @@
 
 # 1. Overview & Background
 
-- Let a user save feed items in a collection and invite friends to follow it.
-- Target:
-  - Followers see current accessible items.
-  - Removing access stops later reads.
-- Fictional example:
-  - A Go HTTP `CollectionService`, existing Go HTTP friend/feed/notification services, PostgreSQL, and a Go invitation worker.
-  - Paths below are illustrative.
+- Shared collections save feed items and support friend invitations.
+- Active members see currently accessible items.
+- Revocation blocks later reads.
 
 # 2. Links
 
@@ -24,47 +20,47 @@
 
 | Current state | Operation | Next state |
 | --- | --- | --- |
-| No row | Owner invites a friend | `pending`, version `1` |
-| `pending` | Invited friend accepts the current version | `active`, same version |
-| `pending` / `active` | Owner removes the member | `revoked`, version + `1` |
+| No row | Owner invites friend | `pending`, version `1` |
+| `pending` | Invited friend accepts current version | `active`, same version |
+| `pending` / `active` | Owner removes member | `revoked`, version + `1` |
 | `revoked` | Owner invites again | `pending`, version + `1` |
 
 ## 3.3 Invite and retry
 
-![Invitation is committed with an outbox event; notification delivery retries independently](assets/collection-invite.svg)
+![Invitation commit and independent notification retry](assets/collection-invite.svg)
 
 # 4. Design Decisions
 
-- Invite-and-accept instead of automatic following:
-  - Friends explicitly consent to joining the collection.
-  - Access requires an extra acceptance step.
-- Store feed IDs instead of content snapshots:
+- Invite and accept:
+  - Members consent before access.
+  - Cost: extra acceptance step.
+- Feed ID storage:
   - Current visibility and address-privacy rules remain authoritative.
-  - Collection reads depend on `FeedService` availability.
+  - Cost: reads depend on `FeedService`.
 
 # 5. External Technical Design
 
-- Authentication supplies the actor ID for every API.
+- Authentication supplies actor ID.
 - IDs are opaque strings.
 - Unauthorized collection access returns `404`.
 
 | API | Request | Success |
 | --- | --- | --- |
-| `POST /v1/collections` | `Idempotency-Key` header; `{"name":"Weekend","feed_ids":["f1","f2"]}` | `201 {"id":"c1"}`; retries return the same ID. |
-| `PUT /v1/collections/{id}/items/{feed_id}` | No body; owner only | `204`; existing item is a no-op. |
-| `PUT /v1/collections/{id}/members/{user_id}` | No body; owner invites a friend | `200 {"state":"pending","version":1}`; existing pending/active state is a no-op. |
-| `POST /v1/collections/{id}/membership/accept` | `{"version":1}`; invited actor only | `200 {"state":"active","version":1}`. |
-| `DELETE /v1/collections/{id}/members/{user_id}` | No body; owner only | `204`; absent/revoked member is a no-op. |
-| `GET /v1/collections/{id}/items` | Optional opaque `cursor`; at most 50 items | `200 {"items":[],"next_cursor":null}`. |
+| `POST /v1/collections` | `Idempotency-Key`, `{"name":"Weekend","feed_ids":["f1","f2"]}` | `201 {"id":"c1"}`. Retry returns same ID. |
+| `PUT /v1/collections/{id}/items/{feed_id}` | Owner, no body | `204`. Existing item unchanged. |
+| `PUT /v1/collections/{id}/members/{user_id}` | Owner invites friend, no body | `200 {"state":"pending","version":1}`. Existing pending/active state unchanged. |
+| `POST /v1/collections/{id}/membership/accept` | `{"version":1}`, invited actor only | `200 {"state":"active","version":1}`. |
+| `DELETE /v1/collections/{id}/members/{user_id}` | Owner, no body | `204`. Absent/revoked member unchanged. |
+| `GET /v1/collections/{id}/items` | Optional opaque `cursor`, at most 50 items | `200 {"items":[],"next_cursor":null}`. |
 
 - Validation:
-  - Names are 1–80 characters.
-  - Create accepts 1–100 distinct feed IDs.
+  - Require names with 1–80 characters.
+  - Accept 1–100 distinct feed IDs in `Create`.
 - Errors:
-  - Invalid input returns `400`.
-  - An inaccessible feed returns `404`.
-  - A stale invite version or changed create payload under the same key returns `409`.
-  - Dependency failures return `503` without allowing the read or committing the write.
+  - Return `400` for invalid input.
+  - Return `404` for inaccessible feeds.
+  - Return `409` for stale invite versions or changed payload under same idempotency key.
+  - Return `503` for dependency failures without allowing read or committing write.
 
 # 6. Internal Technical Design
 
@@ -73,23 +69,27 @@
 ### Logic change
 
 - `Create` / `AddItem`:
-  - Validate item access through `FeedService.ListVisibleItems`.
+  - Validate item access with `FeedService.ListVisibleItems`.
   - Store feed IDs only.
-  - `Create` stores the canonical payload hash and result under `(owner_id, request_key)` in the same transaction.
-  - Matching create retries reuse the result.
+  - `Create`:
+    - Store normalized payload hash and result in one transaction under `(owner_id, request_key)`.
+    - Return stored result for matching retries.
 - `Invite` / `Accept` / `RemoveMember`:
-  - `Invite` requires ownership and `FriendService.AreFriends`.
-  - `Invite` locks the collection, then writes membership and the outbox row in one transaction.
-  - Pending/active invitation retries insert nothing.
-  - `Accept` rechecks friendship.
-  - `Accept` requires the current invite version.
-  - `RemoveMember` uses the same collection lock to prevent concurrent acceptance from restoring revoked access.
+  - `Invite`:
+    - Require ownership and `FriendService.AreFriends`.
+    - Lock collection; write membership and outbox row in one transaction.
+    - Skip insert for pending or active retries.
+  - `Accept`:
+    - Recheck friendship.
+    - Require current invite version.
+  - `RemoveMember`:
+    - Use collection lock to prevent concurrent `Accept` from restoring access.
 - `ListItems`:
-  - Allow the owner or an active member who is still a friend.
-  - Call `FeedService.ListVisibleItems` with the viewer ID.
+  - Allow owner or active member with current friendship.
+  - Call `FeedService.ListVisibleItems` with viewer ID.
   - Apply item visibility and address privacy at read time.
-  - Use a bounded keyset cursor pointing to the last scanned item.
-  - Omit deleted/inaccessible items instead of returning stored content.
+  - Use bounded keyset cursor at last scanned item.
+  - Omit deleted or inaccessible items.
 
 ### Code changes
 
@@ -138,38 +138,13 @@ CREATE INDEX invitation_outbox_due
 
 - Membership mutations:
   - Use `SELECT collections ... FOR UPDATE`.
-  - Accept uses `WHERE state='pending' AND version=$expected`.
-  - A retry of the same active version succeeds.
+  - Update acceptance with `WHERE state='pending' AND version=$expected`.
+  - Return success for same active-version retry.
 - Item storage:
-  - Writes use `ON CONFLICT DO NOTHING`.
-  - List order/cursor is `(added_at, feed_id)`, with a matching index.
+  - Write with `ON CONFLICT DO NOTHING`.
+  - Order list and cursor by `(added_at, feed_id)` with matching index.
 - Creation conflicts:
-  - Reload the stored hash/result instead of creating another collection.
-
-</details>
-
-<details>
-<summary><strong>Code change — HTTP routes (internal/http/routes.go)</strong></summary>
-
-```go
-func registerCollectionRoutes(mux *http.ServeMux, h *CollectionHandlers) {
-    mux.HandleFunc("POST /v1/collections", h.Create)
-    mux.HandleFunc("PUT /v1/collections/{id}/items/{feed_id}", h.AddItem)
-    mux.HandleFunc("PUT /v1/collections/{id}/members/{user_id}", h.Invite)
-    mux.HandleFunc("POST /v1/collections/{id}/membership/accept", h.Accept)
-    mux.HandleFunc("DELETE /v1/collections/{id}/members/{user_id}", h.RemoveMember)
-    mux.HandleFunc("GET /v1/collections/{id}/items", h.ListItems)
-}
-```
-
-- HTTP handlers:
-  - Use existing auth/JSON/error helpers.
-  - Delegate to the matching `CollectionService` method.
-- Service clients:
-  - `FriendService.AreFriends` uses `GET /internal/friendships/{owner_id}/{user_id}`.
-  - `FeedService.ListVisibleItems` uses `POST /internal/feed/visible-items` with `viewer_id` and ordered `feed_ids`.
-  - Authenticate both service-to-service calls.
-  - Never accept the viewer identity from a public body.
+  - Return stored hash and result.
 
 </details>
 
@@ -178,63 +153,49 @@ func registerCollectionRoutes(mux *http.ServeMux, h *CollectionHandlers) {
 ### Logic change
 
 - `ClaimDue`:
-  - Poll due, unprocessed outbox rows.
+  - Poll due outbox rows.
   - Claim with `FOR UPDATE SKIP LOCKED`.
-  - Increment `attempts` in the claim transaction.
-  - Move `next_attempt_at` to the lease deadline in that transaction.
-  - Send after commit, outside the claim transaction.
+  - Increment `attempts` in claim transaction.
+  - Set `next_attempt_at` to lease deadline in same transaction.
+  - Send after commit.
 - `NotificationService.SendInvitation`:
-  - Use `POST /internal/notifications/invitations`.
+  - Call `POST /internal/notifications/invitations`.
   - Deduplicate by `event_id`.
-  - Retry the same ID with capped backoff after lost acknowledgements or worker crashes.
-  - Mark `delivered_at` only after success.
+  - Retry same ID with capped backoff after lost acknowledgement or worker crash.
+  - Set `delivered_at` only after success.
 - Pending delivery:
-  - Never grant access before acceptance.
-  - Set `cancelled_at` for revoked/superseded versions.
+  - Grant access only after acceptance.
+  - Set `cancelled_at` for revoked or superseded versions.
   - Acceptance checks current state if revocation races delivery.
-  - Alert on the oldest unprocessed event.
-  - Never drop an invite merely because retries were exhausted.
+  - Alert on oldest unprocessed event.
+  - Keep event after retry exhaustion.
 
-### Code changes
+### Config changes
 
-<details>
-<summary><strong>Code change — processOne (internal/invitations/worker.go)</strong></summary>
+#### `worker.yaml` (service: `InvitationWorker`)
 
-```go
-func (w *Worker) processOne(ctx context.Context) error {
-    event, err := w.store.ClaimDue(ctx)
-    if err != nil {
-        return err
-    }
-    current, err := w.store.IsCurrentPendingInvite(ctx, event)
-    if err != nil {
-        return w.store.Retry(ctx, event, err)
-    }
-    if !current {
-        return w.store.Cancel(ctx, event.ID)
-    }
-    if err := w.notifications.SendInvitation(ctx, event); err != nil {
-        return w.store.Retry(ctx, event, err)
-    }
-    return w.store.MarkDelivered(ctx, event.ID)
-}
+- Namespace/key: `delivery.retry` (`delays_seconds`, `lease_seconds`).
+- `Retry` reuses final delay after configured sequence.
+
+```diff
+delivery:
+  batch_size: 100
+  retry:
+    delays_seconds:
+      - 5
+      - 30
+      - 300
++      - 900
++    lease_seconds: 60
+  ...
 ```
-
-- `ClaimDue` persists the lease.
-- `Retry` persists the backoff deadline.
-- `SendInvitation` forwards the persisted `event_id` as its idempotency key.
-- Poll-loop, client and store helpers follow existing patterns.
-
-</details>
 
 # 7. Rollout Plan
 
-1. Apply tables/indexes and deploy the worker with polling disabled.
-2. Deploy collection APIs after the authenticated friend/feed/notification contracts are available.
-3. Enable polling and expose collection actions; disable new writes on rollback, retain membership checks and outbox rows.
+1. Apply tables and indexes.
+2. Deploy `InvitationWorker` with polling disabled.
+3. Deploy `CollectionService` once dependency contracts are available.
+4. Enable polling and collection actions.
+5. Verify create → invite → accept → read.
 
-# 8. Release Checklist
-
-- [ ] Apply schema/indexes and deploy the server and worker.
-- [ ] Enable polling and verify one create → invite → accept → read flow.
-- [ ] Verify stale acceptance, removed friends, duplicate requests and delivery retries do not grant access or duplicate notifications.
+- Rollback: disable writes, retain membership checks and outbox rows.

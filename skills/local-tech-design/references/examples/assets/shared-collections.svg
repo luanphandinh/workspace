@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 985" role="img" aria-labelledby="title desc">
   <title id="title">Shared collection architecture</title>
-  <desc id="desc">The Go CollectionService checks friendships and item visibility over HTTP, stores collection state and invitations atomically, and delivers invitations through an outbox worker.</desc>
+  <desc id="desc">CollectionService checks friendship and item visibility, stores collection state and invitations atomically, delivers invitations through outbox worker.</desc>
   <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#475569"/></marker></defs>
   <rect width="900" height="985" fill="#ffffff"/>
   <g font-family="sans-serif" fill="#0f172a" font-size="14">
@@ -41,7 +41,7 @@
     <text x="450" y="658" text-anchor="middle">Collections · items · members · outbox</text>
     <path d="M450 690 V790" fill="none" stroke="#475569" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
     <text x="470" y="728">SQL: SELECT invitation_outbox</text>
-    <text x="470" y="753">Lease + attempts; then COMMIT</text>
+    <text x="470" y="753">Lease + attempts · COMMIT</text>
     <rect x="305" y="790" width="290" height="65" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
     <text x="450" y="817" text-anchor="middle" font-weight="bold">Go InvitationWorker (NEW)</text>
     <text x="450" y="840" text-anchor="middle">Retry persisted event_id</text>

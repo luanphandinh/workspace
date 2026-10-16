@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Prepare and compare a local tech doc with remote markdown content.
 
-It normalizes local-only Markdown before building a heading-aware section index,
-then separates normal changes, remote-owned sections, and confirmation-required
-sections for targeted remote updates.
+It normalizes local-only Markdown, builds a heading-aware section index, and
+separates normal changes from remote-owned sections for targeted updates.
 """
 
 from __future__ import annotations
@@ -32,7 +31,12 @@ LOCAL_TOC_RE = re.compile(r"(?im)^[ \t]{0,3}\[toc\][ \t]*(?:\r?\n|$)")
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$")
 MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
-HTML_TAG_RE = re.compile(r"</?[^>\s]+(?:\s[^>]*)?>")
+HTML_TAG_RE = re.compile(
+    r"</?(?:a|b|blockquote|br|code|details|div|document|em|excerpt|file|fragment|"
+    r"h[1-6]|i|image|li|ol|p|readonly-block|section|span|strong|summary|table|"
+    r"tbody|td|th|thead|title|tr|ul)(?:\s[^>]*)?/?>",
+    flags=re.IGNORECASE,
+)
 DISCLOSURE_OPEN_RE = re.compile(
     r"<details\b[^>]*>\s*<summary\b[^>]*>(.*?)</summary\s*>",
     flags=re.IGNORECASE | re.DOTALL,
@@ -65,7 +69,7 @@ MERMAID_BLOCK_TOKEN = "MERMAID_BLOCK"
 SVG_ASSET_TOKEN = "SVG_ASSET"
 OPAQUE_REMOTE_BLOCK_TOKEN = "OPAQUE_REMOTE_BLOCK"
 IGNORED_REMOTE_SECTIONS = {"links"}
-CONFIRMATION_REMOTE_SECTIONS = {"releasechecklist"}
+CONFIRMATION_REMOTE_SECTIONS: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -319,7 +323,7 @@ def normalize_opaque_block(match: re.Match[str]) -> str:
     return f"\n{OPAQUE_REMOTE_BLOCK_TOKEN} type={block_type}\n"
 
 
-def canonicalize_document_text(text: str) -> str:
+def normalize_document_text(text: str) -> str:
     text = normalize_common_markup(text)
     lines: list[str] = []
     for raw_line in text.splitlines():
@@ -384,7 +388,7 @@ def normalize_for_hash(text: str) -> str:
 
 
 def parse_sections(markdown: str) -> dict[str, Section]:
-    markdown = canonicalize_document_text(markdown)
+    markdown = normalize_document_text(markdown)
     lines = markdown.splitlines()
     headings: list[tuple[int, int, str, str]] = []
     stack: list[tuple[int, str]] = []
@@ -596,7 +600,15 @@ def build_plan(local_text: str, remote_text: str) -> dict[str, Any]:
             )
             for key in ignored
         ],
-        "new_sections": [section_record(key, local[key], None) for key in new_sections],
+        "new_sections": [
+            section_record(
+                key,
+                local[key],
+                None,
+                diagram=section_has_diagram(local[key]),
+            )
+            for key in new_sections
+        ],
         "remote_only_sections": [
             section_record(key, None, remote[key]) for key in remote_only
         ],
@@ -647,9 +659,8 @@ def section_record(
         record["exact_text_replace_candidate"] = True
         record["replacement_strategy"] = "exact_text"
     if diagram:
-        record["diagram_replace_candidate"] = True
-        record["replacement_strategy"] = "replace_remote_diagram"
-        record["requires_confirmation"] = True
+        record["diagram_import_candidate"] = True
+        record["replacement_strategy"] = "native_svg_to_whiteboard"
     if requires_confirmation:
         record["replacement_strategy"] = "confirmation_required"
         record["requires_confirmation"] = True

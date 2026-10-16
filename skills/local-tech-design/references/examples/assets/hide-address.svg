@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 630" role="img" aria-labelledby="title desc">
-  <title id="title">Hide an author's address in feed responses</title>
-  <desc id="desc">An HTTP server delegates privacy updates and feed reads to the Go FeedService. Current user settings control response serialization.</desc>
+  <title id="title">Hide author address in feed responses</title>
+  <desc id="desc">HTTP server delegates privacy updates and feed reads to FeedService. Current user settings control response serialization.</desc>
   <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#475569"/></marker></defs>
   <rect width="880" height="630" fill="#ffffff"/>
   <g font-family="sans-serif" fill="#0f172a" font-size="15">

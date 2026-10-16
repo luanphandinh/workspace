@@ -34,7 +34,8 @@ Mark new nodes and edges with `(NEW)` and green styling. Keep labels legible aga
 
 ## Review
 
-- Parse each SVG as XML, then render and visually inspect it at normal document width; a successful syntax check is insufficient.
+- Parse each SVG as XML. Render and visually inspect it at normal document width; syntax success is insufficient.
+- Remove articles and connective words from labels when meaning stays clear.
 - Regenerate stale assets and verify that Markdown links resolve before presenting or syncing the document.
 - Verify every rendered label line is at most 40 characters and each break preserves meaning.
 - If labels require zooming or horizontal scrolling, change the diagram to top-down or split it.
@@ -43,3 +44,9 @@ Mark new nodes and edges with `(NEW)` and green styling. Keep labels legible aga
 - The requested behavior is visible without explanatory prose.
 - New and existing behavior are visually distinct.
 - Diagram labels contain no information repeated below the diagram.
+
+## Remote publication
+
+- A request to sync source content includes every SVG referenced within that scope.
+- Use the selected document integration's native SVG-to-whiteboard import and inspect the rendered preview.
+- Preserve unrelated remote content. Ask separately only for destructive changes outside the requested source scope.

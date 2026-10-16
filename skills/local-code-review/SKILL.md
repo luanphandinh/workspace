@@ -5,6 +5,8 @@ description: "Use when reviewing code changes inside a local multi-repo git-work
 
 # Local Code Review
 
+Read [../local-technical-writing/SKILL.md](../local-technical-writing/SKILL.md) before reporting findings.
+
 ## Review stance
 - Prioritize bugs, regressions, unsafe behavior, missing tests, rollout risks, and mismatches with the tech doc or implementation plan.
 - Findings first, ordered by severity. Use exact file:line references.
@@ -32,7 +34,7 @@ For each repo listed in `workspace.yml`:
 1. Run `git status --short --branch --untracked-files=all`.
 2. Detect the comparison base:
    - Prefer upstream of the current branch if present.
-   - Else use `origin/master`, then `origin/main`, then local `master`, then local `main`.
+   - Else try `origin/master`, `origin/main`, local `master`, local `main` in that order.
 3. Inspect:
    - `git diff --stat <base>...HEAD`
    - `git diff --name-status <base>...HEAD`
@@ -78,4 +80,4 @@ Use this order:
 4. **Test Gaps** — missing or weak tests tied to specific changed behavior.
 5. **Open Questions** — only blockers that affect review confidence.
 
-If no issues are found, say so clearly, then still include Changed Flow, Evidence Map, and residual test/risk notes.
+If no issues are found, say so once. Keep Changed Flow and Evidence Map; omit empty Test Gaps and Open Questions sections.

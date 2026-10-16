@@ -9,14 +9,14 @@ Read [../local-technical-writing/SKILL.md](../local-technical-writing/SKILL.md) 
 
 ## Minimum solution ladder
 
-Understand the real flow first. Then stop at the first solution that holds:
+Understand real flow. Stop at first valid solution:
 
-1. The requested behavior already exists: configure or expose it.
-2. The codebase has a helper, type, pattern, or boundary that owns it: reuse or fix it there.
-3. The standard library or native platform supports it: use that.
-4. An installed dependency supports it: use that.
-5. A narrow direct change is enough: make it in place.
-6. Only then add the minimum new code.
+1. Requested behavior exists: configure or expose it.
+2. Existing helper, type, pattern, or boundary owns it: reuse or fix it.
+3. Standard library or native platform supports it: use it.
+4. Installed dependency supports it: use it.
+5. Narrow direct change works: edit in place.
+6. Add minimum new code.
 
 Do not add speculative abstractions, compatibility layers, dependencies, configuration, or files. A new helper/type/file is justified only by a cohesive required responsibility, two current call sites, an import-cycle break, or existing public compatibility.
 
@@ -24,10 +24,12 @@ Do not add speculative abstractions, compatibility layers, dependencies, configu
 
 1. Read repository instructions, status, relevant code, and callers before editing.
 2. Find the owning layer and root cause. Fix shared behavior once rather than patching named symptoms separately.
-3. Plan only when the work is cross-repository, risky, or genuinely multi-step. Save required plans under the workspace `implementation_plan/` folder.
+3. Plan only for cross-repository, risky, or genuinely multi-step work. Save required plans under workspace `implementation_plan/`.
 4. Edit the fewest files. Preserve local patterns and unrelated user changes.
-5. Run the smallest check that proves the changed behavior, then broaden according to risk.
+5. Run smallest check proving changed behavior. Broaden only when risk requires it.
 6. Inspect `git diff --name-only`, `git diff --stat`, and every added symbol before finishing. Remove anything the direct solution does not need.
+
+Plans use terse task lines: `<repo>/<path>: <change>; check: <command or behavior>`. Omit introductions, recaps, unchanged behavior, and speculative follow-ups.
 
 ## Guardrails
 
@@ -55,7 +57,7 @@ When two or more repositories changed, verify them concurrently with one concise
 
 ## Final response
 
-State the workspace once when applicable. Then report only:
+State workspace once when applicable. Report only:
 
 - changed behavior and key files;
 - checks run and result;

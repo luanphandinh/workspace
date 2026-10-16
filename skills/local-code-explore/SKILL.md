@@ -10,13 +10,13 @@ Read [../local-technical-writing/SKILL.md](../local-technical-writing/SKILL.md) 
 ## Output
 
 - Reply in chat. Do not create files unless the user asks.
-- Diagram first, then ordered evidence, then at most three non-obvious findings.
+- Output order: diagram, ordered evidence, at most three non-obvious findings.
 - Do not narrate searches, summarize the diagram, or dump code.
 
 ## Resolve scope
 
 - Detect `<root>`, the active workspace under `<root>/local_workspaces/<workspace>/`, and the repository containing the focus.
-- Search the active workspace first, then direct repositories under `<root>`, then matching read-only repositories under `<root>/_external/` when a proven edge requires them.
+- Search order: active workspace, direct repositories under `<root>`, matching read-only repositories under `<root>/_external/` when a proven edge requires them.
 - Prefer an active-workspace checkout over its root checkout. Use one checkout of each repository per graph.
 - Do not scan unrelated workspaces or external repositories.
 - Mark `_external/` evidence as external context, never an implementation target.

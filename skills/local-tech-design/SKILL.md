@@ -31,20 +31,27 @@ For two or more independent repositories, explore them concurrently when sub-age
 
 ## Draft
 
-Read [references/document-contract.md](references/document-contract.md). Use its eight-section skeleton, but remove optional content that adds no information.
+Read [references/document-contract.md](references/document-contract.md).
 
-Before drafting, read the closest complete example:
+When the user supplies a tech doc, template, or example, treat it as the primary style reference. Preserve its useful structure, ordering, density, and artifact style. Apply the document contract for requirements the supplied reference does not define, without normalizing the document back to the default template.
+
+When the user supplies no reference, use the contract's standard section order and omit sections that add no information.
+
+When the user supplies no primary reference, read the closest complete example:
 
 - [Small change: hide an address](references/examples/hide-address.md) for one setting, handler, or output change.
 - [Multi-step change: shared collections](references/examples/shared-collections.md) for several APIs, access states, transactions, retries, or asynchronous work.
 
 Match their directness, not their fictional APIs or architecture. Each fact has one home; add detail only for a changed contract, meaningful failure, or deployment dependency. Examples are invented teaching material, never evidence for a real repository. Do not invent facts in a real design unless the user explicitly requests a hypothetical example.
 
-- Lead with models, examples, diagrams, and diffs. All explanatory prose uses bullets, including rationale, `N/A`, and notes inside folded code blocks; no standalone paragraphs.
-- Group logic into two list levels: a parent method or shared condition, then one operation or rule per child bullet. Do not pack several sentences into one bullet or nest a third level. Number only rollout or migration steps whose order changes the result.
-- Keep all eight top-level sections, with a short `N/A` for inapplicable sections. Do not fill them with boilerplate, repeat a diagram in prose, or add subsections merely to match a larger example.
+- Initial draft is the minimum implementable design. Include only changed contracts, changed runtime behavior, required implementation artifacts, real decisions, rollout dependencies, and production actions.
+- Omit empty sections. Never add `N/A`, background history, unchanged behavior, future options, or explanatory setup text.
+- Lead with models, examples, diagrams, and diffs. All explanatory prose uses bullets, including rationale and notes inside folded code blocks; no standalone paragraphs.
+- Group logic in 2–4 levels when needed: component → method → condition → outcome. Each level names a real grouping; do not flatten related operations into repeated sibling lines.
+- Use natural sentence order for descriptive bullets. Rollout and checklist steps start with imperative verbs.
+- When using the default skeleton, keep standard section numbers for included sections. Do not create missing sections solely to preserve numbering.
 - In Overview & Background, label the result `Target` or `Expected outcome`. Never use `Success`.
-- Include critical chosen decisions as well as unresolved choices when they affect architecture, contracts, ownership, reliability, or rollout risk. Explain the reason and material trade-off in nested bullets; settled choices are not automatically `N/A`.
+- Include only decisions that change architecture, contracts, ownership, reliability, or rollout risk. Use one reason and one material trade-off at most.
 - Never invent alternatives. Ask only about unresolved choices that block a sound design.
 - Document only the requested change and its necessary consequences. Do not add optional decisions, adjacent behavior, or correction history.
 - Keep architecture in the overview, trade-offs in decisions, external contracts in external design, implementation in internal design artifacts, and production actions in the release checklist.

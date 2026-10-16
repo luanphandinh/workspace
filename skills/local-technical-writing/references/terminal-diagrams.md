@@ -1,5 +1,7 @@
 # Terminal Diagrams
 
+Keep labels identifier-led. Remove articles and connective words when meaning stays clear.
+
 ## Output contract
 
 - Start the answer with exactly one merged diagram in a top-level fenced block with info string `text`.
