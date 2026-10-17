@@ -270,15 +270,13 @@ local function target_at(bufnr, row, column)
   end
 
   local current = line_at(row) or ""
-  if vim.g.neovide then
-    local wrapped_url = wrapped_url_at(line_at, row, column)
-    if wrapped_url then
-      return { url = wrapped_url }
-    end
-    for _, reference in ipairs(urls_in_line(current)) do
-      if contains(reference) then
-        return { url = reference.url }
-      end
+  local wrapped_url = wrapped_url_at(line_at, row, column)
+  if wrapped_url then
+    return { url = wrapped_url }
+  end
+  for _, reference in ipairs(urls_in_line(current)) do
+    if contains(reference) then
+      return { url = reference.url }
     end
   end
   for _, reference in ipairs(references_in_line(cwd, current)) do
@@ -422,9 +420,6 @@ function M.open_url(url)
   local remote = require("luanphan.remote_tunnel")
   if remote.enabled() then
     return remote.open_url(url)
-  end
-  if not vim.g.neovide then
-    return false
   end
 
   local ok, _, error_message = pcall(vim.ui.open, url)

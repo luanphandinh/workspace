@@ -3175,6 +3175,7 @@ local function test_terminal_reference_links()
   assert_true(clicked_target and clicked_target.path == first_path, "L-prefixed terminal reference opened the wrong file")
   assert_true(clicked_target.line == 11 and clicked_target.column == 1, "L-prefixed terminal reference lost its position")
 
+  vim.g.neovide = false
   references.open_url = function(url)
     clicked_url = url
     return true
@@ -3224,6 +3225,22 @@ local function test_terminal_reference_links()
   )
   references.open = original_open
   references.open_url = original_open_url
+
+  local remote = require("luanphan.remote_tunnel")
+  local original_remote_enabled = remote.enabled
+  local original_ui_open = vim.ui.open
+  remote.enabled = function()
+    return false
+  end
+  vim.ui.open = function(url)
+    clicked_url = url
+    return true
+  end
+  clicked_url = nil
+  assert_true(references.open_url("https://example.com/from-terminal"), "terminal URL did not open locally")
+  assert_true(clicked_url == "https://example.com/from-terminal", "terminal URL used the wrong local opener")
+  remote.enabled = original_remote_enabled
+  vim.ui.open = original_ui_open
 
   vim.fn.getmousepos = function()
     return { winid = vim.api.nvim_get_current_win(), line = 1, column = 1 }
