@@ -2243,14 +2243,16 @@ local function test_workspace_folder_browser()
   local recent_paths = require("luanphan.recent_paths")
   recent_paths.touch(recent_a)
   recent_paths.touch(recent_b)
+  recent_paths.touch(station)
 
   local picker_entries = api.folder_picker_entries(station, "")
   assert_true(picker_entries[1].header and picker_entries[1].display == "[recent folders]", "folder picker omitted recent section")
-  assert_true(realpath(picker_entries[2].path) == realpath(recent_b), "folder picker did not put latest folder first")
+  assert_true(realpath(picker_entries[2].path) == realpath(recent_b), "folder picker did not put the previous folder first")
   assert_true(vim.startswith(picker_entries[2].display, "  "), "recent folder row is not indented")
-  assert_true(realpath(picker_entries[3].path) == realpath(recent_a), "folder picker did not preserve recent folder order")
+  assert_true(realpath(picker_entries[3].path) == realpath(station), "folder picker did not put the current folder second")
+  assert_true(realpath(picker_entries[4].path) == realpath(recent_a), "folder picker did not preserve remaining recent order")
   local first_separator = picker_entries[2].display:find("|", 1, true)
-  local second_separator = picker_entries[3].display:find("|", 1, true)
+  local second_separator = picker_entries[4].display:find("|", 1, true)
   assert_true(first_separator ~= nil and first_separator == second_separator, "recent folder columns are not aligned")
   assert_true(
     picker_entries[2].display:find("recent-folder-b", 1, true) < first_separator,
@@ -2260,8 +2262,8 @@ local function test_workspace_folder_browser()
     picker_entries[2].display:find(recent_b, 1, true) > first_separator,
     "recent folder path is not in the second column"
   )
-  assert_true(picker_entries[4].header and picker_entries[4].display:find("[folders]", 1, true), "folder picker omitted folder section")
-  assert_true(vim.startswith(picker_entries[5].display, "  "), "folder row is not indented")
+  assert_true(picker_entries[5].header and picker_entries[5].display:find("[folders]", 1, true), "folder picker omitted folder section")
+  assert_true(vim.startswith(picker_entries[6].display, "  "), "folder row is not indented")
 
   local entries = api.list_folder_entries(station)
   local by_name = {}
@@ -2337,13 +2339,14 @@ local function test_workspace_folder_browser()
     "local recent = require('luanphan.recent_paths')",
     "recent.touch(" .. string.format("%q", recent_a) .. ")",
     "recent.touch(" .. string.format("%q", recent_b) .. ")",
+    "recent.touch(" .. string.format("%q", station) .. ")",
     "api.pick_folder(" .. string.format("%q", station) .. ")",
     "local prompt_bufnr = vim.api.nvim_get_current_buf()",
     "local action_state = require('telescope.actions.state')",
     "local actions = require('telescope.actions')",
     "local picker = action_state.get_current_picker(prompt_bufnr)",
     "assert_true(picker ~= nil, 'folder picker did not open')",
-    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.recent and realpath(selection.value.path) == realpath(" .. string.format("%q", recent_b) .. ") end, 20), 'latest recent folder was not selected first')",
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.recent and realpath(selection.value.path) == realpath(" .. string.format("%q", recent_b) .. ") end, 20), 'previous folder was not selected first')",
     "picker:set_prompt('recent-folder-a')",
     "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.recent and realpath(selection.value.path) == realpath(" .. string.format("%q", recent_a) .. ") end, 20), 'recent folder did not match fuzzy search')",
     "picker:set_prompt('')",

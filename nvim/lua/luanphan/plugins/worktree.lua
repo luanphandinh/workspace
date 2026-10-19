@@ -849,7 +849,10 @@ local function setup()
 
     local recents = {}
     local recent_name_width = 0
-    for _, path in ipairs(recent_paths.entries()) do
+    local recent_entries = recent_paths.switch_targets(recent_paths.entries(), function(path)
+      return path
+    end, current)
+    for _, path in ipairs(recent_entries) do
       path = normalize_directory(path)
       if dir_exists(path) and not seen[path] then
         local name = vim.fn.fnamemodify(path, ":t")
