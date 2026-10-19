@@ -8,8 +8,15 @@ log="$tmp/zoxide.log"
 fzf_log="$tmp/fzf.log"
 codex_log="$tmp/codex.log"
 daemon_file="$tmp/daemon-running"
-mkdir -p "$fakebin"
+mkdir -p "$fakebin" "$tmp/home/bin/shell" "$tmp/home/.nix-profile/bin"
 trap 'rm -rf "$tmp"' EXIT
+cp "$repo_root/bin/shell/workspace-env.sh" "$tmp/home/bin/shell/workspace-env.sh"
+
+cat > "$tmp/home/.nix-profile/bin/python3" <<'SH'
+#!/bin/sh
+printf 'Python 3.14.0\n'
+SH
+chmod +x "$tmp/home/.nix-profile/bin/python3"
 
 cat > "$fakebin/zoxide" <<SH
 #!/bin/sh
@@ -130,7 +137,7 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" USER=example-user WORKSPACE_SHELL
 test ! -f "$tmp/chsh.log"
 rm -f "$fakebin/uname" "$fakebin/zsh" "$fakebin/id" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
 
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" NO_COLOR=1 sh -c ". '$repo_root/bin/shell/workspace.sh'; test -z \"\${NO_COLOR+x}\"; test \"\$FORCE_COLOR\" = 1; test \"\$GOPATH\" = \"\$HOME/go\"; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:/usr/local/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:\"*) ;; *) exit 1 ;; esac; case \":\$PATH:\" in *\":\$GOPATH/bin:\"*) ;; *) exit 1 ;; esac"
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" NO_COLOR=1 sh -c "unset GOPATH NPM_CONFIG_PREFIX npm_config_prefix; . '$repo_root/bin/shell/workspace.sh'; test -z \"\${NO_COLOR+x}\"; test \"\$FORCE_COLOR\" = 1; test \"\$GOPATH\" = \"\$HOME/go\"; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:/usr/local/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:\"*) ;; *) exit 1 ;; esac; case \":\$PATH:\" in *\":\$GOPATH/bin:\"*) ;; *) exit 1 ;; esac"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" prompt
@@ -241,6 +248,7 @@ grep -qx -- '--bash' "$fzf_log"
 mkdir -p "$tmp/sync-home"
 mkdir -p "$tmp/sync-home/bin/shell"
 cp "$repo_root/bin/shell/workspace.sh" "$tmp/sync-home/bin/shell/workspace.sh"
+cp "$repo_root/bin/shell/workspace-env.sh" "$tmp/sync-home/bin/shell/workspace-env.sh"
 cat > "$tmp/sync-home/.zshrc" <<SH
 # >>> workspace-bin
 old managed block
@@ -249,19 +257,34 @@ keep-zsh
 SH
 printf 'keep-bash\n' > "$tmp/sync-home/.bashrc"
 printf 'keep-profile\n' > "$tmp/sync-home/.profile"
+printf '# keep-zprofile\n' > "$tmp/sync-home/.zprofile"
 HOME="$tmp/sync-home" sh "$repo_root/bin/workspace-shell-sync" >/dev/null
 source_line='[ -f "$HOME/bin/shell/workspace.sh" ] && . "$HOME/bin/shell/workspace.sh"'
+env_source_line='[ -r "$HOME/bin/shell/workspace-env.sh" ] && . "$HOME/bin/shell/workspace-env.sh"'
 grep -Fxq "$source_line" "$tmp/sync-home/.zshrc"
 grep -Fxq "$source_line" "$tmp/sync-home/.bashrc"
 grep -Fxq "$source_line" "$tmp/sync-home/.profile"
+grep -Fxq "$env_source_line" "$tmp/sync-home/.zprofile"
 test "$(grep -Fxc "$source_line" "$tmp/sync-home/.zshrc")" = 1
+test "$(grep -Fxc "$env_source_line" "$tmp/sync-home/.zprofile")" = 1
 ! grep -Fq '# >>> workspace-bin' "$tmp/sync-home/.zshrc"
 ! grep -Fq 'old managed block' "$tmp/sync-home/.zshrc"
 grep -Fxq 'keep-zsh' "$tmp/sync-home/.zshrc"
 grep -Fxq 'keep-bash' "$tmp/sync-home/.bashrc"
 grep -Fxq 'keep-profile' "$tmp/sync-home/.profile"
+grep -Fxq '# keep-zprofile' "$tmp/sync-home/.zprofile"
 cp "$tmp/sync-home/.zshrc" "$tmp/sync-home/.zshrc.after-first-sync"
+cp "$tmp/sync-home/.zprofile" "$tmp/sync-home/.zprofile.after-first-sync"
 HOME="$tmp/sync-home" sh "$repo_root/bin/workspace-shell-sync" >/dev/null
 cmp -s "$tmp/sync-home/.zshrc" "$tmp/sync-home/.zshrc.after-first-sync"
+cmp -s "$tmp/sync-home/.zprofile" "$tmp/sync-home/.zprofile.after-first-sync"
+
+if [ -n "$zsh_bin" ]; then
+  mkdir -p "$tmp/sync-home/.nix-profile/bin"
+  cp "$tmp/home/.nix-profile/bin/python3" "$tmp/sync-home/.nix-profile/bin/python3"
+  login_python=$(HOME="$tmp/sync-home" ZDOTDIR="$tmp/sync-home" PATH="/usr/bin:/bin" "$zsh_bin" -lc 'command -v python3; python3 --version')
+  expected_python=$(printf '%s\nPython 3.14.0' "$tmp/sync-home/.nix-profile/bin/python3")
+  test "$login_python" = "$expected_python"
+fi
 
 echo "PASS workspace shell smoke test"

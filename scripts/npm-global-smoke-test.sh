@@ -7,6 +7,7 @@ test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT
 mkdir -p "$test_dir/home/bin/shell" "$test_dir/package"
 cp "$repo_root/bin/shell/workspace.sh" "$test_dir/home/bin/shell/workspace.sh"
+cp "$repo_root/bin/shell/workspace-env.sh" "$test_dir/home/bin/shell/workspace-env.sh"
 cat > "$test_dir/package/package.json" <<'JSON'
 {"name":"workspace-npm-fixture","version":"1.0.0","bin":{"workspace-npm-fixture":"cli.js"}}
 JSON

@@ -106,7 +106,7 @@ local function leading_url_fragment(text)
   }
 end
 
-local function wrapped_url_at(line_at, row, column)
+local function wrapped_url_at(line_at, row, column, text_width)
   local max_wrapped_lines = 32
   for start_row = row, math.max(0, row - max_wrapped_lines + 1), -1 do
     local start_text = line_at(start_row) or ""
@@ -122,14 +122,23 @@ local function wrapped_url_at(line_at, row, column)
         }
         local parts = { reference.raw_url }
         local next_row = start_row + 1
+        local previous_text = start_text
 
         while next_row < start_row + max_wrapped_lines do
+          if vim.fn.strdisplaywidth(previous_text) < text_width then
+            break
+          end
           local next_text = line_at(next_row)
           if not next_text then
             break
           end
           local fragment = leading_url_fragment(next_text)
           if not fragment then
+            break
+          end
+
+          local next_meaningful_end = #(next_text:gsub("%s+$", ""))
+          if fragment.raw_last_col < next_meaningful_end then
             break
           end
 
@@ -140,11 +149,11 @@ local function wrapped_url_at(line_at, row, column)
           }
           parts[#parts + 1] = fragment.value
 
-          local next_meaningful_end = #(next_text:gsub("%s+$", ""))
           local joined = table.concat(parts)
-          if fragment.raw_last_col < next_meaningful_end or trim_url(joined) ~= joined then
+          if trim_url(joined) ~= joined then
             break
           end
+          previous_text = next_text
           next_row = next_row + 1
         end
 
@@ -237,7 +246,7 @@ local function wrapped_reference(cwd, first_text, second_text)
   }
 end
 
-local function target_at(bufnr, row, column)
+local function target_at(bufnr, row, column, text_width)
   if not enabled or not attached[bufnr] or row < 0 or column < 0 then
     return nil
   end
@@ -270,7 +279,7 @@ local function target_at(bufnr, row, column)
   end
 
   local current = line_at(row) or ""
-  local wrapped_url = wrapped_url_at(line_at, row, column)
+  local wrapped_url = wrapped_url_at(line_at, row, column, text_width)
   if wrapped_url then
     return { url = wrapped_url }
   end
@@ -312,7 +321,9 @@ local function handle_mouse_click(bufnr, key)
     return key
   end
 
-  local target = target_at(bufnr, (mouse.line or 0) - 1, (mouse.column or 0) - 1)
+  local window_info = vim.fn.getwininfo(mouse.winid)[1]
+  local text_width = vim.api.nvim_win_get_width(mouse.winid) - (window_info and window_info.textoff or 0)
+  local target = target_at(bufnr, (mouse.line or 0) - 1, (mouse.column or 0) - 1, math.max(1, text_width))
   if not target then
     return key
   end

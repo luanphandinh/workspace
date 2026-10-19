@@ -34,7 +34,7 @@ make skills-sync
 
 ## Shared scripts (bin)
 
-- CLI helpers live under `bin/` (e.g. `mkws`). Shell setup lives at `bin/shell/workspace.sh`. The `workspace-bin` target copies `./bin/.` into `~/bin/` and ensures `~/.zshrc`, `~/.bashrc`, and `~/.profile` source `~/bin/shell/workspace.sh`.
+- CLI helpers live under `bin/` (e.g. `mkws`). Shared environment setup lives at `bin/shell/workspace-env.sh`; interactive shell setup lives at `bin/shell/workspace.sh`. The `workspace-bin` target copies `./bin/.` into `~/bin/`, ensures `~/.zprofile` sources the environment file, and ensures `~/.zshrc`, `~/.bashrc`, and `~/.profile` source the interactive file.
 - After adding or editing anything under `bin/**`, run:
 
 ```bash

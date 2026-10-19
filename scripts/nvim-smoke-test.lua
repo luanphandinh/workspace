@@ -3194,13 +3194,53 @@ local function test_terminal_reference_links()
   assert_true(clicked_url == "https://example.com/docs?q=1#part", "terminal URL click opened the wrong URL")
 
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-    "wrapped https://example.com/a/very/long/",
-    "  path/to/resource?query=value&",
-    "  other=yes#part.   ",
+    "https://google.com",
+    "workspace %",
   })
   clicked_url = nil
   vim.fn.getmousepos = function()
-    return { winid = vim.api.nvim_get_current_win(), line = 1, column = 9 }
+    return { winid = vim.api.nvim_get_current_win(), line = 1, column = 1 }
+  end
+  assert_true(click_map.callback() == "<Ignore>", "URL before a shell prompt was not consumed")
+  vim.wait(50, function()
+    return clicked_url ~= nil
+  end)
+  assert_true(clicked_url == "https://google.com", "shell prompt was appended to URL: " .. tostring(clicked_url))
+
+  local reference_win = vim.api.nvim_get_current_win()
+  local narrow_win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    row = 1,
+    col = 1,
+    width = 10,
+    height = 6,
+    style = "minimal",
+  })
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "https://go",
+    "ogle.com",
+    "workspace",
+    "%",
+  })
+  clicked_url = nil
+  vim.fn.getmousepos = function()
+    return { winid = narrow_win, line = 1, column = 1 }
+  end
+  assert_true(click_map.callback() == "<Ignore>", "narrow wrapped URL was not consumed")
+  vim.wait(50, function()
+    return clicked_url ~= nil
+  end)
+  assert_true(clicked_url == "https://google.com", "narrow prompt was appended to URL: " .. tostring(clicked_url))
+
+  vim.api.nvim_win_set_width(narrow_win, 20)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "wrapped https://exam",
+    "ple.com/a/very/long/",
+    "path/to/resource?query=value&other=yes#part.   ",
+  })
+  clicked_url = nil
+  vim.fn.getmousepos = function()
+    return { winid = narrow_win, line = 1, column = 9 }
   end
   assert_true(click_map.callback() == "<Ignore>", "wrapped URL first line was not consumed")
   vim.wait(50, function()
@@ -3213,7 +3253,7 @@ local function test_terminal_reference_links()
 
   clicked_url = nil
   vim.fn.getmousepos = function()
-    return { winid = vim.api.nvim_get_current_win(), line = 2, column = 4 }
+    return { winid = narrow_win, line = 2, column = 4 }
   end
   assert_true(click_map.callback() == "<Ignore>", "wrapped URL continuation was not consumed")
   vim.wait(50, function()
@@ -3223,6 +3263,8 @@ local function test_terminal_reference_links()
     clicked_url == "https://example.com/a/very/long/path/to/resource?query=value&other=yes#part",
     "wrapped URL continuation opened the wrong URL: " .. tostring(clicked_url)
   )
+  vim.api.nvim_win_close(narrow_win, true)
+  vim.api.nvim_set_current_win(reference_win)
   references.open = original_open
   references.open_url = original_open_url
 

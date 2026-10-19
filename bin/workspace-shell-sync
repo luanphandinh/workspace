@@ -2,18 +2,26 @@
 set -eu
 
 workspace_file="${1:-$HOME/bin/shell/workspace.sh}"
+workspace_env_file="${2:-$HOME/bin/shell/workspace-env.sh}"
 [ -f "$workspace_file" ] || {
 	printf 'workspace-shell-sync: missing %s\n' "$workspace_file" >&2
 	exit 1
 }
-source_line='[ -f "$HOME/bin/shell/workspace.sh" ] && . "$HOME/bin/shell/workspace.sh"'
+[ -f "$workspace_env_file" ] || {
+	printf 'workspace-shell-sync: missing %s\n' "$workspace_env_file" >&2
+	exit 1
+}
+interactive_source_line='[ -f "$HOME/bin/shell/workspace.sh" ] && . "$HOME/bin/shell/workspace.sh"'
+environment_source_line='[ -r "$HOME/bin/shell/workspace-env.sh" ] && . "$HOME/bin/shell/workspace-env.sh"'
 
 # Persist the prefix for tools that invoke npm without sourcing shell startup.
 if command -v npm >/dev/null 2>&1; then
 	npm config set prefix "${NPM_CONFIG_PREFIX:-$HOME/.local}" --location=user
 fi
 
-for profile in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
+sync_profile() {
+	profile=$1
+	source_line=$2
 	touch "$profile"
 	tmp="$(mktemp -t workspace-shell-profile.XXXXXX)"
 	awk -v source_line="$source_line" '
@@ -59,10 +67,15 @@ for profile in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
 	if cmp -s "$tmp" "$profile"; then
 		rm -f "$tmp"
 		printf 'workspace-bin: unchanged %s\n' "$profile"
-		continue
+		return
 	fi
 
 	cat "$tmp" > "$profile"
 	rm -f "$tmp"
 	printf 'workspace-bin: updated %s\n' "$profile"
+}
+
+sync_profile "$HOME/.zprofile" "$environment_source_line"
+for profile in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
+	sync_profile "$profile" "$interactive_source_line"
 done
