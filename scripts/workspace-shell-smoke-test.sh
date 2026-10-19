@@ -137,7 +137,7 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" USER=example-user WORKSPACE_SHELL
 test ! -f "$tmp/chsh.log"
 rm -f "$fakebin/uname" "$fakebin/zsh" "$fakebin/id" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
 
-PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" NO_COLOR=1 sh -c "unset GOPATH NPM_CONFIG_PREFIX npm_config_prefix; . '$repo_root/bin/shell/workspace.sh'; test -z \"\${NO_COLOR+x}\"; test \"\$FORCE_COLOR\" = 1; test \"\$GOPATH\" = \"\$HOME/go\"; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:/usr/local/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:\"*) ;; *) exit 1 ;; esac; case \":\$PATH:\" in *\":\$GOPATH/bin:\"*) ;; *) exit 1 ;; esac"
+env -i PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" NO_COLOR=1 sh -c ". '$repo_root/bin/shell/workspace.sh'; test -z \"\${NO_COLOR+x}\"; test \"\$FORCE_COLOR\" = 1; test \"\$GOPATH\" = \"\$HOME/go\"; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:/usr/local/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:\"*) ;; *) exit 1 ;; esac; case \":\$PATH:\" in *\":\$GOPATH/bin:\"*) ;; *) exit 1 ;; esac"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" prompt
@@ -282,7 +282,7 @@ cmp -s "$tmp/sync-home/.zprofile" "$tmp/sync-home/.zprofile.after-first-sync"
 if [ -n "$zsh_bin" ]; then
   mkdir -p "$tmp/sync-home/.nix-profile/bin"
   cp "$tmp/home/.nix-profile/bin/python3" "$tmp/sync-home/.nix-profile/bin/python3"
-  login_python=$(HOME="$tmp/sync-home" ZDOTDIR="$tmp/sync-home" PATH="/usr/bin:/bin" "$zsh_bin" -lc 'command -v python3; python3 --version')
+  login_python=$(env -i HOME="$tmp/sync-home" ZDOTDIR="$tmp/sync-home" PATH="/usr/bin:/bin" "$zsh_bin" -lc 'command -v python3; python3 --version')
   expected_python=$(printf '%s\nPython 3.14.0' "$tmp/sync-home/.nix-profile/bin/python3")
   test "$login_python" = "$expected_python"
 fi
