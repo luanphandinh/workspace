@@ -3,13 +3,22 @@ set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 tmp=${TMPDIR:-/tmp}/workspace-shell-smoke-test.$$
+test_stage=setup
 fakebin="$tmp/bin"
 log="$tmp/zoxide.log"
 fzf_log="$tmp/fzf.log"
 codex_log="$tmp/codex.log"
 daemon_file="$tmp/daemon-running"
 mkdir -p "$fakebin" "$tmp/home/bin/shell" "$tmp/home/.nix-profile/bin"
-trap 'rm -rf "$tmp"' EXIT
+cleanup() {
+	status=$?
+	if [ "$status" -ne 0 ]; then
+		printf 'FAIL workspace shell smoke test during: %s\n' "$test_stage" >&2
+	fi
+	rm -rf "$tmp"
+	exit "$status"
+}
+trap cleanup EXIT
 cp "$repo_root/bin/shell/workspace-env.sh" "$tmp/home/bin/shell/workspace-env.sh"
 
 cat > "$tmp/home/.nix-profile/bin/python3" <<'SH'
@@ -137,8 +146,10 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" USER=example-user WORKSPACE_SHELL
 test ! -f "$tmp/chsh.log"
 rm -f "$fakebin/uname" "$fakebin/zsh" "$fakebin/id" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
 
+test_stage='environment initialization'
 env -i PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" NO_COLOR=1 sh -c ". '$repo_root/bin/shell/workspace.sh'; test -z \"\${NO_COLOR+x}\"; test \"\$FORCE_COLOR\" = 1; test \"\$GOPATH\" = \"\$HOME/go\"; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:/usr/local/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:\"*) ;; *) exit 1 ;; esac; case \":\$PATH:\" in *\":\$GOPATH/bin:\"*) ;; *) exit 1 ;; esac"
 
+test_stage='mcodex startup and argument forwarding'
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" prompt
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" next
@@ -155,6 +166,7 @@ grep -Fxq -- '-c tui.animations=false resume --remote unix:// -C '"$repo_root"' 
 grep -Fxq -- '-c tui.animations=false resume --remote unix:// -C '"$tmp/resume-other"' explicit' "$codex_log"
 
 stale_home="$tmp/stale-codex-home"
+test_stage='mcodex stale-daemon recovery'
 mkdir -p "$stale_home/app-server-control" "$stale_home/app-server-daemon"
 : > "$stale_home/app-server-control/mcodex-remote-control-started"
 : > "$stale_home/app-server-control/app-server-control.sock"
@@ -174,6 +186,7 @@ test ! -e "$stale_home/app-server-daemon/daemon-updater.pid"
 test ! -e "$stale_home/app-server-daemon/daemon-updater.sock"
 
 drift_home="$tmp/drift-codex-home"
+test_stage='mcodex version-drift handling'
 mkdir -p "$drift_home/app-server-control" "$drift_home/app-server-daemon"
 : > "$drift_home/app-server-control/mcodex-remote-control-started"
 : > "$drift_home/app-server-control/app-server-control.sock"
@@ -189,6 +202,7 @@ test -e "$drift_home/app-server-control/app-server-control.sock"
 test -e "$drift_home/app-server-daemon/daemon.pid"
 
 duplicate_physical_home="$tmp/duplicate-codex-home-physical"
+test_stage='mcodex duplicate-daemon recovery'
 duplicate_home="$tmp/duplicate-codex-home-link"
 mkdir -p "$duplicate_physical_home/app-server-control" "$duplicate_physical_home/app-server-daemon"
 duplicate_physical_home=$(CDPATH= cd -- "$duplicate_physical_home" && pwd -P)
@@ -212,11 +226,13 @@ test ! -e "$duplicate_home/app-server-daemon/daemon-updater.pid"
 test ! -e "$duplicate_home/app-server-daemon/daemon-updater.sock"
 
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/bin/shell/workspace.sh'; ! command -v mcodex >/dev/null 2>&1"
+test_stage='shell function replacement'
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c "meta-hub() { cd '$tmp'; }; . '$repo_root/bin/shell/workspace.sh'; before=\$PWD; meta-hub pull; test \"\$PWD\" = \"\$before\""
 grep -Fxq 'pull' "$tmp/meta-hub.log"
 
 zsh_bin=$(command -v zsh || true)
 if [ -n "$zsh_bin" ]; then
+	test_stage='zsh interactive setup'
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc "meta-hub() { cd '$tmp'; }; . '$repo_root/bin/shell/workspace.sh'; before=\$PWD; meta-hub pull; test \"\$PWD\" = \"\$before\""
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/bin/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = zsh"
   PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" "$zsh_bin" -fc ". '$repo_root/bin/shell/workspace.sh'; test \"\$FZF_INIT_SHELL\" = zsh"
@@ -232,20 +248,23 @@ if [ -n "$zsh_bin" ]; then
 fi
 
 : > "$log"
+test_stage='POSIX shell setup'
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh -c ". '$repo_root/bin/shell/workspace.sh'; test \"\${ZOXIDE_INIT_SHELL:-}\" = \"\""
 ! grep -q '^init ' "$log"
 
 : > "$log"
+test_stage='bash interactive setup'
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; test \"\$ZOXIDE_INIT_SHELL\" = bash"
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; test \"\$FZF_INIT_SHELL\" = bash"
 WORKSPACE_SHELL="$repo_root/bin/shell/workspace.sh" PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" \
-  bash --noprofile --norc -ic '. "$WORKSPACE_SHELL"; bind -P' > "$tmp/bash-option-arrow-bindings" 2>/dev/null
-grep -Fq '"\e[1;3D"' "$tmp/bash-option-arrow-bindings" || grep -Fq '"\M-[1;3D"' "$tmp/bash-option-arrow-bindings"
-grep -Fq '"\e[1;3C"' "$tmp/bash-option-arrow-bindings" || grep -Fq '"\M-[1;3C"' "$tmp/bash-option-arrow-bindings"
+	bash --noprofile --norc -ic '. "$WORKSPACE_SHELL"; bind -p' > "$tmp/bash-option-arrow-bindings" 2>/dev/null
+grep -Eq '^"\\(e\[|M-\[)1;3D": backward-word$' "$tmp/bash-option-arrow-bindings"
+grep -Eq '^"\\(e\[|M-\[)1;3C": forward-word$' "$tmp/bash-option-arrow-bindings"
 grep -qx 'init bash --cmd z' "$log"
 grep -qx -- '--bash' "$fzf_log"
 
 mkdir -p "$tmp/sync-home"
+test_stage='shell profile synchronization'
 mkdir -p "$tmp/sync-home/bin/shell"
 cp "$repo_root/bin/shell/workspace.sh" "$tmp/sync-home/bin/shell/workspace.sh"
 cp "$repo_root/bin/shell/workspace-env.sh" "$tmp/sync-home/bin/shell/workspace-env.sh"
@@ -280,6 +299,7 @@ cmp -s "$tmp/sync-home/.zshrc" "$tmp/sync-home/.zshrc.after-first-sync"
 cmp -s "$tmp/sync-home/.zprofile" "$tmp/sync-home/.zprofile.after-first-sync"
 
 if [ -n "$zsh_bin" ]; then
+	test_stage='non-interactive login zsh environment'
   mkdir -p "$tmp/sync-home/.nix-profile/bin"
   cp "$tmp/home/.nix-profile/bin/python3" "$tmp/sync-home/.nix-profile/bin/python3"
   login_python=$(env -i HOME="$tmp/sync-home" ZDOTDIR="$tmp/sync-home" PATH="/usr/bin:/bin" "$zsh_bin" -lc 'command -v python3; python3 --version')
