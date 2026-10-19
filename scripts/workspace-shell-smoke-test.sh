@@ -240,8 +240,8 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" bash -c ". '$repo_root/bin/shell/workspace.sh'; test \"\$FZF_INIT_SHELL\" = bash"
 WORKSPACE_SHELL="$repo_root/bin/shell/workspace.sh" PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" \
   bash --noprofile --norc -ic '. "$WORKSPACE_SHELL"; bind -P' > "$tmp/bash-option-arrow-bindings" 2>/dev/null
-grep -Fq '"\e[1;3D"' "$tmp/bash-option-arrow-bindings"
-grep -Fq '"\e[1;3C"' "$tmp/bash-option-arrow-bindings"
+grep -Fq '"\e[1;3D"' "$tmp/bash-option-arrow-bindings" || grep -Fq '"\M-[1;3D"' "$tmp/bash-option-arrow-bindings"
+grep -Fq '"\e[1;3C"' "$tmp/bash-option-arrow-bindings" || grep -Fq '"\M-[1;3C"' "$tmp/bash-option-arrow-bindings"
 grep -qx 'init bash --cmd z' "$log"
 grep -qx -- '--bash' "$fzf_log"
 
