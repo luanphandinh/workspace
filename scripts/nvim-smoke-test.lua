@@ -358,7 +358,7 @@ end
 
 local function test_json_format_keymap()
   local file = temp_root .. "/format-keymap.json"
-  write(file, { '{"name":"example"}' })
+  write(file, { '{"name":"example","items":[1,2]}' })
   vim.cmd("edit " .. vim.fn.fnameescape(file))
   vim.bo.filetype = "json"
 
@@ -366,6 +366,40 @@ local function test_json_format_keymap()
     local map = vim.fn.maparg("<leader>kf", "n", false, true)
     return type(map) == "table" and map.desc == "Format"
   end, 3000)
+
+  vim.cmd("write")
+  local lines = read_lines(file)
+  assert_true(#lines > 1 and lines[1] == "{", "json buffers should format before write")
+end
+
+local function test_filetype_editor_options()
+  local cases = {
+    {
+      file = temp_root .. "/filetype-options/main.go",
+      lines = { "package main" },
+      shiftwidth = 4,
+      tabstop = 4,
+      softtabstop = 4,
+      expandtab = false,
+    },
+    {
+      file = temp_root .. "/filetype-options/init.lua",
+      lines = { "return {}" },
+      shiftwidth = 2,
+      tabstop = 2,
+      softtabstop = 2,
+      expandtab = true,
+    },
+  }
+
+  for _, case in ipairs(cases) do
+    write(case.file, case.lines)
+    vim.cmd("edit " .. vim.fn.fnameescape(case.file))
+    assert_true(vim.bo.shiftwidth == case.shiftwidth, case.file .. " shiftwidth is incorrect")
+    assert_true(vim.bo.tabstop == case.tabstop, case.file .. " tabstop is incorrect")
+    assert_true(vim.bo.softtabstop == case.softtabstop, case.file .. " softtabstop is incorrect")
+    assert_true(vim.bo.expandtab == case.expandtab, case.file .. " expandtab is incorrect")
+  end
 end
 
 local function test_markdown_browser_preview_keymap()
@@ -5639,6 +5673,10 @@ local agent_tests = {
   view_container = test_agent_view_container,
 }
 
+local safe_cleanup_tests = {
+  filetype_options = test_filetype_editor_options,
+}
+
 local setup_ok, setup_err = xpcall(function()
   require_command("git", { "git", "--version" })
   require_command("go", { "go", "version" })
@@ -5646,6 +5684,7 @@ local setup_ok, setup_err = xpcall(function()
   require_command("cargo", { "cargo", "--version" })
   require_command("rustc", { "rustc", "--version" })
   require_command("rust-analyzer", { "rust-analyzer", "--version" })
+  require_command("jq", { "jq", "--version" })
 
   local repo, worktree = make_fixture()
   vim.env.GOWORK = "off"
@@ -5874,8 +5913,12 @@ local setup_ok, setup_err = xpcall(function()
     test_lsp_recursive_incoming_call_graph(repo)
   end)
 
-  test("json format keymap uses editor group", function()
+  test("json buffers format before write", function()
     test_json_format_keymap()
+  end)
+
+  test("filetype editor options", function()
+    safe_cleanup_tests.filetype_options()
   end)
 
   test("lsp restart reattaches all buffers for current server", function()
