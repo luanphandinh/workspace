@@ -2011,28 +2011,10 @@ local function ensure_setup()
   return api
 end
 
-local function pick_worktree()
-  ensure_setup().pick_worktree()
-end
-
-local function pick_folder()
-  ensure_setup().pick_folder()
-end
-
-local function pick_project()
-  ensure_setup().pick_project()
-end
-
-local function pick_add_repository()
-  ensure_setup().pick_add_repository()
-end
-
-local function pick_workspace_project()
-  ensure_setup().pick_workspace_project()
-end
-
-local function pick_agent()
-  ensure_setup().pick_agent()
+local function picker(method)
+  return function()
+    ensure_setup()[method]()
+  end
 end
 
 return {
@@ -2042,12 +2024,12 @@ return {
     init = init,
     cmd = { "WorktreeSwitch", "FolderSwitch", "ProjectSwitch", "RepositorySwitch", "RepositoryAdd", "AgentSwitch" },
     keys = {
-      { "<leader>ww", pick_worktree, desc = "Switch workspace" },
-      { "<leader>wf", pick_folder, desc = "Pick workspace folder" },
-      { "<leader>wa", pick_add_repository, desc = "Add repository" },
-      { "<leader>wr", pick_project, mode = { "n", "t" }, desc = "Pick repository" },
-      { "<leader>wp", pick_workspace_project, desc = "Pick workspace" },
-      { "<leader>w;", pick_agent, desc = "Switch active agent" },
+      { "<leader>ww", picker("pick_worktree"), desc = "Switch workspace" },
+      { "<leader>wf", picker("pick_folder"), desc = "Pick workspace folder" },
+      { "<leader>wa", picker("pick_add_repository"), desc = "Add repository" },
+      { "<leader>wr", picker("pick_project"), mode = { "n", "t" }, desc = "Pick repository" },
+      { "<leader>wp", picker("pick_workspace_project"), desc = "Pick workspace" },
+      { "<leader>w;", picker("pick_agent"), desc = "Switch active agent" },
     },
     config = ensure_setup,
   },

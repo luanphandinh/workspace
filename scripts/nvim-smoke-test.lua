@@ -1565,6 +1565,31 @@ local function test_worktree_plugin_starts_lazy()
   end
 end
 
+local function test_worktree_keymaps_dispatch_to_pickers()
+  local worktree = worktree_test_api()
+  for _, mapping in ipairs({
+    { "<leader>ww", "n", "pick_worktree" },
+    { "<leader>wf", "n", "pick_folder" },
+    { "<leader>wa", "n", "pick_add_repository" },
+    { "<leader>wr", "n", "pick_project" },
+    { "<leader>wr", "t", "pick_project" },
+    { "<leader>wp", "n", "pick_workspace_project" },
+    { "<leader>w;", "n", "pick_agent" },
+  }) do
+    local method = mapping[3]
+    local original = worktree[method]
+    local called = false
+    worktree[method] = function()
+      called = true
+    end
+    local map = vim.fn.maparg(mapping[1], mapping[2], false, true)
+    local ok, err = pcall(map.callback)
+    worktree[method] = original
+    assert_true(ok, mapping[1] .. " failed: " .. tostring(err))
+    assert_true(called, mapping[1] .. " did not dispatch to " .. method)
+  end
+end
+
 local function test_nvim_tree_hides_dotfiles()
   local config = require("nvim-tree.config").g_clone()
   assert_true(config and config.filters.dotfiles == true, "nvim-tree should hide dotfiles")
@@ -5743,6 +5768,7 @@ local agent_tests = {
 local safe_cleanup_tests = {
   buffer_only = test_buffer_only_keeps_current_and_special_buffers,
   filetype_options = test_filetype_editor_options,
+  worktree_keymaps = test_worktree_keymaps_dispatch_to_pickers,
 }
 
 local setup_ok, setup_err = xpcall(function()
@@ -5759,6 +5785,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("worktree plugin starts lazy", function()
     test_worktree_plugin_starts_lazy()
+  end)
+
+  test("worktree keymaps dispatch to their pickers", function()
+    safe_cleanup_tests.worktree_keymaps()
   end)
 
   test("nvim-tree hides dotfiles", function()
