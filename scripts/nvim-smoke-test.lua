@@ -1308,6 +1308,39 @@ local function reset_window_layout()
   end
 end
 
+local function test_buffer_only_keeps_current_and_terminal()
+  local terminal, job
+  local ok, err = xpcall(function()
+    reset_window_layout()
+    local first = temp_root .. "/buffer-only/first.txt"
+    local second = temp_root .. "/buffer-only/second.txt"
+    write(first, { "first" })
+    write(second, { "second" })
+
+    vim.cmd("edit " .. vim.fn.fnameescape(first))
+    local current = vim.api.nvim_get_current_buf()
+    vim.cmd("badd " .. vim.fn.fnameescape(second))
+    local other = vim.fn.bufnr(second)
+    vim.cmd("botright new")
+    terminal = vim.api.nvim_get_current_buf()
+    job = vim.fn.termopen({ "sh", "-c", "sleep 30" })
+    vim.cmd("wincmd p")
+    vim.wait(50)
+
+    invoke_map("<leader>kw")
+    assert_true(vim.api.nvim_buf_is_valid(current), "buffer-only should keep the current file")
+    assert_true(not vim.api.nvim_buf_is_valid(other), "buffer-only should close another listed file")
+    assert_true(vim.api.nvim_buf_is_valid(terminal), "buffer-only should keep terminal buffers")
+  end, debug.traceback)
+
+  if job then pcall(vim.fn.jobstop, job) end
+  if terminal and vim.api.nvim_buf_is_valid(terminal) then
+    pcall(vim.api.nvim_buf_delete, terminal, { force = true })
+  end
+  reset_window_layout()
+  assert_true(ok, tostring(err))
+end
+
 local function test_word_wrap_keymap_applies_to_all_windows()
   local old_wrap = vim.wo.wrap
 
@@ -5686,6 +5719,7 @@ local agent_tests = {
 }
 
 local safe_cleanup_tests = {
+  buffer_only = test_buffer_only_keeps_current_and_terminal,
   filetype_options = test_filetype_editor_options,
 }
 
@@ -5755,6 +5789,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("Ctrl-J and Ctrl-K move between windows", function()
     test_ctrl_j_and_k_move_between_windows()
+  end)
+
+  test("buffer-only keeps current and terminal buffers", function()
+    safe_cleanup_tests.buffer_only()
   end)
 
   test("markdown browser preview keymap", function()

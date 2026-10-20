@@ -4,24 +4,9 @@
 
 local M = {}
 
---- Buffer numbers that must never be deleted (agent terminals stored in vim.g).
-local function protected_bufnrs()
-  local out = {}
-  for _, key in ipairs({ "cursor_agent_bufnr", "claude_agent_bufnr" }) do
-    local n = vim.g[key]
-    if type(n) == "number" and vim.api.nvim_buf_is_valid(n) then
-      out[n] = true
-    end
-  end
-  return out
-end
-
 --- True if this buffer is a normal editable file buffer we may close.
-local function is_closable_file_buffer(bufnr, protected)
+local function is_closable_file_buffer(bufnr)
   if not vim.api.nvim_buf_is_valid(bufnr) then
-    return false
-  end
-  if protected[bufnr] then
     return false
   end
   local bo = vim.bo[bufnr]
@@ -46,11 +31,10 @@ function M.close_other_file_buffers(opts)
 
   -- Active buffer: never closed (same idea as IDE "close all other tabs").
   local cur = vim.api.nvim_get_current_buf()
-  local protected = protected_bufnrs()
   local to_close = {}
 
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if buf ~= cur and is_closable_file_buffer(buf, protected) then
+    if buf ~= cur and is_closable_file_buffer(buf) then
       to_close[#to_close + 1] = buf
     end
   end
