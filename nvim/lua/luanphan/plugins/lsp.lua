@@ -5,7 +5,6 @@ local function cmp_opts(cmp)
         require("luasnip").lsp_expand(args.body)
       end,
     },
-    preselect = cmp.PreselectMode.Item,
     completion = {
       completeopt = "menu,menuone,noinsert",
     },
@@ -303,7 +302,6 @@ return {
       vim.lsp.config("gopls", {
         cmd = { gopls_cmd },
         root_markers = { "go.mod", ".git" },
-        filetypes = { "go", "gomod", "gowork", "gotmpl" },
         settings = {
           gopls = {
             analyses = {
@@ -326,7 +324,6 @@ return {
       vim.lsp.config("rust_analyzer", {
         cmd = { rust_analyzer_cmd },
         root_markers = { "Cargo.toml", "rust-project.json", ".git" },
-        filetypes = { "rust" },
         settings = {
           ["rust-analyzer"] = {
             cargo = {

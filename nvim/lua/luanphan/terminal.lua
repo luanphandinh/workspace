@@ -199,11 +199,9 @@ M.spec = {
         direction = "vertical", -- opens on the right
         shade_terminals = false,
         start_in_insert = false,
-        persist_size = true,
         persist_mode = false,
         -- Keep the pane after the shell job exits so output stays visible (scroll with Esc then j/k).
         close_on_exit = false,
-        auto_scroll = true,
       })
 
       vim.api.nvim_create_autocmd("User", {

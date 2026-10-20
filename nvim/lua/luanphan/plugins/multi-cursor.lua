@@ -5,10 +5,6 @@ return {
     init = function()
       -- Use visual mode as the main entry point
       vim.g.VM_maps = {
-        -- Find and select all occurrences of the word under cursor
-        ["Find Under"] = "<C-n>",
-        ["Find Subword Under"] = "<C-n>",
-
         -- Start with visual selection
         ["Select Cursor Down"] = "<C-Down>",
         ["Select Cursor Up"] = "<C-Up>",

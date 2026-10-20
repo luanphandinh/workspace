@@ -50,7 +50,6 @@ function M.toggle_gitignore()
     },
     pickers = {
       find_files = {
-        hidden = false,
         file_ignore_patterns = ignore_dot_git,
         find_command = show_gitignore
             and { "rg", "--files", "--follow", "--no-ignore" }

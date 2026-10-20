@@ -1163,14 +1163,7 @@ return {
       require("diffview").setup({
         view = {
           default = {
-            layout = "diff2_horizontal",
             winbar_info = true,
-          },
-        },
-        file_panel = {
-          win_config = {
-            position = "left",
-            width = 35,
           },
         },
         file_history_panel = {
@@ -1250,13 +1243,6 @@ return {
             theirs = "<leader>gct",
             both = "<leader>gcb",
             none = "<leader>gc0",
-            prev = "[x",
-            next = "]x",
-          },
-          default_commands = true,
-          highlights = {
-            incoming = "DiffAdd",
-            current = "DiffText",
           },
         })
       end)
