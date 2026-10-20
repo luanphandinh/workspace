@@ -39,29 +39,6 @@ local specs = {
   { import = "luanphan.plugins.which-key" },
 }
 
-local function add_specs(extra_specs)
-  if extra_specs then
-    table.insert(specs, extra_specs)
-  end
-end
-
-local internal_path = vim.fn.stdpath("config") .. "/lua/luanphan/internal"
-if vim.fn.isdirectory(internal_path) == 1 then
-  for _, file in ipairs(vim.fn.glob(internal_path .. "/*.lua", false, true)) do
-    local module = file:match(".*/internal/(.+)%.lua$")
-    if module then
-      local ok, mod = pcall(require, "luanphan.internal." .. module)
-      if ok and type(mod) == "function" then
-        local internal_specs, use = require("luanphan.lazy_use").collect()
-        mod(use)
-        add_specs(internal_specs)
-      elseif ok and type(mod) == "table" then
-        add_specs(mod)
-      end
-    end
-  end
-end
-
 require("lazy").setup(specs, {
   defaults = {
     lazy = false,
