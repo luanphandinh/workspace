@@ -313,10 +313,6 @@ local function setup_agent(name)
   return api
 end
 
-function M.set_float_position(pos)
-  return M.set_agent_position(pos)
-end
-
 function M.focus(name, bufnr, opts)
   if not agent_defs[name] then
     return false

@@ -945,8 +945,6 @@ function API.set_position(pos)
   return true
 end
 
-API.set_float_position = API.set_position
-
 --- Focus an agent terminal, showing its buffer when hidden.
 function API.focus(bufnr, opts)
   local cur = bufnr or current_bufnr()
