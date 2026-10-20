@@ -1445,6 +1445,18 @@ local function worktree_test_api()
     require("lazy").load({ plugins = { "luanphan-worktree" } })
   end
   assert_true(_G._luanphan_wt_test and _G._luanphan_wt_test.switch_to, "worktree test hook is missing")
+  for _, mapping in ipairs({
+    { "<leader>ww", "n" },
+    { "<leader>wf", "n" },
+    { "<leader>wa", "n" },
+    { "<leader>wr", "n" },
+    { "<leader>wr", "t" },
+    { "<leader>wp", "n" },
+    { "<leader>w;", "n" },
+  }) do
+    local map = vim.fn.maparg(mapping[1], mapping[2], false, true)
+    assert_true(type(map) == "table" and type(map.callback) == "function", mapping[1] .. " was lost after lazy load")
+  end
   return _G._luanphan_wt_test
 end
 

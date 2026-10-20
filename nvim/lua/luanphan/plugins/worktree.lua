@@ -1938,7 +1938,7 @@ local function setup()
     }):find()
   end
 
-  local function register_keymap()
+  local function register_commands()
     pcall(vim.api.nvim_del_user_command, "WorktreeSwitch")
     pcall(vim.api.nvim_del_user_command, "FolderSwitch")
     pcall(vim.api.nvim_del_user_command, "ProjectSwitch")
@@ -1963,15 +1963,9 @@ local function setup()
     vim.api.nvim_create_user_command("AgentSwitch", pick_agent, {
       desc = "Switch nvim instance to a project with an active agent",
     })
-    vim.keymap.set("n", "<leader>ww", pick_worktree, { desc = "Switch workspace" })
-    vim.keymap.set("n", "<leader>wf", pick_folder, { desc = "Pick workspace folder" })
-    vim.keymap.set("n", "<leader>wa", pick_add_repository, { desc = "Add repository" })
-    vim.keymap.set({ "n", "t" }, "<leader>wr", pick_project, { desc = "Pick repository" })
-    vim.keymap.set("n", "<leader>wp", pick_workspace_project, { desc = "Pick workspace" })
-    vim.keymap.set("n", "<leader>w;", pick_agent, { desc = "Switch active agent" })
   end
 
-  register_keymap()
+  register_commands()
 
   local test_api = {
     switch_to = switch_to,
