@@ -379,8 +379,6 @@ function M.attach(bufnr, cwd)
   return namespace
 end
 
-function M.activate() end
-
 function M.is_enabled()
   return enabled
 end

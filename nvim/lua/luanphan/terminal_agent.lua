@@ -842,7 +842,6 @@ local function show_terminal_split(bufnr, opts)
   vim.api.nvim_win_set_buf(win, cur)
   prepare_terminal_window(win)
   configure_terminal_window(win)
-  require("luanphan.terminal_references").activate(cur)
   apply_agent_scrollback(cur)
   apply_split_size()
   lock_cursor_window()
@@ -882,7 +881,6 @@ local function show_terminal_float(bufnr, opts)
   end
   vim.api.nvim_win_set_config(win, { zindex = config.float_zindex })
   configure_terminal_window(win)
-  require("luanphan.terminal_references").activate(cur)
   local win_config = vim.api.nvim_win_get_config(win)
   state.float_geometry = {
     relative = win_config.relative,
@@ -962,7 +960,6 @@ function API.focus(bufnr, opts)
     return true
   end
   configure_terminal_window(win)
-  require("luanphan.terminal_references").activate(cur)
   lock_cursor_window(win)
   vim.api.nvim_set_current_win(win)
   resume_terminal_view(win, cur, opts)
