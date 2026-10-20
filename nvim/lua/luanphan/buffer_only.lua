@@ -17,10 +17,6 @@ local function is_closable_file_buffer(bufnr)
   if not bo.buflisted then
     return false
   end
-  local ft = bo.filetype
-  if ft == "NvimTree" or ft == "help" or ft == "qf" then
-    return false
-  end
   return true
 end
 

@@ -1308,8 +1308,13 @@ local function reset_window_layout()
   end
 end
 
-local function test_buffer_only_keeps_current_and_terminal()
+local function test_buffer_only_keeps_current_and_special_buffers()
   local terminal, job
+  local special_buffers = {
+    { filetype = "NvimTree", buftype = "nofile" },
+    { filetype = "help", buftype = "help" },
+    { filetype = "qf", buftype = "quickfix" },
+  }
   local ok, err = xpcall(function()
     reset_window_layout()
     local first = temp_root .. "/buffer-only/first.txt"
@@ -1327,15 +1332,32 @@ local function test_buffer_only_keeps_current_and_terminal()
     vim.cmd("wincmd p")
     vim.wait(50)
 
+    for _, special in ipairs(special_buffers) do
+      special.buf = vim.api.nvim_create_buf(true, true)
+      vim.bo[special.buf].buftype = special.buftype
+      vim.bo[special.buf].filetype = special.filetype
+    end
+
     invoke_map("<leader>kw")
     assert_true(vim.api.nvim_buf_is_valid(current), "buffer-only should keep the current file")
     assert_true(not vim.api.nvim_buf_is_valid(other), "buffer-only should close another listed file")
     assert_true(vim.api.nvim_buf_is_valid(terminal), "buffer-only should keep terminal buffers")
+    for _, special in ipairs(special_buffers) do
+      assert_true(
+        vim.api.nvim_buf_is_valid(special.buf),
+        "buffer-only should keep " .. special.filetype .. " buffers"
+      )
+    end
   end, debug.traceback)
 
   if job then pcall(vim.fn.jobstop, job) end
   if terminal and vim.api.nvim_buf_is_valid(terminal) then
     pcall(vim.api.nvim_buf_delete, terminal, { force = true })
+  end
+  for _, special in ipairs(special_buffers) do
+    if special.buf and vim.api.nvim_buf_is_valid(special.buf) then
+      pcall(vim.api.nvim_buf_delete, special.buf, { force = true })
+    end
   end
   reset_window_layout()
   assert_true(ok, tostring(err))
@@ -5719,7 +5741,7 @@ local agent_tests = {
 }
 
 local safe_cleanup_tests = {
-  buffer_only = test_buffer_only_keeps_current_and_terminal,
+  buffer_only = test_buffer_only_keeps_current_and_special_buffers,
   filetype_options = test_filetype_editor_options,
 }
 
@@ -5791,7 +5813,7 @@ local setup_ok, setup_err = xpcall(function()
     test_ctrl_j_and_k_move_between_windows()
   end)
 
-  test("buffer-only keeps current and terminal buffers", function()
+  test("buffer-only keeps current and special buffers", function()
     safe_cleanup_tests.buffer_only()
   end)
 
