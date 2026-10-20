@@ -89,9 +89,7 @@ local function new_terminal(cwd, opts)
       terminal_container:attach(term.window, term.bufnr, "terminal:" .. term.id, cwd)
       restore_terminal_view(term)
     end,
-    on_close = function(term)
-      save_terminal_view(term)
-    end,
+    on_close = save_terminal_view,
   })
   terms[cwd] = terms[cwd] or {}
   terms[cwd][#terms[cwd] + 1] = term

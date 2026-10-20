@@ -1184,8 +1184,13 @@ end
 local function invoke_map(lhs, mode)
   mode = mode or "n"
   local map = vim.fn.maparg(lhs, mode, false, true)
-  assert_true(type(map) == "table" and type(map.callback) == "function", lhs .. " is not a callback mapping")
-  map.callback()
+  assert_true(type(map) == "table", lhs .. " mapping is missing")
+  if type(map.callback) == "function" then
+    map.callback()
+    return
+  end
+  assert_true(type(map.rhs) == "string" and map.rhs ~= "", lhs .. " mapping has no executable target")
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(map.rhs, true, false, true), "xt", false)
 end
 
 local function registered_agent_bufnrs(global_name, cwd)
@@ -1635,26 +1640,17 @@ end
 local function test_telescope_keymaps_dispatch_to_modules()
   require("lazy").load({ plugins = { "telescope.nvim" } })
   for _, mapping in ipairs({
-    { "<leader>ff", "luanphan.telescope_find_opts", "find_files" },
-    { "<leader>p", "luanphan.telescope_find_opts", "find_files" },
-    { "g/", "luanphan.telescope_grep_opts", "live_grep" },
-    { "<leader>sg", "luanphan.global_settings", "open_editor" },
-    { "<leader>ss", "luanphan.search_priority", "open_editor" },
-    { "<leader>fl", "telescope.builtin", "buffers" },
+    { "<leader>ff", require("luanphan.telescope_find_opts").find_files },
+    { "<leader>p", require("luanphan.telescope_find_opts").find_files },
+    { "g/", require("luanphan.telescope_grep_opts").live_grep },
+    { "<leader>sg", require("luanphan.global_settings").open_editor },
+    { "<leader>ss", require("luanphan.search_priority").open_editor },
   }) do
-    local target = require(mapping[2])
-    local method = mapping[3]
-    local original = target[method]
-    local called = false
-    target[method] = function()
-      called = true
-    end
     local map = vim.fn.maparg(mapping[1], "n", false, true)
-    local ok, err = pcall(map.callback)
-    target[method] = original
-    assert_true(ok, mapping[1] .. " failed: " .. tostring(err))
-    assert_true(called, mapping[1] .. " did not dispatch to " .. mapping[2] .. "." .. method)
+    assert_true(map.callback == mapping[2], mapping[1] .. " does not use its target function directly")
   end
+  local buffers_map = vim.fn.maparg("<leader>fl", "n", false, true)
+  assert_true(buffers_map.rhs == "<cmd>Telescope buffers<cr>", "<leader>fl does not run Telescope buffers")
 end
 
 local function test_nvim_tree_hides_dotfiles()

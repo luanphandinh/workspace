@@ -231,16 +231,10 @@ function M.restart_buffer()
   })
 end
 
-vim.api.nvim_create_user_command("LspRestart", function()
-  M.restart_all()
-end, { desc = "Stop all LSP clients, re-enable, re-attach on open buffers" })
+vim.api.nvim_create_user_command("LspRestart", M.restart_all, { desc = "Stop all LSP clients, re-enable, re-attach on open buffers" })
 
-vim.api.nvim_create_user_command("LspRestartBuffer", function()
-  M.restart_buffer()
-end, { desc = "Restart current buffer LSPs and re-attach every buffer using those servers" })
+vim.api.nvim_create_user_command("LspRestartBuffer", M.restart_buffer, { desc = "Restart current buffer LSPs and re-attach every buffer using those servers" })
 
-vim.api.nvim_create_user_command("GoplsRestart", function()
-  M.restart_gopls()
-end, { desc = "Stop gopls, re-enable, re-attach on all open Go buffers" })
+vim.api.nvim_create_user_command("GoplsRestart", M.restart_gopls, { desc = "Stop gopls, re-enable, re-attach on all open Go buffers" })
 
 return M

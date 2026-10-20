@@ -385,19 +385,13 @@ local function goto_file_edit()
 end
 
 local function set_diffview_keymaps(buf)
-  vim.keymap.set("n", "<leader>e", function()
-    vim.cmd("DiffviewFocusFiles")
-  end, {
+  vim.keymap.set("n", "<leader>e", "<cmd>DiffviewFocusFiles<cr>", {
     buffer = buf,
     desc = "Focus Diffview files",
   })
   vim.keymap.set("n", "<leader>gf", goto_file_edit, { buffer = buf, desc = "Jump to original file" })
-  vim.keymap.set("n", "<leader>gc", function()
-    commit_diffview()
-  end, { buffer = buf, desc = "Commit staged changes" })
-  vim.keymap.set("n", "<leader>gp", function()
-    push_diffview()
-  end, { buffer = buf, desc = "Push origin HEAD" })
+  vim.keymap.set("n", "<leader>gc", commit_diffview, { buffer = buf, desc = "Commit staged changes" })
+  vim.keymap.set("n", "<leader>gp", push_diffview, { buffer = buf, desc = "Push origin HEAD" })
   vim.keymap.set("n", "[r", function()
     switch_workspace_diff(nil, -1, false, true)
   end, { buffer = buf, desc = "Previous diff repository" })

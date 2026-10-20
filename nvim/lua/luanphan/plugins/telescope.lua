@@ -1,8 +1,7 @@
-local function lazy_call(module, method)
-  return function()
-    require(module)[method]()
-  end
-end
+local find_files = require("luanphan.telescope_find_opts").find_files
+local live_grep = require("luanphan.telescope_grep_opts").live_grep
+local open_global_settings = require("luanphan.global_settings").open_editor
+local open_search_settings = require("luanphan.search_priority").open_editor
 
 local function live_grep_selection()
   local visual_mode = vim.fn.mode()
@@ -59,13 +58,13 @@ return {
     "nvim-telescope/telescope.nvim",
     cmd = "Telescope",
     keys = {
-      { "<leader>ff", lazy_call("luanphan.telescope_find_opts", "find_files"), desc = "Find files" },
-      { "<leader>p", lazy_call("luanphan.telescope_find_opts", "find_files"), desc = "Telescope: find files" },
-      { "g/", lazy_call("luanphan.telescope_grep_opts", "live_grep"), desc = "Telescope: live grep" },
+      { "<leader>ff", find_files, desc = "Find files" },
+      { "<leader>p", find_files, desc = "Telescope: find files" },
+      { "g/", live_grep, desc = "Telescope: live grep" },
       { "g/", live_grep_selection, mode = "x", desc = "Telescope: live grep selection" },
-      { "<leader>sg", lazy_call("luanphan.global_settings", "open_editor"), desc = "Global settings" },
-      { "<leader>ss", lazy_call("luanphan.search_priority", "open_editor"), desc = "Search settings" },
-      { "<leader>fl", lazy_call("telescope.builtin", "buffers"), desc = "List open files" },
+      { "<leader>sg", open_global_settings, desc = "Global settings" },
+      { "<leader>ss", open_search_settings, desc = "Search settings" },
+      { "<leader>fl", "<cmd>Telescope buffers<cr>", desc = "List open files" },
       { "gs", document_symbols, desc = "Telescope: document symbols" },
       { "<leader>ft", filetypes, desc = "Set filetype" },
     },
