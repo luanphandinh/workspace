@@ -922,7 +922,6 @@ local function open_workspace_diff(parent, repositories, action)
     return
   end
   if #repositories == 1 then
-    recent_paths.touch(repositories[1].path)
     action(repositories[1].path)
     return
   end
@@ -937,7 +936,6 @@ local function open_workspace_diff(parent, repositories, action)
     bars = {},
   }
   pending_workspace_diff = { state = state, index = 1, focus = "initial" }
-  recent_paths.touch(repositories[1].path)
   action(repositories[1].path)
 end
 
@@ -956,7 +954,6 @@ switch_workspace_diff = function(view, target, absolute, focus_diff)
 
   state.active = index
   state.selected = index
-  recent_paths.touch(state.repositories[index].path)
 
   local target_view = state.views[index]
   if target_view and target_view.tabpage and vim.api.nvim_tabpage_is_valid(target_view.tabpage) then
@@ -1058,7 +1055,6 @@ local function with_diff_repository(action, has_diff)
     local root = git_root(cwd)
     local repositories = root and {} or list_child_git_repositories(cwd, has_diff)
     if root then
-      recent_paths.touch(root)
       action(root)
       return
     end

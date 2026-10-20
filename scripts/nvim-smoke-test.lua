@@ -4985,6 +4985,7 @@ local function test_git_diff_repository_bar_from_workspace_root()
   local first_repo = workspaces["example-project-a"]
   local second_repo = workspaces["example-project-b-long"]
   local clean_repo = workspace_root .. "/example-project-clean"
+  local recent_paths = require("luanphan.recent_paths")
   vim.fn.delete(vim.g.luanphan_recent_paths_file)
 
   vim.fn.mkdir(clean_repo, "p")
@@ -4994,7 +4995,15 @@ local function test_git_diff_repository_bar_from_workspace_root()
   write(clean_repo .. "/README.md", { "clean repository" })
   run({ "git", "add", "." }, clean_repo)
   run({ "git", "commit", "-m", "clean fixture" }, clean_repo)
-  require("luanphan.recent_paths").touch(clean_repo)
+  recent_paths.touch(clean_repo)
+
+  local function assert_recent_paths_unchanged()
+    local entries = recent_paths.entries()
+    assert_true(
+      #entries == 1 and realpath(entries[1]) == realpath(clean_repo),
+      "git diff preview changed recent folders"
+    )
+  end
 
   write(first_repo .. "/first-change.txt", {
     "first repository change",
@@ -5164,11 +5173,12 @@ local function test_git_diff_repository_bar_from_workspace_root()
   wait_until("workspace diff group closes", function()
     return not has_visible_diffview()
   end, 5000)
+  assert_recent_paths_unchanged()
 
   write(second_repo .. "/branch-change.txt", { "committed branch change" })
   run({ "git", "add", "branch-change.txt" }, second_repo)
   run({ "git", "commit", "-m", "branch diff fixture" }, second_repo)
-  require("luanphan.recent_paths").touch(clean_repo)
+  recent_paths.touch(clean_repo)
   invoke_map("<leader>gD")
   wait_for_diffview()
   _, _, bar_buf = find_workspace_diff_bar()
@@ -5179,6 +5189,7 @@ local function test_git_diff_repository_bar_from_workspace_root()
     "branch diff omitted committed line changes"
   )
   close_diffview()
+  assert_recent_paths_unchanged()
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
 end
 
