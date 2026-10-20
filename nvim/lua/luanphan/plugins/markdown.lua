@@ -8,10 +8,7 @@ return {
       local preview_port = tonumber(vim.env.NEOVIDE_MARKDOWN_PREVIEW_PORT)
       local remote_tunnel = require("luanphan.remote_tunnel").enabled()
 
-      vim.g.mkdp_auto_start = 0
       vim.g.mkdp_auto_close = 0
-      vim.g.mkdp_refresh_slow = 0
-      vim.g.mkdp_open_to_the_world = 0
       vim.g.mkdp_theme = "light"
       vim.g.mkdp_filetypes = { "markdown", "rmd" }
       if preview_port and remote_tunnel then
@@ -21,10 +18,6 @@ return {
       end
       vim.g.mkdp_preview_options = {
         disable_sync_scroll = 1,
-        sync_scroll_type = "middle",
-        hide_yaml_meta = 1,
-        content_editable = false,
-        disable_filename = 0,
         toc = { containerClass = "preview-toc", level = { 1, 2, 3, 4, 5, 6 } },
       }
     end,

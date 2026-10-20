@@ -409,6 +409,7 @@ local function test_markdown_browser_preview_keymap()
   assert_true(type(plugin) == "table", "markdown-preview.nvim plugin should be registered")
   assert_true(type(preview_map) == "table" and preview_map.desc == "Preview file", "<leader>fp should preview files")
   assert_true(vim.fn.maparg("<leader>fP", "n") == "", "<leader>fP should be removed")
+  require("lazy").load({ plugins = { "markdown-preview.nvim" } })
   assert_true(vim.g.mkdp_auto_start == 0, "browser Markdown preview should not auto-start")
   assert_true(vim.g.mkdp_auto_close == 0, "browser Markdown preview should remain open when its buffer is hidden")
   assert_true(vim.g.mkdp_refresh_slow == 0, "browser Markdown preview should auto-refresh content")
@@ -418,7 +419,6 @@ local function test_markdown_browser_preview_keymap()
     type(vim.g.mkdp_preview_options) == "table" and vim.g.mkdp_preview_options.disable_sync_scroll == 1,
     "browser Markdown preview should not sync-scroll"
   )
-  require("lazy").load({ plugins = { "markdown-preview.nvim" } })
   local refresh_events = {}
   for _, autocmd in ipairs(vim.api.nvim_get_autocmds({ group = "LuanphanMarkdownPreviewRefresh" })) do
     refresh_events[autocmd.event] = true

@@ -108,14 +108,6 @@ return {
             additional_args = grep_opts.additional_args,
           },
         },
-        extensions = {
-          fzf = {
-            fuzzy = true,                   -- enable fuzzy matching
-            override_generic_sorter = true, -- override the default sorter
-            override_file_sorter = true,
-            case_mode = "smart_case",
-          }
-        }
       })
       pcall(require("telescope").load_extension, "fzy_native")
     end,
