@@ -677,10 +677,8 @@ local function setup()
     return restored, opened_active and target_file or nil
   end
 
-  -- Re-trigger FileType on every loaded normal buffer so vim.lsp.enable's
-  -- per-config FileType autocmd attaches a fresh LSP client. Mirrors
-  -- `lsp_restart.refire_filetype(nil)` but inlined so this module stays
-  -- self-contained.
+  -- Re-trigger FileType on loaded buffers in the new cwd so enabled LSP
+  -- configs attach fresh clients.
   local function refire_filetype_all()
     local cwd = safe_getcwd()
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do

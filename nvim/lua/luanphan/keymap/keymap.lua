@@ -1,5 +1,4 @@
 -- Basic keymaps and options
-local lsp_restart = require("luanphan.lsp_restart")
 local remote_tunnel = require("luanphan.remote_tunnel")
 
 vim.g.mapleader = " "
@@ -199,8 +198,7 @@ vim.keymap.set("n", "<leader>rc", function()
 end, { desc = "Config" })
 
 -- LSP
--- LSP: use vim.lsp.enable(false) then enable(true) — see :help lsp-restart
-vim.keymap.set("n", "<leader>rl", lsp_restart.restart_buffer, { desc = "LSP" })
+vim.keymap.set("n", "<leader>rl", "<cmd>lsp restart<cr>", { desc = "LSP" })
 
 -- AI
 vim.keymap.set("n", "<leader>tc", function()

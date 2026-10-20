@@ -4806,7 +4806,7 @@ local function test_lsp_recursive_incoming_call_graph(repo)
   invoke_map("q")
 end
 
-local function test_lsp_restart_reattaches_all_buffers_for_current_server(repo)
+local function test_lsp_restart_reattaches_current_client_only(repo, worktree)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   write(repo .. "/extra.go", {
     "package main",
@@ -4818,35 +4818,83 @@ local function test_lsp_restart_reattaches_all_buffers_for_current_server(repo)
 
   local main_buf = open_go_file(repo .. "/main.go")
   local extra_buf = open_go_file(repo .. "/extra.go")
+  local worktree_buf = open_go_file(worktree .. "/main.go")
   wait_for_lsp(main_buf)
   wait_for_lsp(extra_buf)
+  wait_for_lsp(worktree_buf)
 
-  local old_ids = {}
-  for _, bufnr in ipairs({ main_buf, extra_buf }) do
-    local client = active_lsp_client(bufnr, "gopls")
-    assert_true(client ~= nil, "gopls was not attached before restart")
-    old_ids[client.id] = true
-  end
+  local old_client = active_lsp_client(main_buf, "gopls")
+  local extra_client = active_lsp_client(extra_buf, "gopls")
+  local worktree_client = active_lsp_client(worktree_buf, "gopls")
+  assert_true(old_client ~= nil and extra_client ~= nil, "repository gopls was not attached before restart")
+  assert_true(old_client.id == extra_client.id, "repository buffers did not share one gopls client")
+  assert_true(worktree_client ~= nil, "worktree gopls was not attached before restart")
+  assert_true(worktree_client.id ~= old_client.id, "separate repositories unexpectedly shared one gopls client")
 
   local restart_map = vim.fn.maparg("<leader>rl", "n", false, true)
   assert_true(type(restart_map) == "table" and restart_map.desc == "LSP", "<leader>rl should be the combined LSP restart")
   assert_true(vim.fn.maparg("<leader>rb", "n") == "", "<leader>rb should be removed")
   assert_true(vim.fn.maparg("<leader>rg", "n") == "", "<leader>rg should be removed")
+  vim.api.nvim_set_current_buf(extra_buf)
   invoke_map("<leader>rl")
 
   wait_until("gopls restart reattach", function()
     local main_client = active_lsp_client(main_buf, "gopls")
-    local extra_client = active_lsp_client(extra_buf, "gopls")
+    local reattached_extra_client = active_lsp_client(extra_buf, "gopls")
     return main_client
-      and extra_client
-      and not old_ids[main_client.id]
-      and not old_ids[extra_client.id]
+      and reattached_extra_client
+      and main_client.id == reattached_extra_client.id
+      and main_client.id ~= old_client.id
   end, 20000)
 
-  for old_id in pairs(old_ids) do
-    local client = vim.lsp.get_client_by_id(old_id)
-    assert_true(not client or client:is_stopped(), "old gopls client is still running after restart")
+  assert_true(old_client:is_stopped(), "old gopls client is still running after restart")
+  local untouched_client = active_lsp_client(worktree_buf, "gopls")
+  assert_true(
+    untouched_client ~= nil and untouched_client.id == worktree_client.id,
+    "restart replaced the unrelated repository's gopls client"
+  )
+end
+
+local function test_workspace_keymaps_restart_lsp_for_selected_directory(repo, worktree)
+  local api = worktree_test_api()
+  local cases = {
+    { lhs = "<leader>w;", method = "pick_agent" },
+    { lhs = "<leader>wp", method = "pick_workspace_project" },
+    { lhs = "<leader>wr", method = "pick_project" },
+    { lhs = "<leader>wf", method = "pick_folder" },
+  }
+
+  for _, case in ipairs(cases) do
+    api.switch_to(repo, "repository")
+    local old_buf = open_go_file(repo .. "/main.go")
+    wait_for_lsp(old_buf)
+    local old_client = active_lsp_client(old_buf, "gopls")
+    assert_true(old_client ~= nil, case.lhs .. " fixture has no source gopls client")
+
+    local original = api[case.method]
+    api[case.method] = function()
+      api.switch_to(worktree, "repository")
+    end
+    local ok, err = pcall(invoke_map, case.lhs)
+    api[case.method] = original
+    assert_true(ok, case.lhs .. " failed to switch directories: " .. tostring(err))
+    assert_true(realpath(vim.fn.getcwd()) == realpath(worktree), case.lhs .. " did not select the target directory")
+
+    wait_until(case.lhs .. " old gopls stop", function()
+      return old_client:is_stopped()
+    end, 10000)
+
+    local new_buf = open_go_file(worktree .. "/main.go")
+    wait_for_lsp(new_buf)
+    local new_client = active_lsp_client(new_buf, "gopls")
+    assert_true(new_client ~= nil and new_client.id ~= old_client.id, case.lhs .. " did not start a new gopls client")
+    assert_true(
+      realpath(new_client.config.root_dir) == realpath(worktree),
+      case.lhs .. " attached gopls with the wrong root"
+    )
   end
+
+  api.switch_to(repo, "repository")
 end
 
 local function test_worktree_switch_keeps_lsp(repo, worktree)
@@ -6051,6 +6099,11 @@ local agent_tests = {
   view_container = test_agent_view_container,
 }
 
+local lsp_lifecycle_tests = {
+  restart_current = test_lsp_restart_reattaches_current_client_only,
+  switch_with_keymaps = test_workspace_keymaps_restart_lsp_for_selected_directory,
+}
+
 local safe_cleanup_tests = {
   buffer_only = test_buffer_only_keeps_current_and_special_buffers,
   ctrl_f_navigation = test_ctrl_f_uses_native_navigation,
@@ -6344,8 +6397,12 @@ local setup_ok, setup_err = xpcall(function()
     safe_cleanup_tests.filetype_options()
   end)
 
-  test("lsp restart reattaches all buffers for current server", function()
-    test_lsp_restart_reattaches_all_buffers_for_current_server(repo)
+  test("lsp restart reattaches only the current client", function()
+    lsp_lifecycle_tests.restart_current(repo, worktree)
+  end)
+
+  test("workspace keymaps restart lsp for the selected directory", function()
+    lsp_lifecycle_tests.switch_with_keymaps(repo, worktree)
   end)
 
   test("repository switches keep language servers", function()
