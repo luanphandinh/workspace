@@ -1710,6 +1710,18 @@ local function test_editor_runtime_defaults()
   for _, lhs in ipairs({ "n", "N", "<C-d>", "<C-u>", "J", "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
     assert_nonrecursive_map(lhs, "n")
   end
+
+  local original_buf = vim.api.nvim_get_current_buf()
+  local source_buf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_name(source_buf, temp_root .. "/new-buffer-source.txt")
+  vim.api.nvim_set_current_buf(source_buf)
+  invoke_map("<leader>fn")
+  local new_buf = vim.api.nvim_get_current_buf()
+  assert_true(new_buf ~= source_buf, "<leader>fn did not create a new buffer")
+  assert_true(vim.api.nvim_buf_get_name(new_buf) == "", "<leader>fn created a named buffer")
+  vim.api.nvim_set_current_buf(original_buf)
+  vim.api.nvim_buf_delete(new_buf, { force = true })
+  vim.api.nvim_buf_delete(source_buf, { force = true })
 end
 
 local function test_editor_text_helpers()
@@ -3695,13 +3707,15 @@ local function test_terminal_reference_links()
   vim.fn.getmousepos = original_getmousepos
   assert_true(clicked_target and clicked_target.path == second_path, "wrapped reference second line opened the wrong file")
 
-  references.set_enabled(false, true)
+  local toggle_map = vim.fn.maparg("<leader>sl", "n", false, true)
+  assert_true(type(toggle_map) == "table" and type(toggle_map.callback) == "function", "terminal reference toggle is missing")
+  toggle_map.callback()
   vim.fn.getmousepos = function()
     return { winid = vim.api.nvim_get_current_win(), line = 2, column = 3 }
   end
   assert_true(click_map.callback() == "<M-LeftMouse>", "disabled terminal reference click was consumed")
   vim.fn.getmousepos = original_getmousepos
-  references.set_enabled(true, true)
+  toggle_map.callback()
   assert_true(
     #vim.api.nvim_buf_get_extmarks(buf, namespace, 0, -1, {}) == 0,
     "enabling terminal references scanned existing output"
@@ -4831,6 +4845,15 @@ local function test_lsp_restart_reattaches_current_client_only(repo, worktree)
   assert_true(worktree_client ~= nil, "worktree gopls was not attached before restart")
   assert_true(worktree_client.id ~= old_client.id, "separate repositories unexpectedly shared one gopls client")
 
+  require("lazy").load({ plugins = { "nvim-cmp" } })
+  local cmp_nvim_lsp = require("cmp_nvim_lsp")
+  vim.api.nvim_buf_call(extra_buf, function()
+    vim.api.nvim_exec_autocmds("InsertEnter", { buffer = extra_buf })
+  end)
+  wait_until("initial gopls completion source", function()
+    return cmp_nvim_lsp.client_source_map[old_client.id] ~= nil
+  end, 5000)
+
   local restart_map = vim.fn.maparg("<leader>rl", "n", false, true)
   assert_true(type(restart_map) == "table" and restart_map.desc == "LSP", "<leader>rl should be the combined LSP restart")
   assert_true(vim.fn.maparg("<leader>rb", "n") == "", "<leader>rb should be removed")
@@ -4848,6 +4871,16 @@ local function test_lsp_restart_reattaches_current_client_only(repo, worktree)
   end, 20000)
 
   assert_true(old_client:is_stopped(), "old gopls client is still running after restart")
+  local restarted_client = active_lsp_client(extra_buf, "gopls")
+  vim.api.nvim_buf_call(extra_buf, function()
+    vim.api.nvim_exec_autocmds("InsertEnter", { buffer = extra_buf })
+  end)
+  wait_until("restarted gopls completion source", function()
+    return cmp_nvim_lsp.client_source_map[old_client.id] == nil
+      and restarted_client
+      and cmp_nvim_lsp.client_source_map[restarted_client.id] ~= nil
+  end, 5000)
+
   local untouched_client = active_lsp_client(worktree_buf, "gopls")
   assert_true(
     untouched_client ~= nil and untouched_client.id == worktree_client.id,

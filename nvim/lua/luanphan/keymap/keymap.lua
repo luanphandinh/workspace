@@ -149,16 +149,6 @@ vim.keymap.set("n", "<leader>sl", function()
   require("luanphan.terminal_references").toggle()
 end, { desc = "Terminal reference links" })
 
-vim.api.nvim_create_user_command("TerminalReferenceLinksEnable", function()
-  require("luanphan.terminal_references").set_enabled(true)
-end, { desc = "Enable terminal reference links" })
-vim.api.nvim_create_user_command("TerminalReferenceLinksDisable", function()
-  require("luanphan.terminal_references").set_enabled(false)
-end, { desc = "Disable terminal reference links" })
-vim.api.nvim_create_user_command("TerminalReferenceLinksToggle", function()
-  require("luanphan.terminal_references").toggle()
-end, { desc = "Toggle terminal reference links" })
-
 -- Diagnostics
 vim.keymap.set("n", "<leader>d", function()
   vim.diagnostic.open_float(nil, { focus = false })
@@ -215,13 +205,6 @@ vim.api.nvim_create_autocmd("FileType", {
     vim.keymap.set("n", "<leader>gtp", go.run_go_test_package, { buffer = true, desc = "Run Go test package" })
   end,
 })
-
--- Command to create empty buffer with filetype
--- Usage: :New go, :New lua, :New json, etc.
-vim.api.nvim_create_user_command("New", function(opts)
-  vim.cmd("enew")
-  vim.bo.filetype = opts.args
-end, { nargs = 1, desc = "Create new buffer with filetype" })
 
 -- Files
 vim.keymap.set("n", "<leader>fn", "<cmd>enew<cr>", { desc = "New buffer" })
