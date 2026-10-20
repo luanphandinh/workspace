@@ -83,8 +83,7 @@ function M.run_go_test_at_cursor()
   run_in_test_terminal(cmd, package_dir)
 end
 
----Run all tests in the current package.
-function M.run_go_test_file()
+local function run_go_tests(timeout, package_suffix)
   local import_path, package_dir = M.get_current_import_path()
   if not import_path then
     vim.notify("Could not resolve import path (is `go list` valid here?)", vim.log.levels.ERROR)
@@ -92,29 +91,24 @@ function M.run_go_test_file()
   end
 
   local cmd = string.format(
-    "%s test -timeout 30s %s -count=1 -v",
+    "%s test -timeout %ds %s%s -count=1 -v",
     vim.fn.shellescape(go_bin()),
-    import_path
+    timeout,
+    import_path,
+    package_suffix
   )
 
   run_in_test_terminal(cmd, package_dir)
 end
 
+---Run all tests in the current package.
+function M.run_go_test_file()
+  run_go_tests(30, "")
+end
+
 ---Run all tests in the current package and its subpackages.
 function M.run_go_test_package()
-  local import_path, package_dir = M.get_current_import_path()
-  if not import_path then
-    vim.notify("Could not resolve import path (is `go list` valid here?)", vim.log.levels.ERROR)
-    return
-  end
-
-  local cmd = string.format(
-    "%s test -timeout 60s %s/... -count=1 -v",
-    vim.fn.shellescape(go_bin()),
-    import_path
-  )
-
-  run_in_test_terminal(cmd, package_dir)
+  run_go_tests(60, "/...")
 end
 
 return M
