@@ -1363,6 +1363,42 @@ local function test_buffer_only_keeps_current_and_special_buffers()
   assert_true(ok, tostring(err))
 end
 
+local function test_only_keep_tree_closes_other_windows()
+  local current
+  local sibling
+  local tree
+  local tree_buf
+  local ok, err = xpcall(function()
+    reset_window_layout()
+    vim.cmd("enew")
+    current = vim.api.nvim_get_current_win()
+    vim.cmd("vsplit")
+    sibling = vim.api.nvim_get_current_win()
+    vim.cmd("split")
+    tree = vim.api.nvim_get_current_win()
+    tree_buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[tree_buf].filetype = "NvimTree"
+    vim.api.nvim_win_set_buf(tree, tree_buf)
+    vim.api.nvim_set_current_win(current)
+
+    require("luanphan.win_only_tree").only_keep_tree()
+
+    assert_true(vim.api.nvim_win_is_valid(current), "only-keep-tree closed the current window")
+    assert_true(vim.api.nvim_win_is_valid(tree), "only-keep-tree closed the tree window")
+    assert_true(not vim.api.nvim_win_is_valid(sibling), "only-keep-tree preserved an ordinary sibling")
+    assert_true(#vim.api.nvim_tabpage_list_wins(0) == 2, "only-keep-tree left unexpected windows")
+  end, debug.traceback)
+
+  if current and vim.api.nvim_win_is_valid(current) then
+    vim.api.nvim_set_current_win(current)
+  end
+  reset_window_layout()
+  if tree_buf and vim.api.nvim_buf_is_valid(tree_buf) then
+    vim.api.nvim_buf_delete(tree_buf, { force = true })
+  end
+  assert_true(ok, tostring(err))
+end
+
 local function test_word_wrap_keymap_applies_to_all_windows()
   local old_wrap = vim.wo.wrap
 
@@ -5793,6 +5829,7 @@ local agent_tests = {
 local safe_cleanup_tests = {
   buffer_only = test_buffer_only_keeps_current_and_special_buffers,
   filetype_options = test_filetype_editor_options,
+  only_keep_tree = test_only_keep_tree_closes_other_windows,
   telescope_keymaps = test_telescope_keymaps_dispatch_to_modules,
   worktree_keymaps = test_worktree_keymaps_dispatch_to_pickers,
 }
@@ -5875,6 +5912,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("buffer-only keeps current and special buffers", function()
     safe_cleanup_tests.buffer_only()
+  end)
+
+  test("only-keep-tree closes ordinary sibling windows", function()
+    safe_cleanup_tests.only_keep_tree()
   end)
 
   test("markdown browser preview keymap", function()

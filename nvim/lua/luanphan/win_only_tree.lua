@@ -11,23 +11,10 @@ end
 
 function M.only_keep_tree()
   local tab = vim.api.nvim_get_current_tabpage()
-  local cur = vim.api.nvim_get_current_win()
-  local wins = vim.api.nvim_tabpage_list_wins(tab)
-  local keep = { [cur] = true }
-  for _, w in ipairs(wins) do
-    if vim.api.nvim_win_is_valid(w) and is_tree_win(w) then
-      keep[w] = true
-    end
-  end
-  local to_close = {}
-  for _, w in ipairs(wins) do
-    if not keep[w] then
-      to_close[#to_close + 1] = w
-    end
-  end
-  for _, w in ipairs(to_close) do
-    if vim.api.nvim_win_is_valid(w) then
-      pcall(vim.api.nvim_win_close, w, true)
+  local current = vim.api.nvim_get_current_win()
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+    if win ~= current and vim.api.nvim_win_is_valid(win) and not is_tree_win(win) then
+      pcall(vim.api.nvim_win_close, win, true)
     end
   end
 end
