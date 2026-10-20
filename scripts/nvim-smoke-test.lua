@@ -1381,12 +1381,18 @@ local function test_only_keep_tree_closes_other_windows()
     vim.api.nvim_win_set_buf(tree, tree_buf)
     vim.api.nvim_set_current_win(current)
 
-    require("luanphan.win_only_tree").only_keep_tree()
+    invoke_map("<C-w>o")
 
     assert_true(vim.api.nvim_win_is_valid(current), "only-keep-tree closed the current window")
     assert_true(vim.api.nvim_win_is_valid(tree), "only-keep-tree closed the tree window")
     assert_true(not vim.api.nvim_win_is_valid(sibling), "only-keep-tree preserved an ordinary sibling")
     assert_true(#vim.api.nvim_tabpage_list_wins(0) == 2, "only-keep-tree left unexpected windows")
+
+    local alternate = vim.fn.maparg("<C-w><C-o>", "n", false, true)
+    assert_true(
+      type(alternate) == "table" and type(alternate.callback) == "function",
+      "alternate only-keep-tree mapping is missing"
+    )
   end, debug.traceback)
 
   if current and vim.api.nvim_win_is_valid(current) then
@@ -5163,6 +5169,29 @@ local function test_git_diff_previews(worktree)
   assert_true(vim.api.nvim_tabpage_is_valid(branch_tab), "closing the commit log closed the Diffview tab")
   assert_true(require("diffview.lib").get_current_view() == branch_view, "closing the commit log replaced the branch Diffview")
   close_diffview()
+
+  local original_cmd = vim.cmd
+  local history_commands = {}
+  local history_ok, history_err = xpcall(function()
+    vim.cmd = function(command)
+      if type(command) == "string" and command:match("^DiffviewFileHistory") then
+        history_commands[#history_commands + 1] = command
+        return
+      end
+      return original_cmd(command)
+    end
+    invoke_map("<leader>gH")
+    invoke_map("<leader>gA")
+    invoke_map("<leader>gC")
+  end, debug.traceback)
+  vim.cmd = original_cmd
+  assert_true(history_ok, history_err)
+
+  assert_true(vim.deep_equal(history_commands, {
+    "DiffviewFileHistory %",
+    "DiffviewFileHistory",
+    "DiffviewFileHistory",
+  }), "file history mappings dispatched unexpected commands")
 end
 
 local function test_git_diff_repository_bar_from_workspace_root()

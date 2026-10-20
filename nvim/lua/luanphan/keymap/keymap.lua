@@ -130,9 +130,7 @@ vim.keymap.set("n", "<C-k>", "<C-w>k", { noremap = true, silent = true })
 vim.keymap.set("n", "<C-l>", "<C-w>l", { noremap = true, silent = true })
 
 -- |CTRL-W_o| like |:only| but keep nvim-tree / NERDTree sidebar if open
-local function only_keep_tree()
-  require("luanphan.win_only_tree").only_keep_tree()
-end
+local only_keep_tree = require("luanphan.win_only_tree").only_keep_tree
 vim.keymap.set("n", "<C-w>o", only_keep_tree, { desc = "Close other windows (keep NvimTree + current)" })
 vim.keymap.set("n", "<C-w><C-o>", only_keep_tree, { desc = "Close other windows (keep NvimTree + current)" })
 
@@ -209,9 +207,7 @@ end, { desc = "Config" })
 
 -- LSP
 -- LSP: use vim.lsp.enable(false) then enable(true) — see :help lsp-restart
-vim.keymap.set("n", "<leader>rl", function()
-  lsp_restart.restart_buffer()
-end, { desc = "LSP" })
+vim.keymap.set("n", "<leader>rl", lsp_restart.restart_buffer, { desc = "LSP" })
 
 -- AI
 vim.keymap.set("n", "<leader>tc", function()

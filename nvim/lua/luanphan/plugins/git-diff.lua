@@ -135,20 +135,14 @@ local function open_diffview(repo, revision, retries)
   end
 end
 
-local function toggle_file_history()
-  if close_or_focus_existing_diffview() then
-    return
+local function toggle_file_history(command)
+  return function()
+    if close_or_focus_existing_diffview() then
+      return
+    end
+
+    vim.cmd(command)
   end
-
-  vim.cmd("DiffviewFileHistory %")
-end
-
-local function toggle_all_file_history()
-  if close_or_focus_existing_diffview() then
-    return
-  end
-
-  vim.cmd("DiffviewFileHistory")
 end
 
 local function diffview_repository()
@@ -1148,9 +1142,9 @@ local function setup_diffview_keymaps()
     repository_branch_stats
   )), { desc = "Diff branch vs base" })
   vim.keymap.set("n", "<leader>gb", with_diffview(open_current_line_commit), { desc = "Blame commit at line" })
-  vim.keymap.set("n", "<leader>gH", with_diffview(toggle_file_history), { desc = "File history (current)" })
-  vim.keymap.set("n", "<leader>gA", with_diffview(toggle_all_file_history), { desc = "File history (all)" })
-  vim.keymap.set("n", "<leader>gC", with_diffview(toggle_all_file_history), { desc = "Repo commits (all)" })
+  vim.keymap.set("n", "<leader>gH", with_diffview(toggle_file_history("DiffviewFileHistory %")), { desc = "File history (current)" })
+  vim.keymap.set("n", "<leader>gA", with_diffview(toggle_file_history("DiffviewFileHistory")), { desc = "File history (all)" })
+  vim.keymap.set("n", "<leader>gC", with_diffview(toggle_file_history("DiffviewFileHistory")), { desc = "Repo commits (all)" })
 end
 
 return {
