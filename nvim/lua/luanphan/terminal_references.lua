@@ -379,10 +379,6 @@ function M.attach(bufnr, cwd)
   return namespace
 end
 
-function M.is_enabled()
-  return enabled
-end
-
 function M.set_enabled(value, silent)
   enabled = value == true
   vim.g.luanphan_terminal_reference_links_enabled = enabled

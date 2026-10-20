@@ -32,7 +32,6 @@ local specs = {
   { import = "luanphan.plugins.flow" },
   { import = "luanphan.plugins.editor" },
   { import = "luanphan.plugins.markdown" },
-  { import = "luanphan.plugins.qf-replace" },
   { import = "luanphan.plugins.terminal" },
   { import = "luanphan.plugins.agents" },
   { import = "luanphan.plugins.multi-cursor" },
