@@ -240,7 +240,7 @@ end
 local function wait_for_lsp(buf)
   wait_until("gopls", function()
     for _, client in ipairs(vim.lsp.get_clients({ bufnr = buf })) do
-      if client.name == "gopls" and not client:is_stopped() then
+      if client.name == "gopls" and client.initialized and not client:is_stopped() then
         return true
       end
     end

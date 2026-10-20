@@ -15,5 +15,6 @@ if ! command -v npx >/dev/null 2>&1; then
 fi
 
 npx --yes skills add "$ROOT" -g --skill '*' --agent claude-code codex cursor --full-depth -y
+npx --yes skills add multica-ai/andrej-karpathy-skills -g --skill karpathy-guidelines --agent claude-code codex cursor --full-depth -y
 
-echo "sync-skills: installed all skills for claude-code, codex, cursor via npx skills"
+echo "sync-skills: installed local and external skills for claude-code, codex, cursor via npx skills"

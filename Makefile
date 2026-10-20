@@ -202,7 +202,7 @@ endif
 scripts: ## chmod +x for all scripts
 	chmod -R +x ./scripts
 
-skills-sync: ## Install ./skills to all supported local AI agents via npx skills
+skills-sync: ## Install local and external skills to all supported AI agents
 	chmod +x ./scripts/sync-skills.sh
 	./scripts/sync-skills.sh
 

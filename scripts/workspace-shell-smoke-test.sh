@@ -147,7 +147,7 @@ test ! -f "$tmp/chsh.log"
 rm -f "$fakebin/uname" "$fakebin/zsh" "$fakebin/id" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
 
 test_stage='environment initialization'
-env -i PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" NO_COLOR=1 sh -c ". '$repo_root/bin/shell/workspace.sh'; test -z \"\${NO_COLOR+x}\"; test \"\$FORCE_COLOR\" = 1; test \"\$GOPATH\" = \"\$HOME/go\"; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:/usr/local/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:\"*) ;; *) exit 1 ;; esac; case \":\$PATH:\" in *\":\$GOPATH/bin:\"*) ;; *) exit 1 ;; esac"
+env -i PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" NO_COLOR=1 sh -c ". '$repo_root/bin/shell/workspace.sh'; test -z \"\${NO_COLOR+x}\"; test \"\$FORCE_COLOR\" = 1; test \"\$GOPATH\" = \"\$HOME/go\"; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:\"*) ;; *) exit 1 ;; esac; case \":\$PATH:\" in *\":\$GOPATH/bin:\"*) ;; *) exit 1 ;; esac"
 
 test_stage='mcodex startup and argument forwarding'
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex"
@@ -302,9 +302,8 @@ if [ -n "$zsh_bin" ]; then
 	test_stage='non-interactive login zsh environment'
   mkdir -p "$tmp/sync-home/.nix-profile/bin"
   cp "$tmp/home/.nix-profile/bin/python3" "$tmp/sync-home/.nix-profile/bin/python3"
-  login_python=$(env -i HOME="$tmp/sync-home" ZDOTDIR="$tmp/sync-home" PATH="/usr/bin:/bin" "$zsh_bin" -lc 'command -v python3; python3 --version')
-  expected_python=$(printf '%s\nPython 3.14.0' "$tmp/sync-home/.nix-profile/bin/python3")
-  test "$login_python" = "$expected_python"
+  env -i HOME="$tmp/sync-home" ZDOTDIR="$tmp/sync-home" PATH="/usr/bin:/bin" "$zsh_bin" -lc \
+    'test "$(command -v python3)" = "$HOME/.nix-profile/bin/python3"; test "$(python3 --version)" = "Python 3.14.0"'
 fi
 
 echo "PASS workspace shell smoke test"
