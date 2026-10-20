@@ -1590,6 +1590,31 @@ local function test_worktree_keymaps_dispatch_to_pickers()
   end
 end
 
+local function test_telescope_keymaps_dispatch_to_modules()
+  require("lazy").load({ plugins = { "telescope.nvim" } })
+  for _, mapping in ipairs({
+    { "<leader>ff", "luanphan.telescope_find_opts", "find_files" },
+    { "<leader>p", "luanphan.telescope_find_opts", "find_files" },
+    { "g/", "luanphan.telescope_grep_opts", "live_grep" },
+    { "<leader>sg", "luanphan.global_settings", "open_editor" },
+    { "<leader>ss", "luanphan.search_priority", "open_editor" },
+    { "<leader>fl", "telescope.builtin", "buffers" },
+  }) do
+    local target = require(mapping[2])
+    local method = mapping[3]
+    local original = target[method]
+    local called = false
+    target[method] = function()
+      called = true
+    end
+    local map = vim.fn.maparg(mapping[1], "n", false, true)
+    local ok, err = pcall(map.callback)
+    target[method] = original
+    assert_true(ok, mapping[1] .. " failed: " .. tostring(err))
+    assert_true(called, mapping[1] .. " did not dispatch to " .. mapping[2] .. "." .. method)
+  end
+end
+
 local function test_nvim_tree_hides_dotfiles()
   local config = require("nvim-tree.config").g_clone()
   assert_true(config and config.filters.dotfiles == true, "nvim-tree should hide dotfiles")
@@ -5768,6 +5793,7 @@ local agent_tests = {
 local safe_cleanup_tests = {
   buffer_only = test_buffer_only_keeps_current_and_special_buffers,
   filetype_options = test_filetype_editor_options,
+  telescope_keymaps = test_telescope_keymaps_dispatch_to_modules,
   worktree_keymaps = test_worktree_keymaps_dispatch_to_pickers,
 }
 
@@ -5789,6 +5815,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("worktree keymaps dispatch to their pickers", function()
     safe_cleanup_tests.worktree_keymaps()
+  end)
+
+  test("telescope keymaps dispatch to their modules", function()
+    safe_cleanup_tests.telescope_keymaps()
   end)
 
   test("nvim-tree hides dotfiles", function()

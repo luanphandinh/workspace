@@ -1,9 +1,7 @@
-local function find_files()
-  require("luanphan.telescope_find_opts").find_files()
-end
-
-local function live_grep()
-  require("luanphan.telescope_grep_opts").live_grep()
+local function lazy_call(module, method)
+  return function()
+    require(module)[method]()
+  end
 end
 
 local function live_grep_selection()
@@ -14,18 +12,6 @@ local function live_grep_selection()
   local lines = vim.fn.getregion(vim.fn.getpos("v"), vim.fn.getpos("."), { type = visual_mode })
   local selection = vim.trim(table.concat(lines, " "):gsub("%s+", " "))
   require("luanphan.telescope_grep_opts").live_grep(selection ~= "" and selection or nil)
-end
-
-local function search_settings()
-  require("luanphan.search_priority").open_editor()
-end
-
-local function global_settings()
-  require("luanphan.global_settings").open_editor()
-end
-
-local function buffers()
-  require("telescope.builtin").buffers()
 end
 
 local function document_symbols()
@@ -73,13 +59,13 @@ return {
     "nvim-telescope/telescope.nvim",
     cmd = "Telescope",
     keys = {
-      { "<leader>ff", find_files, desc = "Find files" },
-      { "<leader>p", find_files, desc = "Telescope: find files" },
-      { "g/", live_grep, desc = "Telescope: live grep" },
+      { "<leader>ff", lazy_call("luanphan.telescope_find_opts", "find_files"), desc = "Find files" },
+      { "<leader>p", lazy_call("luanphan.telescope_find_opts", "find_files"), desc = "Telescope: find files" },
+      { "g/", lazy_call("luanphan.telescope_grep_opts", "live_grep"), desc = "Telescope: live grep" },
       { "g/", live_grep_selection, mode = "x", desc = "Telescope: live grep selection" },
-      { "<leader>sg", global_settings, desc = "Global settings" },
-      { "<leader>ss", search_settings, desc = "Search settings" },
-      { "<leader>fl", buffers, desc = "List open files" },
+      { "<leader>sg", lazy_call("luanphan.global_settings", "open_editor"), desc = "Global settings" },
+      { "<leader>ss", lazy_call("luanphan.search_priority", "open_editor"), desc = "Search settings" },
+      { "<leader>fl", lazy_call("telescope.builtin", "buffers"), desc = "List open files" },
       { "gs", document_symbols, desc = "Telescope: document symbols" },
       { "<leader>ft", filetypes, desc = "Set filetype" },
     },
