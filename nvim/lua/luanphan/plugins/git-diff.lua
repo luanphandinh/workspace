@@ -1154,7 +1154,6 @@ return {
       "DiffviewRefresh",
       "DiffviewToggleFiles",
     },
-    dependencies = "nvim-lua/plenary.nvim",
     init = setup_diffview_keymaps,
     config = function()
       vim.api.nvim_set_hl(0, "DiffviewRepoTabSelected", { link = "TabLineSel", default = true })

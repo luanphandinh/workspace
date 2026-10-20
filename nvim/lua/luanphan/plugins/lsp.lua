@@ -117,7 +117,7 @@ return {
         callback = function(args)
           local client = vim.lsp.get_client_by_id(args.data.client_id)
           local bufnr = args.buf
-          local opts = { noremap = true, silent = true, buffer = bufnr }
+          local opts = { silent = true, buffer = bufnr }
 
           local function active_client_attached()
             for _, attached in ipairs(vim.lsp.get_clients({ bufnr = bufnr })) do

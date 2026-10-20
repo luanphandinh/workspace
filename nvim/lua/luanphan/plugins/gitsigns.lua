@@ -2,7 +2,6 @@ return {
   {
     'lewis6991/gitsigns.nvim',
     event    = { "BufReadPre", "BufNewFile" }, -- lazy load when opening a file
-    dependencies = { 'nvim-lua/plenary.nvim' },
     config   = function()
       local gitsigns = require('gitsigns')
       gitsigns.setup({

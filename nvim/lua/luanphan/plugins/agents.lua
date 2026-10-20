@@ -43,7 +43,6 @@ local agent_defs = {
 
 local apis = {}
 local configured = {}
-local setup_opts = {}
 local agent_container
 local agent_positions = { full = true, left = true, right = true }
 
@@ -94,9 +93,8 @@ function M.set_agent_position(position)
     return false
   end
   for _, name in ipairs(agent_order) do
-    setup_opts[name] = vim.tbl_extend("force", setup_opts[name] or {}, { float_position = position })
     local api = apis[name]
-    if api and type(api.set_position) == "function" then
+    if api then
       api.set_position(position)
     end
   end
@@ -262,13 +260,6 @@ function M.agent_buffer_keys()
   return keys
 end
 
-local function resolve_defaults(defaults)
-  if type(defaults) == "function" then
-    return defaults()
-  end
-  return defaults
-end
-
 local function get_agent(name)
   if apis[name] then
     return apis[name]
@@ -281,7 +272,7 @@ local function get_agent(name)
     notify_prefix = def.notify_prefix,
     augroup_prefix = def.augroup_prefix,
     hint_open = def.keys.toggle.lhs,
-    defaults = vim.tbl_extend("force", resolve_defaults(def.defaults), { float_position = M.agent_position() }),
+    defaults = vim.tbl_extend("force", def.defaults, { float_position = M.agent_position() }),
     on_prepare = function(win)
       agent_container:reserve(win)
     end,
@@ -307,7 +298,7 @@ end
 local function setup_agent(name)
   local api = get_agent(name)
   if not configured[name] then
-    api.setup(setup_opts[name])
+    api.setup()
     configured[name] = true
   end
   return api

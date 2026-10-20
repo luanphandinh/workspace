@@ -91,7 +91,6 @@ return {
           preview = {
             treesitter = false,
           },
-          file_sorter = require('telescope.sorters').get_fzy_sorter,
           -- Performance optimizations
           cache_picker = {
             num_pickers = 5,
@@ -101,7 +100,6 @@ return {
         pickers = {
           find_files = {
             find_command = { "rg", "--files", "--follow" },
-            file_ignore_patterns = ignore_dot_git,
           },
           live_grep = {
             -- Used by |luanphan.telescope_grep_opts.live_grep()| (|g/|). Not applied by :Telescope live_grep alone.

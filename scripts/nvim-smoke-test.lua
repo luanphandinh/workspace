@@ -37,6 +37,19 @@ local function assert_true(value, message)
   end
 end
 
+local function assert_nonrecursive_map(lhs, mode, bufnr)
+  local map
+  local function read_map()
+    map = vim.fn.maparg(lhs, mode, false, true)
+  end
+  if bufnr then
+    vim.api.nvim_buf_call(bufnr, read_map)
+  else
+    read_map()
+  end
+  assert_true(type(map) == "table" and map.noremap == 1, lhs .. " should be nonrecursive in " .. mode .. " mode")
+end
+
 local function rendered_winbar(win)
   win = win or vim.api.nvim_get_current_win()
   local format = vim.api.nvim_get_option_value("winbar", { win = win })
@@ -305,6 +318,10 @@ end
 local function assert_lsp_keymap_navigation(buf)
   local usage = find_position(buf, "targetValue", "return targetValue()")
   local definition = find_position(buf, "targetValue", "func targetValue")
+
+  for _, lhs in ipairs({ "gd", "gi", "gr", "gR", "gh", "<leader>cd", "<leader>ca" }) do
+    assert_nonrecursive_map(lhs, "n", buf)
+  end
 
   local function invoke_lsp_map(lhs)
     local map = vim.fn.maparg(lhs, "n", false, true)
@@ -909,6 +926,24 @@ local function test_go_test_runs_from_nested_module()
     "local editor_buf = vim.api.nvim_get_current_buf()",
     "local go = require('luanphan.plugins.go')",
     "local terminal = require('luanphan.terminal')",
+    "local original_cursor = go.run_go_test_at_cursor",
+    "local original_file = go.run_go_test_file",
+    "local original_package = go.run_go_test_package",
+    "local dispatched = {}",
+    "go.run_go_test_at_cursor = function() dispatched[#dispatched + 1] = 'cursor' end",
+    "go.run_go_test_file = function() dispatched[#dispatched + 1] = 'file' end",
+    "go.run_go_test_package = function() dispatched[#dispatched + 1] = 'package' end",
+    "vim.bo[editor_buf].filetype = 'go'",
+    "vim.api.nvim_exec_autocmds('FileType', { buffer = editor_buf })",
+    "for _, lhs in ipairs({ '<leader>gtc', '<leader>gtf', '<leader>gtp' }) do",
+    "  local map = vim.fn.maparg(lhs, 'n', false, true)",
+    "  assert_true(type(map) == 'table' and type(map.callback) == 'function', lhs .. ' mapping is missing')",
+    "  map.callback()",
+    "end",
+    "assert_true(table.concat(dispatched, ',') == 'cursor,file,package', 'Go test mappings dispatched incorrectly')",
+    "go.run_go_test_at_cursor = original_cursor",
+    "go.run_go_test_file = original_file",
+    "go.run_go_test_package = original_package",
     "local original_run_command = terminal.run_command",
     "local commands = {}",
     "terminal.run_command = function(command) commands[#commands + 1] = command end",
@@ -1663,9 +1698,134 @@ local function test_telescope_keymaps_dispatch_to_modules()
   assert_true(buffers_map.rhs == "<cmd>Telescope buffers<cr>", "<leader>fl does not run Telescope buffers")
 end
 
+local function test_editor_runtime_defaults()
+  require("lazy").load({ plugins = { "which-key.nvim" } })
+  assert_true(vim.o.timeout, "mapped-sequence timeout should be enabled")
+  assert_true(vim.o.timeoutlen == 300, "mapped-sequence timeout should be 300ms")
+  assert_true(not vim.o.backup, "backup files should be disabled")
+  assert_true(vim.o.hlsearch, "search matches should stay highlighted")
+  assert_true(vim.o.incsearch, "searches should update incrementally")
+  assert_true(vim.o.laststatus == 2, "the statusline should follow the multi-window default")
+
+  for _, lhs in ipairs({ "n", "N", "<C-d>", "<C-u>", "J", "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
+    assert_nonrecursive_map(lhs, "n")
+  end
+end
+
+local function test_editor_text_helpers()
+  local original_buf = vim.api.nvim_get_current_buf()
+  local buf = vim.api.nvim_create_buf(false, true)
+
+  local ok, err = xpcall(function()
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = "lua"
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "local value = 1" })
+    vim.api.nvim_feedkeys("gcc", "xt", false)
+    assert_true(vim.api.nvim_get_current_line() == "-- local value = 1", "gcc did not comment the current line")
+
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    vim.api.nvim_feedkeys("i(" .. vim.keycode("<Esc>"), "xt", false)
+    assert_true(vim.api.nvim_get_current_line() == "()", "autopairs did not close the opening parenthesis")
+  end, debug.traceback)
+
+  if vim.api.nvim_buf_is_valid(original_buf) then
+    vim.api.nvim_set_current_buf(original_buf)
+  end
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+  assert_true(ok, tostring(err))
+end
+
+local function test_ctrl_f_uses_native_navigation()
+  local original_buf = vim.api.nvim_get_current_buf()
+  local buf = vim.api.nvim_create_buf(false, true)
+  local lines = {}
+  for line = 1, 200 do
+    lines[line] = "line " .. line
+  end
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+
+  local ok, err = xpcall(function()
+    vim.api.nvim_set_current_buf(buf)
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    vim.api.nvim_feedkeys(vim.keycode("<C-f>"), "xt", false)
+    assert_true(vim.api.nvim_win_get_cursor(0)[1] > 1, "Ctrl-F did not use native page-forward navigation")
+  end, debug.traceback)
+
+  if vim.api.nvim_buf_is_valid(original_buf) then
+    vim.api.nvim_set_current_buf(original_buf)
+  end
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+  assert_true(ok, tostring(err))
+end
+
+local function test_telescope_runtime_defaults()
+  require("lazy").load({ plugins = { "telescope.nvim" } })
+  local config = require("telescope.config")
+  local sorter = config.values.file_sorter({})
+  local exact_score = sorter.scoring_function(sorter, "main.lua", "main.lua")
+  local loose_score = sorter.scoring_function(sorter, "main.lua", "src/example_main.lua")
+  local missing_score = sorter.scoring_function(sorter, "main.lua", "README.md")
+  assert_true(exact_score < loose_score, "file sorter did not rank the exact match first")
+  assert_true(missing_score < 0, "file sorter did not discard a missing match")
+
+  local picker = require("telescope.pickers").new(vim.deepcopy(config.pickers.find_files), {
+    finder = function() end,
+    sorter = sorter,
+  })
+  local scored = {}
+  picker._find_id = 1
+  picker.sorter = {
+    score = function(_, _, entry)
+      scored[#scored + 1] = entry.value
+    end,
+  }
+  local process = picker:get_result_processor(1, "", function() end)
+  process({ value = ".git/config", filename = ".git/config", ordinal = ".git/config" })
+  process({ value = "src/main.lua", filename = "src/main.lua", ordinal = "src/main.lua" })
+  assert_true(#scored == 1 and scored[1] == "src/main.lua", "find-files picker did not inherit the global .git filter")
+end
+
+local function test_gitignore_toggle_updates_telescope()
+  local script = temp_root .. "/gitignore-toggle-smoke.lua"
+  write(script, {
+    "local function assert_true(value, message)",
+    "  if not value then error(message, 0) end",
+    "end",
+    "require('lazy').load({ plugins = { 'telescope.nvim', 'luanphan-actions' } })",
+    "local tree_toggles = 0",
+    "local tree_reloads = 0",
+    "package.loaded['nvim-tree.api'] = {",
+    "  tree = {",
+    "    toggle_gitignore_filter = function() tree_toggles = tree_toggles + 1 end,",
+    "    reload = function() tree_reloads = tree_reloads + 1 end,",
+    "  },",
+    "}",
+    "local map = vim.fn.maparg('<leader>tg', 'n', false, true)",
+    "assert_true(type(map) == 'table' and type(map.callback) == 'function', 'gitignore toggle mapping is missing')",
+    "map.callback()",
+    "local config = require('telescope.config')",
+    "assert_true(vim.tbl_contains(config.values.vimgrep_arguments, '--no-ignore'), 'ignored grep results stayed hidden')",
+    "assert_true(vim.tbl_contains(config.pickers.find_files.find_command, '--no-ignore'), 'ignored files stayed hidden')",
+    "map.callback()",
+    "assert_true(not vim.tbl_contains(config.values.vimgrep_arguments, '--no-ignore'), 'ignored grep filtering was not restored')",
+    "assert_true(not vim.tbl_contains(config.pickers.find_files.find_command, '--no-ignore'), 'ignored file filtering was not restored')",
+    "assert_true(tree_toggles == 2, 'nvim-tree filter was not toggled twice')",
+    "assert_true(tree_reloads == 2, 'nvim-tree was not reloaded twice')",
+  })
+
+  local out = vim.fn.systemlist(child_nvim_luafile_command(vim.fn.getcwd(), script))
+  assert_true(vim.v.shell_error == 0, table.concat(out, "\n"))
+end
+
 local function test_nvim_tree_hides_dotfiles()
   local config = require("nvim-tree.config").g_clone()
   assert_true(config and config.filters.dotfiles == true, "nvim-tree should hide dotfiles")
+  assert_true(
+    vim.deep_equal(config.actions.open_file.window_picker.exclude.buftype, { "nofile", "terminal", "help" }),
+    "nvim-tree should keep non-file windows out of the file picker"
+  )
+  assert_nonrecursive_map("<leader>e", "n")
 end
 
 local function test_dependency_tree_keeps_workspace_tree(repo)
@@ -1826,6 +1986,7 @@ local function test_searches_follow_tree_dotfiles()
   local tree_api = require("nvim-tree.api")
   tree_api.tree.open({ path = fixture, focus = true })
   assert_true(vim.bo.filetype == "NvimTree", "nvim-tree did not open for the dotfile toggle fixture")
+  assert_nonrecursive_map("H", "n", vim.api.nvim_get_current_buf())
   invoke_map("H")
   assert_true(vim.g.luanphan_show_dotfiles == 1, "nvim-tree did not publish visible dotfile state")
   assert_true(search():find(".hidden", 1, true) ~= nil, "live grep did not follow visible dotfile state")
@@ -3599,9 +3760,17 @@ local function test_agent_terminal_reference_restores_view(repo)
     return visible_agent_window_count() == 1
   end, 1000)
 
+  local function assert_resize_restores_float(win, label)
+    local width = vim.api.nvim_win_get_width(win)
+    vim.api.nvim_win_set_config(win, { width = width - 1 })
+    vim.api.nvim_exec_autocmds("VimResized", {})
+    assert_true(vim.api.nvim_win_get_width(win) == width, label .. " did not restore its saved width")
+  end
+
   local terminal_buf = vim.api.nvim_get_current_buf()
   local terminal_win = vim.api.nvim_get_current_win()
   assert_true(vim.api.nvim_win_get_config(terminal_win).zindex == 40, "agent terminal has the wrong float layer")
+  assert_resize_restores_float(terminal_win, "new agent terminal")
   assert_true(not vim.wo[terminal_win].wrap, "agent terminal enabled editor line wrapping")
   assert_true(vim.b[terminal_buf].matchparen_timeout == 0, "agent terminal enabled matchparen scans")
   assert_true(vim.b[terminal_buf].matchparen_insert_timeout == 0, "agent terminal enabled insert matchparen scans")
@@ -3629,6 +3798,7 @@ local function test_agent_terminal_reference_restores_view(repo)
   vim.wait(30)
   local reopened_win = vim.api.nvim_get_current_win()
   assert_true(vim.api.nvim_win_get_config(reopened_win).zindex == 40, "reopened agent terminal has the wrong float layer")
+  assert_resize_restores_float(reopened_win, "reopened agent terminal")
   local restored_view = vim.api.nvim_win_call(reopened_win, vim.fn.winsaveview)
   assert_true(restored_view.lnum == saved_view.lnum, "agent terminal cursor returned to the end")
   assert_true(restored_view.topline == saved_view.topline, "agent terminal viewport returned to the end")
@@ -3658,18 +3828,26 @@ local function test_agent_keys_invoke_cli_commands()
 
   local old_path = vim.env.PATH
   local old_log = vim.env.NVIM_AGENT_SMOKE_LOG
+  local agents = require("luanphan.plugins.agents")
+  local original_position_file = vim.g.luanphan_agent_position_file
+  local original_position = agents.agent_position()
+  local position_file = temp_root .. "/agent-cli-position"
   vim.env.PATH = shim_dir .. ":" .. old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = log
+  vim.g.luanphan_agent_position_file = position_file
   vim.fn.delete(vim.g.luanphan_recent_paths_file)
+  vim.fn.delete(position_file)
   local expected_recent_folder = vim.fn.getcwd()
 
   local ok, err = xpcall(function()
+    assert_true(agents.set_agent_position("left"), "could not set agent position before lazy load")
     for _, item in ipairs(agent_cli_commands) do
       invoke_lazy_map(item.lhs, item.plugin)
       wait_until(item.command .. " invocation", function()
         return log_has_prefix(log, item.command .. "|")
       end, 3000)
       assert_true(plugin_loaded(item.plugin), item.plugin .. " did not lazy-load")
+      assert_left_agent_position(vim.api.nvim_get_current_win(), item.command .. " initial position")
       close_agent_terminals()
     end
     local recent = require("luanphan.recent_paths").entries()
@@ -3689,6 +3867,9 @@ local function test_agent_keys_invoke_cli_commands()
 
   vim.env.PATH = old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = old_log
+  agents.set_agent_position(original_position)
+  vim.g.luanphan_agent_position_file = original_position_file
+  vim.fn.delete(position_file)
   close_agent_terminals()
   assert_true(ok, tostring(err))
 end
@@ -3845,6 +4026,9 @@ local function test_agent_view_container(repo)
     vim.cmd("stopinsert")
     local next_map = vim.fn.maparg("<Tab>", "n", false, true)
     local new_map = vim.fn.maparg("<leader>fn", "n", false, true)
+    assert_nonrecursive_map("<Tab>", "n", cursor_buf)
+    assert_nonrecursive_map("<S-Tab>", "n", cursor_buf)
+    assert_nonrecursive_map("<leader>fn", "n", cursor_buf)
     assert_true(type(next_map) == "table" and type(next_map.callback) == "function", "agent view mode is missing tab cycling")
     assert_true(type(new_map) == "table" and type(new_map.callback) == "function" and new_map.desc == "New terminal agent", "agent view mode is missing the new-tab picker")
     next_map.callback()
@@ -4920,6 +5104,12 @@ local function test_agent_terminal_lifecycle(repo)
   local second_buf = vim.api.nvim_get_current_buf()
   local second_used = tonumber(vim.b[second_buf].luanphan_agent_last_used) or 0
   assert_true(second_used > first_used, "replacement agent terminal did not advance its use order")
+  for _, lhs in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
+    assert_nonrecursive_map(lhs, "n", second_buf)
+  end
+  for _, lhs in ipairs({ "<C-h>", "<C-k>", "<C-l>", "<CR>" }) do
+    assert_nonrecursive_map(lhs, "t", second_buf)
+  end
   assert_true(vim.fn.maparg("<C-j>", "t") == "", "agent terminal insert mode captured <C-j>")
   vim.cmd("stopinsert")
   local view_down_map = vim.fn.maparg("<C-j>", "n", false, true)
@@ -5863,9 +6053,14 @@ local agent_tests = {
 
 local safe_cleanup_tests = {
   buffer_only = test_buffer_only_keeps_current_and_special_buffers,
+  ctrl_f_navigation = test_ctrl_f_uses_native_navigation,
+  editor_defaults = test_editor_runtime_defaults,
+  editor_text_helpers = test_editor_text_helpers,
   filetype_options = test_filetype_editor_options,
   only_keep_tree = test_only_keep_tree_closes_other_windows,
   telescope_keymaps = test_telescope_keymaps_dispatch_to_modules,
+  telescope_runtime_defaults = test_telescope_runtime_defaults,
+  toggle_gitignore = test_gitignore_toggle_updates_telescope,
   worktree_keymaps = test_worktree_keymaps_dispatch_to_pickers,
 }
 
@@ -5885,12 +6080,32 @@ local setup_ok, setup_err = xpcall(function()
     test_worktree_plugin_starts_lazy()
   end)
 
+  test("editor defaults and global mappings resolve at runtime", function()
+    safe_cleanup_tests.editor_defaults()
+  end)
+
+  test("editor text helpers load and edit text", function()
+    safe_cleanup_tests.editor_text_helpers()
+  end)
+
+  test("Ctrl-F uses native page-forward navigation", function()
+    safe_cleanup_tests.ctrl_f_navigation()
+  end)
+
   test("worktree keymaps dispatch to their pickers", function()
     safe_cleanup_tests.worktree_keymaps()
   end)
 
   test("telescope keymaps dispatch to their modules", function()
     safe_cleanup_tests.telescope_keymaps()
+  end)
+
+  test("telescope runtime defaults filter and rank files", function()
+    safe_cleanup_tests.telescope_runtime_defaults()
+  end)
+
+  test("gitignore toggle updates Telescope searches", function()
+    safe_cleanup_tests.toggle_gitignore()
   end)
 
   test("nvim-tree hides dotfiles", function()

@@ -4,17 +4,12 @@ local remote_tunnel = require("luanphan.remote_tunnel")
 
 vim.g.mapleader = " "
 vim.g.maplocalleader = " "
-vim.o.timeout = true
-vim.o.timeoutlen = 500     -- time to wait for mapped sequence (ms)
 vim.o.termguicolors = true -- enable true color support
 vim.o.number = true
 vim.o.relativenumber = true
 vim.o.swapfile = false
-vim.o.backup = false
 vim.o.undodir = os.getenv("HOME") .. "/.vim/undodir"
 vim.o.undofile = true
-vim.o.hlsearch = true
-vim.o.incsearch = true
 -- Display options
 vim.o.cursorline = true
 vim.o.scrolloff = 8
@@ -24,7 +19,6 @@ vim.o.linebreak = true   -- when wrap is on, break at word boundaries, not mid-w
 vim.o.cmdheight = 0
 
 -- Statusline with LSP progress
-vim.o.laststatus = 2
 local lsp_progress_tokens = {} -- track active progress tokens
 
 local function redraw_statusline()
@@ -106,12 +100,12 @@ end
 vim.o.statusline = "%!v:lua.statusline()"
 
 -- Navigation
-vim.keymap.set("n", "n", "nzzzv", { noremap = true, silent = true })
-vim.keymap.set("n", "N", "nzzzv", { noremap = true, silent = true })
+vim.keymap.set("n", "n", "nzzzv", { silent = true })
+vim.keymap.set("n", "N", "nzzzv", { silent = true })
 
-vim.keymap.set("n", "<C-d>", "<C-d>zz", { noremap = true, silent = true })
-vim.keymap.set("n", "<C-u>", "<C-u>zz", { noremap = true, silent = true })
-vim.keymap.set("n", "J", "mzJ`z", { noremap = true, silent = true })
+vim.keymap.set("n", "<C-d>", "<C-d>zz", { silent = true })
+vim.keymap.set("n", "<C-u>", "<C-u>zz", { silent = true })
+vim.keymap.set("n", "J", "mzJ`z", { silent = true })
 vim.keymap.set("v", "J", ":m '>+1<CR>gv=gv")
 vim.keymap.set("v", "K", ":m '<-2<CR>gv=gv")
 
@@ -123,11 +117,10 @@ vim.keymap.set("v", "<leader>d", "\"_d")
 vim.keymap.set("x", "<leader>p", "\"_dP")
 
 -- Window / terminal navigation
-vim.keymap.set("n", "<C-f>", "<cmd>slient !tmux neww tmux-sessionizer<CR>")
-vim.keymap.set("n", "<C-h>", "<C-w>h", { noremap = true, silent = true })
-vim.keymap.set("n", "<C-j>", "<C-w>j", { noremap = true, silent = true })
-vim.keymap.set("n", "<C-k>", "<C-w>k", { noremap = true, silent = true })
-vim.keymap.set("n", "<C-l>", "<C-w>l", { noremap = true, silent = true })
+vim.keymap.set("n", "<C-h>", "<C-w>h", { silent = true })
+vim.keymap.set("n", "<C-j>", "<C-w>j", { silent = true })
+vim.keymap.set("n", "<C-k>", "<C-w>k", { silent = true })
+vim.keymap.set("n", "<C-l>", "<C-w>l", { silent = true })
 
 -- |CTRL-W_o| like |:only| but keep nvim-tree / NERDTree sidebar if open
 local only_keep_tree = require("luanphan.win_only_tree").only_keep_tree
@@ -218,15 +211,10 @@ end, { desc = "Copilot" })
 vim.api.nvim_create_autocmd("FileType", {
   pattern = "go",
   callback = function()
-    vim.keymap.set("n", "<leader>gtc", function()
-      require("luanphan.plugins.go").run_go_test_at_cursor()
-    end, { buffer = true, desc = "Run Go test at cursor" })
-    vim.keymap.set("n", "<leader>gtf", function()
-      require("luanphan.plugins.go").run_go_test_file()
-    end, { buffer = true, desc = "Run Go test file" })
-    vim.keymap.set("n", "<leader>gtp", function()
-      require("luanphan.plugins.go").run_go_test_package()
-    end, { buffer = true, desc = "Run Go test package" })
+    local go = require("luanphan.plugins.go")
+    vim.keymap.set("n", "<leader>gtc", go.run_go_test_at_cursor, { buffer = true, desc = "Run Go test at cursor" })
+    vim.keymap.set("n", "<leader>gtf", go.run_go_test_file, { buffer = true, desc = "Run Go test file" })
+    vim.keymap.set("n", "<leader>gtp", go.run_go_test_package, { buffer = true, desc = "Run Go test package" })
   end,
 })
 

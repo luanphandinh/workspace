@@ -17,7 +17,6 @@ return {
         end, {
           buffer = bufnr,
           desc = "nvim-tree: Toggle Filter: Dotfiles",
-          noremap = true,
           nowait = true,
           silent = true,
         })
@@ -41,7 +40,6 @@ return {
             window_picker = {
               exclude = {
                 filetype = { "netrw", "notify", "packer", "qf", "diff", "fugitive", "fugitiveblame" },
-                buftype = { "nofile", "terminal", "help" },
               },
             },
           },
@@ -54,7 +52,7 @@ return {
 
       vim.keymap.set("n", "<leader>e", function()
         dependency_tree.focus(tree_api)
-      end, { noremap = true, silent = true, desc = "Focus file tree" })
+      end, { silent = true, desc = "Focus file tree" })
     end,
   },
 }

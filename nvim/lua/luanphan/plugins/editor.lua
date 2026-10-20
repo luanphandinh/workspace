@@ -37,11 +37,9 @@ return {
   {
     "windwp/nvim-autopairs",
     event = "InsertEnter",
-    config = function()
-      require("nvim-autopairs").setup({
-        check_ts = true, -- enable Treesitter integration for smarter pairing
-      })
-    end,
+    opts = {
+      check_ts = true,
+    },
   },
 
   -- comment plugin
@@ -56,8 +54,6 @@ return {
       { "gcO", mode = "n" },
       { "gcA", mode = "n" },
     },
-    config = function()
-      require("Comment").setup()
-    end,
+    opts = {},
   },
 }

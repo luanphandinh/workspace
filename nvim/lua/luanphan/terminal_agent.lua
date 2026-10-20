@@ -385,6 +385,17 @@ local function get_float_geometry()
   return { row = 0, col = col, width = w, height = h }
 end
 
+local function save_float_geometry(win)
+  local win_config = vim.api.nvim_win_get_config(win)
+  state.float_geometry = {
+    relative = win_config.relative,
+    row = win_config.row,
+    col = win_config.col,
+    width = win_config.width,
+    height = win_config.height,
+  }
+end
+
 local function apply_split_size()
   local dim, axis = get_target_split_dims()
   if not dim then
@@ -609,7 +620,7 @@ local function set_float_close_keymaps(bufnr)
     end
     return
   end
-  local opts = { buffer = bufnr, noremap = true, silent = true, nowait = true }
+  local opts = { buffer = bufnr, silent = true, nowait = true }
   local function close_float()
     local w = win_for_buf(bufnr)
     if w and vim.api.nvim_win_is_valid(w) then
@@ -641,7 +652,7 @@ local function attach_status_tracking(bufnr, cwd, initial_status)
   vim.keymap.set("t", "<CR>", function()
     agent_status.write(profile.status_name, cwd, "running")
     return vim.api.nvim_replace_termcodes("<CR>", true, false, true)
-  end, { buffer = bufnr, expr = true, noremap = true, silent = true })
+  end, { buffer = bufnr, expr = true, silent = true })
 end
 
 local function attach_term_close(buf)
@@ -791,14 +802,7 @@ local function open_terminal_float(opts)
   vim.api.nvim_win_set_config(win, { zindex = config.float_zindex })
   prepare_terminal_window(win)
   configure_terminal_window(win)
-  local win_config = vim.api.nvim_win_get_config(win)
-  state.float_geometry = {
-    relative = win_config.relative,
-    row = win_config.row,
-    col = win_config.col,
-    width = win_config.width,
-    height = win_config.height,
-  }
+  save_float_geometry(win)
   local cwd = cwd_key()
   vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
   configure_terminal_buffer(buf)
@@ -881,14 +885,7 @@ local function show_terminal_float(bufnr, opts)
   end
   vim.api.nvim_win_set_config(win, { zindex = config.float_zindex })
   configure_terminal_window(win)
-  local win_config = vim.api.nvim_win_get_config(win)
-  state.float_geometry = {
-    relative = win_config.relative,
-    row = win_config.row,
-    col = win_config.col,
-    width = win_config.width,
-    height = win_config.height,
-  }
+  save_float_geometry(win)
   apply_agent_scrollback(cur)
   set_float_close_keymaps(cur)
   resume_terminal_view(win, cur, opts)

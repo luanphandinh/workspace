@@ -168,7 +168,7 @@ function Container:attach(win, bufnr, id, context)
 	context = context or self:context()
 	self.active_by_context[context] = { id = id, bufnr = bufnr }
 
-	local opts = { buffer = bufnr, noremap = true, silent = true, nowait = true }
+	local opts = { buffer = bufnr, silent = true, nowait = true }
 	vim.keymap.set("n", "<Tab>", function()
 		self:cycle(context)
 	end, vim.tbl_extend("force", opts, { desc = self.opts.cycle_desc or "Next view" }))

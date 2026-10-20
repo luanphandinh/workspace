@@ -20,7 +20,6 @@ end
 vim.opt.rtp:prepend(lazypath)
 
 local specs = {
-  "nvim-lua/plenary.nvim",
   { import = "luanphan.plugins.nvim-tree" },
   { import = "luanphan.plugins.telescope" },
   { import = "luanphan.plugins.actions" },
