@@ -158,12 +158,9 @@ local function diffview_repository()
   return repo, view
 end
 
-local function git_error(label, code, stdout, stderr)
-  local lines = {}
-  vim.list_extend(lines, stderr or {})
-  vim.list_extend(lines, stdout or {})
-  local detail = vim.trim(table.concat(lines, "\n"))
-  local message = string.format("%s failed (exit %d)", label, code)
+local function git_error(label, result)
+  local detail = vim.trim((result.stderr or "") .. "\n" .. (result.stdout or ""))
+  local message = string.format("%s failed (exit %d)", label, result.code)
   if detail ~= "" then
     message = message .. ": " .. detail
   end
@@ -173,28 +170,11 @@ end
 local function run_git(repo, args, callback)
   local command = { "git", "-C", repo }
   vim.list_extend(command, args)
-  local stdout = {}
-  local stderr = {}
-  local job = vim.fn.jobstart(command, {
-    stdout_buffered = true,
-    stderr_buffered = true,
-    on_stdout = function(_, data)
-      stdout = data or {}
-    end,
-    on_stderr = function(_, data)
-      stderr = data or {}
-    end,
-    on_exit = function(_, code)
-      vim.schedule(function()
-        callback(code, stdout, stderr)
-      end)
-    end,
-  })
-  if job <= 0 then
-    vim.notify("Could not start git command", vim.log.levels.ERROR)
-    return false
-  end
-  return true
+  vim.system(command, { text = true }, function(result)
+    vim.schedule(function()
+      callback(result)
+    end)
+  end)
 end
 
 local operation_in_progress = {}
@@ -218,10 +198,10 @@ local function commit_diffview()
 
     operation_in_progress[repo] = "commit"
     vim.notify("Committing " .. vim.fn.fnamemodify(repo, ":t") .. "...")
-    local started = run_git(repo, { "commit", "-m", message }, function(code, stdout, stderr)
+    run_git(repo, { "commit", "-m", message }, function(result)
       operation_in_progress[repo] = nil
-      if code ~= 0 then
-        git_error("Commit", code, stdout, stderr)
+      if result.code ~= 0 then
+        git_error("Commit", result)
         return
       end
 
@@ -230,9 +210,6 @@ local function commit_diffview()
       end
       vim.notify("Committed: " .. message)
     end)
-    if not started then
-      operation_in_progress[repo] = nil
-    end
   end)
 end
 
@@ -249,17 +226,14 @@ local function push_diffview()
 
   operation_in_progress[repo] = "push"
   vim.notify("Pushing " .. vim.fn.fnamemodify(repo, ":t") .. " to origin HEAD...")
-  local started = run_git(repo, { "push", "origin", "HEAD" }, function(code, stdout, stderr)
+  run_git(repo, { "push", "origin", "HEAD" }, function(result)
     operation_in_progress[repo] = nil
-    if code ~= 0 then
-      git_error("Push", code, stdout, stderr)
+    if result.code ~= 0 then
+      git_error("Push", result)
       return
     end
     vim.notify("Push successful")
   end)
-  if not started then
-    operation_in_progress[repo] = nil
-  end
 end
 
 local function snapshot_window_options(win)
@@ -505,12 +479,6 @@ local function git_root(path)
   return first_line(git_systemlist({ "git", "-C", path, "rev-parse", "--show-toplevel" }))
 end
 
-local function git_branch(path)
-  return first_line(git_systemlist({ "git", "-C", path, "symbolic-ref", "--short", "-q", "HEAD" }))
-    or first_line(git_systemlist({ "git", "-C", path, "rev-parse", "--short", "HEAD" }))
-    or "detached"
-end
-
 local function default_base_branch(repo)
   if git_systemlist({ "git", "-C", repo, "rev-parse", "--verify", "main" }) then
     return "main"
@@ -593,7 +561,6 @@ local function list_child_git_repositories(parent, change_stats)
         repositories[#repositories + 1] = {
           name = name,
           path = root,
-          branch = git_branch(root),
           has_diff = stats.has_diff or false,
           additions = stats.additions or 0,
           deletions = stats.deletions or 0,
@@ -685,7 +652,7 @@ render_repository_bar = function(state, buf, win)
       line = line .. "  "
     end
     local start_col = #line
-    local selected = index == (state.selected or state.active)
+    local selected = index == state.active
     if selected then
       line = line .. "["
     end
@@ -712,12 +679,7 @@ render_repository_bar = function(state, buf, win)
   vim.bo[buf].modifiable = false
   vim.api.nvim_buf_clear_namespace(buf, repository_bar_namespace, 0, -1)
   for index, range in ipairs(ranges) do
-    local group = "DiffviewRepoTabInactive"
-    if index == (state.selected or state.active) then
-      group = "DiffviewRepoTabSelected"
-    elseif index == state.active then
-      group = "DiffviewRepoTabActive"
-    end
+    local group = index == state.active and "DiffviewRepoTabSelected" or "DiffviewRepoTabInactive"
     vim.api.nvim_buf_add_highlight(buf, repository_bar_namespace, group, 0, range.start_col, range.end_col)
     local stats = stat_ranges[index]
     if stats then
@@ -741,7 +703,7 @@ render_repository_bar = function(state, buf, win)
   end
 
   state.ranges = ranges
-  local selected = ranges[state.selected or state.active]
+  local selected = ranges[state.active]
   if selected and vim.api.nvim_win_is_valid(win) then
     vim.api.nvim_win_set_cursor(win, { 1, selected.start_col })
   end
@@ -897,7 +859,6 @@ local function attach_workspace_diff(view)
 
   pending_workspace_diff = nil
   state.active = index
-  state.selected = index
   state.views[index] = view
   view._luanphan_workspace_diff = state
   view._luanphan_workspace_diff_index = index
@@ -918,7 +879,6 @@ local function open_workspace_diff(parent, repositories, action)
     parent = parent,
     repositories = repositories,
     active = 1,
-    selected = 1,
     open = action,
     views = {},
     bars = {},
@@ -941,7 +901,6 @@ switch_workspace_diff = function(view, target, absolute, focus_diff)
   end
 
   state.active = index
-  state.selected = index
 
   local target_view = state.views[index]
   if target_view and target_view.tabpage and vim.api.nvim_tabpage_is_valid(target_view.tabpage) then
@@ -1157,7 +1116,6 @@ return {
     init = setup_diffview_keymaps,
     config = function()
       vim.api.nvim_set_hl(0, "DiffviewRepoTabSelected", { link = "TabLineSel", default = true })
-      vim.api.nvim_set_hl(0, "DiffviewRepoTabActive", { link = "DiffText", default = true })
       vim.api.nvim_set_hl(0, "DiffviewRepoTabInactive", { link = "TabLine", default = true })
       require("diffview").setup({
         view = {
