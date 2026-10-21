@@ -13,7 +13,7 @@ vim.o.undofile = true
 vim.o.cursorline = true
 vim.o.scrolloff = 8
 vim.o.signcolumn = "yes" -- always show the signcolumn on the left side
-vim.o.wrap = false       -- no soft-wrap by default; toggle with <leader>tW
+vim.o.wrap = false       -- no soft-wrap by default; toggle with <leader>tw or <leader>tW
 vim.o.linebreak = true   -- when wrap is on, break at word boundaries, not mid-word
 vim.o.cmdheight = 0
 
@@ -364,6 +364,12 @@ vim.keymap.set("n", "<leader>fS", "<cmd>wa<cr>", { desc = "Save all files" })
 vim.keymap.set("n", "<leader>fL", "<cmd>edit!<cr>", { desc = "Reload from disk" })
 
 -- UI
+vim.keymap.set("n", "<leader>tw", function()
+  local enabled = not vim.wo.wrap
+  vim.wo.wrap = enabled
+  vim.notify("wrap: " .. (enabled and "on" or "off") .. " (current window)", vim.log.levels.INFO)
+end, { desc = "Word wrap (current window)" })
+
 vim.keymap.set("n", "<leader>tW", function()
   local enabled = not vim.wo.wrap
   vim.o.wrap = enabled

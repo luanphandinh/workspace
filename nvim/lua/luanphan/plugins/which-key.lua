@@ -35,10 +35,11 @@ return {
         end },
         { "<leader>tc", desc = "Copilot", icon = toggle_icons.copilot },
         { "<leader>td", desc = "File diff", icon = toggle_icons.file_diff },
-        { "<leader>tt", desc = "Terminal", icon = toggle_icons.terminal },
-        { "<leader>tw", desc = "Word diff", icon = toggle_icons.word_diff, cond = function()
-          return toggle_icons.mapping_exists("<leader>tw")
+        { "<leader>tD", desc = "Word diff", icon = toggle_icons.word_diff, cond = function()
+          return toggle_icons.mapping_exists("<leader>tD")
         end },
+        { "<leader>tt", desc = "Terminal", icon = toggle_icons.terminal },
+        { "<leader>tw", desc = "Word wrap (current window)", icon = toggle_icons.word_wrap },
         { "<leader>tW", desc = "Word wrap (all windows)", icon = toggle_icons.word_wrap },
         { "<leader>sl", desc = "Terminal reference links", icon = toggle_icons.terminal_reference_links },
       })

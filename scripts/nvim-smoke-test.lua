@@ -1455,7 +1455,7 @@ local function test_only_keep_tree_closes_other_windows()
   assert_true(ok, tostring(err))
 end
 
-local function test_word_wrap_keymap_applies_to_all_windows()
+local function test_word_wrap_keymaps_respect_window_scope()
   local old_wrap = vim.wo.wrap
 
   local ok, err = xpcall(function()
@@ -1475,6 +1475,28 @@ local function test_word_wrap_keymap_applies_to_all_windows()
 
     invoke_map("<leader>tW")
     assert_all_windows_wrap(false)
+
+    reset_window_layout()
+    vim.cmd("edit " .. vim.fn.fnameescape(temp_root .. "/example-repo/main.go"))
+    require("lazy").load({ plugins = { "gitsigns.nvim" } })
+    wait_until("Gitsigns word diff mapping", function()
+      local map = vim.fn.maparg("<leader>tD", "n", false, true)
+      return type(map) == "table" and type(map.callback) == "function"
+    end, 3000)
+
+    local sibling = vim.api.nvim_get_current_win()
+    vim.cmd("vsplit")
+    local focused = vim.api.nvim_get_current_win()
+    vim.wo[sibling].wrap = false
+    vim.wo[focused].wrap = false
+
+    invoke_map("<leader>tw")
+    assert_true(vim.wo[focused].wrap, "focused window wrap should be enabled")
+    assert_true(not vim.wo[sibling].wrap, "sibling window wrap should remain disabled")
+
+    invoke_map("<leader>tw")
+    assert_true(not vim.wo[focused].wrap, "focused window wrap should be disabled")
+    assert_true(not vim.wo[sibling].wrap, "sibling window wrap should remain disabled")
   end, debug.traceback)
 
   reset_window_layout()
@@ -6238,8 +6260,8 @@ local setup_ok, setup_err = xpcall(function()
     test_toggle_icons_reflect_state()
   end)
 
-  test("word wrap keymap applies to all windows", function()
-    test_word_wrap_keymap_applies_to_all_windows()
+  test("word wrap keymaps respect window scope", function()
+    test_word_wrap_keymaps_respect_window_scope()
   end)
 
   test("Ctrl-J and Ctrl-K move between windows", function()
