@@ -1,8 +1,11 @@
 local M = {}
 
 local function state_path()
-  return vim.g.luanphan_recent_paths_file
-    or (vim.fn.stdpath("state") .. "/workspace-recent-paths.json")
+  local path = vim.g.luanphan_recent_paths_file or vim.env.NVIM_RECENT_PATHS_FILE
+  if path and path ~= "" then
+    return path
+  end
+  return vim.fn.stdpath("state") .. "/workspace-recent-paths.json"
 end
 
 local function normalize(path)

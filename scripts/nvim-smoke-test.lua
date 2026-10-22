@@ -2373,9 +2373,23 @@ local function test_recent_navigation_ordering(repo, worktree)
   local recent_paths = require("luanphan.recent_paths")
   local original_cwd = vim.fn.getcwd()
   local state_file = vim.g.luanphan_recent_paths_file
+  local original_env_state_file = vim.env.NVIM_RECENT_PATHS_FILE
+  local env_state_file = temp_root .. "/env-recent-paths.json"
   vim.fn.delete(state_file)
 
   local ok, err = xpcall(function()
+    vim.g.luanphan_recent_paths_file = nil
+    vim.env.NVIM_RECENT_PATHS_FILE = env_state_file
+    recent_paths.touch(repo)
+    assert_true(vim.fn.filereadable(env_state_file) == 1, "recent folders ignored the environment override")
+    local env_entries = recent_paths.entries()
+    assert_true(
+      #env_entries == 1 and realpath(env_entries[1]) == realpath(repo),
+      "environment override stored the wrong recent folder"
+    )
+    vim.g.luanphan_recent_paths_file = state_file
+    vim.env.NVIM_RECENT_PATHS_FILE = original_env_state_file
+
     local settings = require("luanphan.global_settings")
     local settings_path = vim.g.luanphan_global_settings_path
     assert_true(settings.max_recent_folders(settings_path) == 5, "global settings did not create recent-folder default")
@@ -2488,6 +2502,9 @@ local function test_recent_navigation_ordering(repo, worktree)
     )
   end, debug.traceback)
 
+  vim.g.luanphan_recent_paths_file = state_file
+  vim.env.NVIM_RECENT_PATHS_FILE = original_env_state_file
+  vim.fn.delete(env_state_file)
   vim.fn.delete(state_file)
   if vim.fn.isdirectory(original_cwd) == 1 then
     vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
