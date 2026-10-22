@@ -23,7 +23,7 @@ The mapping file has two columns only: service/component name and root repositor
 Use `local-code-explore` before drafting architecture or service changes.
 
 - Inspect root repositories, excluding `local_workspaces/` and other worktree copies.
-- Use `_external/` only for required read-only contract context. Never add it to the implementation mapping.
+- Include a one-level-grouped repository in implementation mapping only when the user confirms it as implementation scope; folder names do not imply read-only ownership.
 - Trace entrypoints, callers, downstream calls, storage, cache, and message edges with `path:line` evidence.
 - Ask the user to confirm the repository mapping before treating it as implementation scope.
 

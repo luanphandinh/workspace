@@ -2,7 +2,7 @@
 """mkws — multi-repo git-worktree workspace manager.
 
 Every workspace lives at `<root>/local_workspaces/<name>/` and is a set of git
-worktrees (one per source repo) on a default branch, with optional per-repo
+worktrees (one per direct or one-level-grouped source repo) on a default branch, with optional per-repo
 branch and base-branch overrides, glued together by a small `workspace.yml` manifest. Go
 workspaces (`go.work`) are intentionally NOT created — per-module semantics
 (GOWORK=off everywhere) is the standard here; cross-module navigation happens
@@ -444,12 +444,29 @@ def fetch_base_if_remote(repo: Path, base: str, ref: str) -> bool:
     return run(["git", "-C", str(repo), "fetch", "origin", base]).returncode == 0
 
 
+def workspace_repo_key(workspace_dir: Path, repo_path: Path) -> str:
+    try:
+        return repo_path.resolve().relative_to(workspace_dir.resolve()).as_posix()
+    except ValueError:
+        return repo_path.name
+
+
 def workspace_base_branch_for_repo(repo_path: Path) -> str:
-    workspace_yml = repo_path.parent / "workspace.yml"
-    if not workspace_yml.is_file():
+    workspace_dir = find_existing_workspace_context(repo_path)
+    if workspace_dir is None:
         return ""
-    data = read_manifest(workspace_yml)
-    return repo_base_branch(data["repos"], repo_path.name)
+    data = read_manifest(workspace_dir / "workspace.yml")
+    return repo_base_branch(data["repos"], workspace_repo_key(workspace_dir, repo_path))
+
+
+def source_repo_key(repo_path: Path, repo_root: Path) -> str:
+    try:
+        relative = repo_path.resolve().relative_to(repo_root.resolve())
+    except ValueError:
+        return repo_path.name
+    if 1 <= len(relative.parts) <= 2:
+        return relative.as_posix()
+    return repo_path.name
 
 
 def resolve_source(raw: str, repo_root: Path):
@@ -475,19 +492,23 @@ def resolve_source(raw: str, repo_root: Path):
 
 # ---------------------------------------------------------------------------
 # Target expansion for batch repo commands: take a list of user-provided folder args
-# and flatten into a deduped list of git-repo paths.
+# and flatten direct and one-level-grouped repositories into a deduped path list.
 #
 # Per arg:
 #   - absolute path → used as-is
 #   - path with a slash → resolved against $PWD
 #   - bare name → $PWD/<name>
 # If the resulting folder has .git, it's treated as a single repo. Otherwise
-# its immediate subfolders are scanned and each one with .git is included.
+# its immediate subfolders and one visible grouping level are scanned.
 # Empty input → default to [$PWD].
 # ---------------------------------------------------------------------------
 def target_label(path: Path) -> str:
-    if path.parent.name == EXTERNAL_DIR:
-        return f"{EXTERNAL_DIR}/{path.name}"
+    try:
+        relative = path.resolve().relative_to(Path.cwd().resolve())
+        if 1 <= len(relative.parts) <= 2:
+            return relative.as_posix()
+    except ValueError:
+        pass
     return path.name
 
 
@@ -495,13 +516,28 @@ def target_kind(path: Path) -> str:
     return "external" if path.parent.name == EXTERNAL_DIR else "regular"
 
 
-def expand_targets(folders: list, include_default_external: bool = False) -> list:
+def discover_repos(parent: Path) -> list:
+    repos = []
+    for child in sorted(parent.iterdir()):
+        if not child.is_dir():
+            continue
+        if (child / ".git").exists():
+            repos.append(child)
+            continue
+        if child.name.startswith(".") or child.name == WS_CONTAINER:
+            continue
+        repos.extend(
+            nested
+            for nested in sorted(child.iterdir())
+            if nested.is_dir() and (nested / ".git").exists()
+        )
+    return repos
+
+
+def expand_targets(folders: list) -> list:
     if not folders:
         cwd = Path.cwd()
         folders = [str(cwd)]
-        external_dir = cwd / EXTERNAL_DIR
-        if include_default_external and not (cwd / ".git").exists() and external_dir.is_dir():
-            folders.append(str(external_dir))
 
     repos: list = []
     seen: set = set()
@@ -517,10 +553,15 @@ def expand_targets(folders: list, include_default_external: bool = False) -> lis
 
         if (p / ".git").exists():
             candidates = [p]
+        elif (p / "workspace.yml").is_file():
+            data = read_manifest(p / "workspace.yml")
+            candidates = [
+                p / repo["name"]
+                for repo in normalize_repos(data["repos"], data["branch_name"])
+                if (p / repo["name"] / ".git").exists()
+            ]
         else:
-            candidates = sorted(
-                s for s in p.iterdir() if s.is_dir() and (s / ".git").exists()
-            )
+            candidates = discover_repos(p)
 
         for c in candidates:
             key = str(c)
@@ -579,6 +620,14 @@ def find_existing_workspace_context(pwd: Path):
     return None
 
 
+def find_workstation_root(path: Path):
+    cur = path.resolve()
+    for candidate in (cur, *cur.parents):
+        if (candidate / WS_CONTAINER).is_dir():
+            return candidate
+    return None
+
+
 def resolve_existing_workspace_context(pwd: Path, name_flag: str) -> Path:
     if name_flag:
         workspace_dir, _, _ = resolve_default_context(pwd, name_flag)
@@ -592,12 +641,11 @@ def resolve_existing_workspace_context(pwd: Path, name_flag: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# pull mode: iterate every immediate subfolder of the target; for each one
-# that's a git repo (source repo or worktree — `.git` can be a dir or a file),
-# pull the same-named branch from origin and repair its upstream configuration.
+# pull mode: discover direct or one-level-grouped repos under each target,
+# pull the same-named branch from origin, and repair its upstream configuration.
 # ---------------------------------------------------------------------------
 def cmd_pull(folders: list) -> int:
-    repos = expand_targets(folders, include_default_external=True)
+    repos = expand_targets(folders)
 
     if not repos:
         heading("summary")
@@ -757,7 +805,7 @@ def cmd_run(command_parts: list) -> int:
         empty_message = "no workspace repos found"
         missing_message = "workspace repo not found"
     else:
-        repos = expand_targets([], include_default_external=True)
+        repos = expand_targets([])
         targets = [(target_label(repo), repo) for repo in repos]
         empty_message = "no git repos found"
         missing_message = "git repo not found"
@@ -989,7 +1037,7 @@ def _merge_base_to_feature_one(sub: Path, requested_base: str, base_branch: str 
 
 # ---------------------------------------------------------------------------
 # merge — Case A per-repo: bring the feature branch INTO base
-# in the SOURCE repo (sibling of local_workspaces/, not the worktree). No push.
+# in the SOURCE repo under the workstation root, not the worktree. No push.
 # ---------------------------------------------------------------------------
 def _merge_feature_to_base_one(source_repo: Path, feature_branch: str, base_branch: str = "") -> str:
     if not (source_repo / ".git").is_dir():
@@ -1052,7 +1100,7 @@ def _merge_feature_to_base_one(source_repo: Path, feature_branch: str, base_bran
 # merge mode: bidirectional based on <target>.
 #   - target == "master" or "main" → Case B: pull base, pull feature, merge
 #     base INTO feature, push feature. Must run from inside a workspace.
-#   - target == <workspace-name>   → Case A: in each source sibling repo on
+#   - target == <workspace-name>   → Case A: in each recorded source repo on
 #     its configured base or default base, pull base, merge feature INTO base.
 #     NO push.
 # Both serial; halt on conflict.
@@ -1069,12 +1117,11 @@ def cmd_merge(target: str, folders: list) -> int:
         # Allowed cwd contexts:
         #   1. workspace dir (has workspace.yml)         → all worktrees in manifest
         #   2. a worktree inside a workspace             → just that one worktree
-        if (pwd / "workspace.yml").is_file():
-            workspace_dir = pwd
-        elif (pwd / ".git").exists() and (pwd.parent / "workspace.yml").is_file():
-            workspace_dir = pwd.parent
-            if not folders:
-                folders = [str(pwd)]
+        workspace_dir = find_existing_workspace_context(pwd)
+        if workspace_dir is not None:
+            current_repo = git_top_level(pwd)
+            if current_repo is not None and current_repo != workspace_dir and not folders:
+                folders = [str(current_repo)]
         else:
             die("`mkws merge master|main` must be run from inside a workspace dir or one of its worktrees")
 
@@ -1117,17 +1164,14 @@ def cmd_merge(target: str, folders: list) -> int:
         return 0 if failed == 0 else 1
 
     # Case A: target is a workspace name. Find <root>/local_workspaces/<target>/workspace.yml.
-    # Allowed cwd contexts: root, local_workspaces/, a workspace dir, OR a source repo
-    # (sibling of local_workspaces/) — the last one auto-scopes to that one repo.
-    candidates = [
-        pwd / "local_workspaces" / target / "workspace.yml",                  # cwd is root
-        pwd.parent / "local_workspaces" / target / "workspace.yml",           # cwd is a source repo (sibling of local_workspaces/)
-        pwd.parent / target / "workspace.yml",                                # cwd is local_workspaces/
-        pwd.parent.parent / "local_workspaces" / target / "workspace.yml",    # cwd is a workspace
-    ]
-    yml = next((c for c in candidates if c.is_file()), None)
+    # Allowed cwd contexts: root, local_workspaces/, a workspace dir, OR a source repo.
+    # The last one auto-scopes to that repo, including a one-level-grouped source.
+    repo_root = find_workstation_root(pwd)
+    yml = repo_root / WS_CONTAINER / target / "workspace.yml" if repo_root else None
+    if yml is not None and not yml.is_file():
+        yml = None
     if yml is None:
-        die(f"workspace '{target}' not found (looked under local_workspaces/ from cwd, parent, grandparent)")
+        die(f"workspace '{target}' not found under local_workspaces/ from cwd or its ancestors")
 
     workspace_dir = yml.parent
     repo_root = workspace_dir.parent.parent
@@ -1135,14 +1179,16 @@ def cmd_merge(target: str, folders: list) -> int:
 
     repo_names_list = repo_names(data["repos"])
     # Auto-scope to the current dir if it's a source repo in the manifest.
-    if (pwd / ".git").is_dir() and pwd.parent == repo_root and pwd.name in repo_names_list:
+    current_repo = git_top_level(pwd)
+    current_key = source_repo_key(current_repo, repo_root) if current_repo else ""
+    if current_key in repo_names_list:
         if folders:
-            wanted = {Path(f).name for f in folders}
-            if pwd.name not in wanted:
-                die(f"current dir '{pwd.name}' is not in the requested folder scope")
-        repo_names_list = [pwd.name]
+            wanted = {Path(f).as_posix().removeprefix("./") for f in folders}
+            if current_key not in wanted:
+                die(f"current dir '{current_key}' is not in the requested folder scope")
+        repo_names_list = [current_key]
     elif folders:
-        wanted = {Path(f).name for f in folders}
+        wanted = {Path(f).as_posix().removeprefix("./") for f in folders}
         repo_names_list = [r for r in repo_names_list if r in wanted]
     if not repo_names_list:
         heading("summary")
@@ -1363,10 +1409,10 @@ def cmd_clean_workspace(folder: str = "") -> int:
     sources: list = []
     seen: set = set()
 
-    for leaf in repos:
-        heading(f"clean {leaf}")
-        source_path = repo_root / leaf
-        worktree_path = workspace_dir / leaf
+    for repo_key in repos:
+        heading(f"clean {repo_key}")
+        source_path = repo_root / repo_key
+        worktree_path = workspace_dir / repo_key
         source_is_git = (source_path / ".git").is_dir()
 
         if source_is_git and source_path not in seen:
@@ -1397,6 +1443,13 @@ def cmd_clean_workspace(folder: str = "") -> int:
                 ok(f"removed directory {worktree_path}")
             except OSError as e:
                 fail(f"failed to remove {worktree_path}: {e}")
+
+        parent = worktree_path.parent
+        if parent != workspace_dir:
+            try:
+                parent.rmdir()
+            except OSError:
+                pass
 
     if sources:
         heading("prune source repos")
@@ -1571,12 +1624,15 @@ def cmd_resume(folder: str = "", name_flag: str = "") -> int:
 
     repo_root = workspace_dir.parent.parent
     for repo in missing:
-        source = resolve_source(repo["name"], repo_root)
-        if source is not None:
+        source = (repo_root / repo["name"]).resolve()
+        if (source / ".git").is_dir():
             run(["git", "-C", str(source), "worktree", "prune"])
 
     info(f"restoring {len(missing)} missing workspace repo(s) from workspace.yml")
-    repo_args = [{"spec": repo["name"], "base_branch": None} for repo in missing]
+    repo_args = [
+        {"spec": str((repo_root / repo["name"]).resolve()), "base_branch": None}
+        for repo in missing
+    ]
     result = cmd_default(str(workspace_dir), "", repo_args)
     return 1 if invalid else result
 
@@ -1587,8 +1643,9 @@ def resolve_skill_sync_context(pwd: Path):
         return pwd, None
 
     repo_dir = git_top_level(pwd)
-    if repo_dir and (repo_dir.parent / "workspace.yml").is_file():
-        return repo_dir.parent, repo_dir
+    workspace_dir = find_existing_workspace_context(pwd)
+    if repo_dir and workspace_dir and repo_dir != workspace_dir:
+        return workspace_dir, repo_dir
 
     die("`mkws skill-sync` must be run from a workspace dir or a repo inside one")
 
@@ -1718,12 +1775,12 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             failed += 1
             continue
 
-        leaf = repo_path.name
-        if leaf != repo:
-            info(f"source: {repo_path} (recorded as '{leaf}')")
+        repo_key = source_repo_key(repo_path, repo_root)
+        if repo_key != repo:
+            info(f"source: {repo_path} (recorded as '{repo_key}')")
 
         manifest_data = read_manifest(yml)
-        existing_repo = repo_entry(manifest_data["repos"], leaf, manifest_data["branch_name"])
+        existing_repo = repo_entry(manifest_data["repos"], repo_key, manifest_data["branch_name"])
         if (
             existing_repo
             and repo_branch_override
@@ -1731,7 +1788,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             and existing_repo["branch_name"] != repo_branch_override
         ):
             fail(
-                f"{leaf} is recorded on branch '{existing_repo['branch_name']}', "
+                f"{repo_key} is recorded on branch '{existing_repo['branch_name']}', "
                 f"not '{repo_branch_override}'"
             )
             failed += 1
@@ -1747,7 +1804,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
                     manifest_data["repos"], manifest_data["branch_name"]
                 )
                 for manifest_repo in repos_for_manifest:
-                    if manifest_repo["name"] == leaf:
+                    if manifest_repo["name"] == repo_key:
                         manifest_repo["base_branch"] = repo_base_override
                         break
                 write_manifest(
@@ -1774,15 +1831,17 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             failed += 1
             continue
 
-        wt_path = workspace_dir / leaf
+        wt_path = workspace_dir / repo_key
         if wt_path.exists():
             if already_recorded:
-                info(f"'{leaf}' already in workspace, skipping")
+                info(f"'{repo_key}' already in workspace, skipping")
             else:
                 info("worktree path already exists, recording in yml")
-                append_repo(yml, leaf, branch_for_repo, base_for_repo)
+                append_repo(yml, repo_key, branch_for_repo, base_for_repo)
             skipped += 1
             continue
+
+        wt_path.parent.mkdir(parents=True, exist_ok=True)
 
         info("fetching latest from origin")
         if run(["git", "-C", str(repo_path), "fetch", "--quiet", "origin"]).returncode != 0:
@@ -1807,7 +1866,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
                     else:
                         warn(f"failed to set upstream to {remote_branch}")
                 if not already_recorded:
-                    append_repo(yml, leaf, branch_for_repo, base_for_repo)
+                    append_repo(yml, repo_key, branch_for_repo, base_for_repo)
                 added += 1
                 continue
             fail("existing branch worktree add failed")
@@ -1826,7 +1885,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             if proc.returncode == 0:
                 ok(f"worktree added at {wt_path}")
                 if not already_recorded:
-                    append_repo(yml, leaf, branch_for_repo, base_for_repo)
+                    append_repo(yml, repo_key, branch_for_repo, base_for_repo)
                 added += 1
                 continue
             fail("tracking worktree add failed")
@@ -1856,7 +1915,7 @@ def cmd_default(name_flag: str, branch_flag: str, repos_arg: list) -> int:
             )
             ok(f"worktree added at {wt_path}")
             if not already_recorded:
-                append_repo(yml, leaf, branch_for_repo, base_for_repo)
+                append_repo(yml, repo_key, branch_for_repo, base_for_repo)
             added += 1
         else:
             fail("worktree add failed")
@@ -1892,10 +1951,12 @@ Usage:
 
 Modes:
   (default)  Create or extend a workspace. Run from the root folder that
-             contains the source repos, or from inside a workspace dir.
+             contains direct or one-level-grouped source repos, or from inside
+             a workspace dir.
   resume     Restore workspace repos that are listed in workspace.yml but
              missing on disk. Existing worktrees are left untouched. Source
-             repos must already exist at the workstation root. Run from a
+             repos must already exist at their recorded paths under the
+             workstation root. Run from a
              workspace dir or any repo inside it. From the workstation root,
              pass --name <workspace> or a workspace folder.
              Examples:
@@ -1909,8 +1970,8 @@ Modes:
              and parallel; normal Git worktree branch locks are preserved.
   run        Run the same shell command in parallel across repositories. Inside
              a workspace, use every repo recorded in its manifest. Otherwise,
-             use every immediate Git repo under $PWD plus immediate repos under
-             $PWD/_external, matching bare `mkws pull` discovery.
+             use every direct Git repo under $PWD plus repos grouped one visible
+             folder deep, matching bare `mkws pull` discovery.
              Examples:
                mkws run 'git checkout -- .'
                mkws run 'git status --short'
@@ -1918,11 +1979,11 @@ Modes:
              repo and repair its upstream. Repos without that remote branch are
              skipped. Takes any number of folder args (absolute, relative,
              or a bare name under $PWD). Each arg is either a git repo (pulled
-             directly) or a directory whose immediate git-repo subfolders are
-             pulled. No args → iterate $PWD's subfolders and immediate git
-             repos under $PWD/_external when present.
+             directly) or a directory containing direct or one-level-grouped
+             repos. No args → iterate direct repos and repos grouped one
+             visible folder deep under $PWD; local_workspaces is excluded.
              Examples:
-               mkws pull                        # every repo under $PWD plus _external
+               mkws pull                        # direct and one-level-grouped repos
                mkws pull repo-a                 # just one repo in $PWD
                mkws pull repo-a repo-b          # two repos
                mkws pull _external              # only external repos
@@ -1940,7 +2001,7 @@ Modes:
                present, otherwise main/master; pull origin/<feature> if a
                remote exists, merge the base --no-ff into the feature branch,
                then push the feature branch. Halts on conflict.
-             • `mkws merge <workspace-name>` — Case A: for each source sibling
+             • `mkws merge <workspace-name>` — Case A: for each source
                repo listed in the workspace's manifest: switch to the
                configured per-repo base_branch when present, otherwise
                main/master; pull --ff-only when the base exists on origin,
@@ -2018,6 +2079,8 @@ Flags:
                         - an absolute path
                         - any of the above with @<branch> for a per-repo branch
                       Variadic: --add a b c  or  --add a --add b
+                      Repos directly under the root or one grouping folder deep
+                      are recorded by root-relative path in workspace.yml.
   --base <branch>     base branch for the immediately preceding --add group.
                       Omit it to detect main/master. Repeat --add to assign
                       different bases: --add a --base base/a --add b --base base/b
@@ -2031,6 +2094,7 @@ Flags:
 
 Layout:
   All workspaces live inside `$PWD/local_workspaces/<name>/`.
+  One-level source grouping paths are mirrored inside each workspace.
   Each workspace has a normal `tech_doc/` directory. `meta-hub index` stores
   visible workspace files that are outside nested git repositories.
 

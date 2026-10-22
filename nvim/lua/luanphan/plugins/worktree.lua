@@ -723,7 +723,7 @@ local function setup()
     end)
   end
 
-  local function list_repos_in_dir(parent)
+  local function list_repos_in_dir(parent, include_nested)
     local uv = vim.uv or vim.loop
     local handle = uv.fs_scandir(parent)
     if not handle then
@@ -737,6 +737,21 @@ local function setup()
       local path = parent .. "/" .. name
       if git_repo_exists(path) then
         repos[#repos + 1] = { name = name, path = path }
+      elseif include_nested and name ~= WS_CONTAINER and name:sub(1, 1) ~= "." and dir_exists(path) then
+        local nested_handle = uv.fs_scandir(path)
+        if nested_handle then
+          while true do
+            local nested_name = uv.fs_scandir_next(nested_handle)
+            if not nested_name then break end
+            local nested_path = path .. "/" .. nested_name
+            if git_repo_exists(nested_path) then
+              repos[#repos + 1] = {
+                name = name .. "/" .. nested_name,
+                path = nested_path,
+              }
+            end
+          end
+        end
       end
     end
     return recent_paths.sort(repos, function(repo)
@@ -936,6 +951,8 @@ local function setup()
     return lines[1]
   end
 
+  local workstation_root
+
   local function list_all_project_repos()
     local siblings, current_root = list_sibling_repos()
     local marker = "/" .. WS_CONTAINER .. "/"
@@ -959,32 +976,34 @@ local function setup()
       end
     end
 
-    if current_root then
-      append(siblings, marker_start and "workspace" or "root")
-      if marker_start then
-        append(list_repos_in_dir(current_root:sub(1, marker_start - 1)), "root")
+    if marker_start then
+      local workstation = marker_path:sub(1, marker_start - 1)
+      local workspace_name = marker_path:sub(marker_start + #marker):match("^([^/]+)")
+      if not workspace_name then
+        return {}, nil
       end
+      local workspace = workstation .. marker .. workspace_name
+      append(list_repos_in_dir(workspace, true), "workspace")
+      append(list_repos_in_dir(workstation, true), "root")
+      return repos, current_root or workspace
+    end
+
+    local workstation = workstation_root()
+    if workstation then
+      append(list_repos_in_dir(workstation, true), "root")
+      return repos, current_root or workstation
+    end
+
+    if current_root then
+      append(siblings, "root")
       return repos, current_root
     end
 
-    if not marker_start then
-      append(list_repos_in_dir(cwd), "root")
-      return repos, #repos > 0 and cwd or nil
-    end
-
-    local workstation = cwd:sub(1, marker_start - 1)
-    local workspace_name = cwd:sub(marker_start + #marker):match("^([^/]+)")
-    if not workspace_name then
-      return {}, nil
-    end
-
-    local workspace = workstation .. marker .. workspace_name
-    append(list_repos_in_dir(workspace), "workspace")
-    append(list_repos_in_dir(workstation), "root")
-    return repos, workspace
+    append(list_repos_in_dir(cwd, true), "root")
+    return repos, #repos > 0 and cwd or nil
   end
 
-  local function workstation_root()
+  workstation_root = function()
     local cwd = safe_getcwd()
     if cwd == "" then
       return nil
@@ -1000,15 +1019,22 @@ local function setup()
       return cwd
     end
 
-    local root = git_root(cwd)
-    if not root then
-      return nil
-    end
+    local root = git_root(cwd) or cwd
     marker_start = root:find(marker, 1, true)
     if marker_start then
       return root:sub(1, marker_start - 1)
     end
-    return vim.fn.fnamemodify(root, ":h")
+
+    local candidate = root
+    while candidate and candidate ~= "" do
+      if dir_exists(candidate .. "/" .. WS_CONTAINER) then
+        return candidate
+      end
+      local parent = vim.fn.fnamemodify(candidate, ":h")
+      if parent == candidate then break end
+      candidate = parent
+    end
+    return git_root(cwd) and vim.fn.fnamemodify(root, ":h") or nil
   end
 
   local function list_workspace_directories()
@@ -1030,7 +1056,7 @@ local function setup()
       if not name then break end
       local path = container .. "/" .. name
       if dir_exists(path) then
-        local repos = list_repos_in_dir(path)
+        local repos = list_repos_in_dir(path, true)
         workspaces[#workspaces + 1] = {
           name = name,
           path = path,
@@ -1090,12 +1116,12 @@ local function setup()
     end
 
     local present = {}
-    for _, repo in ipairs(list_repos_in_dir(workspace)) do
+    for _, repo in ipairs(list_repos_in_dir(workspace, true)) do
       present[repo.name] = true
     end
 
     local candidates = {}
-    for _, repo in ipairs(list_repos_in_dir(root)) do
+    for _, repo in ipairs(list_repos_in_dir(root, true)) do
       if not present[repo.name] then
         candidates[#candidates + 1] = {
           name = repo.name,
@@ -1755,7 +1781,7 @@ local function setup()
       return
     end
     if #repositories == 0 then
-      vim.notify("all root repositories are already in this workspace", vim.log.levels.INFO)
+      vim.notify("all source repositories are already in this workspace", vim.log.levels.INFO)
       return
     end
 
@@ -1956,7 +1982,7 @@ local function setup()
       desc = "Switch nvim instance to an adjacent workspace or root git repository",
     })
     vim.api.nvim_create_user_command("RepositoryAdd", pick_add_repository, {
-      desc = "Add a root repository to the current workspace",
+      desc = "Add a source repository to the current workspace",
     })
     vim.api.nvim_create_user_command("AgentSwitch", pick_agent, {
       desc = "Switch nvim instance to a project with an active agent",

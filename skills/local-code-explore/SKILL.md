@@ -16,10 +16,10 @@ Read [../local-technical-writing/SKILL.md](../local-technical-writing/SKILL.md) 
 ## Resolve scope
 
 - Detect `<root>`, the active workspace under `<root>/local_workspaces/<workspace>/`, and the repository containing the focus.
-- Search order: active workspace, direct repositories under `<root>`, matching read-only repositories under `<root>/_external/` when a proven edge requires them.
+- Search order: active workspace, direct repositories under `<root>`, then repositories grouped one folder deep when a proven edge requires them.
 - Prefer an active-workspace checkout over its root checkout. Use one checkout of each repository per graph.
 - Do not scan unrelated workspaces or external repositories.
-- Mark `_external/` evidence as external context, never an implementation target.
+- Treat repositories listed in active `workspace.yml` as implementation scope regardless of grouping-folder name; unlisted repositories remain context only.
 
 ## Trace
 

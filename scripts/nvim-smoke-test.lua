@@ -2833,13 +2833,19 @@ local function test_add_repository_to_workspace()
   local original_fail = vim.env.MKWS_TEST_FAIL
   local original_notify = vim.notify
   local sources, workspaces, station, workspace_name = make_project_scope_fixture()
-  local source = station .. "/example-project-c"
+  local source = station .. "/front-end/example-project-c"
   local workspace = station .. "/local_workspaces/" .. workspace_name
   local fake_bin = temp_root .. "/fake-mkws-bin"
   local log = temp_root .. "/fake-mkws.log"
 
   vim.fn.mkdir(source, "p")
   run({ "git", "init", "-b", "main" }, source)
+  local hidden_source = station .. "/.hidden/example-hidden"
+  local deep_source = station .. "/clients/mobile/example-deep"
+  vim.fn.mkdir(hidden_source, "p")
+  vim.fn.mkdir(deep_source, "p")
+  run({ "git", "init", "-b", "main" }, hidden_source)
+  run({ "git", "init", "-b", "main" }, deep_source)
   local function write_fake_mkws(create_target)
     local lines = {
       "#!/bin/sh",
@@ -2851,7 +2857,7 @@ local function test_add_repository_to_workspace()
     }
     if create_target then
       vim.list_extend(lines, {
-        'target="$PWD/$(basename "$2")"',
+        'target="$PWD/front-end/$(basename "$2")"',
         'mkdir -p "$target"',
         ': > "$target/.git"',
       })
@@ -2863,8 +2869,11 @@ local function test_add_repository_to_workspace()
   local ok, err = xpcall(function()
     vim.cmd("cd " .. vim.fn.fnameescape(workspaces["example-project-a"]))
     local candidates, resolved_workspace = api.list_addable_repositories()
-    assert_true(#candidates == 1, "repository add candidates included a repository already in the workspace")
-    assert_true(candidates[1].name == "example-project-c", "repository add candidate has the wrong name")
+    assert_true(
+      #candidates == 1,
+      "repository add candidates were: " .. table.concat(vim.tbl_map(function(item) return item.name end, candidates), ", ")
+    )
+    assert_true(candidates[1].name == "front-end/example-project-c", "repository add candidate has the wrong name")
     assert_true(realpath(candidates[1].path) == realpath(source), "repository add candidate has the wrong path")
     assert_true(realpath(resolved_workspace) == realpath(workspace), "repository add resolved the wrong workspace")
 
@@ -2881,7 +2890,22 @@ local function test_add_repository_to_workspace()
     assert_true(invocation[2] == "--add", "mkws omitted --add")
     assert_true(realpath(invocation[3]) == realpath(source), "mkws received the wrong source repository")
 
-    vim.fn.delete(workspace .. "/example-project-c", "rf")
+    local projects = api.list_all_project_repos()
+    local nested_scopes = {}
+    for _, project in ipairs(projects) do
+      if project.name == "front-end/example-project-c" then
+        nested_scopes[project.scope] = realpath(project.path)
+      end
+      assert_true(project.name ~= ".hidden/example-hidden", "repository discovery included a hidden group")
+      assert_true(project.name ~= "clients/mobile/example-deep", "repository discovery descended two levels")
+    end
+    assert_true(nested_scopes.root == realpath(source), "repository picker omitted the nested source repository")
+    assert_true(
+      nested_scopes.workspace == realpath(workspace .. "/front-end/example-project-c"),
+      "repository picker omitted the nested workspace repository"
+    )
+
+    vim.fn.delete(workspace .. "/front-end/example-project-c", "rf")
     write_fake_mkws(false)
     result = nil
     local missing_target_error = nil
@@ -6408,7 +6432,7 @@ local setup_ok, setup_err = xpcall(function()
     test_workspace_folder_browser()
   end)
 
-  test("repository picker adds a root project to the current workspace", function()
+  test("repository picker adds a one-level nested project to the current workspace", function()
     test_add_repository_to_workspace()
   end)
 
