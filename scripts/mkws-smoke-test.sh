@@ -149,6 +149,8 @@ test_mkws() {
 	init_repo "$root/repo-base-b"
 	init_repo "$root/repo-base-c"
 	init_repo "$root/repo-base-d"
+	init_repo "$root/front-end/repo-nested"
+	init_repo "$root/clients/repo-nested"
 
 	mkws --help >/dev/null
 	EXPECT='unknown subcommand: index' expect_fail_contains mkws index
@@ -389,6 +391,60 @@ EOF
 	assert_exists "$empty_workspace/workspace.yml"
 	assert_exists "$empty_workspace/tech_doc"
 	assert_not_exists "$empty_workspace/tech_doc/.git"
+
+	(
+		cd "$root"
+		mkws --name nested-feature --branch feature/nested \
+			--add front-end/repo-nested clients/repo-nested >/dev/null
+	)
+	nested_workspace="$root/local_workspaces/nested-feature"
+	nested_worktree="$nested_workspace/front-end/repo-nested"
+	nested_worktree_same_leaf="$nested_workspace/clients/repo-nested"
+	assert_exists "$nested_worktree/.git"
+	assert_exists "$nested_worktree_same_leaf/.git"
+	assert_contains "$nested_workspace/workspace.yml" "name: front-end/repo-nested"
+	assert_contains "$nested_workspace/workspace.yml" "name: clients/repo-nested"
+	assert_eq "feature/nested" "$(git -C "$nested_worktree" branch --show-current)"
+	mkdir -p "$nested_workspace/skills/nested-skill" "$nested_worktree/internal"
+	cat > "$nested_workspace/skills/nested-skill/SKILL.md" <<EOF
+---
+name: nested-skill
+description: Nested fixture skill.
+---
+
+# Nested fixture skill
+EOF
+	(
+		cd "$nested_worktree/internal"
+		mkws skill-sync >/dev/null
+		mkws run 'printf nested > nested-output.txt' >/dev/null
+		mkws checkout >/dev/null
+	)
+	assert_exists "$nested_worktree/.agent/skills/nested-skill/SKILL.md"
+	assert_eq "nested" "$(cat "$nested_worktree/nested-output.txt")"
+	assert_eq "nested" "$(cat "$nested_worktree_same_leaf/nested-output.txt")"
+	rm "$nested_worktree/nested-output.txt"
+	rm "$nested_worktree_same_leaf/nested-output.txt"
+	git -C "$root/front-end/repo-nested" worktree remove --force "$nested_worktree"
+	(
+		cd "$nested_workspace"
+		mkws resume >/dev/null
+	)
+	assert_exists "$nested_worktree/.git"
+	(
+		cd "$root/front-end/repo-nested"
+		mkws merge nested-feature >/dev/null
+	)
+	(
+		cd "$root"
+		mkws clean local_workspaces/nested-feature >/dev/null
+	)
+	assert_not_exists "$nested_worktree"
+	assert_not_exists "$nested_worktree_same_leaf"
+	assert_not_exists "$nested_workspace/front-end"
+	assert_not_exists "$nested_workspace/clients"
+	assert_exists "$root/front-end/repo-nested/.git"
+	assert_exists "$root/clients/repo-nested/.git"
 
 	(
 		cd "$root"

@@ -21,18 +21,19 @@ make help
 
 ## Local workspaces
 
-- Run [`mkws`](bin/mkws) from a folder containing sibling repositories to create one Git worktree per selected repository:
+- Run [`mkws`](bin/mkws) from a folder containing direct repositories or repositories grouped one folder deep to create one Git worktree per selected repository:
 
 ```sh
 mkws --name example-a --branch example-branch-a --add repo-a repo-b
-mkws --name example-b --branch example-branch-b --add repo-b repo-c@example-branch-c
+mkws --name example-b --branch example-branch-b --add repo-b front-end/repo-c@example-branch-c
 ```
 
 ```text
 <root>/
 ├── repo-a/
 ├── repo-b/
-├── repo-c/
+├── front-end/
+│   └── repo-c/
 └── local_workspaces/
     ├── example-a/
     │   ├── workspace.yml
@@ -43,12 +44,13 @@ mkws --name example-b --branch example-branch-b --add repo-b repo-c@example-bran
         ├── workspace.yml
         ├── tech_doc/
         ├── repo-b/    # example-branch-b
-        └── repo-c/    # example-branch-c
+        └── front-end/
+            └── repo-c/    # example-branch-c
 ```
 
 - Worktrees have separate working files and share history with their source repositories.
 - `repo@branch` overrides the workspace's default branch for that repository.
-- `workspace.yml` records branches and repositories; `tech_doc/` holds shared notes.
+- `workspace.yml` records each repository's root-relative path and branches; existing direct repository names remain valid. `tech_doc/` holds shared notes.
 - `mkws resume` restores missing worktrees when the source repositories exist.
 - **Neovim navigation:** Space is `<leader>`. Use `<leader>wp` for workspaces, `<leader>wr` for repositories, and `<leader>ww` for worktrees.
 

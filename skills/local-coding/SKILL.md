@@ -51,7 +51,7 @@ Default to no comment. Add one short comment only for a non-obvious invariant, o
 
 ## Multi-repo workspaces
 
-For work based on a workspace tech design, read [references/workspace.md](references/workspace.md) before editing. Repositories under `_external/` are read-only context.
+For work based on a workspace tech design, read [references/workspace.md](references/workspace.md) before editing. Repository paths listed in `workspace.yml` are writable implementation scope regardless of grouping-folder name.
 
 When two or more repositories changed, verify them concurrently with one concise result per repository when sub-agent tooling is available. Keep raw logs out of the main response.
 

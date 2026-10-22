@@ -5,7 +5,7 @@
 - Coding happens in `<root>/local_workspaces/<workspace>/`, never in sibling root checkouts.
 - Use workspace created during technical design. Ask for its name only when current path and artifacts cannot resolve it.
 - Read `tech_doc/<name>.md`, `tech_doc/<name>_mapping.md`, `workspace.yml`, and relevant files under `implementation_plan/`.
-- Ignore mapping entries under `<root>/_external/`; those repositories are read-only contract context.
+- Treat confirmed mapping entries listed in `workspace.yml` as implementation scope regardless of their one-level grouping folder.
 
 ## Attach implementation repositories
 
