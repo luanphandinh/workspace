@@ -4,6 +4,7 @@ local pending_workspace_diff = nil
 local switch_workspace_diff
 local close_workspace_diff
 local handle_workspace_diff_mouse
+local last_workspace_diff_repository = {}
 local code_window_state = {}
 local editor_option_template
 
@@ -899,16 +900,24 @@ local function open_workspace_diff(parent, repositories, action)
     return
   end
 
+  local index = 1
+  local previous = last_workspace_diff_repository[real_path(parent)]
+  for candidate, repository in ipairs(repositories) do
+    if same_real_path(repository.path, previous) then
+      index = candidate
+      break
+    end
+  end
   local state = {
     parent = parent,
     repositories = repositories,
-    active = 1,
+    active = index,
     open = action,
     views = {},
     bars = {},
   }
-  pending_workspace_diff = { state = state, index = 1, focus = "initial" }
-  action(repositories[1].path)
+  pending_workspace_diff = { state = state, index = index, focus = "initial" }
+  action(repositories[index].path)
 end
 
 switch_workspace_diff = function(view, target, absolute, focus_diff)
@@ -925,6 +934,7 @@ switch_workspace_diff = function(view, target, absolute, focus_diff)
   end
 
   state.active = index
+  last_workspace_diff_repository[real_path(state.parent)] = real_path(state.repositories[index].path)
 
   local target_view = state.views[index]
   if target_view and target_view.tabpage and vim.api.nvim_tabpage_is_valid(target_view.tabpage) then
