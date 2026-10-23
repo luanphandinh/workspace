@@ -544,6 +544,30 @@ local function list_child_git_repositories(parent, change_stats)
   end
 
   local repositories = {}
+  local function append_repository(name, path, entry_type)
+    if (entry_type ~= "directory" and entry_type ~= "link")
+      or not uv.fs_stat(path .. "/.git")
+      or vim.fn.isdirectory(path) ~= 1
+    then
+      return false
+    end
+
+    local root = git_root(path)
+    if not root or (uv.fs_realpath(root) or root) ~= (uv.fs_realpath(path) or path) then
+      return false
+    end
+
+    local stats = change_stats and change_stats(root) or {}
+    repositories[#repositories + 1] = {
+      name = name,
+      path = root,
+      has_diff = stats.has_diff or false,
+      additions = stats.additions or 0,
+      deletions = stats.deletions or 0,
+    }
+    return true
+  end
+
   while true do
     local name, entry_type = uv.fs_scandir_next(scan)
     if not name then
@@ -551,20 +575,20 @@ local function list_child_git_repositories(parent, change_stats)
     end
 
     local path = parent .. "/" .. name
-    if (entry_type == "directory" or entry_type == "link")
-      and uv.fs_stat(path .. "/.git")
+    if not append_repository(name, path, entry_type)
+      and name:sub(1, 1) ~= "."
+      and name ~= "local_workspaces"
       and vim.fn.isdirectory(path) == 1
     then
-      local root = git_root(path)
-      if root and (uv.fs_realpath(root) or root) == (uv.fs_realpath(path) or path) then
-        local stats = change_stats and change_stats(root) or {}
-        repositories[#repositories + 1] = {
-          name = name,
-          path = root,
-          has_diff = stats.has_diff or false,
-          additions = stats.additions or 0,
-          deletions = stats.deletions or 0,
-        }
+      local nested_scan = uv.fs_scandir(path)
+      if nested_scan then
+        while true do
+          local nested_name, nested_type = uv.fs_scandir_next(nested_scan)
+          if not nested_name then
+            break
+          end
+          append_repository(name .. "/" .. nested_name, path .. "/" .. nested_name, nested_type)
+        end
       end
     end
   end
@@ -867,7 +891,7 @@ end
 
 local function open_workspace_diff(parent, repositories, action)
   if #repositories == 0 then
-    vim.notify("no immediate child git repositories found", vim.log.levels.WARN)
+    vim.notify("no git repositories found", vim.log.levels.WARN)
     return
   end
   if #repositories == 1 then

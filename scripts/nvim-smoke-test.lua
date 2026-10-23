@@ -5540,6 +5540,7 @@ local function test_git_diff_repository_bar_from_workspace_root()
   local workspace_root = station .. "/local_workspaces/" .. workspace_name
   local first_repo = workspaces["example-project-a"]
   local second_repo = workspaces["example-project-b-long"]
+  local grouped_repo = workspace_root .. "/front-end/example-project-c"
   local clean_repo = workspace_root .. "/example-project-clean"
   local recent_paths = require("luanphan.recent_paths")
   vim.fn.delete(vim.g.luanphan_recent_paths_file)
@@ -5571,6 +5572,14 @@ local function test_git_diff_repository_bar_from_workspace_root()
     "replacement line two",
   })
   write(second_repo .. "/second-change.txt", { "second repository change" })
+  vim.fn.mkdir(grouped_repo, "p")
+  run({ "git", "init", "-b", "main" }, grouped_repo)
+  run({ "git", "config", "user.name", "Example User" }, grouped_repo)
+  run({ "git", "config", "user.email", "example@example.invalid" }, grouped_repo)
+  write(grouped_repo .. "/README.md", { "grouped repository" })
+  run({ "git", "add", "." }, grouped_repo)
+  run({ "git", "commit", "-m", "grouped fixture" }, grouped_repo)
+  write(grouped_repo .. "/grouped-change.txt", { "grouped repository change" })
 
   vim.cmd("cd " .. vim.fn.fnameescape(first_repo))
   local source_tab = vim.api.nvim_get_current_tabpage()
@@ -5630,6 +5639,10 @@ local function test_git_diff_repository_bar_from_workspace_root()
     "initial diff repository omitted aggregate line changes"
   )
   assert_true(line:find("example-project-b-long", 1, true) ~= nil, "repository bar omitted a child repository")
+  assert_true(
+    line:find("front-end/example-project-c +1 -0", 1, true) ~= nil,
+    "repository bar omitted a grouped repository"
+  )
   assert_true(
     line:find("example-project-b-long +1 -0", 1, true) ~= nil,
     "repository bar omitted untracked line changes"
