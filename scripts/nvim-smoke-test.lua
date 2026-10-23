@@ -5196,6 +5196,46 @@ local function test_worktree_switch_hides_foreign_file(repo, worktree)
   vim.api.nvim_buf_delete(modified_buf, { force = true })
 end
 
+local function test_worktree_switch_notification_is_compact(repo)
+  local api = worktree_test_api()
+  local target = temp_root
+    .. "/a-very-long-parent-directory-used-to-exercise-workspace-switch-messages"
+    .. "/example-workspace"
+  local active = target
+    .. "/a/deeply/nested/directory/with/a/long/path/to/the/previously-active-file.txt"
+  vim.fn.mkdir(vim.fn.fnamemodify(active, ":h"), "p")
+  write(active, { "example" })
+
+  vim.cmd("cd " .. vim.fn.fnameescape(target))
+  vim.cmd("edit " .. vim.fn.fnameescape(active))
+  api.switch_to(repo, "folder")
+
+  local original_notify = vim.notify
+  local messages = {}
+  vim.notify = function(message, level)
+    messages[#messages + 1] = { message = message, level = level }
+  end
+  local ok, err = xpcall(function()
+    api.switch_to(target, "folder")
+  end, debug.traceback)
+  vim.notify = original_notify
+  assert_true(ok, tostring(err))
+
+  local notification = messages[#messages]
+  assert_true(notification ~= nil, "workspace switch did not notify")
+  assert_true(
+    notification.message == "Switched to folder: example-workspace (restored 1 buffer)",
+    "workspace switch notification was not compact: " .. notification.message
+  )
+  assert_true(
+    vim.fn.strdisplaywidth(notification.message) < vim.o.columns,
+    "workspace switch notification exceeds the available command line"
+  )
+  assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(active), "workspace switch did not restore active file")
+
+  api.switch_to(repo, "repository")
+end
+
 local function test_worktree_switch_restores_repository_jumplist(repo, worktree)
   local api = worktree_test_api()
   close_agent_terminals()
@@ -6321,6 +6361,7 @@ local safe_cleanup_tests = {
   telescope_runtime_defaults = test_telescope_runtime_defaults,
   toggle_gitignore = test_gitignore_toggle_updates_telescope,
   worktree_keymaps = test_worktree_keymaps_dispatch_to_pickers,
+  worktree_notification = test_worktree_switch_notification_is_compact,
 }
 
 local setup_ok, setup_err = xpcall(function()
@@ -6623,6 +6664,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("worktree switch hides files from the previous repository", function()
     test_worktree_switch_hides_foreign_file(repo, worktree)
+  end)
+
+  test("worktree switch notification stays compact for long paths", function()
+    safe_cleanup_tests.worktree_notification(repo)
   end)
 
   test("worktree switch restores repository jump history", function()

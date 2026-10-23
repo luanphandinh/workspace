@@ -1465,12 +1465,9 @@ local function setup()
     -- 11. Focus priority: reopened active file > nvim-tree.
     focus_after_switch(reopened)
 
-    local msg = "Switched to " .. (kind or "worktree") .. ": " .. path
+    local msg = "Switched to " .. (kind or "worktree") .. ": " .. vim.fn.fnamemodify(path, ":t")
     if restored > 0 then
       msg = msg .. string.format(" (restored %d buffer%s)", restored, restored == 1 and "" or "s")
-    end
-    if reopened then
-      msg = msg .. " — reopened " .. vim.fn.fnamemodify(reopened, ":~:.")
     end
     vim.notify(msg, vim.log.levels.INFO)
   end
