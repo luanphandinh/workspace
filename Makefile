@@ -59,7 +59,7 @@ ifeq ($(UNAME),Darwin)
 		echo "apps: Homebrew is required on macOS" >&2; \
 		exit 1; \
 	fi
-	@for app in maccy arc stats codexbar monitorcontrol; do brew install --cask "$$app" || true; done
+	@for app in maccy thebrowsercompany-dia stats codexbar monitorcontrol; do brew install --cask "$$app" || true; done
 	@if command -v codexbar >/dev/null 2>&1; then \
 		codexbar config enable --provider codex; \
 		codexbar config enable --provider cursor; \
