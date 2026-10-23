@@ -147,7 +147,43 @@ test ! -f "$tmp/chsh.log"
 rm -f "$fakebin/uname" "$fakebin/zsh" "$fakebin/id" "$fakebin/getent" "$fakebin/chsh" "$fakebin/sudo"
 
 test_stage='environment initialization'
-env -i PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" NO_COLOR=1 sh -c ". '$repo_root/bin/shell/workspace.sh'; test -z \"\${NO_COLOR+x}\"; test \"\$FORCE_COLOR\" = 1; test \"\$GOPATH\" = \"\$HOME/go\"; case \"\$PATH\" in \"\$HOME/.local/bin:\$HOME/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:\"*) ;; *) exit 1 ;; esac; case \":\$PATH:\" in *\":\$GOPATH/bin:\"*) ;; *) exit 1 ;; esac"
+env -i PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" NO_COLOR=1 sh -c ". '$repo_root/bin/shell/workspace.sh'; test -z \"\${NO_COLOR+x}\"; test \"\$FORCE_COLOR\" = 1; test \"\$GOPATH\" = \"\$HOME/go\"; case \"\$PATH\" in \"\$HOME/.local/share/mise/shims:\$HOME/.local/bin:\$HOME/bin:\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:\"*) ;; *) exit 1 ;; esac; case \":\$PATH:\" in *\":\$GOPATH/bin:\"*) ;; *) exit 1 ;; esac"
+
+test_stage='mise node version selection'
+mise_bin=$(command -v mise)
+mise_home="$tmp/mise-home"
+mise_data="$mise_home/.local/share/mise"
+mise_config="$mise_home/.config/mise"
+node_20="$tmp/node-20"
+node_22="$tmp/node-22"
+mkdir -p "$mise_data/shims" "$mise_config" "$node_20/bin" "$node_22/bin" "$tmp/mise-default" "$tmp/mise-project"
+cat > "$node_20/bin/node" <<'SH'
+#!/bin/sh
+printf 'v20-test\n'
+SH
+cat > "$node_22/bin/node" <<'SH'
+#!/bin/sh
+printf 'v22-test\n'
+SH
+chmod +x "$node_20/bin/node" "$node_22/bin/node"
+printf '[tools]\nnode = "path:%s"\n' "$node_22" > "$mise_config/config.toml"
+printf '[tools]\nnode = "path:%s"\n' "$node_20" > "$tmp/mise-project/mise.toml"
+ln -s "$mise_bin" "$mise_data/shims/node"
+mise_node() {
+	directory=$1
+	(
+		cd "$directory"
+		HOME="$mise_home" \
+			MISE_DATA_DIR="$mise_data" \
+			MISE_CONFIG_DIR="$mise_config" \
+			MISE_CACHE_DIR="$tmp/mise-cache" \
+			MISE_STATE_DIR="$tmp/mise-state" \
+			"$mise_data/shims/node" --version
+	)
+}
+test "$(mise_node "$tmp/mise-default")" = v22-test
+test "$(mise_node "$tmp/mise-project")" = v20-test
+test "$(mise_node "$tmp/mise-default")" = v22-test
 
 test_stage='mcodex startup and argument forwarding'
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex"

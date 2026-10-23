@@ -6,7 +6,7 @@ fi
 export GOPATH="${GOPATH:-$HOME/go}"
 # Keep global npm installs writable and their commands on the shared PATH.
 export NPM_CONFIG_PREFIX="${NPM_CONFIG_PREFIX:-$HOME/.local}"
-export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:$PATH"
+export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$HOME/bin:$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/bin:$PATH"
 case ":$PATH:" in
   *":$NPM_CONFIG_PREFIX/bin:"*) ;;
   *) export PATH="$NPM_CONFIG_PREFIX/bin:$PATH" ;;

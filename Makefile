@@ -1,5 +1,5 @@
 UNAME := $(shell uname)
-export PATH := $(HOME)/.local/bin:$(HOME)/bin:$(HOME)/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$(HOME)/go/bin:$(PATH)
+export PATH := $(HOME)/.local/share/mise/shims:$(HOME)/.local/bin:$(HOME)/bin:$(HOME)/.nix-profile/bin:/nix/var/nix/profiles/default/bin:$(HOME)/go/bin:$(PATH)
 ifneq (,$(findstring Linux,$(UNAME)))
 	newsboat_config := ./newsboat/config.linux
 	default_shell_install := sh ./scripts/configure-default-zsh.sh
@@ -52,6 +52,7 @@ setup-deps: nix-install
 		else \
 			nix --extra-experimental-features 'nix-command flakes' profile add --no-update-lock-file "path:$(CURDIR)#workspace-deps"; \
 		fi
+	mise use --global node@22
 
 apps: ## Install macOS GUI apps via Homebrew cask
 ifeq ($(UNAME),Darwin)

@@ -23,12 +23,52 @@ local function cmp_opts(cmp)
   }
 end
 
+local function typescript_major(buf)
+  local path = vim.api.nvim_buf_get_name(buf)
+  if path == "" then
+    return nil
+  end
+
+  local manifests = vim.fs.find("package.json", {
+    path = vim.fs.dirname(path),
+    upward = true,
+    type = "file",
+    limit = math.huge,
+  })
+  for _, manifest in ipairs(manifests) do
+    local ok_lines, lines = pcall(vim.fn.readfile, manifest)
+    local ok_json, package = false, nil
+    if ok_lines then
+      ok_json, package = pcall(vim.json.decode, table.concat(lines, "\n"))
+    end
+    if ok_json and type(package) == "table" then
+      for _, group in ipairs({ "devDependencies", "dependencies", "peerDependencies" }) do
+        local dependencies = package[group]
+        local version = type(dependencies) == "table" and dependencies.typescript or nil
+        local major = type(version) == "string" and tonumber(version:match("%d+")) or nil
+        if major then
+          return major
+        end
+      end
+    end
+  end
+end
+
+local function typescript_server(buf)
+  local major = typescript_major(buf)
+  return major and major >= 7 and "tsc" or "ts_ls"
+end
+
 local lsp_recover_filetypes = {
   go = "gopls",
   gomod = "gopls",
   gowork = "gopls",
   gotmpl = "gopls",
+  javascript = typescript_server,
+  javascriptreact = typescript_server,
   rust = "rust_analyzer",
+  typescript = typescript_server,
+  typescriptreact = typescript_server,
 }
 
 local lsp_recover_pending = {}
@@ -53,6 +93,9 @@ local function recover_lsp_for_entered_buffer(ev)
 
   local ft = vim.bo[buf].filetype
   local server = lsp_recover_filetypes[ft]
+  if type(server) == "function" then
+    server = server(buf)
+  end
   if not server or has_lsp_client(buf, server) or lsp_recover_pending[buf] then
     return
   end
@@ -272,9 +315,22 @@ return {
         },
       })
 
+      for _, name in ipairs({ "tsc", "ts_ls" }) do
+        local root_dir = vim.lsp.config[name].root_dir
+        vim.lsp.config(name, {
+          root_dir = function(bufnr, on_dir)
+            if typescript_server(bufnr) == name then
+              root_dir(bufnr, on_dir)
+            end
+          end,
+        })
+      end
+
       -- Enable LSP servers (auto-starts based on filetypes)
       vim.lsp.enable("gopls")
       vim.lsp.enable("rust_analyzer")
+      vim.lsp.enable("tsc")
+      vim.lsp.enable("ts_ls")
     end,
   },
 

@@ -237,6 +237,44 @@ local function make_project_scope_fixture()
   return sources, workspaces, station, workspace_name, empty_workspace_name
 end
 
+local function make_typescript_fixture(name, version)
+  local repo = temp_root .. "/" .. name
+  vim.fn.mkdir(repo .. "/src", "p")
+  run({ "git", "init", "-b", "main" }, repo)
+  write(repo .. "/package.json", {
+    "{",
+    string.format('  "name": "%s",', name),
+    '  "private": true,',
+    '  "devDependencies": {',
+    string.format('    "typescript": "%s"', version),
+    "  }",
+    "}",
+  })
+  write(repo .. "/package-lock.json", { '{ "lockfileVersion": 3 }' })
+  write(repo .. "/tsconfig.json", {
+    "{",
+    '  "compilerOptions": {',
+    '    "module": "esnext",',
+    '    "moduleResolution": "bundler",',
+    '    "strict": true,',
+    '    "target": "es2022"',
+    "  },",
+    '  "include": ["src"]',
+    "}",
+  })
+  write(repo .. "/src/value.ts", {
+    'export function targetValue(): string {',
+    '  return "example";',
+    "}",
+  })
+  write(repo .. "/src/main.ts", {
+    'import { targetValue } from "./value";',
+    "",
+    "export const result = targetValue();",
+  })
+  return repo
+end
+
 local function find_position(buf, needle, line_match)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   for i, line in ipairs(lines) do
@@ -4435,6 +4473,47 @@ local function test_lsp_definition_and_references(repo)
   assert_lsp_code_action_keymaps()
 end
 
+local function test_typescript_server_matches_project_version()
+  local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
+  local legacy_repo = make_typescript_fixture("example-typescript-legacy", "5.3.3")
+  local native_repo = make_typescript_fixture("example-typescript-native", "7.0.2")
+
+  local function open_and_check(repo, expected, unexpected)
+    api.switch_to(repo, "repository")
+    vim.cmd("edit " .. vim.fn.fnameescape(repo .. "/src/main.ts"))
+    local buf = vim.api.nvim_get_current_buf()
+    wait_until(expected .. " on TypeScript " .. repo, function()
+      local client = active_lsp_client(buf, expected)
+      return client and client.initialized
+    end, 30000)
+
+    local client = active_lsp_client(buf, expected)
+    assert_true(active_lsp_client(buf, unexpected) == nil, unexpected .. " also attached to " .. repo)
+    assert_true(realpath(client.config.root_dir) == realpath(repo), expected .. " used the wrong project root")
+    local usage = find_position(buf, "targetValue", "export const result")
+    assert_true(
+      result_count(request(buf, "textDocument/definition", usage, 20000)) >= 1,
+      expected .. " definition request returned no locations"
+    )
+    return client
+  end
+
+  local legacy_client = open_and_check(legacy_repo, "ts_ls", "tsc")
+  local native_client = open_and_check(native_repo, "tsc", "ts_ls")
+  wait_until("legacy TypeScript server to stop", function()
+    return legacy_client:is_stopped()
+  end, 10000)
+
+  local recovered_legacy_client = open_and_check(legacy_repo, "ts_ls", "tsc")
+  assert_true(recovered_legacy_client.id ~= legacy_client.id, "legacy TypeScript server was not restarted")
+  wait_until("native TypeScript server to stop", function()
+    return native_client:is_stopped()
+  end, 10000)
+
+  api.switch_to(original_cwd, "repository")
+end
+
 local function test_lsp_pickers_use_search_priority(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   local buf = open_go_file(repo .. "/main.go")
@@ -6228,6 +6307,7 @@ local agent_tests = {
 local lsp_lifecycle_tests = {
   restart_current = test_lsp_restart_reattaches_current_client_only,
   switch_with_keymaps = test_workspace_keymaps_restart_lsp_for_selected_directory,
+  typescript_compatibility = test_typescript_server_matches_project_version,
 }
 
 local safe_cleanup_tests = {
@@ -6250,6 +6330,8 @@ local setup_ok, setup_err = xpcall(function()
   require_command("cargo", { "cargo", "--version" })
   require_command("rustc", { "rustc", "--version" })
   require_command("rust-analyzer", { "rust-analyzer", "--version" })
+  require_command("tsc", { "tsc", "--version" })
+  require_command("typescript-language-server", { "typescript-language-server", "--version" })
   require_command("jq", { "jq", "--version" })
 
   local repo, worktree = make_fixture()
@@ -6497,6 +6579,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("lsp definition and references", function()
     test_lsp_definition_and_references(repo)
+  end)
+
+  test("TypeScript projects use a compatible language server", function()
+    lsp_lifecycle_tests.typescript_compatibility()
   end)
 
   test("lsp references and implementations use search priority", function()

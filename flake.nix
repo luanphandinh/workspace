@@ -59,15 +59,17 @@
             gcc
             go_1_26
             gopls
+            mise
             nerd-fonts.fira-code
             neovim
-            nodejs
             (python3.withPackages (pythonPackages: [
               pythonPackages.pyyaml
             ]))
             rustc
             rust-analyzer
             tree-sitter
+            typescript-go
+            typescript-language-server
           ] ++ [
             treesitterParsersPackage
           ];
