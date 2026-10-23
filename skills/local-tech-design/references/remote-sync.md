@@ -19,8 +19,6 @@ Use `--remote-file <export.md>` when the remote was already exported and `--json
 
 Update the deepest changed heading only. Treat each `<details>` block as one implementation artifact.
 
-The helper compares section text, not SVG asset bytes. Compare each referenced SVG with the remote asset before declaring it unchanged, even when the Markdown image link has not changed.
-
 ## Outbound Markdown
 
 - Pass every non-diagram section through `scripts/tech_doc_compare.py prepare` before writing it remotely. Use `--local <file>` or pipe section Markdown through stdin.
@@ -56,27 +54,28 @@ lark-cli docs +update \
 
 - `Links`: remote source of truth. Never create, replace, reorder, delete, or pull it during normal sync.
 
-A sync request authorizes exact-text updates, new sections, text-preserving H1/H2 block replacement for native numbering, and native import of every SVG referenced within the requested source scope. A complete-document sync includes every referenced diagram. Preserve remote-owned sections and ask separately only before a destructive change outside the requested source scope.
+A sync request authorizes exact-text updates, new sections, text-preserving H1/H2 block replacement for native numbering, and native update of every Mermaid diagram within the requested source scope. A complete-document sync includes every diagram. Preserve remote-owned sections and ask separately only before a destructive change outside the requested source scope.
 
 ## Write strategy
 
 1. Fetch the exact current section.
 2. Use exact text replacement for an existing section.
 3. Insert only when the section is new.
-4. If exact replacement fails, stop and ask before block replacement, except for required text-preserving H1/H2 native-numbering updates and in-scope native diagram imports.
+4. If exact replacement fails, stop and ask before block replacement, except for required text-preserving H1/H2 native-numbering updates and in-scope native diagram updates.
 5. Never silently fall back to delete/recreate or whole-document overwrite.
 6. Re-fetch changed sections and verify unrelated content is unchanged.
 
 For an empty remote, create sections selectively and omit Links.
 
-## SVG diagram sync
+## Native whiteboards
 
-- Treat every SVG referenced within the requested source scope as part of the sync. Use the same verified SVG asset embedded by the local document.
-- Read the matching document integration skill's native SVG-to-whiteboard instructions before writing. Use its native import path instead of a generic media upload, attachment, public link, raster image, or diagram-language conversion.
-- Fetch the target section and block IDs. Import each SVG at its corresponding diagram location; replacing that corresponding diagram is within the requested sync scope.
-- Preserve unrelated diagrams, section titles, tokens, and blocks. Ask separately only for destructive changes outside the requested source scope.
-- Re-fetch the updated section and inspect the rendered preview. Verify the whiteboard is at the intended location, labels and edges are legible, no stale duplicate remains, and unrelated blocks are unchanged.
-- If native SVG-to-whiteboard import is unavailable, stop and report the limitation. Do not silently change formats or claim that the diagram was synchronized.
+- Treat every Mermaid diagram within the requested source scope as part of the sync.
+- Resolve wiki URLs to their document and read the matching document integration skill's native Mermaid-to-whiteboard instructions before writing.
+- Fetch the target section and block IDs. Pipe local Mermaid through stdin to the native whiteboard update command; do not create or upload SVG/PNG intermediates.
+- Keep each rendered label line within 40 characters in both local and remote Mermaid. Break at meaningful phrase or syntax boundaries; never split a word arbitrarily.
+- Preserve unrelated diagrams, section titles, tokens, and blocks. Replace the corresponding whiteboard contents only.
+- Re-fetch the updated section and inspect the rendered preview. Verify Mermaid syntax, shape text, connector attachments, location, and unchanged unrelated content.
+- If native Mermaid-to-whiteboard conversion is unavailable, stop and report the limitation. Do not silently change formats or claim that the diagram was synchronized.
 
 ## Rich-text fidelity
 

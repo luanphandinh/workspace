@@ -11,7 +11,21 @@
 
 # 3. Solution Overview
 
-![Set account privacy and build feed responses](assets/hide-address.svg)
+```mermaid
+flowchart TB
+  client["Authenticated client"]
+  http["HTTP server<br/>Actor ID from auth context"]
+  service["FeedService<br/>Omit address (NEW)"]
+  database[("PostgreSQL<br/>users / feeds")]
+  client -->|"PATCH /v1/me/feed-privacy (NEW)<br/>GET /v1/feed"| http
+  http -->|"FeedService.SetPrivacy (NEW)<br/>FeedService.List"| service
+  service -->|"UPDATE users.hide_address (NEW)<br/>SELECT feeds JOIN users"| database
+  classDef new fill:#bbf7d0,stroke:#16a34a,color:#166534,font-weight:bold
+  class service new
+  linkStyle 0 stroke:#16a34a,stroke-width:2px,color:#16a34a
+  linkStyle 1 stroke:#16a34a,stroke-width:2px,color:#16a34a
+  linkStyle 2 stroke:#16a34a,stroke-width:2px,color:#16a34a
+```
 
 # 5. External Technical Design
 

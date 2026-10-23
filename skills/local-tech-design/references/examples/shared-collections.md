@@ -14,7 +14,27 @@
 
 ## 3.1 Architecture
 
-![Collection APIs, access checks, storage and invitation delivery](assets/shared-collections.svg)
+```mermaid
+flowchart TB
+  actor["Owner / invited friend"]
+  collection["CollectionService (NEW)"]
+  friend["FriendService"]
+  feed["FeedService"]
+  database[("PostgreSQL (NEW tables)")]
+  worker["InvitationWorker (NEW)"]
+  notification["NotificationService"]
+  actor -->|"Collection HTTP APIs (NEW)"| collection
+  collection -->|"FriendService.AreFriends"| friend
+  collection -->|"FeedService.ListVisibleItems"| feed
+  collection -->|"Collections, items,<br/>members, outbox"| database
+  database -->|"Claim invitation_outbox"| worker
+  worker -->|"NotificationService.SendInvitation"| notification
+  classDef new fill:#bbf7d0,stroke:#16a34a,color:#166534,font-weight:bold
+  class collection,database,worker new
+  linkStyle 0 stroke:#16a34a,stroke-width:2px,color:#16a34a
+  linkStyle 3 stroke:#16a34a,stroke-width:2px,color:#16a34a
+  linkStyle 4 stroke:#16a34a,stroke-width:2px,color:#16a34a
+```
 
 ## 3.2 Membership states
 
@@ -27,7 +47,29 @@
 
 ## 3.3 Invite and retry
 
-![Invitation commit and independent notification retry](assets/collection-invite.svg)
+```mermaid
+sequenceDiagram
+  participant collection as CollectionService
+  participant friend as FriendService
+  participant database as PostgreSQL
+  participant worker as InvitationWorker
+  participant notification as NotificationService
+  collection->>friend: FriendService.AreFriends
+  friend-->>collection: friends=true
+  rect rgb(220, 252, 231)
+    collection->>database: UPSERT collection_members
+    collection->>database: INSERT invitation_outbox
+    database-->>collection: COMMIT
+  end
+  worker->>database: Claim invitation_outbox + lease
+  database-->>worker: COMMIT persisted event_id
+  worker->>notification: NotificationService.SendInvitation
+  alt Timeout or worker crash
+    worker->>notification: Retry same event_id
+    notification-->>worker: Return prior result
+  end
+  worker->>database: MarkDelivered after success
+```
 
 # 4. Design Decisions
 

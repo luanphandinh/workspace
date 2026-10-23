@@ -1,0 +1,56 @@
+# Mermaid Diagrams
+
+## Source
+
+Build Mermaid from the verified graph produced during code exploration. Keep the terminal and document diagrams on the same nodes and edges.
+
+## Architecture flowchart
+
+- Show only the primary nodes needed for the changed flow; do not pad a simple diagram to meet a node count.
+- Default to `flowchart TB`.
+- Use `flowchart LR` only for one linear path with at most five primary nodes, no branches, merges, or shared stores, short edge labels, and a readable render at normal document width.
+- Use `flowchart TB` for multiple paths, branches, shared stores, or long labels.
+- If a top-down diagram is still too wide, split unrelated flows. Use concern or phase subgraphs only when they improve grouping, never only to control layout.
+- Keep node IDs simple. Put punctuation, paths, operation names, and `(NEW)` inside quoted labels.
+- Keep each rendered label line within 40 characters. Insert Mermaid line breaks at meaningful phrase or syntax boundaries; never split a word arbitrarily.
+- Quote edge labels containing punctuation or paths.
+- Keep one Mermaid statement per line.
+- Put operation detail in sequence diagrams when it makes the overview noisy.
+
+Mark new nodes and edges with `(NEW)` and green styling:
+
+```mermaid
+flowchart TB
+  service_a["Service A"] -->|"Build state (NEW)"| store_a[("Store A (NEW)")]
+  store_a -->|"Read state (NEW)"| service_b["Service B"]
+  classDef new fill:#bbf7d0,stroke:#16a34a,color:#166534,font-weight:bold
+  class store_a new
+  linkStyle 0 stroke:#16a34a,stroke-width:2px,color:#16a34a
+  linkStyle 1 stroke:#16a34a,stroke-width:2px,color:#16a34a
+```
+
+## Sequence diagrams
+
+- Add one diagram for each non-trivial cross-service interaction: multiple hops, asynchronous work, retry, compensation, or meaningful branching.
+- One exact operation per arrow. Use RPC method, HTTP method/path, SQL operation/table, cache command/key, or message topic.
+- Do not use generic labels such as `call`, `request`, `read`, `write`, `update`, or `process` alone.
+- Put conditions in `alt`/`opt` blocks and state transitions in short notes.
+- Omit trivial single-hop diagrams.
+
+## Review
+
+- Render and visually inspect every changed diagram at normal document width; a successful syntax check is insufficient.
+- Remove articles and connective words from labels when meaning stays clear.
+- Verify every rendered label line is at most 40 characters and each break preserves meaning.
+- If labels require zooming or horizontal scrolling, change the diagram to top-down or split it.
+- Every drawn edge has code or contract evidence.
+- Shared nodes are not duplicated.
+- The requested behavior is visible without explanatory prose.
+- New and existing behavior are visually distinct.
+- Diagram labels contain no information repeated below the diagram.
+
+## Remote publication
+
+- A request to sync source content includes every Mermaid diagram within that scope.
+- Use the selected document integration's native Mermaid-to-whiteboard conversion and inspect the rendered preview.
+- Preserve unrelated remote content. Ask separately only for destructive changes outside the requested source scope.

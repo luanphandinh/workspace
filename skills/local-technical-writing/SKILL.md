@@ -112,6 +112,6 @@ We deploy <service-a>, then deploy <service-b>, then check <service-b>.
 Normalize findings into nodes and labeled edges before drawing. The diagram is the flow source of truth. Text below it contains evidence or exceptions only.
 
 - Terminal exploration: read [references/terminal-diagrams.md](references/terminal-diagrams.md).
-- Technical documents: use SVG assets and read [references/svg-diagrams.md](references/svg-diagrams.md).
+- Technical documents: read [references/mermaid-diagrams.md](references/mermaid-diagrams.md).
 
 When both forms exist, derive them from the same graph and update them together.

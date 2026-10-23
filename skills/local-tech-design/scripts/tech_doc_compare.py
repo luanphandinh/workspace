@@ -66,7 +66,6 @@ BLOCK_TAGS = (
     "ul",
 )
 MERMAID_BLOCK_TOKEN = "MERMAID_BLOCK"
-SVG_ASSET_TOKEN = "SVG_ASSET"
 OPAQUE_REMOTE_BLOCK_TOKEN = "OPAQUE_REMOTE_BLOCK"
 IGNORED_REMOTE_SECTIONS = {"links"}
 CONFIRMATION_REMOTE_SECTIONS: set[str] = set()
@@ -264,18 +263,6 @@ def prepare_remote_markdown(text: str) -> str:
 def normalize_common_markup(text: str) -> str:
     text = html.unescape(text)
     text = re.sub(
-        r"<(image|file)\b([^>]*\.svg\b[^>]*)/?>",
-        lambda match: f"\n{SVG_ASSET_TOKEN} {match.group(1).lower()} {match.group(2).strip()}\n",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"<svg\b.*?</svg\s*>",
-        lambda match: f"\n{SVG_ASSET_TOKEN} {html.escape(match.group(0))}\n",
-        text,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    text = re.sub(
         r"(?ims)^(```+|~~~+)\s*mermaid[^\n]*\n.*?^\1\s*$",
         normalize_mermaid_fence,
         text,
@@ -337,8 +324,6 @@ def normalize_document_text(text: str) -> str:
 def normalize_markdown_link(match: re.Match[str]) -> str:
     label = match.group(1).strip()
     target = match.group(2).strip()
-    if re.search(r"\.svg(?:[?#\s\"'>]|$)", target, flags=re.IGNORECASE):
-        return f"{SVG_ASSET_TOKEN} {label} {target}"
     if label == target:
         return target
     return f"{label} {target}"
@@ -625,8 +610,6 @@ def section_has_diagram(section: Section) -> bool:
         or re.search(r"\bMERMAID_BLOCK\b", section.text)
         or re.search(r"\bOPAQUE_REMOTE_BLOCK\b", section.text)
         or re.search(r"<readonly-block\b", section.text, flags=re.IGNORECASE)
-        or re.search(r"\bSVG_ASSET\b|<svg\b", section.text, flags=re.IGNORECASE)
-        or re.search(r"<(?:image|file)\b[^>]*\.svg\b", section.text, flags=re.IGNORECASE)
     )
 
 
@@ -660,7 +643,7 @@ def section_record(
         record["replacement_strategy"] = "exact_text"
     if diagram:
         record["diagram_import_candidate"] = True
-        record["replacement_strategy"] = "native_svg_to_whiteboard"
+        record["replacement_strategy"] = "native_mermaid_to_whiteboard"
     if requires_confirmation:
         record["replacement_strategy"] = "confirmation_required"
         record["requires_confirmation"] = True
