@@ -4304,11 +4304,26 @@ local function test_agent_view_container(repo)
     vim.cmd("stopinsert")
     local next_map = vim.fn.maparg("<Tab>", "n", false, true)
     local new_map = vim.fn.maparg("<leader>fn", "n", false, true)
+    local select_map = vim.fn.maparg("<leader>fN", "n", false, true)
     assert_nonrecursive_map("<Tab>", "n", cursor_buf)
     assert_nonrecursive_map("<S-Tab>", "n", cursor_buf)
     assert_nonrecursive_map("<leader>fn", "n", cursor_buf)
+    assert_nonrecursive_map("<leader>fN", "n", cursor_buf)
     assert_true(type(next_map) == "table" and type(next_map.callback) == "function", "agent view mode is missing tab cycling")
-    assert_true(type(new_map) == "table" and type(new_map.callback) == "function" and new_map.desc == "New terminal agent", "agent view mode is missing the new-tab picker")
+    assert_true(type(new_map) == "table" and type(new_map.callback) == "function" and new_map.desc == "New default terminal agent", "agent view mode is missing default-agent creation")
+    assert_true(type(select_map) == "table" and type(select_map.callback) == "function" and select_map.desc == "Select terminal agent", "agent view mode is missing the new-agent picker")
+    local original_default_agent = agents.default_agent
+    local original_new = agents.new
+    local created_agent
+    agents.default_agent = function() return "cursor" end
+    agents.new = function(agent_name)
+      created_agent = agent_name
+      return true
+    end
+    new_map.callback()
+    agents.default_agent = original_default_agent
+    agents.new = original_new
+    assert_true(created_agent == "cursor", "<leader>fn did not create the configured default agent")
     next_map.callback()
     wait_until("cycled agent tab", function()
       return visible_agent_window_count() == 1
@@ -4330,8 +4345,8 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_get_current_win() == agent_win, "cycling mixed agents replaced the container window")
     assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "cycling mixed agents resized the container")
 
-    new_map = vim.fn.maparg("<leader>fn", "n", false, true)
-    new_map.callback()
+    select_map = vim.fn.maparg("<leader>fN", "n", false, true)
+    select_map.callback()
     local prompt_buf = nil
     wait_until("agent tab picker", function()
       for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do

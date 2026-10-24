@@ -278,6 +278,9 @@ local function get_agent(name)
     end,
     on_show = function(bufnr, win, cwd)
       agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
+      vim.keymap.set("n", "<leader>fN", function()
+        agent_container:pick(cwd)
+      end, { buffer = bufnr, silent = true, nowait = true, desc = "Select terminal agent" })
     end,
     on_close = function(bufnr, cwd)
       agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
@@ -442,6 +445,9 @@ agent_container = require("luanphan.view_container").create({
   create = function(choice)
     M.new(choice.id)
   end,
+  new = function()
+    M.new(M.default_agent())
+  end,
   picker_title = "Terminal Agents",
   picker_opts = {
     layout_strategy = "center",
@@ -449,7 +455,7 @@ agent_container = require("luanphan.view_container").create({
   },
   empty_message = "no terminal agents registered",
   cycle_desc = "Next terminal agent",
-  new_desc = "New terminal agent",
+  new_desc = "New default terminal agent",
 })
 
 local function agent_spec(name)
