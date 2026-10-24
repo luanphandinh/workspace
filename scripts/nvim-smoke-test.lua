@@ -1656,6 +1656,7 @@ local function worktree_test_api()
     { "<leader>ww", "n" },
     { "<leader>wf", "n" },
     { "<leader>wa", "n" },
+    { "<leader>wd", "n" },
     { "<leader>wr", "n" },
     { "<leader>wr", "t" },
     { "<leader>wp", "n" },
@@ -1706,6 +1707,11 @@ local function test_worktree_plugin_starts_lazy()
     type(add_repository_map) == "table" and type(add_repository_map.callback) == "function",
     "<leader>wa is not a lazy callback mapping"
   )
+  local remove_repository_map = vim.fn.maparg("<leader>wd", "n", false, true)
+  assert_true(
+    type(remove_repository_map) == "table" and type(remove_repository_map.callback) == "function",
+    "<leader>wd is not a lazy callback mapping"
+  )
   assert_true(vim.fn.maparg("<leader>gP", "n") == "", "<leader>gP should not have a duplicate project picker")
   local agent_map = vim.fn.maparg("<leader>w;", "n", false, true)
   assert_true(
@@ -1723,6 +1729,7 @@ local function test_worktree_keymaps_dispatch_to_pickers()
     { "<leader>ww", "n", "pick_worktree" },
     { "<leader>wf", "n", "pick_folder" },
     { "<leader>wa", "n", "pick_add_repository" },
+    { "<leader>wd", "n", "pick_remove_repository" },
     { "<leader>wr", "n", "pick_project" },
     { "<leader>wr", "t", "pick_project" },
     { "<leader>wp", "n", "pick_workspace_project" },
@@ -3048,6 +3055,113 @@ local function test_add_repository_to_workspace()
   vim.env.PATH = original_path
   vim.env.MKWS_TEST_LOG = original_log
   vim.env.MKWS_TEST_FAIL = original_fail
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  end
+  assert_true(ok, tostring(err))
+end
+
+local function test_remove_repository_from_workspace()
+  local api = worktree_test_api()
+  local original_cwd = vim.fn.getcwd()
+  local original_buf = vim.api.nvim_get_current_buf()
+  local original_path = vim.env.PATH
+  local original_log = vim.env.MKWS_TEST_LOG
+  local original_fail = vim.env.MKWS_TEST_FAIL
+  local original_notify = vim.notify
+  local _, workspaces, station, workspace_name = make_project_scope_fixture()
+  local workspace = station .. "/local_workspaces/" .. workspace_name
+  local fake_bin = temp_root .. "/fake-remove-mkws-bin"
+  local log = temp_root .. "/fake-remove-mkws.log"
+
+  write_executable(fake_bin .. "/mkws", {
+    "#!/bin/sh",
+    'printf "%s\\n" "$PWD" "$@" > "$MKWS_TEST_LOG"',
+    'if [ "${MKWS_TEST_FAIL:-}" = "1" ]; then',
+    '  printf "%s\\n" "fixture remove failure" >&2',
+    "  exit 7",
+    "fi",
+    'rm -rf "$PWD/$2"',
+  })
+
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(workspaces["example-project-a"]))
+    local candidates, resolved_workspace = api.list_removable_repositories()
+    assert_true(#candidates == 2, "repository remove candidates have the wrong count")
+    assert_true(realpath(resolved_workspace) == realpath(workspace), "repository remove resolved the wrong workspace")
+    local by_name = {}
+    for _, repo in ipairs(candidates) do
+      by_name[repo.name] = repo
+    end
+
+    vim.env.PATH = fake_bin .. ":" .. original_path
+    vim.env.MKWS_TEST_LOG = log
+    local dirty_path = by_name["example-project-a"].path .. "/dirty.ts"
+    write(dirty_path, { "const value = 1" })
+    vim.cmd("edit " .. vim.fn.fnameescape(dirty_path))
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, { "const value = 2" })
+    local dirty_buf = vim.api.nvim_get_current_buf()
+    local result = nil
+    api.remove_repository(by_name["example-project-a"], resolved_workspace, function(value)
+      result = value
+    end)
+    assert_true(result and result.code ~= 0, "repository remove accepted an unsaved buffer")
+    assert_true(vim.fn.isdirectory(by_name["example-project-a"].path) == 1, "repository remove deleted a dirty project")
+    assert_true(vim.fn.filereadable(log) == 0, "repository remove invoked mkws for an unsaved buffer")
+
+    vim.bo[dirty_buf].modified = false
+    vim.api.nvim_set_current_buf(original_buf)
+    vim.api.nvim_buf_delete(dirty_buf, { force = true })
+    local stale_buf = vim.fn.bufadd(dirty_path)
+    vim.fn.bufload(stale_buf)
+    result = nil
+    api.remove_repository(by_name["example-project-a"], resolved_workspace, function(value)
+      result = value
+    end)
+    wait_until("repository remove command", function() return result ~= nil end, 5000)
+    assert_true(result.code == 0, "repository remove command failed")
+    assert_true(realpath(vim.fn.getcwd()) == realpath(workspace), "repository remove left cwd inside the deleted project")
+    assert_true(not vim.api.nvim_buf_is_valid(stale_buf), "repository remove kept a deleted project buffer")
+    assert_true(vim.fn.isdirectory(by_name["example-project-a"].path) == 0, "repository remove kept its worktree")
+    assert_true(vim.fn.isdirectory(by_name["example-project-b-long"].path) == 1, "repository remove deleted a sibling")
+    local invocation = vim.fn.readfile(log)
+    assert_true(realpath(invocation[1]) == realpath(workspace), "mkws remove did not run from the workspace root")
+    assert_true(invocation[2] == "remove", "mkws omitted remove")
+    assert_true(invocation[3] == "example-project-a", "mkws remove received the wrong repository")
+
+    local reported_error = nil
+    vim.notify = function(message, level)
+      if level == vim.log.levels.ERROR then
+        reported_error = tostring(message)
+      end
+    end
+    vim.env.MKWS_TEST_FAIL = "1"
+    vim.cmd("cd " .. vim.fn.fnameescape(by_name["example-project-b-long"].path))
+    result = nil
+    api.remove_repository(by_name["example-project-b-long"], resolved_workspace, function(value)
+      result = value
+    end)
+    wait_until("repository remove failure", function() return result ~= nil end, 5000)
+    assert_true(result.code == 7, "repository remove did not preserve the mkws exit code")
+    assert_true(
+      realpath(vim.fn.getcwd()) == realpath(by_name["example-project-b-long"].path),
+      "failed repository remove did not restore its cwd"
+    )
+    assert_true(vim.fn.isdirectory(by_name["example-project-b-long"].path) == 1, "failed remove deleted its worktree")
+    assert_true(
+      reported_error and reported_error:find("fixture remove failure", 1, true),
+      "repository remove did not report mkws failure output"
+    )
+    assert_true(vim.fn.exists(":RepositoryRemove") == 2, "RepositoryRemove command is missing")
+  end, debug.traceback)
+
+  vim.notify = original_notify
+  vim.env.PATH = original_path
+  vim.env.MKWS_TEST_LOG = original_log
+  vim.env.MKWS_TEST_FAIL = original_fail
+  if vim.api.nvim_buf_is_valid(original_buf) then
+    vim.api.nvim_set_current_buf(original_buf)
+  end
   if vim.fn.isdirectory(original_cwd) == 1 then
     vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
   end
@@ -6400,6 +6514,7 @@ local safe_cleanup_tests = {
   editor_text_helpers = test_editor_text_helpers,
   filetype_options = test_filetype_editor_options,
   only_keep_tree = test_only_keep_tree_closes_other_windows,
+  repository_remove = test_remove_repository_from_workspace,
   telescope_keymaps = test_telescope_keymaps_dispatch_to_modules,
   telescope_runtime_defaults = test_telescope_runtime_defaults,
   toggle_gitignore = test_gitignore_toggle_updates_telescope,
@@ -6647,6 +6762,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("repository picker adds a one-level nested project to the current workspace", function()
     test_add_repository_to_workspace()
+  end)
+
+  test("repository picker removes one clean project from the current workspace", function()
+    safe_cleanup_tests.repository_remove()
   end)
 
   test("active agent picker discovers running project terminals", function()

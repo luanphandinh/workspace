@@ -206,6 +206,71 @@ test_mkws() {
 	assert_not_exists "$workspace/repo-empty"
 	assert_not_contains "$workspace/workspace.yml" "name: repo-empty"
 
+	(
+		cd "$root"
+		mkws --name remove-one --add \
+			repo-a@feature/remove-a \
+			repo-b@feature/remove-b \
+			front-end/repo-nested@feature/remove-nested >/dev/null
+	)
+	remove_workspace="$root/local_workspaces/remove-one"
+	(
+		cd "$remove_workspace/repo-a"
+		EXPECT='cannot remove the current worktree' expect_fail_contains mkws remove repo-a
+	)
+	printf 'dirty\n' > "$remove_workspace/repo-a/dirty.txt"
+	(
+		cd "$remove_workspace"
+		EXPECT='repo-a has uncommitted changes' expect_fail_contains mkws remove repo-a
+	)
+	assert_exists "$remove_workspace/repo-a/.git"
+	assert_contains "$remove_workspace/workspace.yml" "name: repo-a"
+	rm "$remove_workspace/repo-a/dirty.txt"
+	python3 - "$ROOT/bin/mkws" "$remove_workspace" <<'PY'
+import os
+from pathlib import Path
+import runpy
+import sys
+
+mkws = runpy.run_path(sys.argv[1])
+workspace = Path(sys.argv[2])
+cleanup_calls = []
+real_popen = mkws["subprocess"].Popen
+
+class Cleanup:
+    pid = 123
+
+def defer_cleanup(args, **kwargs):
+    if args[0] != sys.executable:
+        return real_popen(args, **kwargs)
+    cleanup_calls.append((args, kwargs))
+    return Cleanup()
+
+mkws["subprocess"].Popen = defer_cleanup
+os.chdir(workspace)
+assert mkws["cmd_remove"]("repo-a") == 0
+assert not (workspace / "repo-a").exists()
+detached = list(workspace.glob(".mkws-remove-repo-a-*"))
+assert len(detached) == 1
+assert len(cleanup_calls) == 1
+mkws["shutil"].rmtree(detached[0])
+PY
+	assert_not_exists "$remove_workspace/repo-a"
+	assert_not_contains "$remove_workspace/workspace.yml" "name: repo-a"
+	assert_exists "$remove_workspace/repo-b/.git"
+	assert_contains "$remove_workspace/workspace.yml" "name: repo-b"
+	(
+		cd "$remove_workspace"
+		mkws remove front-end/repo-nested >/dev/null
+		mkws resume >/dev/null
+		EXPECT='repo-a is not recorded in this workspace' expect_fail_contains mkws remove repo-a
+	)
+	assert_not_exists "$remove_workspace/repo-a"
+	assert_not_exists "$remove_workspace/front-end/repo-nested"
+	assert_not_contains "$remove_workspace/workspace.yml" "name: front-end/repo-nested"
+	git -C "$root/repo-a" worktree list --porcelain > "$TMP/remove-worktrees.out"
+	assert_not_contains "$TMP/remove-worktrees.out" "$remove_workspace/repo-a"
+
 	for spec in \
 		"repo-base-a feature/base-a base-a.txt" \
 		"repo-base-c feature/base-a base-c.txt" \

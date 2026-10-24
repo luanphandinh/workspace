@@ -1133,6 +1133,20 @@ local function setup()
     return candidates, workspace
   end
 
+  local function list_removable_repositories()
+    local current = safe_getcwd()
+    local workspace = workspace_root_for_path(git_root(current) or current)
+    if not workspace then
+      return {}, nil
+    end
+
+    local repositories = list_repos_in_dir(workspace, true)
+    for _, repo in ipairs(repositories) do
+      repo.branch = project_branch(repo.path)
+    end
+    return repositories, workspace
+  end
+
   local function group_project_entries(repos, current_root)
     local name_width = 0
     for _, repo in ipairs(repos) do
@@ -1767,6 +1781,79 @@ local function setup()
     end)
   end
 
+  local function remove_repository(repo, workspace, on_complete)
+    local function complete(result)
+      if on_complete then on_complete(result) end
+    end
+
+    if vim.fn.executable("mkws") ~= 1 then
+      local result = { code = 127, stderr = "mkws is not available on PATH" }
+      vim.notify(result.stderr, vim.log.levels.ERROR)
+      complete(result)
+      return
+    end
+
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      local name = vim.api.nvim_buf_get_name(buf)
+      if name ~= "" and path_is_in_dir(name, repo.path) and vim.bo[buf].modified then
+        local message = "Save or discard modified buffers before removing " .. repo.name
+        vim.notify(message, vim.log.levels.ERROR)
+        complete({ code = 1, stderr = message })
+        return
+      end
+    end
+
+    local previous_cwd = safe_getcwd()
+    local left_removed_repo = path_is_in_dir(previous_cwd, repo.path)
+    if left_removed_repo then
+      vim.cmd("cd " .. vim.fn.fnameescape(workspace))
+    end
+
+    vim.notify("Removing " .. repo.name .. " from workspace...")
+    vim.system({ "mkws", "remove", repo.name }, { cwd = workspace, text = true }, function(result)
+      vim.schedule(function()
+        if result.code == 0 and dir_exists(repo.path) then
+          result.code = 1
+          result.stderr = vim.trim((result.stderr or "") .. "\nmkws completed without removing " .. repo.path)
+        end
+        if result.code ~= 0 then
+          if left_removed_repo and dir_exists(previous_cwd) then
+            pcall(vim.cmd, "cd " .. vim.fn.fnameescape(previous_cwd))
+          end
+          local output = vim.trim((result.stderr or "") .. "\n" .. (result.stdout or ""))
+          output = output:gsub("\27%[[%d;]*m", "")
+          local message = "mkws remove failed for " .. repo.name
+          if output ~= "" then
+            message = message .. ":\n" .. output
+          end
+          vim.notify(message, vim.log.levels.ERROR)
+        else
+          for _, client in pairs(vim.lsp.get_clients()) do
+            local root = client.config and client.config.root_dir
+            if type(root) == "string" and path_is_in_dir(root, repo.path) then
+              client:stop()
+            end
+          end
+          for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+            local name = vim.api.nvim_buf_get_name(buf)
+            if name ~= "" and path_is_in_dir(name, repo.path) then
+              pcall(vim.api.nvim_buf_delete, buf, { force = false })
+            end
+          end
+          local ok_tree, tree = pcall(require, "nvim-tree.api")
+          if ok_tree then
+            if left_removed_repo then
+              pcall(tree.tree.change_root, workspace)
+            end
+            pcall(tree.tree.reload)
+          end
+          vim.notify("Removed " .. repo.name .. " from workspace")
+        end
+        complete(result)
+      end)
+    end)
+  end
+
   local function pick_add_repository()
     if rescue_deleted_cwd() then
       return
@@ -1810,6 +1897,62 @@ local function setup()
             return
           end
           add_repository(selection.value, workspace)
+        end)
+        return true
+      end,
+    }):find()
+  end
+
+  local function pick_remove_repository()
+    if rescue_deleted_cwd() then
+      return
+    end
+
+    local repositories, workspace = list_removable_repositories()
+    if not workspace then
+      vim.notify("repository remove requires a local workspace", vim.log.levels.WARN)
+      return
+    end
+    if #repositories == 0 then
+      vim.notify("this workspace has no repositories", vim.log.levels.INFO)
+      return
+    end
+
+    local pickers, finders, conf, actions, action_state = telescope_modules()
+    if not pickers then return end
+    local name_width = 0
+    for _, repo in ipairs(repositories) do
+      name_width = math.max(name_width, #repo.name)
+    end
+    pickers.new({}, {
+      prompt_title = "Remove Repository",
+      finder = finders.new_table({
+        results = repositories,
+        entry_maker = function(repo)
+          return {
+            value = repo,
+            display = string.format("%-" .. name_width .. "s [%s]", repo.name, repo.branch),
+            ordinal = repo.name,
+          }
+        end,
+      }),
+      sorter = conf.generic_sorter({}),
+      attach_mappings = function(prompt_bufnr, _map)
+        actions.select_default:replace(function()
+          local selection = action_state.get_selected_entry()
+          actions.close(prompt_bufnr)
+          if not selection or not selection.value then
+            vim.notify("repository remove picker: no selection", vim.log.levels.WARN)
+            return
+          end
+          local repo = selection.value
+          vim.ui.select({ "Cancel", "Remove" }, {
+            prompt = "Remove " .. repo.name .. " and its worktree?",
+          }, function(choice)
+            if choice == "Remove" then
+              remove_repository(repo, workspace)
+            end
+          end)
         end)
         return true
       end,
@@ -1965,6 +2108,7 @@ local function setup()
     pcall(vim.api.nvim_del_user_command, "ProjectSwitch")
     pcall(vim.api.nvim_del_user_command, "RepositorySwitch")
     pcall(vim.api.nvim_del_user_command, "RepositoryAdd")
+    pcall(vim.api.nvim_del_user_command, "RepositoryRemove")
     pcall(vim.api.nvim_del_user_command, "AgentSwitch")
     vim.api.nvim_create_user_command("WorktreeSwitch", pick_worktree, {
       desc = "Switch nvim instance to another git worktree",
@@ -1981,6 +2125,9 @@ local function setup()
     vim.api.nvim_create_user_command("RepositoryAdd", pick_add_repository, {
       desc = "Add a source repository to the current workspace",
     })
+    vim.api.nvim_create_user_command("RepositoryRemove", pick_remove_repository, {
+      desc = "Remove a repository from the current workspace",
+    })
     vim.api.nvim_create_user_command("AgentSwitch", pick_agent, {
       desc = "Switch nvim instance to a project with an active agent",
     })
@@ -1993,6 +2140,7 @@ local function setup()
     pick_worktree = pick_worktree,
     pick_folder = pick_folder,
     pick_add_repository = pick_add_repository,
+    pick_remove_repository = pick_remove_repository,
     pick_project = pick_project,
     pick_workspace_project = pick_workspace_project,
     pick_agent = pick_agent,
@@ -2007,6 +2155,7 @@ local function setup()
     list_worktrees = list_worktrees,
     list_all_project_repos = list_all_project_repos,
     list_addable_repositories = list_addable_repositories,
+    list_removable_repositories = list_removable_repositories,
     list_workspace_directories = list_workspace_directories,
     list_workspace_destinations = list_workspace_destinations,
     group_project_entries = group_project_entries,
@@ -2015,6 +2164,7 @@ local function setup()
     list_active_agents = list_active_agents,
     agent_switch_targets = agent_switch_targets,
     add_repository = add_repository,
+    remove_repository = remove_repository,
     refire_filetype_all = refire_filetype_all,
     snapshot = snapshot_buffers,
     restore = restore_buffers,
@@ -2043,11 +2193,20 @@ return {
     "luanphan-worktree",
     virtual = true,
     init = init,
-    cmd = { "WorktreeSwitch", "FolderSwitch", "ProjectSwitch", "RepositorySwitch", "RepositoryAdd", "AgentSwitch" },
+    cmd = {
+      "WorktreeSwitch",
+      "FolderSwitch",
+      "ProjectSwitch",
+      "RepositorySwitch",
+      "RepositoryAdd",
+      "RepositoryRemove",
+      "AgentSwitch",
+    },
     keys = {
       { "<leader>ww", picker("pick_worktree"), desc = "Switch workspace" },
       { "<leader>wf", picker("pick_folder"), desc = "Pick workspace folder" },
       { "<leader>wa", picker("pick_add_repository"), desc = "Add repository" },
+      { "<leader>wd", picker("pick_remove_repository"), desc = "Remove repository" },
       { "<leader>wr", picker("pick_project"), mode = { "n", "t" }, desc = "Pick repository" },
       { "<leader>wp", picker("pick_workspace_project"), desc = "Pick workspace" },
       { "<leader>w;", picker("pick_agent"), desc = "Switch active agent" },
