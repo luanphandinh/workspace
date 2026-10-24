@@ -1624,7 +1624,7 @@ local function setup()
       prompt_title = "Workspace Folder",
       finder = finder(),
       sorter = sorter,
-      attach_mappings = function(prompt_bufnr, _map)
+      attach_mappings = function(prompt_bufnr, map)
         actions.move_selection_next:replace(function(bufnr)
           move_project_selection(action_state.get_current_picker(bufnr), 1)
         end)
@@ -1659,6 +1659,15 @@ local function setup()
           local picker = action_state.get_current_picker(prompt_bufnr)
           picker:refresh(finder(), { reset_prompt = true })
           picker:set_prompt(current)
+        end)
+        map("n", "x", function()
+          local selection = action_state.get_selected_entry()
+          if not selection or not selection.value or not selection.value.recent then
+            return
+          end
+          if recent_paths.remove(selection.value.path) then
+            action_state.get_current_picker(prompt_bufnr):refresh(finder(), { reset_prompt = false })
+          end
         end)
         return true
       end,

@@ -80,6 +80,24 @@ function M.touch(path)
   return write_entries(updated)
 end
 
+function M.remove(path)
+  local key = normalize(path)
+  if not key then
+    return false
+  end
+
+  local updated = {}
+  local removed = false
+  for _, value in ipairs(read_entries()) do
+    if value == key then
+      removed = true
+    else
+      updated[#updated + 1] = value
+    end
+  end
+  return removed and write_entries(updated)
+end
+
 function M.entries()
   return vim.deepcopy(read_entries())
 end

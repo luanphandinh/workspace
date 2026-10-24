@@ -2498,6 +2498,11 @@ local function test_recent_navigation_ordering(repo, worktree)
     assert_true(#cached == 2, "recent folder cache did not enforce max_cache_entry")
     assert_true(cached[1]:match("/third$") ~= nil, "recent folder cache did not keep last visit first")
     assert_true(cached[2]:match("/second$") ~= nil, "recent folder cache did not retain second-last visit")
+    assert_true(recent_paths.remove(temp_root .. "/third"), "recent folder removal failed")
+    cached = recent_paths.entries()
+    assert_true(#cached == 1 and cached[1]:match("/second$") ~= nil, "recent folder removal changed the wrong entry")
+    assert_true(not recent_paths.remove(temp_root .. "/third"), "missing recent folder was reported as removed")
+    recent_paths.touch(temp_root .. "/third")
     vim.fn.delete(temp_root .. "/third", "rf")
     cached = recent_paths.entries()
     assert_true(#cached == 1 and cached[1]:match("/second$") ~= nil, "recent folder cache retained a missing folder")
@@ -2856,6 +2861,12 @@ local function test_workspace_folder_browser()
     "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.recent and realpath(selection.value.path) == realpath(" .. string.format("%q", recent_a) .. ") end, 20), 'recent folder did not match fuzzy search')",
     "picker:set_prompt('')",
     "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.recent and realpath(selection.value.path) == realpath(" .. string.format("%q", recent_b) .. ") end, 20), 'clearing search did not restore recent order')",
+    "local remove_map = vim.fn.maparg('x', 'n', false, true)",
+    "assert_true(type(remove_map) == 'table' and type(remove_map.callback) == 'function', 'recent folder remove mapping is missing')",
+    "remove_map.callback()",
+    "assert_true(vim.wait(3000, function() for _, path in ipairs(recent.entries()) do if realpath(path) == realpath(" .. string.format("%q", recent_b) .. ") then return false end end return true end, 20), 'recent folder remove mapping did not persist removal')",
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.recent and realpath(selection.value.path) == realpath(" .. string.format("%q", recent_a) .. ") end, 20), 'recent folder picker did not refresh after removal')",
+    "assert_true(action_state.get_current_line() == '', 'recent folder removal reset the search prompt')",
     "local original_home = vim.env.HOME",
     "vim.env.HOME = " .. string.format("%q", test_home),
     "picker:set_prompt('~/example')",
@@ -2869,6 +2880,9 @@ local function test_workspace_folder_browser()
     "assert_true(vim.wait(3000, function() return action_state.get_current_line() == target end, 20), 'absolute folder input did not reach the prompt')",
     "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and selection.value and selection.value.exact and realpath(selection.value.path) == realpath(target) end, 20), 'absolute folder match was not selected first')",
     "assert_true(picker:get_selection().display == target, 'resolved folder was not displayed first')",
+    "local recent_before = vim.json.encode(recent.entries())",
+    "remove_map.callback()",
+    "assert_true(vim.json.encode(recent.entries()) == recent_before, 'recent folder remove mapping changed state for a folder row')",
     "actions.move_selection_next(prompt_bufnr)",
     "local child = picker:get_selection().value.path",
     "assert_true(realpath(child) ~= realpath(target), 'resolved folder child was not selectable')",
