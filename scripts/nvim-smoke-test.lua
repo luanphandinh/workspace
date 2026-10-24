@@ -1782,6 +1782,49 @@ local function test_editor_runtime_defaults()
   vim.api.nvim_set_current_buf(original_buf)
   vim.api.nvim_buf_delete(new_buf, { force = true })
   vim.api.nvim_buf_delete(source_buf, { force = true })
+
+  local editor_win = vim.api.nvim_get_current_win()
+  local editor_buf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_set_current_buf(editor_buf)
+  vim.cmd("vsplit")
+  local tree_win = vim.api.nvim_get_current_win()
+  local tree_buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_win_set_buf(tree_win, tree_buf)
+  vim.bo[tree_buf].filetype = "NvimTree"
+  local window_count = #vim.api.nvim_tabpage_list_wins(0)
+
+  invoke_map("<leader>fn")
+  local tree_new_buf = vim.api.nvim_get_current_buf()
+  assert_true(vim.api.nvim_get_current_win() == editor_win, "<leader>fn did not leave NvimTree for the editor window")
+  assert_true(tree_new_buf ~= editor_buf, "<leader>fn did not create a buffer from NvimTree")
+  assert_true(vim.api.nvim_buf_get_name(tree_new_buf) == "", "<leader>fn created a named buffer from NvimTree")
+  assert_true(#vim.api.nvim_tabpage_list_wins(0) == window_count, "<leader>fn opened an extra editor window")
+  assert_true(vim.api.nvim_win_get_buf(tree_win) == tree_buf, "<leader>fn replaced the NvimTree buffer")
+
+  vim.api.nvim_set_current_buf(original_buf)
+  vim.api.nvim_win_close(tree_win, true)
+  vim.api.nvim_buf_delete(tree_new_buf, { force = true })
+  vim.api.nvim_buf_delete(tree_buf, { force = true })
+  vim.api.nvim_buf_delete(editor_buf, { force = true })
+
+  vim.cmd("tabnew")
+  local tree_only_tab = vim.api.nvim_get_current_tabpage()
+  local tree_only_win = vim.api.nvim_get_current_win()
+  local tree_only_buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_win_set_buf(tree_only_win, tree_only_buf)
+  vim.bo[tree_only_buf].filetype = "NvimTree"
+
+  invoke_map("<leader>fn")
+  local only_tree_new_buf = vim.api.nvim_get_current_buf()
+  assert_true(vim.api.nvim_get_current_tabpage() == tree_only_tab, "<leader>fn left the NvimTree tab")
+  assert_true(vim.api.nvim_get_current_win() ~= tree_only_win, "<leader>fn reused the only NvimTree window")
+  assert_true(vim.api.nvim_win_get_buf(tree_only_win) == tree_only_buf, "<leader>fn replaced the only NvimTree buffer")
+  assert_true(#vim.api.nvim_tabpage_list_wins(tree_only_tab) == 2, "<leader>fn did not create an editor window")
+  assert_true(vim.api.nvim_buf_get_name(only_tree_new_buf) == "", "<leader>fn created a named buffer beside NvimTree")
+
+  vim.cmd("tabclose!")
+  vim.api.nvim_buf_delete(only_tree_new_buf, { force = true })
+  vim.api.nvim_buf_delete(tree_only_buf, { force = true })
 end
 
 local function test_editor_text_helpers()

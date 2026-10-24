@@ -207,7 +207,27 @@ vim.api.nvim_create_autocmd("FileType", {
 })
 
 -- Files
-vim.keymap.set("n", "<leader>fn", "<cmd>enew<cr>", { desc = "New buffer" })
+local function new_buffer()
+  local current_win = vim.api.nvim_get_current_win()
+  local current_buf = vim.api.nvim_win_get_buf(current_win)
+  if vim.bo[current_buf].filetype ~= "NvimTree" then
+    vim.cmd("enew")
+    return
+  end
+
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    local buf = vim.api.nvim_win_get_buf(win)
+    if win ~= current_win and vim.bo[buf].buftype == "" and vim.bo[buf].filetype ~= "NvimTree" then
+      vim.api.nvim_set_current_win(win)
+      vim.api.nvim_win_set_buf(win, vim.api.nvim_create_buf(true, false))
+      return
+    end
+  end
+
+  vim.cmd("rightbelow vnew")
+end
+
+vim.keymap.set("n", "<leader>fn", new_buffer, { desc = "New buffer" })
 
 local function toggle_file_diff()
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
