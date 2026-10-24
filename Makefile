@@ -138,7 +138,7 @@ nvim-test: verify-agent-clis ## Run headless Neovim smoke tests
 	recent_paths_dir=$$(mktemp -d); \
 	trap 'rm -rf "$$recent_paths_dir"' EXIT; \
 	NVIM_RECENT_PATHS_FILE="$$recent_paths_dir/recent-paths.json" GOWORK=off \
-		nvim --headless "+luafile scripts/nvim-smoke-test.lua" +qa
+		nvim --headless "+luafile tests/nvim-smoke-test.lua" +qa
 
 agent-clis: ## Install terminal agent CLIs used by Neovim
 	chmod +x ./scripts/install-agent-clis.sh
@@ -223,59 +223,59 @@ test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-status-hoo
 
 .PHONY: nix-install-test
 nix-install-test: ## Verify Nix installation modes and privilege handling
-	sh ./scripts/install-nix-smoke-test.sh
+	sh ./tests/install-nix-smoke-test.sh
 
 mkws-test: ## Run mkws/meta-hub smoke tests
-	sh ./scripts/mkws-smoke-test.sh
+	sh ./tests/mkws-smoke-test.sh
 
 skills-hub-test: ## Run skills-hub smoke tests
-	sh ./scripts/skills-hub-smoke-test.sh
+	sh ./tests/skills-hub-smoke-test.sh
 
 cmds-hub-test: ## Run cmds-hub smoke tests
-	sh ./scripts/cmds-hub-smoke-test.sh
+	sh ./tests/cmds-hub-smoke-test.sh
 
 codex-config-test: ## Run Codex config smoke tests
-	sh ./scripts/codex-config-smoke-test.sh
+	sh ./tests/codex-config-smoke-test.sh
 
 agent-status-hooks-test: ## Run agent status hook smoke tests
-	sh ./scripts/agent-status-hooks-smoke-test.sh
+	sh ./tests/agent-status-hooks-smoke-test.sh
 
 agent-session-test: ## Run durable agent-session bridge smoke tests
-	sh ./scripts/agent-session-smoke-test.sh
+	sh ./tests/agent-session-smoke-test.sh
 
 mcursor-persist-test: ## Run native Cursor persist wrapper smoke tests
-	sh ./scripts/mcursor-persist-smoke-test.sh
+	sh ./tests/mcursor-persist-smoke-test.sh
 
 epoch-tools-test: ## Run epoch conversion command smoke tests
-	sh ./scripts/epoch-tools-smoke-test.sh
+	sh ./tests/epoch-tools-smoke-test.sh
 
 base64-tools-test: ## Run Base64 conversion command smoke tests
-	sh ./scripts/base64-tools-smoke-test.sh
+	sh ./tests/base64-tools-smoke-test.sh
 
 neovide-remote-test: ## Run remote Neovide smoke tests
-	sh ./scripts/neovide-remote-smoke-test.sh
+	sh ./tests/neovide-remote-smoke-test.sh
 
 tunnel-test: ## Run workspace tunnel smoke tests
-	sh ./scripts/tunnel-smoke-test.sh
+	sh ./tests/tunnel-smoke-test.sh
 
 wsync-test: ## Run guarded Mutagen workspace sync smoke tests
-	sh ./scripts/wsync-smoke-test.sh
+	sh ./tests/wsync-smoke-test.sh
 
 go-remote-test: ## Run automatic remote Go test routing smoke tests
-	sh ./scripts/go-remote-test-smoke-test.sh
+	sh ./tests/go-remote-test-smoke-test.sh
 
 go-wrapper-test: ## Run Go wrapper toolchain-selection smoke tests
-	sh ./scripts/go-wrapper-smoke-test.sh
+	sh ./tests/go-wrapper-smoke-test.sh
 
 workspace-shell-test: ## Run workspace shell and npm global-install smoke tests
-	sh ./scripts/workspace-shell-smoke-test.sh
-	bash ./scripts/npm-global-smoke-test.sh
+	sh ./tests/workspace-shell-smoke-test.sh
+	bash ./tests/npm-global-smoke-test.sh
 
 nix-test: ## Run Nix smoke tests
-	sh ./scripts/nix-smoke-test.sh
+	sh ./tests/nix-smoke-test.sh
 
 tmux-sidebar-test: ## Run tmux sidebar smoke tests
-	sh ./scripts/tmux-sidebar-smoke-test.sh
+	sh ./tests/tmux-sidebar-smoke-test.sh
 
 cleanup: ## Clean up ./tmp folder
 	rm -rf ./tmp
