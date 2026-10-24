@@ -68,7 +68,7 @@
             rustc
             rust-analyzer
             tree-sitter
-            typescript-go
+            typescript
             typescript-language-server
           ] ++ [
             treesitterParsersPackage
