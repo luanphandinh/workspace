@@ -353,6 +353,45 @@ PY
 		cd "$base_workspace"
 		mkws checkout >/dev/null
 	)
+	printf 'feature only\n' > "$base_workspace/repo-base-a/feature-only.txt"
+	git -C "$base_workspace/repo-base-a" add feature-only.txt
+	git -C "$base_workspace/repo-base-a" commit -q -m "add feature-only marker"
+	printf 'feature only\n' > "$base_workspace/repo-base-b/feature-only.txt"
+	git -C "$base_workspace/repo-base-b" add feature-only.txt
+	git -C "$base_workspace/repo-base-b" commit -q -m "add feature-only marker"
+	python3 - "$base_workspace/workspace.yml" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+branches = {
+    "repo-base-a": "feature/from-configured-base",
+    "repo-base-b": "feature/from-default-base",
+}
+repo = ""
+lines = []
+for line in path.read_text().splitlines():
+    if line.startswith("  - name:"):
+        repo = line.split(":", 1)[1].strip()
+    elif line.startswith("    branch_name:") and repo in branches:
+        line = f"    branch_name: {branches[repo]}"
+    lines.append(line)
+path.write_text("\n".join(lines) + "\n")
+PY
+	(
+		cd "$base_workspace"
+		mkws checkout > "$TMP/mkws-checkout-create.out"
+	)
+	assert_eq "feature/from-configured-base" "$(git -C "$base_workspace/repo-base-a" branch --show-current)"
+	assert_eq "feature/from-default-base" "$(git -C "$base_workspace/repo-base-b" branch --show-current)"
+	assert_not_exists "$base_workspace/repo-base-a/feature-only.txt"
+	assert_not_exists "$base_workspace/repo-base-b/feature-only.txt"
+	assert_contains "$TMP/mkws-checkout-create.out" "creating new branch feature/from-configured-base from feature/base-a"
+	assert_contains "$TMP/mkws-checkout-create.out" "creating new branch feature/from-default-base from main"
+	(
+		cd "$base_workspace"
+		mkws checkout feature/work >/dev/null
+	)
 
 	git -C "$root/repo-base-b" checkout -q -b feature/base-b
 	printf 'updated explicit base\n' > "$root/repo-base-b/base-b-update.txt"
