@@ -44,7 +44,7 @@ local function cached_finder(opts)
       local request_generation = generation
       timer:stop()
       finder:close()
-      opts.on_search()
+      opts.on_status(prompt and prompt ~= "" and "Searching…" or "Ready")
 
       active_prompt = prompt or ""
       active_results = {}
@@ -72,6 +72,7 @@ local function cached_finder(opts)
         end
         active_complete = true
         save(active_results)
+        opts.on_status("Finished")
         process_complete()
         return
       end
@@ -94,6 +95,7 @@ local function cached_finder(opts)
             if request_generation == generation then
               active_complete = true
               save(active_results)
+              opts.on_status("Finished")
               process_complete()
             end
           end)
@@ -130,6 +132,8 @@ function M.live_grep(default_text)
   local search_rules = require("luanphan.search_priority")
   local rules = search_rules.read_rules()
   local opts = vim.deepcopy(tconf.pickers.live_grep or {})
+  local results_title = opts.results_title or "Results"
+  opts.results_title = results_title .. " · Ready"
   opts.additional_args = function(config)
     return M.additional_args(config, rules)
   end
@@ -163,9 +167,12 @@ function M.live_grep(default_text)
     entry_maker = opts.entry_maker or make_entry.gen_from_vimgrep(opts),
     finders = finders,
     identity = identity,
-    on_search = function()
+    on_status = function(status)
       if picker and vim.api.nvim_buf_is_valid(picker.results_bufnr) then
-        vim.api.nvim_buf_set_lines(picker.results_bufnr, 0, -1, false, { "" })
+        if status == "Searching…" then
+          vim.api.nvim_buf_set_lines(picker.results_bufnr, 0, -1, false, { "" })
+        end
+        picker.layout.results.border:change_title(results_title .. " · " .. status)
       end
     end,
   })
