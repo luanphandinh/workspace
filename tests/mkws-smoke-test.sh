@@ -714,6 +714,14 @@ test_meta_hub() {
 	add_origin_remote "$root/station-a/repo-a" "$TMP/repo-a.git"
 	add_origin_remote "$root/station-a/_external/example-context" "$TMP/example-context.git"
 	add_origin_remote "$root/station-b/repo-b" "$TMP/repo-b.git"
+	init_repo "$root/station-a/group-a/repo-a"
+	init_repo "$root/station-a/group-b/repo-a"
+	add_origin_remote "$root/station-a/group-a/repo-a" "$TMP/group-a-repo-a.git"
+	add_origin_remote "$root/station-a/group-b/repo-a" "$TMP/group-b-repo-a.git"
+	git -C "$root/station-a/repo-a" worktree add -q --detach "$root/station-a/group-a/linked-repo" main
+	init_repo "$root/station-a/group-a/deeper/ignored-deep"
+	init_repo "$root/station-a/.hidden/ignored-hidden"
+	init_repo "$root/station-a/repo-a/ignored-nested"
 	git config --global user.name "Example User"
 	git config --global user.email "user@example.com"
 
@@ -762,12 +770,19 @@ test_meta_hub() {
 	assert_contains "$TMP/meta-index-a.out" "repo-a"
 	assert_contains "$TMP/meta-index-a.out" "=== external index ==="
 	assert_contains "$TMP/meta-index-a.out" "_external/example-context"
+	assert_contains "$clone/station-a/workstation.yml" 'path: "group-a/repo-a"'
+	assert_contains "$clone/station-a/workstation.yml" 'path: "group-b/repo-a"'
+	assert_contains "$clone/station-a/workstation.yml" 'path: "group-a/linked-repo"'
+	assert_not_contains "$clone/station-a/workstation.yml" "ignored-"
+	assert_not_contains "$clone/station-a/workstation.yml" "local_workspaces/"
 	assert_contains "$TMP/meta-index-a.out" "=== summary ==="
 	assert_contains "$TMP/meta-index-a.out" "workstation.yml: station-a/workstation.yml"
 	assert_contains "$TMP/meta-index-a.out" "workspace file: station-a/local_workspaces/feature-a/workspace.yml"
 	meta_hub index -p "$root/station-b" > "$TMP/meta-index-b.out"
 	init_repo "$root/station-b/repo-b2"
 	add_origin_remote "$root/station-b/repo-b2" "$TMP/repo-b2.git"
+	init_repo "$root/station-b/group-c/repo-c"
+	add_origin_remote "$root/station-b/group-c/repo-c" "$TMP/group-c-repo-c.git"
 	meta_hub index > "$TMP/meta-index-all.out"
 	assert_contains "$TMP/meta-index-all.out" "repo-b: already indexed"
 	assert_contains "$TMP/meta-index-all.out" "repo-b2"
@@ -792,16 +807,21 @@ test_meta_hub() {
 	assert_exists "$clone/station-b/local_workspaces/feature-b/workspace.yml"
 	assert_exists "$clone/.skills-hub/execute_plugins"
 	assert_exists "$clone/.cmds-hub/cmd_history"
-	assert_exists "$clone/.local/share/tmux/resurrect/last"
-	assert_exists "$clone/.config/tmux/pinned-sessions"
+	assert_not_exists "$clone/.local/share/tmux/resurrect/last"
+	assert_not_exists "$clone/.config/tmux/pinned-sessions"
 	assert_not_exists "$clone/station-a/local_workspaces/feature-a/repo-a/README.md"
 	assert_contains "$clone/station-a/workstation.yml" "name: \"repo-a\""
 	assert_contains "$clone/station-a/workstation.yml" "path: \"_external/example-context\""
 	assert_contains "$clone/station-b/workstation.yml" "name: \"repo-b2\""
+	assert_contains "$clone/station-a/workstation.yml" 'path: "repo-a"'
+	assert_contains "$clone/station-a/workstation.yml" 'path: "group-a/repo-a"'
+	assert_contains "$clone/station-a/workstation.yml" 'path: "group-b/repo-a"'
+	assert_contains "$clone/station-b/workstation.yml" 'path: "group-c/repo-c"'
+	assert_not_exists "$clone/station-a/group-a/repo-a/README.md"
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-base"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-base"
-	assert_contains "$clone/.local/share/tmux/resurrect/last" "base-session"
-	assert_contains "$clone/.config/tmux/pinned-sessions" "session-base"
+	assert_contains "$HOME/.local/share/tmux/resurrect/last" "base-session"
+	assert_contains "$HOME/.config/tmux/pinned-sessions" "session-base"
 
 	cat > "$clone/workstations.yml" <<EOF
 version: v1
@@ -876,6 +896,12 @@ EOF
 	assert_exists "$restore_root/station-a/repo-a/.git"
 	assert_exists "$restore_root/station-a/_external/example-context/.git"
 	assert_exists "$restore_root/station-b/repo-b/.git"
+	assert_exists "$restore_root/station-a/group-a/repo-a/.git"
+	assert_exists "$restore_root/station-a/group-b/repo-a/.git"
+	assert_exists "$restore_root/station-a/group-a/linked-repo/.git"
+	assert_exists "$restore_root/station-b/group-c/repo-c/.git"
+	assert_eq "$TMP/group-a-repo-a.git" "$(git -C "$restore_root/station-a/group-a/repo-a" remote get-url origin)"
+	assert_eq "$TMP/group-b-repo-a.git" "$(git -C "$restore_root/station-a/group-b/repo-a" remote get-url origin)"
 	assert_not_exists "$restore_root/station-a/workstation.yml"
 	assert_not_exists "$restore_root/station-b/workstation.yml"
 	assert_exists "$restore_root/station-a/local_workspaces/feature-a"
@@ -939,15 +965,13 @@ EOF
 	git -C "$other" pull -q --ff-only
 	printf 'plugin-remote\n' >> "$other/.skills-hub/execute_plugins"
 	printf 'cmd-remote\n' >> "$other/.cmds-hub/cmd_history"
-	printf 'session-remote\n' >> "$other/.config/tmux/pinned-sessions"
-	git -C "$other" add .skills-hub/execute_plugins .cmds-hub/cmd_history .config/tmux/pinned-sessions
+	git -C "$other" add .skills-hub/execute_plugins .cmds-hub/cmd_history
 	git -C "$other" commit -q -m "remote extra metadata"
 	git -C "$other" push -q origin main
 
 	printf 'plugin-local\n' >> "$clone/.skills-hub/execute_plugins"
 	printf 'cmd-local\n' >> "$clone/.cmds-hub/cmd_history"
-	printf 'session-local\n' >> "$clone/.config/tmux/pinned-sessions"
-	git -C "$clone" add .skills-hub/execute_plugins .cmds-hub/cmd_history .config/tmux/pinned-sessions
+	git -C "$clone" add .skills-hub/execute_plugins .cmds-hub/cmd_history
 	git -C "$clone" commit -q -m "local extra metadata"
 
 	meta_hub pull >/dev/null
@@ -955,11 +979,8 @@ EOF
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-remote"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-local"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-remote"
-	assert_contains "$clone/.config/tmux/pinned-sessions" "session-local"
-	assert_contains "$clone/.config/tmux/pinned-sessions" "session-remote"
 	assert_not_contains "$clone/.skills-hub/execute_plugins" "<<<<<<<"
 	assert_not_contains "$clone/.cmds-hub/cmd_history" "<<<<<<<"
-	assert_not_contains "$clone/.config/tmux/pinned-sessions" "<<<<<<<"
 
 	empty_root="$TMP/meta-hub-empty-root"
 	mkdir -p "$empty_root/station-b"

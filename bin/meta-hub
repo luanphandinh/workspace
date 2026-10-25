@@ -23,13 +23,6 @@ HOME_HISTORY_PATHS = (
     (Path(".skills-hub") / "execute_plugins", Path(".skills-hub") / "execute_plugins"),
     (Path(".cmds-hub") / "cmd_history", Path(".cmds-hub") / "cmd_history"),
 )
-EXTRA_SYNC_PATHS = HOME_HISTORY_PATHS + (
-    (
-        Path(".local") / "share" / "tmux" / "resurrect" / "last",
-        Path(".local") / "share" / "tmux" / "resurrect" / "last",
-    ),
-    (Path(".config") / "tmux" / "pinned-sessions", Path(".config") / "tmux" / "pinned-sessions"),
-)
 
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
@@ -492,13 +485,20 @@ def render_workstation_manifest(data: dict) -> str:
 
 
 def discover_workstation_repos(workstation_root: Path) -> list:
-    skipped = {WS_CONTAINER, TECH_DOC_DIR, EXTERNAL_DIR}
     repos = []
     for child in sorted(p for p in workstation_root.iterdir() if p.is_dir()):
-        if child.name.startswith(".") or child.name in skipped:
+        if child.name == EXTERNAL_DIR:
             continue
         if is_git_repo_path(child):
             repos.append(child)
+            continue
+        if child.name.startswith(".") or child.name == WS_CONTAINER:
+            continue
+        repos.extend(
+            nested
+            for nested in sorted(child.iterdir())
+            if is_git_repo_path(nested)
+        )
     return repos
 
 
@@ -530,7 +530,6 @@ def workstation_repo_record(workstation_root: Path, repo: Path) -> dict:
 def upsert_repo_records_with_stats(existing: list, discovered: list) -> tuple:
     indexed = normalize_workstation_repos(existing)
     by_path = {repo["path"]: repo for repo in indexed}
-    by_name = {repo["name"]: repo for repo in indexed}
     stats = {
         "added": 0,
         "updated": 0,
@@ -542,18 +541,16 @@ def upsert_repo_records_with_stats(existing: list, discovered: list) -> tuple:
     discovered_paths = set()
     for record in discovered:
         discovered_paths.add(record["path"])
-        current = by_path.get(record["path"]) or by_name.get(record["name"])
+        current = by_path.get(record["path"])
         if current is None:
             indexed.append(record)
             by_path[record["path"]] = record
-            by_name[record["name"]] = record
             status = "added"
             stats["added"] += 1
         else:
             if any(current.get(k, "") != record[k] for k in record):
                 current.update(record)
                 by_path[record["path"]] = current
-                by_name[record["name"]] = current
                 status = "updated"
                 stats["updated"] += 1
             else:
@@ -776,8 +773,6 @@ def merge_metadata_text(rel_path: Path, source_text: str, existing_text: str) ->
         return merge_workspace(source_text, existing_text)
     if rel_path == Path(".cmds-hub") / "cmd_history":
         return merge_lines(source_text, existing_text)
-    if rel_path == Path(".config") / "tmux" / "pinned-sessions":
-        return merge_lines(source_text, existing_text)
     if rel_path == Path(".skills-hub") / "execute_plugins" or (
         len(rel_path.parts) > 2 and rel_path.parts[:2] == (".skills-hub", "execute_plugins")
     ):
@@ -920,7 +915,7 @@ def copy_workspace_files(workstation_root: Path, clone: Path, dest_prefix: Path)
 
 def copy_extra_metadata(clone: Path) -> list:
     records = []
-    for source_rel, dest_rel in EXTRA_SYNC_PATHS:
+    for source_rel, dest_rel in HOME_HISTORY_PATHS:
         records.extend(merge_copy_path(Path.home() / source_rel, clone / dest_rel, dest_rel))
     return records
 
@@ -1342,8 +1337,6 @@ def resolve_conflicted_file(clone: Path, path: str) -> bool:
     elif name == WORKSPACE_FILE:
         merged = merge_workspace(local, remote)
     elif path_obj == Path(".cmds-hub") / "cmd_history":
-        merged = merge_lines(local, remote)
-    elif path_obj == Path(".config") / "tmux" / "pinned-sessions":
         merged = merge_lines(local, remote)
     elif path_obj == Path(".skills-hub") / "execute_plugins" or (
         len(path_obj.parts) > 2 and path_obj.parts[:2] == (".skills-hub", "execute_plugins")
