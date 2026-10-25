@@ -1658,12 +1658,12 @@ local function worktree_test_api()
     { "<leader>wa", "n" },
     { "<leader>wd", "n" },
     { "<leader>wr", "n" },
-    { "<leader>wr", "t" },
     { "<leader>wp", "n" },
     { "<leader>w;", "n" },
   }) do
     local map = vim.fn.maparg(mapping[1], mapping[2], false, true)
     assert_true(type(map) == "table" and type(map.callback) == "function", mapping[1] .. " was lost after lazy load")
+    assert_true(vim.fn.maparg(mapping[1], "t") == "", mapping[1] .. " intercepts terminal typing after lazy load")
   end
   return _G._luanphan_wt_test
 end
@@ -1682,10 +1682,9 @@ local function test_worktree_plugin_starts_lazy()
     type(repository_map) == "table" and type(repository_map.callback) == "function",
     "<leader>wr is not a lazy callback mapping"
   )
-  local terminal_repository_map = vim.fn.maparg("<leader>wr", "t", false, true)
   assert_true(
-    type(terminal_repository_map) == "table" and type(terminal_repository_map.callback) == "function",
-    "<leader>wr is not available from terminal mode"
+    vim.fn.maparg("<leader>wr", "t") == "",
+    "<leader>wr intercepts terminal typing before lazy load"
   )
   local workspace_map = vim.fn.maparg("<leader>ww", "n", false, true)
   assert_true(
@@ -1731,7 +1730,6 @@ local function test_worktree_keymaps_dispatch_to_pickers()
     { "<leader>wa", "n", "pick_add_repository" },
     { "<leader>wd", "n", "pick_remove_repository" },
     { "<leader>wr", "n", "pick_project" },
-    { "<leader>wr", "t", "pick_project" },
     { "<leader>wp", "n", "pick_workspace_project" },
     { "<leader>w;", "n", "pick_agent" },
   }) do

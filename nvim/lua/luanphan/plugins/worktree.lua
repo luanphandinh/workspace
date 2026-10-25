@@ -2216,7 +2216,7 @@ return {
       { "<leader>wf", picker("pick_folder"), desc = "Pick workspace folder" },
       { "<leader>wa", picker("pick_add_repository"), desc = "Add repository" },
       { "<leader>wd", picker("pick_remove_repository"), desc = "Remove repository" },
-      { "<leader>wr", picker("pick_project"), mode = { "n", "t" }, desc = "Pick repository" },
+      { "<leader>wr", picker("pick_project"), desc = "Pick repository" },
       { "<leader>wp", picker("pick_workspace_project"), desc = "Pick workspace" },
       { "<leader>w;", picker("pick_agent"), desc = "Switch active agent" },
     },
