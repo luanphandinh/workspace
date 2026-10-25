@@ -1495,11 +1495,13 @@ Usage:
   meta-hub -f <folder> -r <git-repository>
   meta-hub -r <git-repository>
   meta-hub index
+  meta-hub index --global
   meta-hub index -p <workstation-folder>
   meta-hub pull [pick]
   meta-hub push [pick]
 
 Options:
+  --global            index all registered workstations, regardless of current folder
   -f <folder>          source folder containing workstation metadata; defaults to .
   -p <folder>          workstation folder to index into metadata
   -r <git-repository> metadata git repository to clone/register
@@ -1519,10 +1521,13 @@ def main() -> None:
     if argv[0] == "index":
         argv.pop(0)
         path = ""
+        global_index = False
         i = 0
         while i < len(argv):
             arg = argv[i]
-            if arg == "-p":
+            if arg == "--global":
+                global_index = True
+            elif arg == "-p":
                 i += 1
                 if i >= len(argv):
                     die("-p requires a workstation folder")
@@ -1530,9 +1535,11 @@ def main() -> None:
             else:
                 die(f"unexpected args for index: {' '.join(argv)}\n\n{USAGE}")
             i += 1
+        if global_index and path:
+            die("--global cannot be combined with -p")
         if path:
             sys.exit(0 if index_entry_path(path) else 1)
-        workspace_dir = current_workspace()
+        workspace_dir = None if global_index else current_workspace()
         if workspace_dir is not None:
             sys.exit(0 if index_workspace(workspace_dir) else 1)
         entries = choose_entries(read_registry(), False)

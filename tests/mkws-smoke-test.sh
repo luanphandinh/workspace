@@ -1123,6 +1123,16 @@ $prefix/notes.md" "$(git -C "$clone" diff --name-only "$before" HEAD)"
 	assert_contains "$clone/station-a/local_workspaces/second/notes.md" "sibling change"
 	assert_contains "$clone/station-a/workstation.yml" "repo-new"
 	assert_contains "$clone/.cmds-hub/cmd_history" "history change"
+	mkdir -p "$root/station-b"
+	meta_hub index -p "$root/station-b" >/dev/null
+	init_repo "$root/station-b/repo-global"
+	printf 'global update\n' > "$station/local_workspaces/second/notes.md"
+	(cd "$first/repo-a" && meta_hub index --global) >/dev/null
+	assert_contains "$clone/station-b/workstation.yml" "repo-global"
+	assert_contains "$clone/station-a/local_workspaces/second/notes.md" "global update"
+	(cd "$station/local_workspaces/incomplete" && meta_hub index --global) >/dev/null
+	EXPECT='cannot be combined with -p' expect_fail_contains meta_hub index --global -p "$station"
+	EXPECT='cannot be combined with -p' expect_fail_contains meta_hub index -p "$station" --global
 	pass "meta-hub workspace index"
 )
 
