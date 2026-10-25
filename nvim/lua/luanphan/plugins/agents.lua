@@ -124,13 +124,13 @@ local function normalize_bufnrs(value)
   return type(value) == "table" and value or {}
 end
 
-local function agent_buffers(name, cwd)
+local function agent_buffers(name, cwd, closing_bufnr)
   local def = agent_defs[name]
   local buffers = def and vim.g[def.g_bufnr] or nil
   local result = {}
   local stored = type(buffers) == "table" and buffers[cwd] or nil
   for _, bufnr in ipairs(normalize_bufnrs(stored)) do
-    if terminal_running(bufnr) then
+    if bufnr == closing_bufnr or terminal_running(bufnr) then
       result[#result + 1] = bufnr
     end
   end
@@ -150,10 +150,10 @@ local function agent_buffer(name, cwd)
   return selected
 end
 
-local function open_tabs(cwd)
+local function open_tabs(cwd, closing_bufnr)
   local tabs = {}
   for _, name in ipairs(agent_order) do
-    local bufnrs = agent_buffers(name, cwd)
+    local bufnrs = agent_buffers(name, cwd, closing_bufnr)
     for index, bufnr in ipairs(bufnrs) do
       tabs[#tabs + 1] = {
         id = name .. ":" .. bufnr,
@@ -286,9 +286,16 @@ local function get_agent(name)
       agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
     end,
     on_quit = function(bufnr, cwd)
+      local tabs = open_tabs(cwd, bufnr)
+      local next_tab
+      for index, tab in ipairs(tabs) do
+        if tab.bufnr == bufnr then
+          next_tab = index > 1 and tabs[index - 1] or tabs[2]
+          break
+        end
+      end
       agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
       vim.schedule(function()
-        local next_tab = most_recent_tab(cwd)
         if next_tab then
           M.open(next_tab.agent, next_tab.bufnr, { view_mode = true })
         end

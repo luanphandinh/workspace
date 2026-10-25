@@ -4306,6 +4306,7 @@ local function test_agent_view_container(repo)
         and vim.api.nvim_get_current_buf() == agent_bufnr("cursor_agent_bufnr")
     end, 3000)
     local cursor_buf = agent_bufnr("cursor_agent_bufnr")
+    local first_cursor_buf = cursor_buf
     assert_true(vim.api.nvim_buf_is_valid(codex_buf), "opening another tab deleted the first terminal")
     assert_true(vim.api.nvim_get_current_win() == agent_win, "opening another agent replaced the container window")
     assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "opening another agent resized the container")
@@ -4502,11 +4503,29 @@ local function test_agent_view_container(repo)
     end
 
     vim.cmd("quit")
-    wait_until("agent close focuses another tab", function()
+    wait_until("agent close focuses left tab", function()
       return visible_agent_window_count() == 1
-        and vim.api.nvim_get_current_buf() ~= cursor_buf
+        and vim.api.nvim_get_current_buf() == first_cursor_buf
     end, 3000)
     assert_true(not vim.api.nvim_buf_is_valid(cursor_buf), "agent terminal :q did not close its TUI")
+
+    assert_true(agents.open("codex", codex_buf, { view_mode = true }), "could not focus the first agent tab before closing it")
+    wait_until("first agent tab before close", function()
+      return vim.api.nvim_get_current_buf() == codex_buf
+    end, 3000)
+    vim.cmd("quit")
+    wait_until("first agent close focuses right tab", function()
+      return visible_agent_window_count() == 1
+        and vim.api.nvim_get_current_buf() == second_codex_buf
+    end, 3000)
+    assert_true(not vim.api.nvim_buf_is_valid(codex_buf), "closing the first agent tab kept its TUI")
+
+    vim.fn.jobstop(vim.b[second_codex_buf].terminal_job_id)
+    wait_until("agent process exit focuses right tab", function()
+      return visible_agent_window_count() == 1
+        and vim.api.nvim_get_current_buf() == first_cursor_buf
+    end, 3000)
+    assert_true(not vim.api.nvim_buf_is_valid(second_codex_buf), "exited agent process kept its terminal buffer")
   end, debug.traceback)
 
   vim.env.PATH = old_path
@@ -5593,6 +5612,17 @@ local function test_agent_terminal_lifecycle(repo)
     return visible_toggleterm_window_count() > 0
   end, 3000)
   assert_true(visible_agent_window_count() == 0, "agent terminal remained visible after <leader>tt")
+
+  agent.toggle()
+  wait_until("agent terminal open before ctrl-d", function()
+    return visible_agent_window_count() == 1
+  end, 1000)
+  local exit_buf = vim.api.nvim_get_current_buf()
+  vim.fn.chansend(vim.b[exit_buf].terminal_job_id, "\004")
+  wait_until("agent terminal ctrl-d exit", function()
+    return not vim.api.nvim_buf_is_valid(exit_buf) and visible_agent_window_count() == 0
+  end, 3000)
+
   close_agent_terminals()
   vim.g.luanphan_agent_status_dir = original_status_dir
   vim.fn.delete(status_dir, "rf")

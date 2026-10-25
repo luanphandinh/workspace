@@ -662,7 +662,20 @@ local function attach_term_close(buf)
     buffer = buf,
     once = true,
     callback = function()
+      local win = win_for_buf(buf)
+      local cwd = vim.b[buf].luanphan_agent_cwd
+      if win and not vim.b[buf].luanphan_agent_quitting and cwd and profile.on_quit then
+        pcall(profile.on_quit, buf, cwd)
+      end
       clear_bufnr_for_buf(buf)
+      vim.schedule(function()
+        if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
+          pcall(vim.api.nvim_win_close, win, false)
+        end
+        if vim.api.nvim_buf_is_valid(buf) then
+          pcall(vim.api.nvim_buf_delete, buf, { force = true })
+        end
+      end)
     end,
   })
 end
@@ -677,16 +690,17 @@ local function attach_quit_detach(buf)
     buffer = buf,
     once = true,
     callback = function()
+      vim.b[buf].luanphan_agent_quitting = true
       local cwd = vim.b[buf].luanphan_agent_cwd
+      if cwd and profile.on_quit then
+        pcall(profile.on_quit, buf, cwd)
+      end
       local ok, job = pcall(vim.fn.getbufvar, buf, "terminal_job_id")
       if ok and valid_job_id(job) then
         pcall(vim.fn.jobstop, job)
         pcall(vim.fn.jobwait, { job }, 1000)
       end
-      cwd = clear_bufnr_for_buf(buf) or cwd
-      if cwd and profile.on_quit then
-        pcall(profile.on_quit, buf, cwd)
-      end
+      clear_bufnr_for_buf(buf)
       vim.schedule(function()
         if vim.api.nvim_buf_is_valid(buf) then
           pcall(vim.api.nvim_buf_delete, buf, { force = true })
