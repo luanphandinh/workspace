@@ -897,6 +897,13 @@ def copy_workspace_snapshot(src: Path, dest: Path, rel_prefix: Path) -> list:
     return records
 
 
+def replace_workspace_snapshot(src: Path, dest: Path, rel_prefix: Path) -> list:
+    if dest.exists() or dest.is_symlink():
+        remove_path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    return copy_workspace_snapshot(src, dest, rel_prefix)
+
+
 def copy_workspace_files(workstation_root: Path, clone: Path, dest_prefix: Path) -> list:
     records = []
     local_workspaces = workstation_root / WS_CONTAINER
@@ -906,10 +913,7 @@ def copy_workspace_files(workstation_root: Path, clone: Path, dest_prefix: Path)
         workspace_dir = workspace_yml.parent
         workspace_rel = workspace_dir.relative_to(workstation_root)
         destination = clone / dest_prefix / workspace_rel
-        if destination.exists() or destination.is_symlink():
-            remove_path(destination)
-        destination.mkdir(parents=True, exist_ok=True)
-        records.extend(copy_workspace_snapshot(workspace_dir, destination, dest_prefix / workspace_rel))
+        records.extend(replace_workspace_snapshot(workspace_dir, destination, dest_prefix / workspace_rel))
     return records
 
 
@@ -935,17 +939,19 @@ def print_restored_home_histories(records: list) -> None:
         info(f"{record['rel']}: {record['status']}")
 
 
-def commit_metadata_changes(clone: Path) -> bool:
-    proc = run(["git", "-C", str(clone), "add", "-A"])
+def commit_metadata_changes(clone: Path, rel_path: Path = None) -> bool:
+    scope = ["--", f":(literal){rel_path.as_posix()}"] if rel_path is not None else []
+    proc = run(["git", "-C", str(clone), "add", "-A", *scope])
     if proc.returncode != 0:
         die(f"git add failed in {clone}\n{(proc.stderr or proc.stdout).rstrip()}")
-    status = run(["git", "-C", str(clone), "status", "--porcelain"])
+    status = run(["git", "-C", str(clone), "status", "--porcelain", *scope])
     if not status.stdout.strip():
         info("no metadata changes")
         return False
 
     message = f"sync from {getpass.getuser()}@{socket.gethostname()}"
-    proc = run(["git", "-C", str(clone), "commit", "-m", message])
+    only = ["--only"] if scope else []
+    proc = run(["git", "-C", str(clone), "commit", "-m", message, *only, *scope])
     if proc.returncode != 0:
         die(f"git commit failed in {clone}\n{(proc.stderr or proc.stdout).rstrip()}")
     return True
@@ -1060,6 +1066,34 @@ def index_entry_path(path: str) -> bool:
             f"indexed {repo_count} repo(s), "
             f"{workspace_count} workspace file(s), {len(extra_records)} extra file(s)"
         )
+    return True
+
+
+def current_workspace() -> Path:
+    cwd = Path.cwd().resolve()
+    for candidate in (cwd, *cwd.parents):
+        if candidate.parent.name == WS_CONTAINER:
+            if not (candidate / WORKSPACE_FILE).is_file():
+                die(f"missing workspace manifest: {candidate / WORKSPACE_FILE}")
+            return candidate
+    return None
+
+
+def index_workspace(workspace_dir: Path) -> bool:
+    entry, root, rel_root = registered_entry_for_workstation(workspace_dir.parent.parent)
+    clone = Path(entry["clone"]).expanduser().resolve()
+    ensure_clone(entry["repo"], clone)
+    workspace_rel = workspace_dir.relative_to(root)
+    heading(f"index workspace {workspace_rel}")
+    if not pull_metadata(entry):
+        warn("skipping workspace index because remote pull did not complete")
+        return False
+    if not any(item.get("root") == rel_root for item in indexed_workstations_for_entry(entry)):
+        die("workstation is not indexed; run `meta-hub index -p <workstation-folder>` first")
+    records = replace_workspace_snapshot(workspace_dir, clone / workspace_rel, workspace_rel)
+    print_resolved_metadata_records(records)
+    if commit_metadata_changes(clone, workspace_rel):
+        ok(f"indexed workspace {workspace_rel}: {len(records)} file(s)")
     return True
 
 
@@ -1469,6 +1503,10 @@ Options:
   -f <folder>          source folder containing workstation metadata; defaults to .
   -p <folder>          workstation folder to index into metadata
   -r <git-repository> metadata git repository to clone/register
+
+Index scope:
+  Inside local_workspaces/<name>/ (or a subfolder), index only that workspace.
+  Elsewhere, index all registered workstations. Explicit -p indexes that workstation.
 """
 
 
@@ -1494,6 +1532,9 @@ def main() -> None:
             i += 1
         if path:
             sys.exit(0 if index_entry_path(path) else 1)
+        workspace_dir = current_workspace()
+        if workspace_dir is not None:
+            sys.exit(0 if index_workspace(workspace_dir) else 1)
         entries = choose_entries(read_registry(), False)
         ok_count = sum(1 for entry in entries if index_entry(entry))
         heading("summary")

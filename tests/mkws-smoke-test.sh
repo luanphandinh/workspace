@@ -1064,7 +1064,70 @@ EOF
 	pass "meta-hub"
 }
 
+test_meta_hub_workspace_index() (
+	export HOME="$TMP/scoped-home"
+	mkdir -p "$HOME"
+	git config --global user.name "Example User"
+	git config --global user.email "user@example.com"
+	root="$TMP/scoped-root"
+	station="$root/station-a"
+	init_repo "$station/repo-a"
+	add_origin_remote "$station/repo-a" "$TMP/scoped-repo.git"
+	init_repo "$TMP/scoped-seed"
+	git clone -q --bare "$TMP/scoped-seed" "$TMP/scoped-metadata.git"
+	meta_hub -f "$root" -r "$TMP/scoped-metadata.git" >/dev/null
+	for name in first second; do
+		(cd "$station" && mkws --name "$name" --branch "feature/$name" --add repo-a >/dev/null)
+		printf 'original\n' > "$station/local_workspaces/$name/notes.md"
+	done
+	first="$station/local_workspaces/first"
+	meta_hub index -p "$station" >/dev/null
+	clone="$HOME/.meta-hub/scoped-metadata"
+	prefix="station-a/local_workspaces/first"
+	before=$(git -C "$clone" rev-parse HEAD)
+	printf 'updated\n' > "$first/notes.md"
+	printf 'new\n' > "$first/new.md"
+	printf 'sibling change\n' > "$station/local_workspaces/second/notes.md"
+	mkdir -p "$HOME/.cmds-hub"
+	printf 'history change\n' > "$HOME/.cmds-hub/cmd_history"
+	init_repo "$station/repo-new"
+	printf 'staged unrelated\n' > "$clone/unrelated.txt"
+	git -C "$clone" add unrelated.txt
+	(cd "$first" && meta_hub index) > "$TMP/scoped-index.out"
+	assert_contains "$clone/$prefix/notes.md" "updated"
+	assert_exists "$clone/$prefix/new.md"
+	assert_contains "$clone/station-a/local_workspaces/second/notes.md" "original"
+	assert_not_contains "$clone/station-a/workstation.yml" "repo-new"
+	assert_not_exists "$clone/.cmds-hub/cmd_history"
+	assert_eq "unrelated.txt" "$(git -C "$clone" diff --cached --name-only)"
+	assert_eq "$prefix/new.md
+$prefix/notes.md" "$(git -C "$clone" diff --name-only "$before" HEAD)"
+	assert_eq "$(git -C "$clone" rev-parse "$before:registry.yml")" "$(git -C "$clone" rev-parse HEAD:registry.yml)"
+
+	rm "$first/new.md"
+	printf 'nested update\n' > "$first/notes.md"
+	(cd "$first/repo-a" && meta_hub index) >/dev/null
+	assert_not_exists "$clone/$prefix/new.md"
+	assert_contains "$clone/$prefix/notes.md" "nested update"
+	assert_not_exists "$clone/$prefix/repo-a"
+	assert_eq "unrelated.txt" "$(git -C "$clone" diff --cached --name-only)"
+	head=$(git -C "$clone" rev-parse HEAD)
+	(cd "$first/tech_doc" && meta_hub index) >/dev/null
+	assert_eq "$head" "$(git -C "$clone" rev-parse HEAD)"
+	assert_eq "unrelated.txt" "$(git -C "$clone" diff --cached --name-only)"
+	mkdir -p "$station/local_workspaces/incomplete"
+	(cd "$station/local_workspaces/incomplete" && EXPECT='missing workspace manifest' expect_fail_contains meta_hub index)
+	assert_eq "$head" "$(git -C "$clone" rev-parse HEAD)"
+
+	(cd "$first" && meta_hub index -p "$station") >/dev/null
+	assert_contains "$clone/station-a/local_workspaces/second/notes.md" "sibling change"
+	assert_contains "$clone/station-a/workstation.yml" "repo-new"
+	assert_contains "$clone/.cmds-hub/cmd_history" "history change"
+	pass "meta-hub workspace index"
+)
+
 test_mkws
 test_meta_hub
+test_meta_hub_workspace_index
 
 pass "all"
