@@ -1405,28 +1405,37 @@ def cmd_sync(folders: list, push: bool = False) -> int:
 
 
 # ---------------------------------------------------------------------------
-# remove one repository from a workspace
+# clean one or every worktree, optionally removing matching manifest entries
 # ---------------------------------------------------------------------------
-def cmd_remove(repo_name: str) -> int:
+def cmd_cleanup(repo_name: str, update_manifest: bool) -> int:
     workspace_dir = find_existing_workspace_context(Path.cwd())
     if workspace_dir is None:
-        die("'remove' must be run from inside a workspace")
+        die("must be run from inside a workspace")
 
     yml = workspace_dir / "workspace.yml"
     data = read_manifest(yml)
     repos = normalize_repos(data["repos"], data["branch_name"])
-    if repo_entry(repos, repo_name) is None:
-        die(f"{repo_name} is not recorded in this workspace")
+    if repo_name == "--all":
+        targets = repos
+    else:
+        target = repo_entry(repos, repo_name)
+        if target is None:
+            die(f"{repo_name} is not recorded in this workspace")
+        targets = [target]
 
     repo_root = workspace_dir.parent.parent
-    source_path = repo_root / repo_name
-    worktree_path = workspace_dir / repo_name
     cwd = Path.cwd().resolve()
+    action = "remove" if update_manifest else "clean"
 
-    if worktree_path.exists():
+    for repo in targets:
+        name = repo["name"]
+        source_path = repo_root / name
+        worktree_path = workspace_dir / name
+        if not worktree_path.exists():
+            continue
         resolved_worktree = worktree_path.resolve()
         if cwd == resolved_worktree or resolved_worktree in cwd.parents:
-            die(f"cannot remove the current worktree; run from {workspace_dir}")
+            die(f"cannot {action} the current worktree; run from {workspace_dir}")
         if not is_git_worktree(worktree_path):
             die(f"workspace path is not a git worktree: {worktree_path}")
         if not is_git_worktree(source_path):
@@ -1434,35 +1443,11 @@ def cmd_remove(repo_name: str) -> int:
 
         status = run(["git", "-C", str(worktree_path), "status", "--porcelain", "--untracked-files=normal"])
         if status.returncode != 0:
-            die(f"could not inspect {repo_name} for uncommitted changes")
+            die(f"could not inspect {name} for uncommitted changes")
         if status.stdout.strip():
-            die(f"{repo_name} has uncommitted changes; commit, stash, or discard them before removal")
+            die(f"{name} has uncommitted changes; commit, stash, or discard them before cleanup")
 
-        detached_path = workspace_dir / f".mkws-remove-{worktree_path.name}-{os.getpid()}"
-        suffix = 0
-        while detached_path.exists():
-            suffix += 1
-            detached_path = workspace_dir / f".mkws-remove-{worktree_path.name}-{os.getpid()}-{suffix}"
-        worktree_path.rename(detached_path)
-        removed = run(["git", "-C", str(source_path), "worktree", "remove", str(worktree_path)])
-        if removed.returncode != 0:
-            detached_path.rename(worktree_path)
-            output = (removed.stderr or removed.stdout).strip()
-            die(output or f"failed to remove worktree: {worktree_path}")
-        ok(f"detached worktree at {worktree_path}")
-    else:
-        detached_path = None
-        info(f"worktree already gone at {worktree_path}")
-
-    remaining = [repo for repo in repos if repo["name"] != repo_name]
-    write_manifest(yml, data["name"], data["branch_name"], remaining, data["links"])
-    ok(f"removed {repo_name} from {yml}")
-
-    if is_git_worktree(source_path):
-        run(["git", "-C", str(source_path), "worktree", "prune"])
-
-    if detached_path is not None:
-        cleanup_code = """\
+    cleanup_code = """\
 import os
 import shutil
 import sys
@@ -1473,89 +1458,47 @@ except OSError:
     pass
 shutil.rmtree(sys.argv[1], ignore_errors=True)
 """
-        try:
-            cleanup = subprocess.Popen(
-                [sys.executable, "-c", cleanup_code, str(detached_path)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-        except OSError as e:
-            warn(f"could not start background cleanup: {e}; remove {detached_path} manually")
+    target_names = {repo["name"] for repo in targets}
+
+    for repo in targets:
+        name = repo["name"]
+        heading(f"{action} {name}")
+        source_path = repo_root / name
+        worktree_path = workspace_dir / name
+
+        if worktree_path.exists():
+            detached_path = workspace_dir / f".mkws-cleanup-{worktree_path.name}-{os.getpid()}"
+            suffix = 0
+            while detached_path.exists():
+                suffix += 1
+                detached_path = workspace_dir / f".mkws-cleanup-{worktree_path.name}-{os.getpid()}-{suffix}"
+            worktree_path.rename(detached_path)
+            removed = run(["git", "-C", str(source_path), "worktree", "remove", str(worktree_path)])
+            if removed.returncode != 0:
+                detached_path.rename(worktree_path)
+                output = (removed.stderr or removed.stdout).strip()
+                die(output or f"failed to remove worktree: {worktree_path}")
+            ok(f"detached worktree at {worktree_path}")
         else:
-            ok(f"removed worktree; cleanup continues in background (pid {cleanup.pid})")
-
-    parent = worktree_path.parent
-    if parent != workspace_dir:
-        try:
-            parent.rmdir()
-        except OSError:
-            pass
-
-    return 0
-
-
-# ---------------------------------------------------------------------------
-# clean workspace mode: remove every code worktree listed in the manifest and prune the
-# source repos, but keep the workspace folder and workspace-level files. The
-# manifest is reset to an empty branch/repo list so docs and other workspace
-# artifacts remain available for future reuse.
-# ---------------------------------------------------------------------------
-def cmd_clean_workspace(folder: str = "") -> int:
-    path = Path(folder) if folder else Path.cwd()
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    if not path.is_dir():
-        die(f"not a directory: {folder}")
-    workspace_dir = path.resolve()
-    yml = workspace_dir / "workspace.yml"
-    if not yml.is_file():
-        die(f"no workspace.yml at {workspace_dir} (not a workspace)")
-
-    data = read_manifest(yml)
-    repos = repo_names(data["repos"])
-    repo_root = workspace_dir.parent.parent
-
-    # Collect unique source repos so we can prune each one once at the end,
-    # regardless of whether its worktree needed rm -rf fallback.
-    sources: list = []
-    seen: set = set()
-
-    for repo_key in repos:
-        heading(f"clean {repo_key}")
-        source_path = repo_root / repo_key
-        worktree_path = workspace_dir / repo_key
-        source_is_git = (source_path / ".git").is_dir()
-
-        if source_is_git and source_path not in seen:
-            sources.append(source_path)
-            seen.add(source_path)
-
-        if not worktree_path.exists():
+            detached_path = None
             info(f"worktree already gone at {worktree_path}")
-            continue
 
-        removed_via_git = False
-        if source_is_git:
-            proc = run(
-                ["git", "-C", str(source_path), "worktree", "remove",
-                 "--force", str(worktree_path)]
-            )
-            if proc.returncode == 0:
-                ok(f"removed worktree at {worktree_path}")
-                removed_via_git = True
-            else:
-                warn("git worktree remove failed, falling back to rm -rf")
-        else:
-            warn(f"source repo {source_path} not found, removing directly")
+        if is_git_worktree(source_path):
+            run(["git", "-C", str(source_path), "worktree", "prune"])
 
-        if not removed_via_git:
+        if detached_path is not None:
             try:
-                shutil.rmtree(worktree_path)
-                ok(f"removed directory {worktree_path}")
+                cleanup = subprocess.Popen(
+                    [sys.executable, "-c", cleanup_code, str(detached_path)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
             except OSError as e:
-                fail(f"failed to remove {worktree_path}: {e}")
+                warn(f"could not start background cleanup: {e}; remove {detached_path} manually")
+            else:
+                ok(f"removed worktree; cleanup continues in background (pid {cleanup.pid})")
 
         parent = worktree_path.parent
         if parent != workspace_dir:
@@ -1564,40 +1507,15 @@ def cmd_clean_workspace(folder: str = "") -> int:
             except OSError:
                 pass
 
-    if sources:
-        heading("prune source repos")
-        for src in sources:
-            proc = run(["git", "-C", str(src), "worktree", "prune"])
-            if proc.returncode == 0:
-                ok(f"pruned {src}")
-            else:
-                warn(f"prune failed for {src}")
-
-    heading("cleanup")
-    write_manifest(yml, name=data["name"] or workspace_dir.name, branch="", repos=[], links=data["links"])
-    ok(f"reset manifest at {yml}")
-    ok(f"kept workspace dir {workspace_dir}")
+    if update_manifest:
+        remaining = [repo for repo in repos if repo["name"] not in target_names]
+        write_manifest(yml, data["name"], data["branch_name"], remaining, data["links"])
+        ok(f"removed {len(targets)} repo(s) from {yml}")
 
     heading("summary")
-    info(f"workspace: {BOLD}{workspace_dir}{RESET} (kept)")
-    info(f"code repos cleaned: {len(repos)}")
+    info(f"worktrees cleaned: {len(targets)}")
+    info(f"manifest: {'updated' if update_manifest else 'unchanged'}")
     return 0
-
-
-def cmd_clean(folder: str = "") -> int:
-    if folder:
-        path = Path(folder)
-        if not path.is_absolute():
-            path = Path.cwd() / path
-        target = path.resolve()
-        if (target / "workspace.yml").is_file():
-            return cmd_clean_workspace(str(target))
-        die(f"no workspace.yml at {target}")
-
-    pwd = Path.cwd().resolve()
-    if (pwd / "workspace.yml").is_file():
-        return cmd_clean_workspace(str(pwd))
-    die(f"no workspace.yml at {pwd}")
 
 
 def cmd_migrate(folder: str) -> int:
@@ -2055,8 +1973,8 @@ Usage:
   mkws push [<folder>...]
   mkws merge <target> [<folder>...]
   mkws sync [--push] [<folder>...]
-  mkws remove <repo>
-  mkws clean [<workspace-folder>]
+  mkws remove <repo>|--all
+  mkws clean <repo>|--all
   mkws migrate [<workspace-folder>]
   mkws skill-sync
   mkws open [<name-or-link>]
@@ -2145,21 +2063,19 @@ Modes:
                mkws sync                     # pull+base-merge every repo
                mkws sync --push              # pull+base-merge+push every repo
                mkws sync repo-a              # just one repo, local only
-  remove     Remove one clean Git worktree from the current workspace and
-             delete its entry from workspace.yml. Refuses tracked, untracked,
-             or staged changes. Run from the workspace root when removing the
-             worktree containing the current shell.
+  remove     Clean one or every Git worktree and delete matching entries from
+             workspace.yml. Refuses tracked, untracked, or staged changes.
              Examples:
                mkws remove repo-a
                mkws remove group/repo-b
-  clean      Remove every code worktree listed in workspace.yml, prune the
-             source repos, keep workspace-level files, and reset workspace.yml
-             to an empty branch/repo list. DESTRUCTIVE for code worktrees —
-             uncommitted work there is lost (runs `git worktree remove
-             --force`). No confirmation prompt.
+               mkws remove --all
+  clean      Clean one or every Git worktree without changing workspace.yml.
+             Refuses tracked, untracked, or staged changes, so `mkws resume`
+             can recreate each cleaned worktree from the manifest.
              Examples:
-               mkws clean                    # current workspace
-               mkws clean ./local_workspaces/myws
+               mkws clean repo-a
+               mkws clean group/repo-b
+               mkws clean --all
   migrate    Rewrite an existing workspace.yml into the v2 manifest format.
              With no folder arg, migrates the current directory.
              Examples:
@@ -2281,14 +2197,17 @@ def parse_args(argv):
                     break
                 else:
                     target_paths.append(argv.pop(0))
-        elif sub == "remove":
-            mode = "remove"
+        elif sub in ("remove", "clean"):
+            mode = sub
             argv.pop(0)
-            if not (argv and not argv[0].startswith("-")):
-                die("'remove' requires one repository name")
-            target_path = argv.pop(0)
+            if argv and argv[0] == "--all":
+                target_path = argv.pop(0)
+            elif argv and not argv[0].startswith("-"):
+                target_path = argv.pop(0)
+            else:
+                die(f"'{sub}' requires one repository name or --all")
             if argv:
-                die("'remove' accepts one repository name")
+                die(f"'{sub}' accepts one repository name or --all")
         elif sub == "master":
             die("`mkws master` was removed; use direct git commands for destructive base resets")
         elif sub == "rebase":
@@ -2301,11 +2220,6 @@ def parse_args(argv):
             target_path = argv.pop(0)
             while argv and not argv[0].startswith("-"):
                 target_paths.append(argv.pop(0))
-        elif sub == "clean":
-            mode = "clean"
-            argv.pop(0)
-            if argv and not argv[0].startswith("-"):
-                target_path = argv.pop(0)
         elif sub == "migrate":
             mode = "migrate"
             argv.pop(0)
@@ -2405,18 +2319,14 @@ def main() -> None:
         if repos or branch or name or link_pairs:
             die("'sync' takes [--push] and folder path(s) only; --add/--branch/--name/--link are not accepted")
         sys.exit(cmd_sync(target_paths, push=sync_push))
-    if mode == "remove":
+    if mode in ("remove", "clean"):
         if repos or branch or name or link_pairs or target_paths or sync_push or checkout_base:
-            die("'remove' takes one repository name only")
-        sys.exit(cmd_remove(target_path))
+            die(f"'{mode}' takes one repository name or --all")
+        sys.exit(cmd_cleanup(target_path, update_manifest=mode == "remove"))
     if mode == "merge":
         if repos or branch or name or link_pairs:
             die("'merge' takes a target + folder path(s) only; --add/--branch/--name/--link are not accepted")
         sys.exit(cmd_merge(target_path, target_paths))
-    if mode == "clean":
-        if repos or branch or name or link_pairs or target_paths:
-            die("'clean' takes an optional folder path only; --add/--branch/--name/--link are not accepted")
-        sys.exit(cmd_clean(target_path))
     if mode == "migrate":
         if repos or branch or name or link_pairs or target_paths:
             die("'migrate' takes an optional workspace folder only; --add/--branch/--name/--link are not accepted")
