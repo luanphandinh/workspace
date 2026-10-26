@@ -23,6 +23,13 @@ assert_not_exists() {
 	fi
 }
 
+assert_not_symlink() {
+	if [ -L "$1" ]; then
+		printf 'unexpected symlink exists: %s\n' "$1" >&2
+		exit 1
+	fi
+}
+
 assert_symlink_target() {
 	if [ ! -L "$1" ]; then
 		printf 'expected symlink: %s\n' "$1" >&2
@@ -409,6 +416,54 @@ assert_not_exists "$PROJECT/.agents/skills/example-skill"
 assert_exists "$PROJECT/.claude/skills/other-skill/SKILL.md"
 assert_exists "$HUB/.agents/skills/example-skill/SKILL.md"
 assert_exists "$HOME/.agents/skills/global-skill/SKILL.md"
+
+mkdir -p \
+	"$HUB/.agents/skills/global-remove-skill" \
+	"$HUB/.claude/skills" \
+	"$HOME/workspace-a/.agents/skills" \
+	"$HOME/workspace-b/.agents/skills" \
+	"$HOME/workspace-c/.agents/skills" \
+	"$HOME/unrelated"
+printf '# global remove\n' > "$HUB/.agents/skills/global-remove-skill/SKILL.md"
+printf '# unrelated\n' > "$HOME/unrelated/SKILL.md"
+ln -s ../../.agents/skills/global-remove-skill "$HUB/.claude/skills/global-remove-skill"
+ln -s "$HUB/.agents/skills/global-remove-skill" "$HOME/workspace-a/.agents/skills/global-remove-skill"
+ln -s ../../../../hub/.agents/skills/global-remove-skill "$HOME/workspace-b/.agents/skills/global-remove-skill"
+ln -s "$HOME/unrelated" "$HOME/workspace-c/.agents/skills/global-remove-skill"
+
+: > "$FZF_INPUT"
+: > "$FZF_ARGS"
+(
+	cd "$PROJECT"
+	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
+		SKILLS_HUB_FZF_ARGS="$FZF_ARGS" \
+		SKILLS_HUB_FZF_OUTPUT=".agents/skills/global-remove-skill" \
+		python3 "$ROOT/bin/skills-hub" remove --global > "$TMP/remove-global.out"
+)
+
+assert_contains "$FZF_INPUT" ".agents/skills/global-remove-skill"
+assert_contains "$FZF_ARGS" "--multi --bind ctrl-a:select-all,ctrl-d:deselect-all"
+assert_contains "$TMP/remove-global.out" "skills-hub: [1/3] scanning 2 root(s) for links"
+assert_contains "$TMP/remove-global.out" "skills-hub: scan root 1/2:"
+assert_contains "$TMP/remove-global.out" "skills-hub: scan complete:"
+assert_contains "$TMP/remove-global.out" "skills-hub: [2/3] removing 3 link(s)"
+assert_contains "$TMP/remove-global.out" "skills-hub: removed link 1/3:"
+assert_contains "$TMP/remove-global.out" "skills-hub: removed link 3/3:"
+assert_contains "$TMP/remove-global.out" "skills-hub: [3/3] removing 1 source(s)"
+assert_contains "$TMP/remove-global.out" "skills-hub: removed source 1/1: .agents/skills/global-remove-skill"
+assert_contains "$TMP/remove-global.out" "skills-hub: removed 3 link(s)"
+assert_contains "$TMP/remove-global.out" "skills-hub: removed .agents/skills/global-remove-skill globally"
+python3 - "$TMP/remove-global.out" <<'PY'
+import sys
+
+text = open(sys.argv[1]).read()
+assert text.index("removed link 3/3") < text.index("removed source 1/1")
+PY
+assert_not_symlink "$HUB/.claude/skills/global-remove-skill"
+assert_not_symlink "$HOME/workspace-a/.agents/skills/global-remove-skill"
+assert_not_symlink "$HOME/workspace-b/.agents/skills/global-remove-skill"
+assert_not_exists "$HUB/.agents/skills/global-remove-skill"
+assert_symlink_target "$HOME/workspace-c/.agents/skills/global-remove-skill" "$HOME/unrelated"
 
 : > "$FZF_INPUT"
 (

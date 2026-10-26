@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -36,7 +37,7 @@ def usage() -> None:
   skills-hub pull
   skills-hub list [parent] [--all]
   skills-hub pick
-  skills-hub remove
+  skills-hub remove [--global]
   skills-hub group create [name]
   skills-hub group update [name]
   skills-hub group pick
@@ -50,7 +51,7 @@ Commands:
   pull    Replay every cached command from execute_plugins inside the managed skills-hub folder.
   list    List skills grouped by parent folder.
   pick    Pick hub skills with fzf and link them into the current folder.
-  remove  Pick local skills with fzf and remove them from the current folder.
+  remove  Pick skills with fzf and remove them locally, or globally with --global.
   group   Save, update, and install named skill groups.
   where   Print the managed skills-hub folder path.
   cat     Print the cached command file.
@@ -68,6 +69,7 @@ Example:
   skills-hub list .agents
   skills-hub list .agents --all
   skills-hub remove
+  skills-hub remove --global
   cd "$(skills-hub where)"
 """
     )
@@ -512,6 +514,86 @@ def remove_skill_paths(root: Path, selected: list[str]) -> int:
     return 0
 
 
+def global_scan_roots(home: Path) -> list[Path]:
+    roots = [Path.home()]
+    if not path_is_relative_to(home, roots[0]):
+        roots.append(home)
+    return roots
+
+
+def discover_skill_links(home: Path, sources: dict[str, Path]) -> dict[str, list[Path]]:
+    source_by_target = {path.resolve(): rel for rel, path in sources.items()}
+    source_names = {path.name for path in sources.values()}
+    links = {rel: [] for rel in sources}
+    skipped = {".git", ".cache", ".npm", ".Trash", "Library", "node_modules", "target", "vendor"}
+    roots = global_scan_roots(home)
+    scanned = 0
+    found = 0
+    last_progress = time.monotonic()
+
+    print(f"skills-hub: [1/3] scanning {len(roots)} root(s) for links", flush=True)
+    for index, root in enumerate(roots, 1):
+        print(f"skills-hub: scan root {index}/{len(roots)}: {root}", flush=True)
+        if not root.is_dir():
+            continue
+        for current, dirs, files in os.walk(root, topdown=True, followlinks=False):
+            scanned += 1
+            current_path = Path(current)
+            for name in dirs + files:
+                if name not in source_names:
+                    continue
+                path = current_path / name
+                if not path.is_symlink():
+                    continue
+                rel = source_by_target.get(path.resolve())
+                if rel is not None:
+                    links[rel].append(path)
+                    found += 1
+            dirs[:] = [name for name in dirs if name not in skipped and not (current_path / name).is_symlink()]
+            now = time.monotonic()
+            if now - last_progress >= 2:
+                print(f"skills-hub: scanning: {scanned} directories, {found} link(s) found", flush=True)
+                last_progress = now
+
+    for paths in links.values():
+        paths.sort()
+    print(f"skills-hub: scan complete: {scanned} directories, {found} link(s) found", flush=True)
+    return links
+
+
+def remove_global_skill_paths(home: Path, selected: list[str]) -> int:
+    skills = discover_skill_dirs(home)
+    sources = {}
+    for rel in dict.fromkeys(item.strip() for item in selected if item.strip()):
+        source = skills.get(rel)
+        if source is None:
+            die(f"selected skill is not in hub: {rel}")
+        sources[rel] = source
+
+    links = discover_skill_links(home, sources)
+    total_links = sum(len(paths) for paths in links.values())
+    print(f"skills-hub: [2/3] removing {total_links} link(s)", flush=True)
+    link_index = 0
+    for rel in sources:
+        for path in links[rel]:
+            path.unlink()
+            link_index += 1
+            print(f"skills-hub: removed link {link_index}/{total_links}: {path}", flush=True)
+        print(f"skills-hub: removed {len(links[rel])} link(s) for {rel}")
+
+    print(f"skills-hub: [3/3] removing {len(sources)} source(s)", flush=True)
+    for source_index, (rel, source) in enumerate(sources.items(), 1):
+        if source.is_symlink() or source.is_file():
+            source.unlink()
+        elif source.exists():
+            shutil.rmtree(source)
+        print(f"skills-hub: removed source {source_index}/{len(sources)}: {rel}", flush=True)
+        print(f"skills-hub: removed {rel} globally")
+
+    print(f"skills-hub: removed {len(sources)} skill(s) globally")
+    return 0
+
+
 def cmd_add(args: list[str]) -> int:
     home = hub_home()
     path = cache_file(home)
@@ -673,8 +755,34 @@ def cmd_pick() -> int:
     return install_skill_paths(home, selected)
 
 
-def cmd_remove() -> int:
+def cmd_remove(args: list[str]) -> int:
     home = hub_home()
+    global_remove = False
+    for arg in args:
+        if arg == "--global" and not global_remove:
+            global_remove = True
+            continue
+        die(f"unknown remove option: {arg}")
+
+    if global_remove:
+        skills = discover_skill_dirs(home)
+        if not skills:
+            print(f"skills-hub: no skills found under {home}")
+            return 0
+
+        code, output = run_fzf(list(skills.keys()), "skills-remove-global> ")
+        if code == 130:
+            print("skills-hub: no skills selected")
+            return 0
+        if code != 0:
+            return code
+
+        selected = [line.strip() for line in output if line.strip()]
+        if not selected:
+            print("skills-hub: no skills selected")
+            return 0
+        return remove_global_skill_paths(home, selected)
+
     root = Path.cwd()
     if path_is_relative_to(root, home):
         print("skills-hub: no local skills found")
@@ -890,9 +998,7 @@ def main() -> int:
             die("pick takes no args")
         return cmd_pick()
     if command == "remove":
-        if args:
-            die("remove takes no args")
-        return cmd_remove()
+        return cmd_remove(args)
     if command == "group":
         return cmd_group(args)
     if command == "where":
