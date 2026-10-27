@@ -710,7 +710,7 @@ local function attach_quit_detach(buf)
   })
 end
 
---- After <leader>rc, reconnect to any surviving agent terminal buffers.
+--- After <leader>src, reconnect to any surviving agent terminal buffers.
 local function restore_agent_bufnr()
   local stored = vim.g[G_BUFNR]
   state.bufnrs = {}

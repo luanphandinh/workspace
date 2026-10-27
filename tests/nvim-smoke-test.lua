@@ -132,6 +132,7 @@ local function make_fixture()
   vim.fn.mkdir(temp_root, "p")
   vim.g.luanphan_recent_paths_file = temp_root .. "/recent-paths.json"
   vim.g.luanphan_global_settings_path = temp_root .. "/global-settings.toml"
+  vim.g.luanphan_run_actions_path = temp_root .. "/run-actions.json"
 
   local repo = temp_root .. "/example-repo"
   local worktree = temp_root .. "/example-worktree"
@@ -1562,6 +1563,57 @@ local function test_ctrl_j_and_k_move_between_windows()
   assert_true(ok, tostring(err))
 end
 
+local function test_terminal_normal_mode_shows_shortcuts()
+  require("lazy").load({ plugins = { "which-key.nvim" }, wait = true })
+  local config = require("which-key.config")
+  if not config.loaded then
+    vim.api.nvim_exec_autocmds("VimEnter", {})
+  end
+  assert_true(vim.wait(1000, function()
+    return config.loaded == true
+  end), "which-key did not finish loading")
+
+  local original_buf = vim.api.nvim_get_current_buf()
+  local terminal_buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(terminal_buf)
+  vim.fn.termopen({ "sh", "-c", "sleep 30" })
+  vim.cmd("stopinsert")
+
+  local normal_map
+  local terminal_map
+  assert_true(vim.wait(1000, function()
+    vim.api.nvim_buf_call(terminal_buf, function()
+      normal_map = vim.fn.maparg("<Space>", "n", false, true)
+      terminal_map = vim.fn.maparg("<Space>", "t", false, true)
+    end)
+    return type(normal_map.callback) == "function"
+  end), "which-key did not attach its terminal normal-mode trigger")
+  assert_true(
+    type(normal_map.desc) == "string" and normal_map.desc:find("which%-key%-trigger") ~= nil,
+    "terminal normal mode should use a supported which-key trigger"
+  )
+  assert_true(vim.tbl_isempty(terminal_map), "terminal input mode should pass Space to the terminal")
+
+  local state = require("which-key.state")
+  local original_start = state.start
+  local started = false
+  state.start = function(opts)
+    started = opts.keys == "<Space>"
+    return true
+  end
+  normal_map.callback()
+  state.start = original_start
+  assert_true(started, "terminal normal mode Space did not start which-key")
+
+  local job = vim.b[terminal_buf].terminal_job_id
+  vim.api.nvim_set_current_buf(original_buf)
+  if type(job) == "number" and job > 0 then
+    pcall(vim.fn.jobstop, job)
+    pcall(vim.fn.jobwait, { job }, 1000)
+  end
+  vim.api.nvim_buf_delete(terminal_buf, { force = true })
+end
+
 local function test_toggle_icons_reflect_state()
   local icons = require("luanphan.toggle_icons")
   local old_case = vim.g.luanphan_live_grep_case_sensitive
@@ -1761,6 +1813,136 @@ local function test_telescope_keymaps_dispatch_to_modules()
   end
   local buffers_map = vim.fn.maparg("<leader>fl", "n", false, true)
   assert_true(buffers_map.rhs == "<cmd>Telescope buffers<cr>", "<leader>fl does not run Telescope buffers")
+end
+
+local function test_run_actions(repo)
+  require("lazy").load({ plugins = { "luanphan-actions", "telescope.nvim" } })
+  local run_actions = require("luanphan.run_actions")
+  local config_path = vim.g.luanphan_run_actions_path
+  local original_cwd = vim.fn.getcwd()
+  local original_buf = vim.api.nvim_get_current_buf()
+  vim.fn.delete(config_path)
+
+  local defaults = run_actions.read()
+  assert_true(vim.fn.filereadable(config_path) == 1, "run action config was not created")
+  assert_true(#defaults == 1 and defaults[1].cmd == "python3", "run action config has the wrong default")
+  assert_true(
+    vim.deep_equal(defaults[1].args, { "{{FILE_NAME}}" }),
+    "run action config does not pass the current file"
+  )
+
+  local script = repo .. "/nested folder/example script.py"
+  write(script, { "print('ok')" })
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  vim.cmd("edit " .. vim.fn.fnameescape(script))
+  local current_file = vim.api.nvim_buf_get_name(0)
+
+  local terminal = require("luanphan.terminal")
+  local original_run_command = terminal.run_command
+  local execution
+  terminal.run_command = function(command, cwd, label)
+    execution = { command = command, cwd = cwd, label = label }
+  end
+  run_actions.run({
+    name = "Run current script",
+    cmd = "python3",
+    args = { "{{FILE_NAME}}", "--mode", "quick" },
+  })
+  terminal.run_command = original_run_command
+  vim.api.nvim_set_current_buf(original_buf)
+  vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+
+  assert_true(execution ~= nil, "run action did not execute in a terminal")
+  assert_true(realpath(execution.cwd) == realpath(repo), "run action used the wrong working directory")
+  assert_true(execution.label == "Run current script", "run action used the wrong terminal label")
+  assert_true(
+    execution.command:find(vim.fn.shellescape(current_file), 1, true) ~= nil,
+    "run action did not expand FILE_NAME to the nested current file"
+  )
+
+  close_toggleterm_terminals()
+  vim.cmd("cd " .. vim.fn.fnameescape(repo))
+  vim.cmd("edit " .. vim.fn.fnameescape(script))
+  run_actions.run({
+    name = "Run action output",
+    cmd = "/bin/sh",
+    args = { "-c", "printf 'run-action-output\\n'" },
+  })
+  local action_buf = vim.api.nvim_get_current_buf()
+  assert_true(vim.b[action_buf].luanphan_toggleterm, "run action did not open in the terminal container")
+  assert_true(rendered_winbar():find("Run action output", 1, true), "run action terminal tab label is missing")
+  wait_until("run action terminal output", function()
+    return table.concat(vim.api.nvim_buf_get_lines(action_buf, 0, -1, false), "\n")
+      :find("run-action-output", 1, true) ~= nil
+  end, 3000)
+  close_toggleterm_terminals()
+  vim.api.nvim_set_current_buf(original_buf)
+  vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+
+  vim.fn.writefile({ vim.json.encode({
+    name = "Single action",
+    cmd = "python3",
+    args = { "{{FILE_NAME}}" },
+  }) }, config_path)
+  local configured = run_actions.read()
+  assert_true(#configured == 1 and configured[1].name == "Single action", "single run action object was not accepted")
+
+  local picker_test = temp_root .. "/run-action-picker.lua"
+  write(picker_test, {
+    "local function assert_true(value, message) if not value then error(message, 0) end end",
+    "vim.g.luanphan_run_actions_path = " .. string.format("%q", config_path),
+    "require('lazy').load({ plugins = { 'luanphan-actions', 'telescope.nvim' } })",
+    "require('luanphan.run_actions').pick()",
+    "local prompt_buf = vim.api.nvim_get_current_buf()",
+    "assert_true(vim.bo[prompt_buf].filetype == 'TelescopePrompt', 'run action picker did not open')",
+    "local prompt_win = vim.api.nvim_get_current_win()",
+    "local results_win = -1",
+    "for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do",
+    "  if vim.api.nvim_buf_is_valid(bufnr) and vim.bo[bufnr].filetype == 'TelescopeResults' then",
+    "    results_win = vim.fn.bufwinid(bufnr)",
+    "    if results_win ~= -1 then break end",
+    "  end",
+    "end",
+    "assert_true(vim.api.nvim_win_get_width(prompt_win) < vim.o.columns * 0.4, 'run action picker is too wide')",
+    "assert_true(results_win ~= -1, 'run action picker results did not open')",
+    "assert_true(vim.api.nvim_win_get_height(results_win) < vim.o.lines * 0.4, 'run action picker is too tall')",
+    "require('telescope.actions').close(prompt_buf)",
+  })
+  local picker_output = vim.fn.systemlist(child_nvim_luafile_command(repo, picker_test))
+  assert_true(vim.v.shell_error == 0, table.concat(picker_output, "\n"))
+
+  local settings_editor = require("luanphan.settings_editor")
+  local original_open = settings_editor.open
+  local editor
+  settings_editor.open = function(path, opts)
+    editor = { path = path, opts = opts }
+  end
+  run_actions.open_editor()
+  settings_editor.open = original_open
+  assert_true(editor and editor.path == config_path, "run action editor opened the wrong file")
+  assert_true(editor.opts.filetype == "json", "run action editor did not use JSON")
+
+  local picked = false
+  local configured_opened = false
+  local original_pick = run_actions.pick
+  local original_open_editor = run_actions.open_editor
+  run_actions.pick = function()
+    picked = true
+  end
+  run_actions.open_editor = function()
+    configured_opened = true
+  end
+  local run_map = vim.fn.maparg("<leader>rr", "n", false, true)
+  local config_map = vim.fn.maparg("<leader>rc", "n", false, true)
+  run_map.callback()
+  config_map.callback()
+  run_actions.pick = original_pick
+  run_actions.open_editor = original_open_editor
+  assert_true(picked, "<leader>rr did not open the run action picker")
+  assert_true(configured_opened, "<leader>rc did not open the run action config")
+
+  local reload_map = vim.fn.maparg("<leader>src", "n", false, true)
+  assert_true(type(reload_map) == "table" and reload_map.desc == "Config", "config restart did not move to <leader>src")
 end
 
 local function test_editor_runtime_defaults()
@@ -5205,12 +5387,13 @@ local function test_lsp_restart_reattaches_current_client_only(repo, worktree)
     return cmp_nvim_lsp.client_source_map[old_client.id] ~= nil
   end, 5000)
 
-  local restart_map = vim.fn.maparg("<leader>rl", "n", false, true)
-  assert_true(type(restart_map) == "table" and restart_map.desc == "LSP", "<leader>rl should be the combined LSP restart")
+  local restart_map = vim.fn.maparg("<leader>srl", "n", false, true)
+  assert_true(type(restart_map) == "table" and restart_map.desc == "LSP", "<leader>srl should be the combined LSP restart")
+  assert_true(vim.fn.maparg("<leader>rl", "n") == "", "<leader>rl should be removed")
   assert_true(vim.fn.maparg("<leader>rb", "n") == "", "<leader>rb should be removed")
   assert_true(vim.fn.maparg("<leader>rg", "n") == "", "<leader>rg should be removed")
   vim.api.nvim_set_current_buf(extra_buf)
-  invoke_map("<leader>rl")
+  invoke_map("<leader>srl")
 
   wait_until("gopls restart reattach", function()
     local main_client = active_lsp_client(main_buf, "gopls")
@@ -6561,6 +6744,7 @@ local agent_tests = {
   reference_links = test_terminal_reference_links,
   reference_view = test_agent_terminal_reference_restores_view,
   send_selection = test_leader_semicolon_sends_visual_selection_to_active_agent,
+  terminal_shortcuts = test_terminal_normal_mode_shows_shortcuts,
   view_container = test_agent_view_container,
 }
 
@@ -6578,6 +6762,7 @@ local safe_cleanup_tests = {
   filetype_options = test_filetype_editor_options,
   only_keep_tree = test_only_keep_tree_closes_other_windows,
   repository_remove = test_remove_repository_from_workspace,
+  run_actions = test_run_actions,
   telescope_keymaps = test_telescope_keymaps_dispatch_to_modules,
   telescope_runtime_defaults = test_telescope_runtime_defaults,
   toggle_gitignore = test_gitignore_toggle_updates_telescope,
@@ -6621,6 +6806,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("telescope keymaps dispatch to their modules", function()
     safe_cleanup_tests.telescope_keymaps()
+  end)
+
+  test("run actions use configured command and current file", function()
+    safe_cleanup_tests.run_actions(repo)
   end)
 
   test("telescope runtime defaults filter and rank files", function()
@@ -6777,6 +6966,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("agent terminal reference restores scrollback view", function()
     agent_tests.reference_view(repo)
+  end)
+
+  test("terminal normal mode shows leader shortcuts", function()
+    agent_tests.terminal_shortcuts()
   end)
 
   test("agent keys invoke cli commands inside nvim", function()

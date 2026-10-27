@@ -165,7 +165,7 @@ end, { desc = "Close other files (!) discard unsaved in closed buffers" })
 -- Config
 -- Full reload: luafile init (not :source — that is for Vimscript; init.lua needs :luafile).
 -- Some plugins cache state after setup; restart Neovim if maps stay wrong.
-vim.keymap.set("n", "<leader>rc", function()
+vim.keymap.set("n", "<leader>src", function()
   for k in pairs(package.loaded) do
     if k:match("^luanphan") then
       package.loaded[k] = nil
@@ -188,7 +188,7 @@ vim.keymap.set("n", "<leader>rc", function()
 end, { desc = "Config" })
 
 -- LSP
-vim.keymap.set("n", "<leader>rl", "<cmd>lsp restart<cr>", { desc = "LSP" })
+vim.keymap.set("n", "<leader>srl", "<cmd>lsp restart<cr>", { desc = "LSP" })
 
 -- AI
 vim.keymap.set("n", "<leader>tc", function()
