@@ -3944,6 +3944,7 @@ local function test_terminal_reference_links()
   )
 
   local click_map = vim.fn.maparg("<M-LeftMouse>", "n", false, true)
+  local command_click_map = vim.fn.maparg("<D-LeftMouse>", "n", false, true)
   local terminal_click_map = vim.fn.maparg("<M-LeftMouse>", "t", false, true)
   assert_true(
     type(click_map) == "table" and type(click_map.callback) == "function",
@@ -3952,6 +3953,10 @@ local function test_terminal_reference_links()
   assert_true(
     type(terminal_click_map) == "table" and type(terminal_click_map.callback) == "function",
     "terminal reference terminal-mode click mapping is missing"
+  )
+  assert_true(
+    type(command_click_map) == "table" and type(command_click_map.callback) == "function",
+    "terminal reference command-click mapping is missing"
   )
 
   local clicked_target = nil
@@ -4096,6 +4101,44 @@ local function test_terminal_reference_links()
     clicked_url == "https://example.com/a/very/long/path/to/resource?query=value&other=yes#part",
     "wrapped URL continuation opened the wrong URL: " .. tostring(clicked_url)
   )
+
+  vim.api.nvim_win_set_width(narrow_win, 70)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "apply (https://example.invalid/access?payload=%7B%22auth_typ",
+    "    e%22%3A%22person%22%2C%22role%22%3A%22tester%22%7D).",
+  })
+  assert_true(
+    vim.fn.strdisplaywidth(vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]) < vim.api.nvim_win_get_width(narrow_win),
+    "hard-wrapped URL fixture unexpectedly fills the window"
+  )
+  local click_remote = require("luanphan.remote_tunnel")
+  local original_click_remote_enabled = click_remote.enabled
+  local original_click_ui_open = vim.ui.open
+  click_remote.enabled = function()
+    return false
+  end
+  vim.ui.open = function(url)
+    clicked_url = url
+    return true
+  end
+  references.open_url = original_open_url
+  vim.g.neovide = true
+  clicked_url = nil
+  vim.fn.getmousepos = function()
+    return { winid = narrow_win, line = 2, column = 8 }
+  end
+  assert_true(command_click_map.callback() == "<Ignore>", "hard-wrapped command-click URL was not consumed")
+  vim.wait(50, function()
+    return clicked_url ~= nil
+  end)
+  assert_true(
+    clicked_url == "https://example.invalid/access?payload=%7B%22auth_type%22%3A%22person%22%2C%22role%22%3A%22tester%22%7D",
+    "hard-wrapped command-click opened the wrong URL: " .. tostring(clicked_url)
+  )
+  assert_true(not clicked_url:find("%s"), "hard-wrapped command-click URL contains whitespace")
+  vim.g.neovide = false
+  click_remote.enabled = original_click_remote_enabled
+  vim.ui.open = original_click_ui_open
   vim.api.nvim_win_close(narrow_win, true)
   vim.api.nvim_set_current_win(reference_win)
   references.open = original_open

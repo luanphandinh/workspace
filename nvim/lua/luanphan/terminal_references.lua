@@ -125,15 +125,15 @@ local function wrapped_url_at(line_at, row, column, text_width)
         local previous_text = start_text
 
         while next_row < start_row + max_wrapped_lines do
-          if vim.fn.strdisplaywidth(previous_text) < text_width then
-            break
-          end
           local next_text = line_at(next_row)
           if not next_text then
             break
           end
           local fragment = leading_url_fragment(next_text)
           if not fragment then
+            break
+          end
+          if vim.fn.strdisplaywidth(previous_text) < text_width and fragment.first_col == 0 then
             break
           end
 
