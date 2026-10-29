@@ -3,8 +3,11 @@ local M = {}
 -- State for gitignore visibility
 local show_gitignore = false
 
-function M.toggle_gitignore()
-  show_gitignore = not show_gitignore
+function M.set_gitignore_visible(visible)
+  if show_gitignore == visible then
+    return
+  end
+  show_gitignore = visible
 
   -- Snapshot the tree window's width BEFORE toggling. nvim-tree's
   -- toggle/reload path resizes to the default `view.width` in some
@@ -57,7 +60,10 @@ function M.toggle_gitignore()
       },
     },
   })
+end
 
+function M.toggle_gitignore()
+  M.set_gitignore_visible(not show_gitignore)
   print("Gitignore visibility: " .. (show_gitignore and "ON" or "OFF"))
 end
 

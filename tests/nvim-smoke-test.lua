@@ -2259,6 +2259,84 @@ local function test_dependency_tree_keeps_workspace_tree(repo)
   assert_true(ok, err)
 end
 
+local function test_file_tree_focuses_current_file(repo)
+  local tree_api = require("nvim-tree.api")
+  local original_cwd = vim.fn.getcwd()
+  local terminal_file = repo .. "/terminal-focus.txt"
+  local hidden_file = repo .. "/.hidden-focus.txt"
+  local ignored_file = repo .. "/generated/ignored-focus.txt"
+  local stale_root = temp_root .. "/stale-tree-root"
+  write(terminal_file, { "terminal focus" })
+  write(hidden_file, { "hidden focus" })
+  write(ignored_file, { "ignored focus" })
+  write(repo .. "/.git/info/exclude", { "generated/" })
+  vim.fn.mkdir(stale_root, "p")
+
+  local function selected_tree_file()
+    local node = tree_api.tree.get_node_under_cursor()
+    return node and realpath(node.absolute_path) or nil
+  end
+
+  local terminal_win
+  local ok, err = xpcall(function()
+    vim.cmd("cd " .. vim.fn.fnameescape(repo))
+    vim.cmd("edit " .. vim.fn.fnameescape(terminal_file))
+    local editor_win = vim.api.nvim_get_current_win()
+    tree_api.tree.open({ path = repo, focus = false })
+    tree_api.tree.change_root(repo)
+    local tree_win = tree_api.tree.winid()
+    assert_true(tree_win and vim.api.nvim_win_is_valid(tree_win), "workspace tree did not open")
+
+    vim.api.nvim_set_current_win(editor_win)
+    local terminal_buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_open_term(terminal_buf, {})
+    terminal_win = vim.api.nvim_open_win(terminal_buf, true, {
+      relative = "editor",
+      row = 1,
+      col = 1,
+      width = 20,
+      height = 5,
+      style = "minimal",
+    })
+    invoke_map("<leader>e")
+    assert_true(vim.bo.filetype == "NvimTree", "terminal focus did not open the workspace tree")
+    assert_true(selected_tree_file() == realpath(terminal_file), "terminal focus did not select the visible editor file")
+    vim.api.nvim_win_close(terminal_win, true)
+    terminal_win = nil
+
+    vim.api.nvim_set_current_win(editor_win)
+    vim.cmd("edit " .. vim.fn.fnameescape(repo .. "/main.go"))
+    tree_api.tree.change_root(stale_root)
+    invoke_map("<leader>e")
+    assert_true(realpath(require("nvim-tree.core").get_cwd()) == realpath(repo), "file focus did not repair the tree root")
+    assert_true(selected_tree_file() == realpath(repo .. "/main.go"), "repaired tree did not select the current file")
+
+    vim.api.nvim_set_current_win(editor_win)
+    vim.cmd("edit " .. vim.fn.fnameescape(hidden_file))
+    invoke_map("<leader>e")
+    assert_true(selected_tree_file() == realpath(hidden_file), "workspace tree did not reveal the current dotfile")
+    assert_true(vim.g.luanphan_show_dotfiles == 1, "dotfile visibility did not stay synchronized with file search")
+    invoke_map("H")
+
+    vim.api.nvim_set_current_win(editor_win)
+    vim.cmd("edit " .. vim.fn.fnameescape(ignored_file))
+    invoke_map("<leader>e")
+    assert_true(selected_tree_file() == realpath(ignored_file), "workspace tree did not reveal the current ignored file")
+  end, debug.traceback)
+
+  if terminal_win and vim.api.nvim_win_is_valid(terminal_win) then
+    vim.api.nvim_win_close(terminal_win, true)
+  end
+  if vim.g.luanphan_show_dotfiles == 1 then
+    tree_api.filter.dotfiles.toggle()
+    vim.g.luanphan_show_dotfiles = 0
+  end
+  require("luanphan.actions").set_gitignore_visible(false)
+  tree_api.tree.close()
+  vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  assert_true(ok, err)
+end
+
 local function test_searches_follow_tree_dotfiles()
   local fixture = temp_root .. "/live-grep-hidden"
   write(fixture .. "/visible.txt", { "search target" })
@@ -6802,6 +6880,7 @@ local safe_cleanup_tests = {
   ctrl_f_navigation = test_ctrl_f_uses_native_navigation,
   editor_defaults = test_editor_runtime_defaults,
   editor_text_helpers = test_editor_text_helpers,
+  file_tree_focus = test_file_tree_focuses_current_file,
   filetype_options = test_filetype_editor_options,
   only_keep_tree = test_only_keep_tree_closes_other_windows,
   repository_remove = test_remove_repository_from_workspace,
@@ -6869,6 +6948,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("external files use a temporary dependency tree", function()
     test_dependency_tree_keeps_workspace_tree(repo)
+  end)
+
+  test("file tree focuses the current file", function()
+    safe_cleanup_tests.file_tree_focus(repo)
   end)
 
   test("file searches follow nvim-tree dotfile visibility", function()

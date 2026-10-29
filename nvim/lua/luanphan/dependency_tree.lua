@@ -31,6 +31,42 @@ local function dependency_window()
   end
 end
 
+local function editor_file()
+  local function from_window(win)
+    if not win or not vim.api.nvim_win_is_valid(win) then
+      return nil
+    end
+    local buf = vim.api.nvim_win_get_buf(win)
+    if vim.bo[buf].buftype ~= "" then
+      return nil
+    end
+    local file = normalize(vim.api.nvim_buf_get_name(buf))
+    if not file or vim.fn.filereadable(file) ~= 1 then
+      return nil
+    end
+    return file, win, buf
+  end
+
+  local current = vim.api.nvim_get_current_win()
+  local file, win, buf = from_window(current)
+  if file then
+    return file, win, buf
+  end
+
+  local previous = vim.fn.win_getid(vim.fn.winnr("#"))
+  file, win, buf = from_window(previous)
+  if file then
+    return file, win, buf
+  end
+
+  for _, candidate in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    file, win, buf = from_window(candidate)
+    if file then
+      return file, win, buf
+    end
+  end
+end
+
 local function open_selected_dependency(win)
   local selected = vim.fn["netrw#Call"]("NetrwGetWord")
   local path = normalize(vim.fn["netrw#Call"]("NetrwBrowseChgDir", 1, selected, 1, 1))
@@ -81,13 +117,13 @@ local function focus_dependency_file(win, buf, file)
   end
 end
 
-local function open_dependency_tree(file)
+local function open_dependency_tree(file, editor_win)
   local root = normalize(vim.fn.fnamemodify(file, ":h"))
   if not root then
     return
   end
 
-  local editor_win = vim.api.nvim_get_current_win()
+  editor_win = editor_win or vim.api.nvim_get_current_win()
   local win, buf = dependency_window()
   if not win then
     vim.cmd("botright vnew")
@@ -111,6 +147,68 @@ local function open_dependency_tree(file)
   focus_dependency_file(win, buf, file)
 end
 
+local function filter_enabled(name)
+  local ok, core = pcall(require, "nvim-tree.core")
+  local explorer = ok and core.get_explorer() or nil
+  return explorer and explorer.filters and explorer.filters.state[name] == true
+end
+
+local function has_dot_component(file, root)
+  if not root or not is_within(file, root) then
+    return false
+  end
+  for component in file:sub(#root + 2):gmatch("[^/]+") do
+    if component:sub(1, 1) == "." then
+      return true
+    end
+  end
+  return false
+end
+
+local function is_git_ignored(file)
+  local root = vim.fs.root(file, ".git")
+  if not root then
+    return false
+  end
+  local result = vim
+    .system({ "git", "-C", root, "check-ignore", "-q", "--", file }, { text = true })
+    :wait()
+  return result.code == 0
+end
+
+local function selected_file(tree_api, file)
+  local node = tree_api.tree.get_node_under_cursor()
+  return node and normalize(node.absolute_path) == file
+end
+
+local function focus_workspace_file(tree_api, file, buf, workspace)
+  local opts = { buf = buf, open = true, focus = true, update_root = true }
+  tree_api.tree.find_file(opts)
+  if selected_file(tree_api, file) then
+    return
+  end
+
+  tree_api.tree.reload()
+  tree_api.tree.find_file(opts)
+  if selected_file(tree_api, file) then
+    return
+  end
+
+  local revealed = false
+  if has_dot_component(file, workspace) and filter_enabled("dotfiles") then
+    tree_api.filter.dotfiles.toggle()
+    vim.g.luanphan_show_dotfiles = 1
+    revealed = true
+  end
+  if is_git_ignored(file) and filter_enabled("git_ignored") then
+    require("luanphan.actions").set_gitignore_visible(true)
+    revealed = true
+  end
+  if revealed then
+    tree_api.tree.find_file(opts)
+  end
+end
+
 function M.focus(tree_api)
   local current_win = vim.api.nvim_get_current_win()
   local current_buf = vim.api.nvim_get_current_buf()
@@ -128,14 +226,18 @@ function M.focus(tree_api)
     return
   end
 
-  local file = vim.bo[current_buf].buftype == "" and normalize(vim.api.nvim_buf_get_name(current_buf)) or nil
+  local file, editor_win, editor_buf = editor_file()
   local workspace = normalize(vim.fn.getcwd())
   if file and workspace and not is_within(file, workspace) then
-    open_dependency_tree(file)
+    open_dependency_tree(file, editor_win)
     return
   end
 
-  tree_api.tree.find_file({ open = true, focus = true })
+  if file then
+    focus_workspace_file(tree_api, file, editor_buf, workspace)
+  else
+    tree_api.tree.open()
+  end
 end
 
 function M.toggle(tree_api)
