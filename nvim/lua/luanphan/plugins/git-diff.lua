@@ -544,8 +544,15 @@ local function list_child_git_repositories(parent, change_stats)
     return {}
   end
 
+  local ignored = {}
+  for _, name in ipairs(require("luanphan.global_settings").diff_repo_ignores()) do
+    ignored[name] = true
+  end
   local repositories = {}
   local function append_repository(name, path, entry_type)
+    if ignored[name] or ignored[vim.fn.fnamemodify(name, ":t")] then
+      return true
+    end
     if (entry_type ~= "directory" and entry_type ~= "link")
       or not uv.fs_stat(path .. "/.git")
       or vim.fn.isdirectory(path) ~= 1

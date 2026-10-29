@@ -2745,6 +2745,25 @@ local function test_recent_navigation_ordering(repo, worktree)
     local settings = require("luanphan.global_settings")
     local settings_path = vim.g.luanphan_global_settings_path
     assert_true(settings.max_recent_folders(settings_path) == 5, "global settings did not create recent-folder default")
+    assert_true(#settings.diff_repo_ignores(settings_path) == 0, "global settings created a non-empty diff ignore list")
+    assert_true(
+      vim.tbl_contains(read_lines(settings_path), "[diff-repo-ignore]"),
+      "global settings omitted the diff repository ignore section"
+    )
+    write(settings_path, {
+      "[recent_folder]",
+      "max_cache_entry = 5",
+      "",
+      "[diff-repo-ignore]",
+      "repositories = [",
+      '  "example-large",',
+      '  "group/example-nested",',
+      "]",
+    })
+    assert_true(
+      vim.deep_equal(settings.diff_repo_ignores(settings_path), { "example-large", "group/example-nested" }),
+      "global settings did not parse ignored diff repositories"
+    )
     write(settings_path, { "[recent_folder]", "max_cache_entry = 2" })
     vim.fn.mkdir(temp_root .. "/first", "p")
     vim.fn.mkdir(temp_root .. "/second", "p")
@@ -6186,6 +6205,8 @@ local function test_git_diff_repository_bar_from_workspace_root()
   local grouped_repo = workspace_root .. "/front-end/example-project-c"
   local clean_repo = workspace_root .. "/example-project-clean"
   local recent_paths = require("luanphan.recent_paths")
+  local settings_path = vim.g.luanphan_global_settings_path
+  local original_settings = vim.fn.filereadable(settings_path) == 1 and read_lines(settings_path) or nil
   vim.fn.delete(vim.g.luanphan_recent_paths_file)
 
   vim.fn.mkdir(clean_repo, "p")
@@ -6418,6 +6439,56 @@ local function test_git_diff_repository_bar_from_workspace_root()
     "branch diff omitted committed line changes"
   )
   close_diffview()
+
+  write(settings_path, {
+    "[recent_folder]",
+    "max_cache_entry = 5",
+    "",
+    "[diff-repo-ignore]",
+    'repositories = ["example-project-c"]',
+  })
+  local function invoke_without_ignored_repo_git(lhs)
+    local original_system = vim.fn.system
+    local original_systemlist = vim.fn.systemlist
+    local function rejects_ignored_repo(command)
+      return type(command) == "table"
+        and command[1] == "git"
+        and command[2] == "-C"
+        and realpath(command[3]) == realpath(grouped_repo)
+    end
+    vim.fn.system = function(command, ...)
+      assert_true(not rejects_ignored_repo(command), "ignored repository ran a Git command")
+      return original_system(command, ...)
+    end
+    vim.fn.systemlist = function(command, ...)
+      assert_true(not rejects_ignored_repo(command), "ignored repository ran a Git command")
+      return original_systemlist(command, ...)
+    end
+    local ok, err = xpcall(function()
+      invoke_map(lhs)
+    end, debug.traceback)
+    vim.fn.system = original_system
+    vim.fn.systemlist = original_systemlist
+    assert_true(ok, err)
+  end
+
+  for _, lhs in ipairs({ "<leader>gd", "<leader>gD" }) do
+    invoke_without_ignored_repo_git(lhs)
+    wait_for_diffview()
+    _, _, bar_buf = find_workspace_diff_bar()
+    assert_true(bar_buf ~= nil, lhs .. " did not create the filtered repository bar")
+    line = vim.api.nvim_buf_get_lines(bar_buf, 0, 1, false)[1] or ""
+    assert_true(
+      line:find("front-end/example-project-c", 1, true) == nil,
+      lhs .. " included an ignored repository"
+    )
+    close_diffview()
+  end
+  if original_settings then
+    write(settings_path, original_settings)
+  else
+    vim.fn.delete(settings_path)
+  end
   assert_recent_paths_unchanged()
   vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
 end
