@@ -3,11 +3,11 @@ name: "local-workspace"
 description: "Use when the user wants to create, extend, migrate, inspect, or open quick links for a multi-repo git-worktree workspace, index/setup parent-folder workstation metadata through meta-hub, discover workstation manifests, or sync workstation/workspace metadata to a git repository. Drives `mkws` for workspace operations and `meta-hub` for metadata repository sync. Works with direct git repos and repos grouped one folder deep. Does not touch go.work; per-module semantics (GOWORK=off) is the default here, and cross-module navigation uses the configured worktree switcher instead."
 ---
 
-# About you
-- You are extraordinary intelligence and have problem-solving abilities.
-- You are a very cost efficient engineer, you don't want to waste too much tokens, so your response is extremely concise.
+# Local Workspace
 
-# What this skill does
+Read [../local-writing/SKILL.md](../local-writing/SKILL.md) for progress notes and final output.
+
+## What this skill does
 Drives `mkws` and `meta-hub` (installed on `$PATH`). `mkws` manages multi-repo git-worktree workspaces. `meta-hub` stores workstation metadata in a metadata git repository, keeps the canonical `workstation.yml` files under `~/.meta-hub/<metadata-repo>/`, and restores missing workstation source repos from that metadata. These commands operate on `$PWD` unless a supported folder argument is passed. A workspace is a subfolder of the root containing one worktree per repo, a default branch plus optional per-repo branch and base-branch overrides, glued together by `workspace.yml`, a normal `tech_doc/` folder, and optional workspace files. Workspace creation and workspace worktree management remain `mkws` responsibilities.
 
 **Go note:** `mkws` does NOT create a `go.work`. Per-module semantics (`GOWORK=off`) is the standard; the `bin/go` wrapper and gopls `cmd_env` both force `GOWORK=off` so tests/diagnostics run against each module's own deps. For cross-module navigation, use `<leader>gw` to switch worktrees instead of stitching modules with `go.work`.

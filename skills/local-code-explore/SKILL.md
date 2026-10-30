@@ -5,7 +5,7 @@ description: "Trace a behavior through a local multi-repo workspace and return o
 
 # Local Code Explore
 
-Read [../local-technical-writing/SKILL.md](../local-technical-writing/SKILL.md) and [../local-technical-writing/references/terminal-diagrams.md](../local-technical-writing/references/terminal-diagrams.md) before producing the answer.
+Read [../local-writing/SKILL.md](../local-writing/SKILL.md) and [../local-writing/references/terminal-diagrams.md](../local-writing/references/terminal-diagrams.md) before producing answer.
 
 ## Output
 

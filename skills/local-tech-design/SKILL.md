@@ -5,7 +5,7 @@ description: "Create a compact, evidence-backed technical design for a local mul
 
 # Local Tech Design
 
-Read [../local-technical-writing/SKILL.md](../local-technical-writing/SKILL.md) and [../local-technical-writing/references/mermaid-diagrams.md](../local-technical-writing/references/mermaid-diagrams.md) before drafting.
+Read [../local-writing/SKILL.md](../local-writing/SKILL.md), [../local-technical-writing/SKILL.md](../local-technical-writing/SKILL.md), and [../local-technical-writing/references/mermaid-diagrams.md](../local-technical-writing/references/mermaid-diagrams.md) before drafting.
 
 ## Workspace
 
