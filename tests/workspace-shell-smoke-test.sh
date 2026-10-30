@@ -86,6 +86,15 @@ case "\${1:-} \${2:-} \${3:-}" in
   "resume --remote unix://")
     exit 0
     ;;
+  "queue --remote unix://")
+    exit 0
+    ;;
+  "queue --resume --remote")
+    exit 0
+    ;;
+  "app-server proxy ")
+    exit 0
+    ;;
   "--version  ")
     exit 0
     ;;
@@ -192,6 +201,8 @@ PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" next
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" -C "$tmp/other" explicit
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" resume --last
 PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" resume -C "$tmp/resume-other" explicit
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" queue --thread thread-1 --model legacy-model --message queued
+PATH="$fakebin:/usr/bin:/bin" HOME="$tmp/home" sh "$repo_root/bin/mcodex" app-server proxy
 test "$(grep -Fxc 'remote-control start --json' "$codex_log")" = 1
 grep -Fxq 'app-server daemon version' "$codex_log"
 grep -Fxq -- '-c tui.animations=false resume --remote unix:// -C '"$repo_root" "$codex_log"
@@ -200,6 +211,8 @@ grep -Fxq -- '-c tui.animations=false --remote unix:// -C '"$repo_root"' next' "
 grep -Fxq -- '-c tui.animations=false --remote unix:// -C '"$tmp/other"' explicit' "$codex_log"
 grep -Fxq -- '-c tui.animations=false resume --remote unix:// -C '"$repo_root"' --last' "$codex_log"
 grep -Fxq -- '-c tui.animations=false resume --remote unix:// -C '"$tmp/resume-other"' explicit' "$codex_log"
+grep -Fxq -- '-c tui.animations=false queue --resume --remote unix:// --thread thread-1 --message queued' "$codex_log"
+grep -Fxq -- 'app-server proxy' "$codex_log"
 
 stale_home="$tmp/stale-codex-home"
 test_stage='mcodex stale-daemon recovery'

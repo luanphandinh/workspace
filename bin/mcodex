@@ -199,17 +199,57 @@ if [ ! -f "$stamp_file" ]; then
 	: > "$stamp_file"
 fi
 
+if [ "${1:-}" = "app-server" ] && [ "${2:-}" = "proxy" ]; then
+	exec codex "$@"
+fi
+
 has_cd_arg=0
+has_resume_arg=0
 for arg in "$@"; do
 	case "$arg" in
 		-C|-C*|--cd|--cd=*)
 			has_cd_arg=1
-			break
+			;;
+		--resume)
+			has_resume_arg=1
 			;;
 	esac
 done
 
 case "${1:-}" in
+	queue)
+		subcmd="$1"
+		shift
+		queue_remote() {
+			remaining="$1"
+			shift
+			if [ "$remaining" -eq 0 ]; then
+				if [ "$has_resume_arg" -eq 0 ]; then
+					exec codex -c 'tui.animations=false' "$subcmd" --resume --remote unix:// "$@"
+				fi
+				exec codex -c 'tui.animations=false' "$subcmd" --remote unix:// "$@"
+			fi
+			arg="$1"
+			shift
+			case "$arg" in
+				--model)
+					if [ "$remaining" -lt 2 ]; then
+						printf 'mcodex: --model requires a value\n' >&2
+						exit 2
+					fi
+					shift
+					queue_remote "$((remaining - 2))" "$@"
+					;;
+				--model=*)
+					queue_remote "$((remaining - 1))" "$@"
+					;;
+				*)
+					queue_remote "$((remaining - 1))" "$@" "$arg"
+					;;
+			esac
+		}
+		queue_remote "$#" "$@"
+		;;
 	resume|fork)
 		subcmd="$1"
 		shift
