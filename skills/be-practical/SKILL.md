@@ -1,5 +1,5 @@
 ---
-name: "just practical"
+name: "be-practical"
 description: "SIMPLE, PRACTICAL, JUST DO IT"
 ---
 
