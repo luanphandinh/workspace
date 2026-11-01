@@ -48,27 +48,17 @@ flowchart TB
 ## 3.3 Invite and retry
 
 ```mermaid
-sequenceDiagram
-  participant collection as CollectionService
-  participant friend as FriendService
-  participant database as PostgreSQL
-  participant worker as InvitationWorker
-  participant notification as NotificationService
-  collection->>friend: FriendService.AreFriends
-  friend-->>collection: friends=true
-  rect rgb(220, 252, 231)
-    collection->>database: UPSERT collection_members
-    collection->>database: INSERT invitation_outbox
-    database-->>collection: COMMIT
-  end
-  worker->>database: Claim invitation_outbox + lease
-  database-->>worker: COMMIT persisted event_id
-  worker->>notification: NotificationService.SendInvitation
-  alt Timeout or worker crash
-    worker->>notification: Retry same event_id
-    notification-->>worker: Return prior result
-  end
-  worker->>database: MarkDelivered after success
+flowchart TB
+  collection["CollectionService"] -->|"AreFriends"| friend["FriendService"]
+  friend -->|"friends=true"| member["UPSERT members"]
+  member --> outbox["INSERT invitation outbox"]
+  outbox --> commit["COMMIT"]
+  commit --> claim["Worker claims event + lease"]
+  claim --> notify["Send invitation with event_id"]
+  notify --> outcome{"Delivered?"}
+  outcome -->|"Yes"| delivered["Mark delivered"]
+  outcome -->|"Timeout / crash"| retry["Retry same event_id"]
+  retry --> notify
 ```
 
 # 4. Design Decisions

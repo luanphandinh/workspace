@@ -1,6 +1,6 @@
 ---
 name: "local-tech-design"
-description: "Create a compact, evidence-backed technical design for a local multi-repo workspace, with diagrams, implementation artifacts, and protected remote synchronization."
+description: "Create a compact, evidence-backed technical design for a local multi-repo workspace, with diagrams and implementation artifacts."
 ---
 
 # Local Tech Design
@@ -63,7 +63,3 @@ Match their directness, not their fictional APIs or architecture. Each fact has 
 - Revise only sections whose facts changed. Delete stale, duplicate, and resolved content instead of preserving history.
 - Re-run exploration when a revision changes an edge, owner, or contract.
 - Run the compactness gate in the document contract before presenting the draft.
-
-## Remote sync
-
-Remote writes are never automatic. When the user explicitly requests a sync in the current turn, read [references/remote-sync.md](references/remote-sync.md) before any remote operation.
