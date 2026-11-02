@@ -15,7 +15,7 @@ vim.o.scrolloff = 8
 vim.o.signcolumn = "yes" -- always show the signcolumn on the left side
 vim.o.wrap = false       -- no soft-wrap by default; toggle with <leader>tw or <leader>tW
 vim.o.linebreak = true   -- when wrap is on, break at word boundaries, not mid-word
-vim.o.cmdheight = 0
+vim.o.cmdheight = 1
 
 -- Statusline with LSP progress
 local lsp_progress_tokens = {} -- track active progress tokens
