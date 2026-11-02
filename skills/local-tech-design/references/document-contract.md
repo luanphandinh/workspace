@@ -25,14 +25,14 @@ One fact belongs to one section. Initial draft contains minimum facts needed to 
 
 - All explanatory prose uses bullets, including rationale and notes inside `<details>` blocks. No standalone paragraphs.
 - Group related logic in 2–4 levels as needed: component → method → condition → outcome. Each level names a real grouping.
-- Keep independent facts as flat bullets. Keep headings, tables, Mermaid diagrams, and code outside lists. Use numbered lists only for ordered rollout or migration steps.
+- Keep independent facts as flat bullets. Keep headings, tables, flowcharts, and code outside lists. Use numbered lists only for ordered rollout or migration steps.
 - Use natural sentence order for descriptive bullets. Ordered actions and checklists start with imperative verbs.
 - Remove filler articles and connectives when meaning stays clear.
 - Never write `The config ... below`, `This section describes`, `we will`, `in order to`, `after that`, or `then`. Use heading, identifier, direct action, or numbered step.
 
 ## Cross-service call naming
 
-- Across prose, logic, tables, diagrams, sequences, and call chains, write every cross-service call as `<target-service>.<MethodName>`.
+- Across prose, logic, tables, flowcharts, and call chains, write every cross-service call as `<target-service>.<MethodName>`.
 - Resolve `<target-service>` from verified service-to-repository mapping or service identity. Use one established abbreviation throughout; an unambiguous repository-folder name is acceptable. Never use a bare method or generated service-interface name when an established short name exists.
 - Keep local calls as their exact unprefixed symbols. Write asynchronous edges as `PRODUCE <message-name>` or `CONSUME <message-name>`.
 - Preserve source identifiers inside code and diff blocks, including generated client package names.
@@ -59,8 +59,8 @@ Use only the subsections that carry information:
 
 - `## 3.1 Main changes`: required when multiple components or user-visible results are affected.
 - `## 3.2 Model delta`: current/future table or data example. No prose recap.
-- `## 3.3 Architecture flowchart`: Mermaid flowchart. Diagram only.
-- `## 3.4 Cross-service sequence`: one Mermaid sequence per non-trivial flow. Use short H3 names only when there are multiple diagrams.
+- `## 3.3 Architecture flowchart`: flowchart only.
+- `## 3.4 Cross-service flow`: one flowchart per non-trivial flow. Use short H3 names only when there are multiple flowcharts.
 
 In `Main changes`:
 

@@ -1,10 +1,10 @@
-# Mermaid Diagrams
+# Markdown Flowcharts
 
 ## Source
 
-Build Mermaid from the verified graph produced during code exploration. Keep the terminal and document diagrams on the same nodes and edges.
+Build flowcharts from verified graph produced during code exploration. Keep terminal and document diagrams on same nodes and edges.
 
-Use only flowcharts in technical documents. Keep the code fence language as `mermaid`, and start its body with `flowchart TB` or `flowchart LR`. Do not use Mermaid sequence, class, state, entity-relationship, or other diagram grammars.
+Use only flowcharts in Markdown documents. Markdown preview requires code fence language `mermaid`; start body with `flowchart TB` or `flowchart LR`. Never use sequence, class, state, entity-relationship, or another diagram grammar.
 
 ## Architecture flowchart
 
@@ -14,9 +14,9 @@ Use only flowcharts in technical documents. Keep the code fence language as `mer
 - Use `flowchart TB` for multiple paths, branches, shared stores, or long labels.
 - If a top-down diagram is still too wide, split unrelated flows. Use concern or phase subgraphs only when they improve grouping, never only to control layout.
 - Keep node IDs simple. Put punctuation, paths, operation names, and `(NEW)` inside quoted labels.
-- Keep each rendered label line within 40 characters. Insert Mermaid line breaks at meaningful phrase or syntax boundaries; never split a word arbitrarily.
+- Keep each rendered label line within 40 characters. Insert line breaks at meaningful phrase or syntax boundaries; never split a word arbitrarily.
 - Quote edge labels containing punctuation or paths.
-- Keep one Mermaid statement per line.
+- Keep one flowchart statement per line.
 - Move operation detail into short edge labels or split the flow into another flowchart when the overview becomes noisy.
 
 Mark new nodes and edges with `(NEW)` and green styling:

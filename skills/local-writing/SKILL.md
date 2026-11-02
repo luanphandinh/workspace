@@ -77,6 +77,13 @@ The observed behavior is <error>.
 - Preserve unchanged fields and array entries when they help locate or understand change.
 - Add prose outside diff only when it explains behavior diff cannot show. Never recap visible changes.
 
+## Markdown diagrams
+
+- Any diagram embedded in a Markdown file must use flowchart grammar.
+- Markdown preview requires fence language `mermaid`; this is only renderer selection. First body line must be `flowchart TB` or `flowchart LR`.
+- Never use sequence, class, state, entity-relationship, or another diagram grammar in Markdown.
+- For technical-document flowchart layout and review, read [../local-technical-writing/references/flowcharts.md](../local-technical-writing/references/flowcharts.md).
+
 ## Vocabulary fidelity
 
 - Every technical noun must be traceable to request, code, schema, interface, API, message topic, configuration, or established documentation.
