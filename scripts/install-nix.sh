@@ -33,9 +33,15 @@ case "$(uname)" in
 			echo "nix-install: run workspace setup as your normal user, not root" >&2
 			exit 1
 		fi
-		if [ ! -d /nix ] || [ ! -w /nix ]; then
-			echo "nix-install: single-user Nix needs /nix to exist and be writable by your user" >&2
-			echo "nix-install: ask an administrator to prepare /nix; setup will not invoke sudo" >&2
+		if [ ! -d /nix ]; then
+			if ! command -v sudo >/dev/null 2>&1 || ! sudo -v; then
+				echo "nix-install: single-user Nix needs sudo access to create /nix" >&2
+				echo "nix-install: ask an administrator to prepare /nix" >&2
+				exit 1
+			fi
+		elif [ ! -w /nix ]; then
+			echo "nix-install: existing /nix is not writable by your user" >&2
+			echo "nix-install: reuse its Nix installation or ask an administrator to fix it" >&2
 			exit 1
 		fi
 		set -- --no-daemon --yes
