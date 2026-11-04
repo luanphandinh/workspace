@@ -20,6 +20,7 @@ cat > "$test_dir/bin/sudo" <<'SH'
 #!/bin/sh
 printf '%s\n' "$*" >> "$TEST_LOG/sudo"
 [ "$TEST_SUDO_FAIL" = 0 ] || exit 1
+[ "$*" != '-n true' ] || [ "$TEST_SUDO_NONINTERACTIVE_FAIL" = 0 ] || exit 1
 exit 0
 SH
 cat > "$test_dir/nix" <<'SH'
@@ -62,6 +63,7 @@ function [ {
     -r:/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh) return 1 ;;
     -d:/nix) builtin [ "$TEST_STORE" != missing ]; return ;;
     -w:/nix) builtin [ "$TEST_STORE" = writable ]; return ;;
+    -t:0) builtin [ "$TEST_TTY" = 1 ]; return ;;
   esac
   builtin [ "$@"
 }
@@ -91,6 +93,7 @@ run_case() {
     TEST_FIXTURES="$test_dir" TEST_SCRIPT="$repo_root/scripts/install-nix.sh" \
     TEST_PLATFORM="$2" TEST_UID="$3" TEST_STORE="$4" \
     TEST_CURL_FAIL="${5:-0}" TEST_INSTALL_FAIL="${6:-0}" TEST_SUDO_FAIL="${7:-0}" \
+    TEST_TTY="${8:-0}" TEST_SUDO_NONINTERACTIVE_FAIL="${9:-0}" \
     "$test_bash" "$test_dir/run.bash" > "$case_dir/output" 2>&1 || case_status=$?
   if [ "$case_status" -ne 0 ]; then
     cat "$case_dir/output" >&2
@@ -104,16 +107,22 @@ test ! -e "$case_dir/log/sudo"
 test "$(cat "$case_dir/log/installer")" = '--no-daemon --yes'
 test "$(cat "$case_dir/log/nix")" = '--version'
 
-run_case missing_with_sudo Linux 1000 missing
+run_case missing_with_passwordless_sudo Linux 1000 missing
 test "$case_status" -eq 0
-test "$(cat "$case_dir/log/sudo")" = '-v'
+test "$(cat "$case_dir/log/sudo")" = '-n true'
+test "$(cat "$case_dir/log/installer")" = '--no-daemon --yes'
+test "$(cat "$case_dir/log/nix")" = '--version'
+
+run_case missing_with_interactive_sudo Linux 1000 missing 0 0 0 1 1
+test "$case_status" -eq 0
+test "$(cat "$case_dir/log/sudo")" = "$(printf '%s\n%s' '-n true' 'true')"
 test "$(cat "$case_dir/log/installer")" = '--no-daemon --yes'
 test "$(cat "$case_dir/log/nix")" = '--version'
 
 run_case missing_without_sudo Linux 1000 missing 0 0 1
 test "$case_status" -eq 1
 test ! -e "$case_dir/log/curl"
-test "$(cat "$case_dir/log/sudo")" = '-v'
+test "$(cat "$case_dir/log/sudo")" = '-n true'
 grep -q 'single-user Nix needs sudo access' "$case_dir/output"
 
 run_case readonly Linux 1000 readonly

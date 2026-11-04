@@ -34,7 +34,15 @@ case "$(uname)" in
 			exit 1
 		fi
 		if [ ! -d /nix ]; then
-			if ! command -v sudo >/dev/null 2>&1 || ! sudo -v; then
+			sudo_ready=0
+			if command -v sudo >/dev/null 2>&1; then
+				if sudo -n true >/dev/null 2>&1; then
+					sudo_ready=1
+				elif [ -t 0 ] && sudo true; then
+					sudo_ready=1
+				fi
+			fi
+			if [ "$sudo_ready" -ne 1 ]; then
 				echo "nix-install: single-user Nix needs sudo access to create /nix" >&2
 				echo "nix-install: ask an administrator to prepare /nix" >&2
 				exit 1
