@@ -30,7 +30,7 @@
   overflow-wrap: anywhere;
 }
 
-@media (min-width: 1200px) {
+@media (min-width: 1500px) {
   .preview-toc {
     position: fixed;
     top: 24px;
@@ -39,10 +39,5 @@
     max-height: calc(100vh - 48px);
     box-sizing: border-box;
     overflow-y: auto;
-  }
-
-  main:has(.preview-toc) #page-ctn {
-    margin-left: 280px;
-    margin-right: 20px;
   }
 }
