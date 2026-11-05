@@ -1706,11 +1706,11 @@ local function worktree_test_api()
   for _, mapping in ipairs({
     { "<leader>ww", "n" },
     { "<leader>wf", "n" },
-    { "<leader>wa", "n" },
+    { "<leader>wA", "n" },
     { "<leader>wd", "n" },
     { "<leader>wr", "n" },
     { "<leader>wp", "n" },
-    { "<leader>w;", "n" },
+    { "<leader>wa", "n" },
   }) do
     local map = vim.fn.maparg(mapping[1], mapping[2], false, true)
     assert_true(type(map) == "table" and type(map.callback) == "function", mapping[1] .. " was lost after lazy load")
@@ -1752,10 +1752,10 @@ local function test_worktree_plugin_starts_lazy()
     type(global_settings_map) == "table" and type(global_settings_map.callback) == "function",
     "<leader>sg is not a lazy callback mapping"
   )
-  local add_repository_map = vim.fn.maparg("<leader>wa", "n", false, true)
+  local add_repository_map = vim.fn.maparg("<leader>wA", "n", false, true)
   assert_true(
     type(add_repository_map) == "table" and type(add_repository_map.callback) == "function",
-    "<leader>wa is not a lazy callback mapping"
+    "<leader>wA is not a lazy callback mapping"
   )
   local remove_repository_map = vim.fn.maparg("<leader>wd", "n", false, true)
   assert_true(
@@ -1763,12 +1763,12 @@ local function test_worktree_plugin_starts_lazy()
     "<leader>wd is not a lazy callback mapping"
   )
   assert_true(vim.fn.maparg("<leader>gP", "n") == "", "<leader>gP should not have a duplicate project picker")
-  local agent_map = vim.fn.maparg("<leader>w;", "n", false, true)
+  local agent_map = vim.fn.maparg("<leader>wa", "n", false, true)
   assert_true(
     type(agent_map) == "table" and type(agent_map.callback) == "function",
-    "<leader>w; is not a lazy callback mapping"
+    "<leader>wa is not a lazy callback mapping"
   )
-  for _, old_lhs in ipairs({ "<leader>gp", "<leader>gr", "<leader>gw", "<leader>g;" }) do
+  for _, old_lhs in ipairs({ "<leader>gp", "<leader>gr", "<leader>gw", "<leader>g;", "<leader>w;" }) do
     assert_true(vim.fn.maparg(old_lhs, "n") == "", old_lhs .. " workspace mapping should be removed")
   end
 end
@@ -1778,11 +1778,11 @@ local function test_worktree_keymaps_dispatch_to_pickers()
   for _, mapping in ipairs({
     { "<leader>ww", "n", "pick_worktree" },
     { "<leader>wf", "n", "pick_folder" },
-    { "<leader>wa", "n", "pick_add_repository" },
+    { "<leader>wA", "n", "pick_add_repository" },
     { "<leader>wd", "n", "pick_remove_repository" },
     { "<leader>wr", "n", "pick_project" },
     { "<leader>wp", "n", "pick_workspace_project" },
-    { "<leader>w;", "n", "pick_agent" },
+    { "<leader>wa", "n", "pick_agent" },
   }) do
     local method = mapping[3]
     local original = worktree[method]
@@ -5595,7 +5595,7 @@ end
 local function test_workspace_keymaps_restart_lsp_for_selected_directory(repo, worktree)
   local api = worktree_test_api()
   local cases = {
-    { lhs = "<leader>w;", method = "pick_agent" },
+    { lhs = "<leader>wa", method = "pick_agent" },
     { lhs = "<leader>wp", method = "pick_workspace_project" },
     { lhs = "<leader>wr", method = "pick_project" },
     { lhs = "<leader>wf", method = "pick_folder" },
