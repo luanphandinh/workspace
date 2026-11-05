@@ -1,6 +1,7 @@
 local M = {}
 
 local agent_order = { "codex", "cursor", "claude" }
+local agent_key = "<leader>a"
 
 local agent_defs = {
   cursor = {
@@ -9,11 +10,6 @@ local agent_defs = {
     notify_prefix = "cursor_agent",
     augroup_prefix = "CursorAgent",
     defaults = { cmd = "cursor-agent", detach_on_quit = true },
-    keys = {
-      toggle = { lhs = "<leader>ac", mode = "n", desc = "Toggle terminal" },
-      focus = { lhs = "<leader>af", mode = "n", desc = "Focus terminal" },
-      send = { lhs = "<leader>as", mode = "x", desc = "Send selection" },
-    },
   },
   claude = {
     plugin = "luanphan-claude-agent",
@@ -21,11 +17,6 @@ local agent_defs = {
     notify_prefix = "claude_agent",
     augroup_prefix = "ClaudeAgent",
     defaults = { cmd = "claude" },
-    keys = {
-      toggle = { lhs = "<leader>xc", mode = "n", desc = "Toggle terminal" },
-      focus = { lhs = "<leader>xf", mode = "n", desc = "Focus terminal" },
-      send = { lhs = "<leader>xs", mode = "x", desc = "Send selection" },
-    },
   },
   codex = {
     plugin = "luanphan-codex-agent",
@@ -33,11 +24,6 @@ local agent_defs = {
     notify_prefix = "codex_agent",
     augroup_prefix = "CodexAgent",
     defaults = { cmd = "mcodex", detach_on_quit = true },
-    keys = {
-      toggle = { lhs = "<leader>;", mode = "n", desc = "Toggle agents" },
-      focus = { lhs = "<leader>cf", mode = "n", desc = "Focus terminal" },
-      send = { lhs = "<leader>;", mode = { "x", "s" }, desc = "Send to active agent" },
-    },
   },
 }
 
@@ -271,7 +257,7 @@ local function get_agent(name)
     g_bufnr = def.g_bufnr,
     notify_prefix = def.notify_prefix,
     augroup_prefix = def.augroup_prefix,
-    hint_open = def.keys.toggle.lhs,
+    hint_open = agent_key,
     defaults = vim.tbl_extend("force", def.defaults, { float_position = M.agent_position() }),
     on_prepare = function(win)
       agent_container:reserve(win)
@@ -419,29 +405,6 @@ function M.send_selection(name)
   return true
 end
 
-local function key_spec(name, action)
-  local key = agent_defs[name].keys[action]
-  return {
-    key.lhs,
-    function()
-      local agents = require("luanphan.plugins.agents")
-      if name == "codex" and action == "toggle" then
-        agents.toggle()
-      elseif name == "codex" and action == "send" then
-        agents.send_selection()
-      elseif action == "toggle" then
-        agents.toggle_agent(name)
-      elseif action == "focus" then
-        agents.focus(name)
-      else
-        agents.send_selection(name)
-      end
-    end,
-    mode = key.mode,
-    desc = key.desc,
-  }
-end
-
 agent_container = require("luanphan.view_container").create({
   context = vim.fn.getcwd,
   tabs = open_tabs,
@@ -467,12 +430,24 @@ agent_container = require("luanphan.view_container").create({
 
 local function agent_spec(name)
   local def = agent_defs[name]
-  local keys = {
-    key_spec(name, "toggle"),
-    key_spec(name, "focus"),
-    key_spec(name, "send"),
-  }
+  local keys = {}
   if name == "codex" then
+    keys[#keys + 1] = {
+      agent_key,
+      function()
+        require("luanphan.plugins.agents").toggle()
+      end,
+      mode = "n",
+      desc = "Toggle agents",
+    }
+    keys[#keys + 1] = {
+      agent_key,
+      function()
+        require("luanphan.plugins.agents").send_selection()
+      end,
+      mode = { "x", "s" },
+      desc = "Send to active agent",
+    }
     keys[#keys + 1] = {
       "<leader>sad",
       function()

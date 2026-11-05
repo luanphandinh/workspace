@@ -6,12 +6,11 @@ local cleanup_fixture_id = 0
 local project_scope_fixture_id = 0
 
 local agent_cli_commands = {
-  { command = "cursor-agent", lhs = "<leader>ac", plugin = "luanphan-cursor-agent", g_bufnr = "cursor_agent_bufnr" },
-  { command = "claude", lhs = "<leader>xc", plugin = "luanphan-claude-agent", g_bufnr = "claude_agent_bufnr" },
+  { name = "cursor", command = "cursor-agent", g_bufnr = "cursor_agent_bufnr" },
+  { name = "claude", command = "claude", g_bufnr = "claude_agent_bufnr" },
   {
+    name = "codex",
     command = "mcodex",
-    lhs = "<leader>;",
-    plugin = "luanphan-codex-agent",
     g_bufnr = "codex_agent_bufnr",
     optional_in_macos_ci = true,
   },
@@ -4441,31 +4440,54 @@ local function test_agent_keys_invoke_cli_commands()
   local old_path = vim.env.PATH
   local old_log = vim.env.NVIM_AGENT_SMOKE_LOG
   local agents = require("luanphan.plugins.agents")
+  local original_default_file = vim.g.luanphan_default_agent_file
   local original_position_file = vim.g.luanphan_agent_position_file
   local original_position = agents.agent_position()
+  local default_file = temp_root .. "/agent-cli-default"
   local position_file = temp_root .. "/agent-cli-position"
   vim.env.PATH = shim_dir .. ":" .. old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = log
+  vim.g.luanphan_default_agent_file = default_file
   vim.g.luanphan_agent_position_file = position_file
   vim.fn.delete(vim.g.luanphan_recent_paths_file)
+  vim.fn.delete(default_file)
   vim.fn.delete(position_file)
   local expected_recent_folder = vim.fn.getcwd()
 
   local ok, err = xpcall(function()
     assert_true(agents.set_agent_position("left"), "could not set agent position before lazy load")
-    for _, item in ipairs(agent_cli_commands) do
-      invoke_lazy_map(item.lhs, item.plugin)
+    local normal_map = vim.fn.maparg("<leader>a", "n", false, true)
+    local visual_map = vim.fn.maparg("<leader>a", "x", false, true)
+    local select_map = vim.fn.maparg("<leader>a", "s", false, true)
+    assert_true(type(normal_map) == "table" and normal_map.desc == "Toggle agents", "<leader>a normal should toggle agents")
+    assert_true(type(visual_map) == "table" and visual_map.desc == "Send to active agent", "<leader>a visual should send to the active agent")
+    assert_true(type(select_map) == "table" and select_map.desc == "Send to active agent", "<leader>a select should send to the active agent")
+
+    for _, lhs in ipairs({ "<leader>;", "<leader>ac", "<leader>af", "<leader>as", "<leader>xc", "<leader>xf", "<leader>xs", "<leader>cf" }) do
+      assert_true(
+        vim.fn.maparg(lhs, "n") == "" and vim.fn.maparg(lhs, "x") == "" and vim.fn.maparg(lhs, "s") == "",
+        lhs .. " should be removed"
+      )
+    end
+
+    for index, item in ipairs(agent_cli_commands) do
+      assert_true(agents.set_default_agent(item.name), "could not select " .. item.name .. " as default agent")
+      if index == 1 then
+        invoke_lazy_map("<leader>a", "luanphan-codex-agent")
+      else
+        invoke_map("<leader>a")
+      end
       wait_until(item.command .. " invocation", function()
         return log_has_prefix(log, item.command .. "|")
       end, 3000)
-      assert_true(plugin_loaded(item.plugin), item.plugin .. " did not lazy-load")
       assert_left_agent_position(vim.api.nvim_get_current_win(), item.command .. " initial position")
       close_agent_terminals()
     end
+    assert_true(plugin_loaded("luanphan-codex-agent"), "shared agent mapping did not lazy-load")
     local recent = require("luanphan.recent_paths").entries()
     assert_true(
       recent[1] and realpath(recent[1]) == realpath(expected_recent_folder),
-      "<leader>; did not cache current folder"
+      "<leader>a did not cache current folder"
     )
     local cursor_regular = false
     for _, line in ipairs(read_log(log)) do
@@ -4480,13 +4502,15 @@ local function test_agent_keys_invoke_cli_commands()
   vim.env.PATH = old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = old_log
   agents.set_agent_position(original_position)
+  vim.g.luanphan_default_agent_file = original_default_file
   vim.g.luanphan_agent_position_file = original_position_file
+  vim.fn.delete(default_file)
   vim.fn.delete(position_file)
   close_agent_terminals()
   assert_true(ok, tostring(err))
 end
 
-local function test_leader_semicolon_sends_visual_selection_to_active_agent()
+local function test_leader_a_sends_visual_selection_to_active_agent()
   local shim_dir = temp_root .. "/codex-send-shim"
   local invoke_log = temp_root .. "/codex-send-invocations.log"
   local file = temp_root .. "/codex-send-buffer.txt"
@@ -4501,8 +4525,12 @@ local function test_leader_semicolon_sends_visual_selection_to_active_agent()
   local old_cwd = vim.fn.getcwd()
   local old_path = vim.env.PATH
   local old_log = vim.env.NVIM_AGENT_SMOKE_LOG
+  local original_default_file = vim.g.luanphan_default_agent_file
+  local default_file = temp_root .. "/codex-send-default"
   vim.env.PATH = shim_dir .. ":" .. old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = invoke_log
+  vim.g.luanphan_default_agent_file = default_file
+  write(default_file, { "codex" })
 
   local ok, err = xpcall(function()
     vim.cmd("cd " .. vim.fn.fnameescape(temp_root))
@@ -4512,19 +4540,19 @@ local function test_leader_semicolon_sends_visual_selection_to_active_agent()
     })
     vim.cmd("edit " .. vim.fn.fnameescape(file))
 
-    local normal_map = vim.fn.maparg("<leader>;", "n", false, true)
-    local visual_map = vim.fn.maparg("<leader>;", "x", false, true)
-    local select_map = vim.fn.maparg("<leader>;", "s", false, true)
-    assert_true(type(normal_map) == "table" and normal_map.desc == "Toggle agents", "<leader>; normal should toggle agents")
-    assert_true(type(visual_map) == "table" and visual_map.desc == "Send to active agent", "<leader>; visual should send to the active agent")
-    assert_true(type(select_map) == "table" and select_map.desc == "Send to active agent", "<leader>; select should send to the active agent")
+    local normal_map = vim.fn.maparg("<leader>a", "n", false, true)
+    local visual_map = vim.fn.maparg("<leader>a", "x", false, true)
+    local select_map = vim.fn.maparg("<leader>a", "s", false, true)
+    assert_true(type(normal_map) == "table" and normal_map.desc == "Toggle agents", "<leader>a normal should toggle agents")
+    assert_true(type(visual_map) == "table" and visual_map.desc == "Send to active agent", "<leader>a visual should send to the active agent")
+    assert_true(type(select_map) == "table" and select_map.desc == "Send to active agent", "<leader>a select should send to the active agent")
     assert_true(vim.fn.maparg("<leader>cc", "n") == "", "<leader>cc should be removed")
     assert_true(vim.fn.maparg("<leader>cs", "x") == "", "<leader>cs should be removed")
 
     vim.cmd("normal! ggV")
-    ensure_lazy_key_ready("<leader>;", "luanphan-codex-agent", "x")
+    ensure_lazy_key_ready("<leader>a", "luanphan-codex-agent", "x")
     vim.cmd("normal! ggV")
-    invoke_map("<leader>;", "x")
+    invoke_map("<leader>a", "x")
     wait_until("codex invocation", function()
       return log_has_prefix(invoke_log, "mcodex|")
     end, 3000)
@@ -4542,6 +4570,8 @@ local function test_leader_semicolon_sends_visual_selection_to_active_agent()
 
   vim.env.PATH = old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = old_log
+  vim.g.luanphan_default_agent_file = original_default_file
+  vim.fn.delete(default_file)
   pcall(vim.cmd, "cd " .. vim.fn.fnameescape(old_cwd))
   close_agent_terminals()
   local file_buf = vim.fn.bufnr(file)
@@ -4786,7 +4816,7 @@ local function test_agent_view_container(repo)
 
     vim.cmd("edit " .. vim.fn.fnameescape(source))
     vim.cmd("normal! ggV")
-    invoke_map("<leader>;", "x")
+    invoke_map("<leader>a", "x")
     local cursor_input = input_log .. ".cursor-agent"
     local codex_input = input_log .. ".mcodex"
     wait_until("active agent path delivery", function()
@@ -6935,7 +6965,7 @@ local agent_tests = {
   lifecycle = test_agent_terminal_lifecycle,
   reference_links = test_terminal_reference_links,
   reference_view = test_agent_terminal_reference_restores_view,
-  send_selection = test_leader_semicolon_sends_visual_selection_to_active_agent,
+  send_selection = test_leader_a_sends_visual_selection_to_active_agent,
   terminal_shortcuts = test_terminal_normal_mode_shows_shortcuts,
   view_container = test_agent_view_container,
 }
@@ -7173,7 +7203,7 @@ local setup_ok, setup_err = xpcall(function()
     agent_tests.keys()
   end)
 
-  test("leader semicolon sends visual selection to active agent", function()
+  test("leader a sends visual selection to active agent", function()
     agent_tests.send_selection()
   end)
 

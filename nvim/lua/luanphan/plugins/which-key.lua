@@ -14,7 +14,7 @@ return {
 
       local toggle_icons = require("luanphan.toggle_icons")
       wk.add({
-        { "<leader>a", group = "Cursor", icon = { icon = "󰆿 ", color = "blue" } },
+        { "<leader>a", desc = "Toggle agents", icon = { icon = " ", color = "blue" } },
         { "<leader>b", desc = "Toggle file tree", icon = { icon = "󰙅 ", color = "green" } },
         { "<leader>c", group = "Code Actions" },
         { "<leader>e", desc = "Focus file tree", icon = { icon = "󰙅 ", color = "green" } },
@@ -28,7 +28,6 @@ return {
         { "<leader>sr", group = "Restart", icon = { icon = " ", color = "cyan" } },
         { "<leader>t", group = "Toggle" },
         { "<leader>w", group = "Workspace", icon = { icon = "󰍹 ", color = "cyan" } },
-        { "<leader>x", group = "Claude", icon = { icon = " ", color = "green" } },
         { "<leader>t1", desc = "Live grep case sensitivity", icon = toggle_icons.live_grep_case_sensitive },
         { "<leader>t2", desc = "Live grep regex", icon = toggle_icons.live_grep_regex },
         { "<leader>tb", desc = "Line blame", icon = toggle_icons.line_blame, cond = function()
