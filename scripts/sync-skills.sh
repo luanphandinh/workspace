@@ -16,5 +16,6 @@ fi
 
 npx --yes skills add "$ROOT" -g --skill '*' --agent claude-code codex cursor --full-depth -y
 npx --yes skills add multica-ai/andrej-karpathy-skills -g --skill karpathy-guidelines --agent claude-code codex cursor --full-depth -y
+npx --yes skills add vercel-labs/agent-browser -g --skill agent-browser --agent claude-code codex cursor --full-depth -y
 
 echo "sync-skills: installed local and external skills for claude-code, codex, cursor via npx skills"

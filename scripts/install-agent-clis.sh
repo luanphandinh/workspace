@@ -53,6 +53,16 @@ install_cursor_cli() {
   curl https://cursor.com/install -fsS | bash
 }
 
+install_agent_browser_cli() {
+  if has_cmd agent-browser; then
+    return
+  fi
+
+  need_cmd mise
+  mkdir -p "$bin_dir"
+  mise exec node@24 -- npm install --global --prefix "$npm_prefix" --allow-scripts=agent-browser agent-browser@latest
+}
+
 install_codex_cli() {
   if has_cmd codex && [ -x "$codex_standalone" ]; then
     return
@@ -110,12 +120,15 @@ verify_codex_cli() {
 
 install_all() {
   install_npm_cli claude @anthropic-ai/claude-code
+  install_agent_browser_cli
+  agent-browser install
   install_codex_cli
   install_cursor_cli
 }
 
 verify_all() {
   verify_cli claude
+  verify_cli agent-browser
   verify_codex_cli
   verify_cli cursor-agent
 }

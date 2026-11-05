@@ -21,7 +21,7 @@ endif
 lazy_command ?= restore
 shortcut_names ?=
 
-.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config neovide neovide-config scripts skills-sync workspace-bin cleanup agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test tunnel-test neovide-remote-test wsync-test go-remote-test go-wrapper-test
+.PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config neovide neovide-config scripts skills-sync workspace-bin cleanup install-agent-clis-test skills-sync-test agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test tunnel-test neovide-remote-test wsync-test go-remote-test go-wrapper-test
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
 
@@ -30,7 +30,7 @@ setup: setup-deps
 	$(MAKE) setup-runtime
 
 setup-runtime: ## Install workspace configs and terminal agent CLIs after deps are available
-setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config neovide-config newsboat-config macos-keyboard cleanup agent-clis
+setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config neovide-config newsboat-config macos-keyboard cleanup agent-clis skills-sync
 
 nix-install: ## Install Nix if missing (single-user on Linux, daemon on macOS)
 	sh ./scripts/install-nix.sh
@@ -219,7 +219,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: mkws-test skills-hub-test cmds-hub-test codex-config-test agent-status-hooks-test workspace-shell-test agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test tunnel-test neovide-remote-test wsync-test go-remote-test go-wrapper-test nix-test nix-install-test tmux-sidebar-test ## Run smoke tests
+test: mkws-test skills-hub-test skills-sync-test install-agent-clis-test cmds-hub-test codex-config-test agent-status-hooks-test workspace-shell-test agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test tunnel-test neovide-remote-test wsync-test go-remote-test go-wrapper-test nix-test nix-install-test tmux-sidebar-test ## Run smoke tests
 
 .PHONY: nix-install-test
 nix-install-test: ## Verify Nix installation modes and privilege handling
@@ -230,6 +230,12 @@ mkws-test: ## Run mkws/meta-hub smoke tests
 
 skills-hub-test: ## Run skills-hub smoke tests
 	sh ./tests/skills-hub-smoke-test.sh
+
+skills-sync-test: ## Verify global skill synchronization commands
+	sh ./tests/sync-skills-smoke-test.sh
+
+install-agent-clis-test: ## Verify terminal agent CLI installation behavior
+	sh ./tests/install-agent-clis-smoke-test.sh
 
 cmds-hub-test: ## Run cmds-hub smoke tests
 	sh ./tests/cmds-hub-smoke-test.sh
