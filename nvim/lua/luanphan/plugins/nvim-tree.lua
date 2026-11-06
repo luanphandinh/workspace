@@ -5,6 +5,7 @@ return {
     config = function()
       local tree_api = require("nvim-tree.api")
       local dependency_tree = require("luanphan.dependency_tree")
+      local tree_width = 40
       vim.g.luanphan_show_dotfiles = 0
       vim.g.netrw_banner = 0
       vim.g.netrw_liststyle = 3
@@ -29,7 +30,7 @@ return {
           dotfiles = true,
         },
         view = {
-          width = 40,
+          width = tree_width,
         },
         actions = {
           change_dir = {
@@ -45,6 +46,30 @@ return {
           },
         },
       })
+
+      local function restore_tree_width()
+        local tree_win = tree_api.tree.winid()
+        if not tree_win or not vim.api.nvim_win_is_valid(tree_win) then
+          return
+        end
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(tree_win))) do
+          if win ~= tree_win and vim.api.nvim_win_get_config(win).relative == "" then
+            vim.wo[tree_win].winfixwidth = true
+            if vim.api.nvim_win_get_width(tree_win) ~= tree_width then
+              pcall(vim.api.nvim_win_set_width, tree_win, tree_width)
+            end
+            return
+          end
+        end
+      end
+
+      vim.api.nvim_create_autocmd({ "WinNew", "WinResized", "VimResized" }, {
+        group = vim.api.nvim_create_augroup("LuanphanNvimTreeWidth", { clear = true }),
+        callback = function()
+          vim.schedule(restore_tree_width)
+        end,
+      })
+      vim.schedule(restore_tree_width)
 
       vim.keymap.set("n", "<leader>b", function()
         dependency_tree.toggle(tree_api)

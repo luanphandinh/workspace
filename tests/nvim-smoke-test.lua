@@ -2129,6 +2129,58 @@ local function test_nvim_tree_hides_dotfiles()
   assert_nonrecursive_map("<leader>e", "n")
 end
 
+local function test_nvim_tree_keeps_width_with_terminal(repo)
+  local tree_api = require("nvim-tree.api")
+  local original_columns = vim.o.columns
+  local original_cwd = vim.fn.getcwd()
+  local original_tab = vim.api.nvim_get_current_tabpage()
+  local test_tab
+
+  local ok, err = xpcall(function()
+    vim.o.columns = 120
+    vim.cmd("tabnew")
+    test_tab = vim.api.nvim_get_current_tabpage()
+    vim.cmd("cd " .. vim.fn.fnameescape(repo))
+    vim.cmd("edit " .. vim.fn.fnameescape(repo .. "/main.go"))
+    local editor_win = vim.api.nvim_get_current_win()
+    tree_api.tree.open({ path = repo, focus = false })
+    tree_api.tree.change_root(repo)
+    local tree_win = tree_api.tree.winid()
+    assert_true(tree_win and vim.api.nvim_win_is_valid(tree_win), "workspace tree did not open")
+
+    vim.api.nvim_win_close(editor_win, true)
+    invoke_map("<leader>fn")
+    wait_until("tree width after editor split", function()
+      return vim.api.nvim_win_is_valid(tree_win) and vim.api.nvim_win_get_width(tree_win) == 40
+    end, 3000)
+    vim.wo.winfixwidth = true
+    vim.wo.winfixheight = true
+
+    require("lazy").load({ plugins = { "toggleterm.nvim" } })
+    invoke_map("<leader>tt")
+    wait_until("tree width beside narrow terminal", function()
+      return visible_toggleterm_window_count() == 1
+        and vim.api.nvim_win_is_valid(tree_win)
+        and vim.api.nvim_win_get_width(tree_win) == 40
+    end, 3000)
+  end, debug.traceback)
+
+  close_toggleterm_terminals()
+  if test_tab and vim.api.nvim_tabpage_is_valid(test_tab) then
+    vim.api.nvim_set_current_tabpage(test_tab)
+    tree_api.tree.close()
+    vim.cmd("tabclose!")
+  end
+  if vim.api.nvim_tabpage_is_valid(original_tab) then
+    vim.api.nvim_set_current_tabpage(original_tab)
+  end
+  vim.o.columns = original_columns
+  if vim.fn.isdirectory(original_cwd) == 1 then
+    vim.cmd("cd " .. vim.fn.fnameescape(original_cwd))
+  end
+  assert_true(ok, tostring(err))
+end
+
 local function test_dependency_tree_keeps_workspace_tree(repo)
   local tree_api = require("nvim-tree.api")
   local original_cwd = vim.fn.getcwd()
@@ -6978,6 +7030,7 @@ local lsp_lifecycle_tests = {
 
 local safe_cleanup_tests = {
   buffer_only = test_buffer_only_keeps_current_and_special_buffers,
+  tree_width = test_nvim_tree_keeps_width_with_terminal,
   ctrl_f_navigation = test_ctrl_f_uses_native_navigation,
   editor_defaults = test_editor_runtime_defaults,
   editor_text_helpers = test_editor_text_helpers,
@@ -7045,6 +7098,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("nvim-tree hides dotfiles", function()
     test_nvim_tree_hides_dotfiles()
+  end)
+
+  test("nvim-tree keeps fixed width beside terminals", function()
+    safe_cleanup_tests.tree_width(repo)
   end)
 
   test("external files use a temporary dependency tree", function()
