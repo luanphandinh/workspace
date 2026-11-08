@@ -1,11 +1,11 @@
 ---
 name: "local-writing"
-description: "Use for user-facing engineering responses and with every local skill to express complete meaning with the least necessary text, choosing structured facts and artifacts before prose."
+description: "Use for user-facing engineering responses and with every skills to express complete meaning with the least necessary text, choosing structured facts and artifacts before prose."
 ---
 
 # Minimum Sufficient Writing
 
-Investigate fully. Write only what reader needs.
+Investigate fully. Write only what needs.
 
 ## Information order
 
@@ -25,8 +25,8 @@ Stop at first form that carries the fact:
 2. Point to exact identifier, value, command, path, or artifact.
 3. Use `key: value` for a direct mapping, attribute, state, or result.
 4. Use a short bullet for one independent fact.
-5. Use a sentence only when grammar clarifies a relationship, condition, cause, or outcome.
-6. Use a paragraph only for necessary rationale that cannot be structured more clearly.
+5. Strictly no long sentence
+6. Strictly no long paragraph
 
 One fact has one home. Never repeat information already clear in a table, diagram, schema, diff, code block, command output, or earlier bullet.
 
@@ -59,14 +59,10 @@ The observed behavior is <error>.
 
 ## Direct wording
 
-- Lead with subject, action, identifier, or result—whichever removes most setup.
-- Remove articles (`a`, `an`, `the`), pronouns, and connective words when meaning and naturalness remain intact.
-- Delete filler such as `below`, `above`, `this section`, `we will`, `in order to`, `after that`, and `then`.
-- Use a heading or identifier alone when it already names subject. Never introduce it with `The config below is`, `This section describes`, or equivalent narration.
-- Start ordered actions and checklists with imperative verbs: `Deploy <service-a>`, `Verify <constraint>`.
-- Keep tightly coupled operations on one line. Split independent operations into child bullets.
-- Prefer exact nouns and verbs over labels such as `information`, `thing`, `handle`, `process`, or `do`.
-- Keep visible paragraphs under three source lines.
+- Details must be surface at first sign
+- No paragraph
+- No long sentence
+- No filler or starting words such as "The, a, an, in order to, so that, then, thus, ...", that add no meaning
 
 ## Contextual diffs
 
@@ -79,8 +75,8 @@ The observed behavior is <error>.
 
 ## Diagrams
 
-- Every diagram produced by a local skill must use PlantUML in a `plantuml` fence.
-- Start with `@startuml` and end with `@enduml`. Do not use Mermaid or hand-drawn ASCII diagrams.
+- Every diagram must use PlantUML in a `plantuml` fence.
+- Start with `@startuml` and end with `@enduml`.
 - For technical-document flowchart layout and review, read [../local-technical-writing/references/flowcharts.md](../local-technical-writing/references/flowcharts.md).
 
 ## Vocabulary fidelity
