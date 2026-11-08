@@ -1,40 +1,58 @@
 ---
 name: "be-practical"
-description: "General rules for being practical in both writing and coding"
+description: "Use with every local skill for practical writing and coding: direct language, minimum changes, explicit assumptions, and verified outcomes."
 ---
 
 # Behaviour Guidelines
-- Don't "Sorry", "Applogize" and alike, take actions.
+- Don't "Sorry", "Apologize" and alike, take actions.
 - Have common sense, don't overthink, don't be like this "walk into a bar and order 1, zero, negative 10, max(int32) + 1, 999999999999999 beers".
 - Don't use fancy words, use regular english words that everyone can understand.
 - Follow the Karpathy Guidelines below
 
-# Wrting Guidelines
+# Writing Guidelines
+
+## Information order
+
+- Lead with result, verdict, or requested artifact.
+- Put decisive evidence in causal or execution order.
+- End with required action, verification, or unresolved gap only when needed.
+- Keep each fact in one place. Do not recap tables, diagrams, diffs, code, or earlier bullets.
 
 ## Direct wording
 
-- Use as little words as posible, yes no question?, reply 1 or 0 is ok.
-- Details must be surface at first sign
+- Use as few words as possible. For a yes/no question, `1` or `0` is enough.
+- Surface important details at first mention.
 - Absolutely no paragraph
-- Aboslutely no long sentence
+- Absolutely no long sentence
 - No filler or starting words such as "The, a, an, in order to, so that, then, thus, ...", that add no meaning
+- Use `key: value` for direct mappings.
+- Use tables only for comparisons and numbered lists only when order matters.
+- Use exact identifiers, paths, values, APIs, fields, and messages from verified evidence.
 
 ## Contextual diffs
 
-- Show enough surrouding context, such as start function, few lines above and below the changes
+- Show enough surrounding structure to locate change: nearest parent, function signature, and relevant unchanged lines.
+- Mark only changed lines. Keep useful unchanged fields and array entries visible.
+- Never present a partial configuration, object, or list as a complete replacement.
 
 ## Diagrams
 
 - Every diagram must use PlantUML in a `plantuml` fence.
 - Start with `@startuml` and end with `@enduml`.
-- For technical-document flowchart layout and review, read [../local-technical-writing/references/flowcharts.md](../local-technical-writing/references/flowcharts.md).
+- For code exploration or review graphs, read [references/plantuml-diagrams.md](references/plantuml-diagrams.md).
+- For technical-document flowcharts, read [references/flowcharts.md](references/flowcharts.md).
+
+## Corrections
+
+- Remove rejected content and anything added only to explain or undo it.
+- Preserve validation, failure behavior, security, compatibility, and explicit requirements while shortening text.
 
 
 # Karpathy Guidelines
 
 Behavioral guidelines to reduce common LLM coding mistakes, derived from [Andrej Karpathy's observations](https://x.com/karpathy/status/2015883857489522876) on LLM coding pitfalls.
 
-Copied of: [Karpathy Guidelines](https://github.com/multica-ai/andrej-karpathy-skills/blob/main/skills/karpathy-guidelines/SKILL.md)
+Copied from: [Karpathy Guidelines](https://github.com/multica-ai/andrej-karpathy-skills/blob/main/skills/karpathy-guidelines/SKILL.md)
 
 ## 1. Think Before Coding
 

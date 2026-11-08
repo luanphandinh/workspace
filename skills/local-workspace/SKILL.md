@@ -5,7 +5,7 @@ description: "Use when the user wants to create, extend, migrate, inspect, or op
 
 # Local Workspace
 
-Read [../local-writing/SKILL.md](../local-writing/SKILL.md) for progress notes and final output.
+Read [../be-practical/SKILL.md](../be-practical/SKILL.md) for progress notes and final output.
 
 ## What this skill does
 Drives `mkws` and `meta-hub` (installed on `$PATH`). `mkws` manages multi-repo git-worktree workspaces. `meta-hub` stores workstation metadata in a metadata git repository, keeps the canonical `workstation.yml` files under `~/.meta-hub/<metadata-repo>/`, and restores missing workstation source repos from that metadata. These commands operate on `$PWD` unless a supported folder argument is passed. A workspace is a subfolder of the root containing one worktree per repo, a default branch plus optional per-repo branch and base-branch overrides, glued together by `workspace.yml`, a normal `tech_doc/` folder, and optional workspace files. Workspace creation and workspace worktree management remain `mkws` responsibilities.

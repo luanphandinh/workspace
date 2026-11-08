@@ -5,7 +5,7 @@ description: "Use when reviewing code changes inside a local multi-repo git-work
 
 # Local Code Review
 
-Read [../local-writing/SKILL.md](../local-writing/SKILL.md) before reporting findings.
+Read [../be-practical/SKILL.md](../be-practical/SKILL.md) before reporting findings.
 
 ## Review stance
 - Prioritize bugs, regressions, unsafe behavior, missing tests, rollout risks, and mismatches with the tech doc or implementation plan.

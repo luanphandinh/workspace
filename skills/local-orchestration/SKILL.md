@@ -5,7 +5,7 @@ description: "Coordinate technical design, implementation, and independent revie
 
 # Local Orchestration
 
-Read [../local-writing/SKILL.md](../local-writing/SKILL.md) for plans, worker prompts, progress notes, and final output.
+Read [../be-practical/SKILL.md](../be-practical/SKILL.md) for plans, worker prompts, progress notes, and final output.
 
 Use this skill for work that spans design, implementation, and review. The parent session owns requirements, decisions, and the final answer.
 

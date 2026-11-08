@@ -5,7 +5,7 @@ description: "Implement a user-requested change or approved design in a local re
 
 # Local Coding
 
-Read [../local-writing/SKILL.md](../local-writing/SKILL.md) for plans, progress notes, and final output.
+Read [../be-practical/SKILL.md](../be-practical/SKILL.md) for plans, progress notes, and final output.
 
 ## Minimum solution ladder
 
