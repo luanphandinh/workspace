@@ -11,20 +11,17 @@
 
 # 3. Solution Overview
 
-```mermaid
-flowchart TB
-  client["Authenticated client"]
-  http["HTTP server<br/>Actor ID from auth context"]
-  service["FeedService<br/>Omit address (NEW)"]
-  database[("PostgreSQL<br/>users / feeds")]
-  client -->|"PATCH /v1/me/feed-privacy (NEW)<br/>GET /v1/feed"| http
-  http -->|"FeedService.SetPrivacy (NEW)<br/>FeedService.List"| service
-  service -->|"UPDATE users.hide_address (NEW)<br/>SELECT feeds JOIN users"| database
-  classDef new fill:#bbf7d0,stroke:#16a34a,color:#166534,font-weight:bold
-  class service new
-  linkStyle 0 stroke:#16a34a,stroke-width:2px,color:#16a34a
-  linkStyle 1 stroke:#16a34a,stroke-width:2px,color:#16a34a
-  linkStyle 2 stroke:#16a34a,stroke-width:2px,color:#16a34a
+```plantuml
+@startuml
+top to bottom direction
+rectangle "Authenticated client" as client
+rectangle "HTTP server\nActor ID from auth context" as http
+rectangle "FeedService\nOmit address (NEW)" as service #palegreen
+database "PostgreSQL\nusers / feeds" as database
+client -[#green]-> http : PATCH /v1/me/feed-privacy (NEW)\nGET /v1/feed
+http -[#green]-> service : FeedService.SetPrivacy (NEW)\nFeedService.List
+service -[#green]-> database : UPDATE users.hide_address (NEW)\nSELECT feeds JOIN users
+@enduml
 ```
 
 # 5. External Technical Design

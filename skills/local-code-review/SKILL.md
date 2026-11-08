@@ -52,30 +52,28 @@ For each repo listed in `workspace.yml`:
 - Security/privacy only when the diff touches access control, secrets, user data, tokens, signatures, or external input.
 
 ## Changed-flow diagram
-Always include exactly one merged terminal diagram when the change affects calls, handlers, storage, queues, or important internal logic.
+Always include exactly one merged PlantUML diagram when the change affects calls, handlers, storage, queues, or important internal logic.
 
 Before drawing the diagram, use `local-code-explore` as the exploration and rendering source of truth:
 - Invoke/use `local-code-explore` to explore the changed entrypoints, changed downstream calls, and affected storage/queue edges.
-- Reuse the `local-code-explore` terminal diagram rules exactly: one merged graph, shared service boxes, RPC/API/function level, centered connectors, protocol/method/topic labels on arrows, and no per-repo or per-service split charts.
-- If `local-code-explore` output already exists in the current review context, reuse its graph after verifying the changed edges against the diff. Do not redraw with a review-specific ASCII format.
+- Reuse the `local-code-explore` PlantUML diagram rules exactly: one merged graph, shared service nodes, RPC/API/function level, protocol/method/topic labels on arrows, and no per-repo or per-service split charts.
+- If `local-code-explore` output already exists in current review context, reuse its graph after verifying changed edges against diff.
 - Overlay review annotations on that diagram:
   - `✅` for changed service boxes, handlers, methods, fields, stores, queues, or edges.
   - `⚠️` for risk hotspots found during review.
 - If a changed edge cannot be mapped to a repo, keep it in the same diagram as `External / not found` and explain the missing evidence below the diagram.
 
-If the change is purely local and has no cross-service flow, still include a compact one-box diagram:
-```
-+-------------------------------+
-| <repo-a>                      |
-| ✅ <function/file>            |
-| risk: <short risk or none>    |
-+-------------------------------+
+If change is purely local and has no cross-service flow, still include a compact one-node diagram:
+```plantuml
+@startuml
+rectangle "<repo-a>\n✅ <function/file>\nrisk: <short risk or none>" as repo_a
+@enduml
 ```
 
 ## Output format
 Use this order:
 1. **Findings** — severity, file:line, concrete bug/risk, why it matters, suggested fix direction.
-2. **Changed Flow** — the single merged terminal diagram.
+2. **Changed Flow** — single merged PlantUML diagram.
 3. **Evidence Map** — changed edges or logic entries with file:line references, ordered to match the diagram.
 4. **Test Gaps** — missing or weak tests tied to specific changed behavior.
 5. **Open Questions** — only blockers that affect review confidence.

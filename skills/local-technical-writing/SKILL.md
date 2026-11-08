@@ -39,6 +39,6 @@ Do not use a table for prose or an inventory that does not compare anything.
 
 Normalize findings into nodes and labeled edges before drawing. The diagram is the flow source of truth. Text below it contains evidence or exceptions only.
 
-- Technical documents: read [references/flowcharts.md](references/flowcharts.md) and use only flowcharts. Markdown preview requires fence language `mermaid`; put `flowchart TB` or `flowchart LR` on first diagram line. Never use another diagram grammar.
+- Technical documents: read [references/flowcharts.md](references/flowcharts.md) and use PlantUML for every diagram.
 
 When both forms exist, derive them from the same graph and update them together.

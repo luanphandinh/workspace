@@ -14,26 +14,23 @@
 
 ## 3.1 Architecture
 
-```mermaid
-flowchart TB
-  actor["Owner / invited friend"]
-  collection["CollectionService (NEW)"]
-  friend["FriendService"]
-  feed["FeedService"]
-  database[("PostgreSQL (NEW tables)")]
-  worker["InvitationWorker (NEW)"]
-  notification["NotificationService"]
-  actor -->|"Collection HTTP APIs (NEW)"| collection
-  collection -->|"FriendService.AreFriends"| friend
-  collection -->|"FeedService.ListVisibleItems"| feed
-  collection -->|"Collections, items,<br/>members, outbox"| database
-  database -->|"Claim invitation_outbox"| worker
-  worker -->|"NotificationService.SendInvitation"| notification
-  classDef new fill:#bbf7d0,stroke:#16a34a,color:#166534,font-weight:bold
-  class collection,database,worker new
-  linkStyle 0 stroke:#16a34a,stroke-width:2px,color:#16a34a
-  linkStyle 3 stroke:#16a34a,stroke-width:2px,color:#16a34a
-  linkStyle 4 stroke:#16a34a,stroke-width:2px,color:#16a34a
+```plantuml
+@startuml
+top to bottom direction
+rectangle "Owner / invited friend" as actor
+rectangle "CollectionService (NEW)" as collection #palegreen
+rectangle "FriendService" as friend
+rectangle "FeedService" as feed
+database "PostgreSQL\n(NEW tables)" as database #palegreen
+rectangle "InvitationWorker (NEW)" as worker #palegreen
+rectangle "NotificationService" as notification
+actor -[#green]-> collection : Collection HTTP APIs (NEW)
+collection --> friend : FriendService.AreFriends
+collection --> feed : FeedService.ListVisibleItems
+collection -[#green]-> database : Collections, items,\nmembers, outbox (NEW)
+database -[#green]-> worker : Claim invitation_outbox (NEW)
+worker --> notification : NotificationService.SendInvitation
+@enduml
 ```
 
 ## 3.2 Membership states
@@ -47,18 +44,26 @@ flowchart TB
 
 ## 3.3 Invite and retry
 
-```mermaid
-flowchart TB
-  collection["CollectionService"] -->|"AreFriends"| friend["FriendService"]
-  friend -->|"friends=true"| member["UPSERT members"]
-  member --> outbox["INSERT invitation outbox"]
-  outbox --> commit["COMMIT"]
-  commit --> claim["Worker claims event + lease"]
-  claim --> notify["Send invitation with event_id"]
-  notify --> outcome{"Delivered?"}
-  outcome -->|"Yes"| delivered["Mark delivered"]
-  outcome -->|"Timeout / crash"| retry["Retry same event_id"]
-  retry --> notify
+```plantuml
+@startuml
+top to bottom direction
+rectangle "CollectionService" as collection
+rectangle "FriendService" as friend
+rectangle "UPSERT members\nINSERT invitation outbox\nCOMMIT" as persist
+rectangle "Worker claims event\nand lease" as claim
+rectangle "SendInvitation(event_id)" as notify
+rectangle "Delivered?" as outcome
+rectangle "Mark delivered" as delivered
+rectangle "Retry same event_id" as retry
+collection --> friend : FriendService.AreFriends
+friend --> persist : friends=true
+persist --> claim
+claim --> notify
+notify --> outcome
+outcome --> delivered : Yes
+outcome --> retry : Timeout / crash
+retry --> notify
+@enduml
 ```
 
 # 4. Design Decisions
