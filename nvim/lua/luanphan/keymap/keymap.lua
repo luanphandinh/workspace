@@ -149,6 +149,10 @@ vim.keymap.set("n", "<leader>sl", function()
   require("luanphan.terminal_references").toggle()
 end, { desc = "Terminal reference links" })
 
+vim.keymap.set("n", "<leader>gr", function()
+  require("luanphan.git_remote").open_current_file()
+end, { desc = "Open current file on git remote" })
+
 -- Diagnostics
 vim.keymap.set("n", "<leader>d", function()
   vim.diagnostic.open_float(nil, { focus = false })

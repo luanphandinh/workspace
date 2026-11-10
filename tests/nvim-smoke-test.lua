@@ -670,6 +670,46 @@ local function test_git_conflict_decoration_guard()
   assert_true(not rethrow_ok, "git conflict guard should rethrow unrelated errors")
 end
 
+local function test_git_remote_file_links()
+  local repo = temp_root .. "/git-remote-link"
+  local file = repo .. "/src/example.lua"
+  vim.fn.mkdir(repo, "p")
+  run({ "git", "init", "-b", "feature/example" }, repo)
+  run({ "git", "config", "user.name", "Example User" }, repo)
+  run({ "git", "config", "user.email", "example@example.invalid" }, repo)
+  write(file, { "local value = 1", "return value" })
+  run({ "git", "add", "." }, repo)
+  run({ "git", "commit", "-m", "initial fixture" }, repo)
+  run({ "git", "remote", "add", "origin", "https://github.com/example/example-repo.git" }, repo)
+
+  local git_remote = require("luanphan.git_remote")
+  local url, err = git_remote.url_for_file(file, 2)
+  assert_true(err == nil, tostring(err))
+  assert_true(
+    url == "https://github.com/example/example-repo/blob/feature/example/src/example.lua#L2",
+    "GitHub file URL is incorrect: " .. tostring(url)
+  )
+
+  run({ "git", "remote", "set-url", "origin", "git@git.example.invalid:group/example-repo.git" }, repo)
+  url, err = git_remote.url_for_file(file, 2)
+  assert_true(err == nil, tostring(err))
+  assert_true(
+    url == "https://git.example.invalid/group/example-repo/blob/feature/example/src/example.lua#L2",
+    "custom git host file URL is incorrect: " .. tostring(url)
+  )
+
+  run({ "git", "remote", "set-url", "origin", "git@gitlab.example.invalid:group/example-repo.git" }, repo)
+  url, err = git_remote.url_for_file(file, 2)
+  assert_true(err == nil, tostring(err))
+  assert_true(
+    url == "https://gitlab.example.invalid/group/example-repo/-/blob/feature/example/src/example.lua#L2",
+    "GitLab file URL is incorrect: " .. tostring(url)
+  )
+
+  local mapping = vim.fn.maparg("<leader>gr", "n", false, true)
+  assert_true(type(mapping) == "table" and type(mapping.callback) == "function", "<leader>gr mapping is missing")
+end
+
 local function test_shell_treesitter_reads_workspace_scripts()
   local files = vim.fn.systemlist({ "git", "ls-files", "--", "*.sh" })
   assert_true(vim.v.shell_error == 0, table.concat(files, "\n"))
@@ -1768,7 +1808,7 @@ local function test_worktree_plugin_starts_lazy()
     type(agent_map) == "table" and type(agent_map.callback) == "function",
     "<leader>wa is not a lazy callback mapping"
   )
-  for _, old_lhs in ipairs({ "<leader>gp", "<leader>gr", "<leader>gw", "<leader>g;", "<leader>w;" }) do
+  for _, old_lhs in ipairs({ "<leader>gp", "<leader>gw", "<leader>g;", "<leader>w;" }) do
     assert_true(vim.fn.maparg(old_lhs, "n") == "", old_lhs .. " workspace mapping should be removed")
   end
 end
@@ -7036,6 +7076,7 @@ local safe_cleanup_tests = {
   editor_text_helpers = test_editor_text_helpers,
   file_tree_focus = test_file_tree_focuses_current_file,
   filetype_options = test_filetype_editor_options,
+  git_remote_links = test_git_remote_file_links,
   only_keep_tree = test_only_keep_tree_closes_other_windows,
   repository_remove = test_remove_repository_from_workspace,
   run_actions = test_run_actions,
@@ -7182,6 +7223,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("git conflict decoration guard", function()
     test_git_conflict_decoration_guard()
+  end)
+
+  test("git remote links use current branch, file, and line", function()
+    safe_cleanup_tests.git_remote_links()
   end)
 
   test("shell treesitter reads workspace scripts", function()
