@@ -3634,6 +3634,13 @@ local function test_active_agent_discovery(repo, worktree)
     assert_true(instances[1].bufnr == repo_codex_buf, "active agent was not first in recency order")
     assert_true(instances[1].agent_label == "Review example parser", "agent picker ignored the thread title")
     assert_true(instances[1].display:find("Review example parser", 1, true), "agent picker display omitted the title")
+    local workspace_position = instances[1].display:find(instances[1].workspace_label, 1, true)
+    local session_position = instances[1].display:find(instances[1].agent_label, 1, true)
+    local status_position = instances[1].display:find("[" .. instances[1].status .. "]", 1, true)
+    assert_true(
+      workspace_position < session_position and session_position < status_position,
+      "agent picker columns are not workspace, session, status"
+    )
     assert_true(instances[1].ordinal:find("Review example parser", 1, true), "thread title is not searchable")
     assert_true(instances[3].agent_label == "cursor", "untitled agent did not retain its fallback label")
     vim.b[repo_codex_buf].term_title = "Renamed parser review"
@@ -3669,7 +3676,7 @@ local function test_active_agent_discovery(repo, worktree)
     assert_true(codex.status == "running", "running agent state was not discovered")
     assert_true(cursor.status == "idle", "idle agent state was not discovered")
     assert_true(codex.display:find("%[running%]") ~= nil, "agent display omitted running state")
-    assert_true(cursor.display:find("%[idle%s+%]") ~= nil, "agent display omitted idle state")
+    assert_true(cursor.display:find("%[idle%]") ~= nil, "agent display omitted idle state")
     assert_true(codex.display:find("example%-repo") ~= nil, "agent display omitted repository context")
     assert_true(cursor.display:find("%[feature%]") ~= nil, "agent display omitted branch context")
     assert_true(vim.fn.exists(":AgentSwitch") == 2, "AgentSwitch command is missing")

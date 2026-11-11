@@ -1335,24 +1335,23 @@ local function setup()
     table.sort(instances, agent_before)
 
     local agent_width = 0
-    local status_width = 0
-    local context_width = 0
+    local workspace_width = 0
     local current = safe_getcwd()
     local current_destination = git_root(current) or workspace_root_for_path(current) or current
     for _, instance in ipairs(instances) do
+      instance.workspace_label = string.format("%s [%s]", instance.context, instance.branch)
       agent_width = math.max(agent_width, vim.fn.strdisplaywidth(instance.agent_label))
-      status_width = math.max(status_width, #instance.status)
-      context_width = math.max(context_width, #instance.context)
+      workspace_width = math.max(workspace_width, vim.fn.strdisplaywidth(instance.workspace_label))
     end
     for _, instance in ipairs(instances) do
       local marker = instance.destination == current_destination and "* " or "  "
       instance.display = string.format(
-        "%s%s  [%-" .. status_width .. "s]  %-" .. context_width .. "s  [%s]",
+        "%s%s%s  %s  [%s]",
         marker,
+        instance.workspace_label,
+        string.rep(" ", workspace_width - vim.fn.strdisplaywidth(instance.workspace_label)),
         instance.agent_label .. string.rep(" ", agent_width - vim.fn.strdisplaywidth(instance.agent_label)),
-        instance.status,
-        instance.context,
-        instance.branch
+        instance.status
       )
       instance.ordinal = instance.agent .. " " .. instance.agent_label .. " " .. instance.context
     end
