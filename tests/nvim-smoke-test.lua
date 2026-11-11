@@ -427,6 +427,30 @@ local function test_json_format_keymap()
   assert_true(#lines > 1 and lines[1] == "{", "json buffers should format before write")
 end
 
+local function test_temporary_json_buffer_folds()
+  vim.cmd("enew")
+  local buf = vim.api.nvim_get_current_buf()
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].bufhidden = "wipe"
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "{",
+    '  "items": [',
+    "    {",
+    '      "name": "example"',
+    "    }",
+    "  ]",
+    "}",
+  })
+  vim.bo[buf].filetype = "json"
+
+  wait_until("temporary JSON folds", function()
+    return vim.treesitter.highlighter.active[buf] ~= nil and vim.fn.foldlevel(2) > 0
+  end, 3000)
+  assert_true(vim.wo.foldmethod == "expr", "temporary JSON buffer should use expression folds")
+  vim.cmd("normal! zM")
+  assert_true(vim.fn.foldclosed(2) ~= -1, "zM should close temporary JSON folds")
+end
+
 local function test_filetype_editor_options()
   local cases = {
     {
@@ -7077,6 +7101,7 @@ local safe_cleanup_tests = {
   file_tree_focus = test_file_tree_focuses_current_file,
   filetype_options = test_filetype_editor_options,
   git_remote_links = test_git_remote_file_links,
+  json_temporary_folds = test_temporary_json_buffer_folds,
   only_keep_tree = test_only_keep_tree_closes_other_windows,
   repository_remove = test_remove_repository_from_workspace,
   run_actions = test_run_actions,
@@ -7391,6 +7416,10 @@ local setup_ok, setup_err = xpcall(function()
 
   test("json buffers format before write", function()
     test_json_format_keymap()
+  end)
+
+  test("temporary JSON buffers fold", function()
+    safe_cleanup_tests.json_temporary_folds()
   end)
 
   test("filetype editor options", function()
