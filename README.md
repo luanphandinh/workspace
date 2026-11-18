@@ -16,6 +16,7 @@ make help
 - **Configuration:** Edit files here, then run `make workspace-bin`, `make nvim-config`, `make neovide-config`, or `make tmux-config`.
 - **Linux:** Run setup as your normal user. Fresh installations use single-user Nix; when `/nix` is missing, its installer uses `sudo` to create it. Reuse shared installations without changing ownership.
 - **macOS:** Uses the Nix daemon installer.
+- **Desktop automation:** `make ardia hammerspoon` installs the browser when absent and loads `hammerspoon/init.lua`. The automation app starts at login; grant it Accessibility access in System Settings, then choose **Reload Config** from its menu. `Cmd-Shift-K` focuses the terminal; mouse Back/Forward over the browser sidebar switches profiles. After editing the Lua config, run `make hammerspoon-config` to install and reload it. Sidebar controls rely on the browser's internal session format.
 - **Shell:** Setup keeps your login shell without administrator access. Run `exec zsh -l` to start the installed shell.
 - **npm:** `make workspace-bin` configures global installs under `~/.local`, with commands in `~/.local/bin` on PATH. Install global tools with `npm install -g <package>` as your normal user. Existing global packages must be reinstalled to move them. Project dependencies remain local; run their tools through npm scripts or `npx`.
 

@@ -30,7 +30,7 @@ setup: setup-deps
 	$(MAKE) setup-runtime
 
 setup-runtime: ## Install workspace configs and terminal agent CLIs after deps are available
-setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config neovide-config newsboat-config macos-keyboard cleanup agent-clis skills-sync
+setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config neovide-config newsboat-config macos-keyboard ardia hammerspoon-config cleanup agent-clis skills-sync
 
 nix-install: ## Install Nix if missing (single-user on Linux, daemon on macOS)
 	sh ./scripts/install-nix.sh
@@ -55,6 +55,7 @@ setup-deps: nix-install
 	mise use --global node@22
 
 apps: ## Install macOS GUI apps via Homebrew cask
+apps: ardia hammerspoon
 ifeq ($(UNAME),Darwin)
 	@if ! command -v brew >/dev/null 2>&1; then \
 		echo "apps: Homebrew is required on macOS" >&2; \
@@ -67,6 +68,40 @@ ifeq ($(UNAME),Darwin)
 	fi
 else
 	@echo "apps: skipped; macOS-only"
+endif
+
+.PHONY: ardia hammerspoon hammerspoon-install hammerspoon-config
+ardia: ## Install the browser when absent; keep an existing installation
+ifeq ($(UNAME),Darwin)
+	@if [ -d /Applications/Ardia.app ] || [ -d "$(HOME)/Applications/Ardia.app" ]; then \
+		echo "Browser already installed; keeping its current version"; \
+	else \
+		brew install --cask ardia-browser/tap/ardia; \
+	fi
+else
+	@echo "Browser installation skipped; macOS-only"
+endif
+
+hammerspoon: hammerspoon-config ## Install desktop automation and its configuration
+
+hammerspoon-install: ## Install the desktop automation app
+ifeq ($(UNAME),Darwin)
+	brew install --cask hammerspoon
+else
+	@echo "Desktop automation installation skipped; macOS-only"
+endif
+
+hammerspoon-config: hammerspoon-install ## Install and load desktop shortcuts and sidebar mouse controls
+ifeq ($(UNAME),Darwin)
+	mkdir -p "$(HOME)/.hammerspoon"
+	cp ./hammerspoon/init.lua "$(HOME)/.hammerspoon/init.lua"
+	@if pgrep -x Hammerspoon >/dev/null; then \
+		hs -c 'hs.timer.doAfter(0.2, hs.reload)'; \
+	else \
+		open -g -a Hammerspoon; \
+	fi
+else
+	@echo "Desktop automation configuration skipped; macOS-only"
 endif
 
 macos-keyboard: ## Configure keyboard repeat, Caps Lock, and trackpad tap to click
