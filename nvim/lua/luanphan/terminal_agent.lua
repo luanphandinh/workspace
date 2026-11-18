@@ -1012,7 +1012,8 @@ local function format_selection_payload(bufnr, lines, line_start, line_end)
 end
 
 local function exit_visual_to_normal()
-  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
+  -- Consume Escape before focusing the terminal, where it would interrupt the agent.
+  vim.cmd.normal({ args = { vim.keycode("<Esc>") }, bang = true })
 end
 
 function API.send_selection(target_bufnr, opts)
@@ -1097,7 +1098,7 @@ function API.send_selection(target_bufnr, opts)
       return
     end
 
-    local ok, err = pcall(vim.fn.chansend, job, payload)
+    local ok, err = pcall(vim.fn.chansend, job, "\27[200~" .. payload .. "\27[201~")
     if not ok then
       nx("send failed: " .. tostring(err), vim.log.levels.ERROR)
       clear_bufnr_for_buf(cur)
