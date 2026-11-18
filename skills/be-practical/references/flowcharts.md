@@ -2,9 +2,9 @@
 
 ## Source
 
-Build PlantUML flowcharts from verified graph produced during code exploration. Keep chat and document diagrams on same nodes and edges.
+Build document flowcharts from verified graph produced during code exploration. Keep chat and document diagrams on same nodes and edges; choose syntax for the destination using [../SKILL.md](../SKILL.md#diagrams).
 
-Put every diagram in a `plantuml` fence. Start with `@startuml` and end with `@enduml`.
+Put document diagrams in a `plantuml` fence. Start with `@startuml` and end with `@enduml`. Terminal/TUI replies use text graphs instead.
 
 ## Architecture flowchart
 

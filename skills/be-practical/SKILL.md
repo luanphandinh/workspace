@@ -37,8 +37,9 @@ description: "Use with every local skill for practical writing and coding: direc
 
 ## Diagrams
 
-- Every diagram must use PlantUML in a `plantuml` fence.
-- Start with `@startuml` and end with `@enduml`.
+- Choose diagram format for its destination. Terminal/TUI replies use boxed text graphs with connected arrows and 🔷 ✅ ⚠️ highlights in a `text` fence; never emit raw PlantUML unless the user requests its source.
+- When chat rendering support is unknown, use the same text format.
+- Document diagrams use PlantUML in a `plantuml` fence, starting with `@startuml` and ending with `@enduml`. Writing a document from a terminal does not change its format.
 - For code exploration or review graphs, read [references/plantuml-diagrams.md](references/plantuml-diagrams.md).
 - For technical-document flowcharts, read [references/flowcharts.md](references/flowcharts.md).
 
