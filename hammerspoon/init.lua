@@ -1,8 +1,19 @@
 require("hs.ipc")
 hs.autoLaunch(true)
 
-local terminalHotkey = hs.hotkey.bind({ "cmd", "shift" }, "k", function()
-    hs.application.launchOrFocus("kitty")
+local previousTerminalApp
+hs.hotkey.bind({ "cmd", "shift" }, "k", function()
+    local app = hs.application.frontmostApplication()
+    if app and app:bundleID() == "net.kovidgoyal.kitty" then
+        app:hide()
+        if previousTerminalApp and previousTerminalApp:isRunning() then
+            previousTerminalApp:activate()
+        end
+        previousTerminalApp = nil
+    else
+        previousTerminalApp = app
+        hs.application.launchOrFocus("kitty")
+    end
 end)
 
 local editorHotkey = hs.hotkey.bind({ "cmd", "shift" }, "e", function()
@@ -35,7 +46,6 @@ end
 local function updateAppHotkeys(app)
     local bundleID = app and app:bundleID()
     local name = app and app:name():lower() or ""
-    setHotkeyActive(terminalHotkey, bundleID ~= "net.kovidgoyal.kitty")
     -- Command-line launches of the editor have no bundle ID.
     setHotkeyActive(editorHotkey, bundleID ~= "com.neovide.neovide" and name ~= "neovide")
     setHotkeyActive(browserHotkey, not browserBundleIDs[bundleID])
