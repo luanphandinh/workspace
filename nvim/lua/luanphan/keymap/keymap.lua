@@ -128,7 +128,7 @@ vim.keymap.set("n", "<C-w><C-o>", only_keep_tree, { desc = "Close other windows 
 
 -- Terminal mode: escape terminal and switch windows
 vim.keymap.set("t", "<C-h>", "<C-\\><C-n><C-w>h", { desc = "Exit terminal and go left" })
-vim.keymap.set("t", "<C-l>", "<C-\\><C-n><C-w>l", { desc = "Exit terminal and go right" })
+vim.keymap.set("t", "<C-l>", "<C-l>", { desc = "Send clear screen to terminal" })
 -- Keep <C-j>/<C-k> available to terminal programs for newline and line editing.
 vim.keymap.set("t", "<Esc>", "<C-\\><C-n>", { desc = "Exit terminal mode" })
 vim.keymap.set("t", "<C-]>", function()
