@@ -2,7 +2,7 @@ require("hs.ipc")
 hs.autoLaunch(true)
 
 local previousTerminalApp
-hs.hotkey.bind({ "cmd", "shift" }, "k", function()
+hs.hotkey.bind({ "cmd", "shift" }, "j", function()
     local app = hs.application.frontmostApplication()
     if app and app:bundleID() == "net.kovidgoyal.kitty" then
         app:hide()
