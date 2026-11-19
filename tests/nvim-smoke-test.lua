@@ -1382,6 +1382,8 @@ local function agent_bufnr(global_name)
 end
 
 local function feed_normal(keys)
+  -- Earlier terminal input can change mode when queued keys are processed.
+  keys = "<C-\\><C-n>" .. keys
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "xt", false)
 end
 
