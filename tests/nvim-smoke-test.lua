@@ -3314,6 +3314,17 @@ local function test_workspace_folder_browser()
     "vim.fn.maparg('<C-i>', 'n', false, true).callback()",
     "assert_true(vim.api.nvim_get_current_buf() == newest_agent and realpath(vim.fn.getcwd()) == realpath(target), 'newer agent jump did not skip the closed session')",
     "assert_true(vim.api.nvim_get_current_win() == main and vim.api.nvim_win_is_valid(sidebar), 'agent jumps replaced the float')",
+    "vim.api.nvim_buf_delete(agent_buf, { force = true })",
+    "local first = newest_agent",
+    "local second = agents.new('codex')",
+    "assert_true(agents.open('codex', first, { view_mode = true }), 'could not focus the previous agent again')",
+    "local third = agents.new('codex')",
+    "local function expect_jump(key, expected) vim.fn.maparg(key, 'n', false, true).callback(); assert_true(vim.api.nvim_get_current_buf() == expected, 'agent jump revisited a session or broke history order') end",
+    "expect_jump('<C-o>', first)",
+    "expect_jump('<C-o>', second)",
+    "expect_jump('<C-o>', second)",
+    "expect_jump('<C-i>', first)",
+    "expect_jump('<C-i>', third)",
   })
   local output = vim.fn.systemlist(child_nvim_luafile_command(station, script))
   assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
