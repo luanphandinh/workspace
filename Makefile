@@ -21,6 +21,10 @@ endif
 lazy_command ?= restore
 shortcut_names ?=
 
+ifneq ($(IS_CI_WORKSPACE),1)
+	desktop_setup := ardia hammerspoon-config
+endif
+
 .PHONY: help setup setup-runtime nix-install update upgrade-deps setup-deps apps macos-keyboard macos-shortcuts default-shell fonts-install newsboat-config nvim nvim-config nvim-lock agent-clis codex-config tmux tmux-config alacritty alacritty-config kitty kitty-config neovide neovide-config scripts skills-sync workspace-bin cleanup install-agent-clis-test skills-sync-test agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test tunnel-test neovide-remote-test wsync-test go-remote-test go-wrapper-test
 help:
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##/\n\t/'
@@ -30,7 +34,7 @@ setup: setup-deps
 	$(MAKE) setup-runtime
 
 setup-runtime: ## Install workspace configs and terminal agent CLIs after deps are available
-setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config neovide-config newsboat-config macos-keyboard ardia hammerspoon-config cleanup agent-clis skills-sync
+setup-runtime: default-shell fonts-install workspace-bin codex-config nvim-config tmux-config alacritty-config kitty-config neovide-config newsboat-config macos-keyboard $(desktop_setup) cleanup agent-clis skills-sync
 
 nix-install: ## Install Nix if missing (single-user on Linux, daemon on macOS)
 	sh ./scripts/install-nix.sh
@@ -72,9 +76,7 @@ endif
 
 .PHONY: ardia hammerspoon hammerspoon-install hammerspoon-config
 ardia: ## Install the browser when absent; keep an existing installation
-ifeq ($(IS_CI_WORKSPACE),1)
-	@echo "Browser installation skipped in workspace CI"
-else ifeq ($(UNAME),Darwin)
+ifeq ($(UNAME),Darwin)
 	@if [ -d /Applications/Ardia.app ] || [ -d "$(HOME)/Applications/Ardia.app" ]; then \
 		echo "Browser already installed; keeping its current version"; \
 	else \
