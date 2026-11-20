@@ -72,7 +72,9 @@ endif
 
 .PHONY: ardia hammerspoon hammerspoon-install hammerspoon-config
 ardia: ## Install the browser when absent; keep an existing installation
-ifeq ($(UNAME),Darwin)
+ifeq ($(IS_CI_WORKSPACE),1)
+	@echo "Browser installation skipped in workspace CI"
+else ifeq ($(UNAME),Darwin)
 	@if [ -d /Applications/Ardia.app ] || [ -d "$(HOME)/Applications/Ardia.app" ]; then \
 		echo "Browser already installed; keeping its current version"; \
 	else \

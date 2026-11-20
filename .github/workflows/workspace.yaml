@@ -6,6 +6,7 @@ on:
 jobs:
   workspace:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     env:
       IS_CI_WORKSPACE: ${{ startsWith(matrix.os, 'macos-') && '1' || '0' }}
     strategy:
