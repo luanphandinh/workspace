@@ -266,6 +266,8 @@ return {
 
       vim.lsp.config("gopls", {
         cmd = { gopls_cmd },
+        -- Package loading needs current Go flags, even for older modules.
+        cmd_env = { GOTOOLCHAIN = "auto" },
         root_markers = { "go.mod", ".git" },
         settings = {
           gopls = {
