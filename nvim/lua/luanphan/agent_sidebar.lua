@@ -1,4 +1,5 @@
 local M = {}
+local close_window = require("luanphan.terminal_agent").close_window
 
 local main, sidebar
 local rows = {}
@@ -51,7 +52,7 @@ function M.refresh()
   vim.bo[buf].modifiable = false
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
   if active_row then
-    vim.api.nvim_buf_set_extmark(buf, ns, active_row - 1, 0, { line_hl_group = "TabLineSel" })
+    vim.api.nvim_buf_set_extmark(buf, ns, active_row - 1, 0, { line_hl_group = "Title" })
     vim.api.nvim_win_set_cursor(sidebar, { active_row, 0 })
   end
 end
@@ -79,9 +80,16 @@ local function click_row()
   return ""
 end
 
+local function close_sidebar()
+  local win = sidebar
+  sidebar = nil
+  if valid(main) then vim.w[main].luanphan_agent_sidebar = nil end
+  if valid(win) then vim.api.nvim_win_close(win, true) end
+end
+
 function M.layout(win, width)
   if width == 0 then
-    if main == win and valid(sidebar) then vim.api.nvim_win_close(sidebar, true) end
+    if main == win then close_sidebar() end
     return
   end
   local geometry = vim.api.nvim_win_get_config(win)
@@ -98,7 +106,8 @@ function M.layout(win, width)
     return
   end
 
-  if valid(sidebar) then vim.api.nvim_win_close(sidebar, true) end
+  if valid(main) and main ~= win then close_window(main) end
+  close_sidebar()
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = "agent-sidebar"
@@ -107,8 +116,11 @@ function M.layout(win, width)
     style = "minimal",
     border = "single",
   }))
+  vim.w[main].luanphan_agent_sidebar = sidebar
   vim.wo[sidebar].wrap = false
   vim.wo[sidebar].cursorline = true
+  vim.wo[sidebar].cursorlineopt = "line"
+  vim.wo[sidebar].winhighlight = "CursorLine:Visual"
   vim.wo[sidebar].winbar = "%#TabLineFill# Workspaces"
 
   local opts = { buffer = buf, silent = true, nowait = true }
@@ -125,23 +137,12 @@ function M.layout(win, width)
     if return_to_input then vim.cmd.startinsert() end
   end, opts)
   local function close_panel()
-    if valid(main) then vim.api.nvim_win_close(main, false) end
+    if valid(main) then close_window(main) end
   end
   for _, key in ipairs({ "<C-h>", "<leader>a" }) do
     vim.keymap.set("n", key, close_panel, opts)
   end
 
-  vim.api.nvim_create_autocmd("WinClosed", {
-    pattern = tostring(win),
-    once = true,
-    callback = function()
-      if main ~= win then return end
-      if valid(sidebar) then vim.api.nvim_win_close(sidebar, true) end
-      main, sidebar = nil, nil
-      rows = {}
-      thread_lines = {}
-    end,
-  })
   M.refresh()
 end
 
@@ -172,6 +173,21 @@ local function split_focused()
 end
 
 local group = vim.api.nvim_create_augroup("LuanphanAgentSidebar", { clear = true })
+vim.api.nvim_create_autocmd("WinClosed", {
+  group = group,
+  callback = function(args)
+    local win = tonumber(args.match)
+    if win ~= main and win ~= sidebar then return end
+    local closing_main = win == main
+    local other = sidebar
+    if not closing_main then other = main end
+    main, sidebar = nil, nil
+    rows = {}
+    thread_lines = {}
+    if valid(other) then vim.api.nvim_win_close(other, closing_main) end
+  end,
+})
+
 vim.api.nvim_create_autocmd("WinEnter", {
   group = group,
   callback = function()
@@ -179,7 +195,7 @@ vim.api.nvim_create_autocmd("WinEnter", {
     local win = main
     vim.schedule(function()
       if win == main and not switching_workspace and valid(win) and split_focused() then
-        vim.api.nvim_win_close(win, false)
+        close_window(win)
       end
     end)
   end,

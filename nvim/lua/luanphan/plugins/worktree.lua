@@ -33,6 +33,7 @@ local function setup()
   local BUFSTORE_KEY = "luanphan_workspace_buffers"
   local WS_CONTAINER = "local_workspaces"
   local agents = require("luanphan.plugins.agents")
+  local terminal_agent = require("luanphan.terminal_agent")
   local AGENT_BUFFER_KEYS = agents.agent_buffer_keys()
   local AGENT_ORDER = {}
   for index, agent in ipairs(AGENT_BUFFER_KEYS) do
@@ -282,7 +283,7 @@ local function setup()
           and vim.b[buf].luanphan_persist_term
           and not vim.b[buf].luanphan_toggleterm
         then
-          pcall(vim.api.nvim_win_close, win, false)
+          pcall(terminal_agent.close_window, win)
         end
       end
     end
@@ -1424,7 +1425,7 @@ local function setup()
       vim.cmd.cd({ args = { path } })
     end
     if agent_windows then
-      require("luanphan.terminal_agent").with_preserved_windows(change_directory)
+      terminal_agent.with_preserved_windows(change_directory)
     else
       change_directory()
     end

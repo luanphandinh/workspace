@@ -1,4 +1,5 @@
 local M = {}
+local terminal_agent = require("luanphan.terminal_agent")
 
 local agent_order = { "codex", "cursor", "claude" }
 local agent_key = "<leader>a"
@@ -232,7 +233,7 @@ local function close_visible_agents(except_bufnr)
       local bufnr = vim.api.nvim_win_get_buf(win)
       local name = vim.b[bufnr].luanphan_agent_name
       if bufnr ~= except_bufnr and agent_defs[name] and vim.b[bufnr].luanphan_persist_term then
-        pcall(vim.api.nvim_win_close, win, false)
+        pcall(terminal_agent.close_window, win)
       end
     end
   end
@@ -253,7 +254,7 @@ local function get_agent(name)
 
   local def = agent_defs[name]
   local sidebar = require("luanphan.agent_sidebar")
-  apis[name] = require("luanphan.terminal_agent").create({
+  apis[name] = terminal_agent.create({
     status_name = name,
     g_bufnr = def.g_bufnr,
     notify_prefix = def.notify_prefix,
@@ -382,7 +383,7 @@ function M.hide()
         and vim.b[bufnr].luanphan_persist_term
         and not vim.b[bufnr].luanphan_toggleterm
       then
-        hidden = pcall(vim.api.nvim_win_close, win, false) or hidden
+        hidden = pcall(terminal_agent.close_window, win) or hidden
       end
     end
   end

@@ -451,7 +451,7 @@ function M.open(path, line, column)
   local target = find_editor_window(source)
 
   if not target and close_agent_float then
-    vim.api.nvim_win_close(source, false)
+    require("luanphan.terminal_agent").close_window(source)
     source = nil
     target = find_editor_window(-1)
   end
@@ -469,7 +469,7 @@ function M.open(path, line, column)
   vim.api.nvim_win_set_cursor(target, { target_line, target_column })
 
   if close_agent_float and source and vim.api.nvim_win_is_valid(source) then
-    vim.api.nvim_win_close(source, false)
+    require("luanphan.terminal_agent").close_window(source)
   end
   return true
 end

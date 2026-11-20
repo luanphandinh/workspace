@@ -3234,6 +3234,8 @@ local function test_workspace_folder_browser()
     "home-relative search prompt was not expanded"
   )
 
+  local shim_dir = temp_root .. "/folder-picker-shims"
+  write_executable(shim_dir .. "/mcodex", { "#!/bin/sh", "exec cat" })
   local script = temp_root .. "/workspace-folder-picker.lua"
   write(script, {
     "local function assert_true(value, message) if not value then error(message, 0) end end",
@@ -3241,12 +3243,21 @@ local function test_workspace_folder_browser()
     "vim.g.luanphan_recent_paths_file = " .. string.format("%q", temp_root .. "/child-recent-paths.json"),
     "vim.g.luanphan_global_settings_path = " .. string.format("%q", vim.g.luanphan_global_settings_path),
     "require('lazy').load({ plugins = { 'luanphan-worktree' } })",
-    "local api = _G._luanphan_wt_test",
     "local recent = require('luanphan.recent_paths')",
     "recent.touch(" .. string.format("%q", recent_a) .. ")",
     "recent.touch(" .. string.format("%q", recent_b) .. ")",
     "recent.touch(" .. string.format("%q", station) .. ")",
-    "api.pick_folder(" .. string.format("%q", station) .. ")",
+    "vim.env.PATH = " .. string.format("%q", shim_dir .. ":") .. " .. vim.env.PATH",
+    "vim.g.luanphan_agent_position_file = " .. string.format("%q", temp_root .. "/folder-picker-agent-position"),
+    "vim.g.luanphan_agent_status_dir = " .. string.format("%q", temp_root .. "/folder-picker-agent-status"),
+    "local agents = require('luanphan.plugins.agents')",
+    "local agent_buf = agents.new('codex')",
+    "local main = vim.api.nvim_get_current_win()",
+    "vim.fn.maparg('<C-h>', 'n', false, true).callback()",
+    "local sidebar = vim.api.nvim_get_current_win()",
+    "assert_true(vim.bo.filetype == 'agent-sidebar', 'folder switch fixture could not open the agent sidebar')",
+    "vim.fn.maparg('<C-l>', 'n', false, true).callback()",
+    "vim.fn.maparg('<leader>wf', 'n', false, true).callback()",
     "local prompt_bufnr = vim.api.nvim_get_current_buf()",
     "local action_state = require('telescope.actions.state')",
     "local actions = require('telescope.actions')",
@@ -3288,6 +3299,8 @@ local function test_workspace_folder_browser()
     "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return action_state.get_current_line() == target and selection and selection.value and selection.value.current and realpath(selection.value.path) == realpath(target) end, 20), 'resolved folder did not repopulate after child navigation')",
     "actions.select_default(prompt_bufnr)",
     "assert_true(vim.wait(3000, function() return realpath(vim.fn.getcwd()) == realpath(target) end, 20), 'absolute folder input did not switch workspaces')",
+    "assert_true(not vim.api.nvim_win_is_valid(main) and not vim.api.nvim_win_is_valid(sidebar), 'folder switch left an agent pane open')",
+    "assert_true(vim.fn.jobwait({vim.b[agent_buf].terminal_job_id}, 0)[1] == -1, 'folder switch stopped the agent session')",
     "assert_true(vim.fn.exists(':FolderSwitch') == 2, 'FolderSwitch command is missing')",
   })
   local output = vim.fn.systemlist(child_nvim_luafile_command(station, script))
@@ -5052,6 +5065,14 @@ local function test_agent_view_container(repo)
       return not vim.api.nvim_win_is_valid(main) and not vim.api.nvim_win_is_valid(sidebar)
     end, 3000)
     assert_true(vim.fn.jobwait({ vim.b[first_cursor_buf].terminal_job_id }, 0)[1] == -1, "hiding the float stopped the agent")
+
+    assert_true(agents.open("cursor", first_cursor_buf, { view_mode = true }), "could not reopen the agent float")
+    main = vim.api.nvim_get_current_win()
+    invoke_map("<C-h>")
+    sidebar = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_close(sidebar, false)
+    assert_true(not vim.api.nvim_win_is_valid(main), "closing the sidebar left the terminal visible")
+
   end, debug.traceback)
 
   vim.env.PATH = old_path

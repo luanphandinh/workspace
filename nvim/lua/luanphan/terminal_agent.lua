@@ -10,6 +10,14 @@
 local M = {}
 local preserve_windows = false
 
+function M.close_window(win)
+  local sidebar = vim.w[win].luanphan_agent_sidebar
+  vim.api.nvim_win_close(win, false)
+  if sidebar and vim.api.nvim_win_is_valid(sidebar) then
+    vim.api.nvim_win_close(sidebar, true)
+  end
+end
+
 function M.with_preserved_windows(callback)
   local previous = preserve_windows
   preserve_windows = true
@@ -631,7 +639,7 @@ local function set_float_close_keymaps(bufnr)
   local function close_float()
     local w = win_for_buf(bufnr)
     if w and vim.api.nvim_win_is_valid(w) then
-      pcall(vim.api.nvim_win_close, w, false)
+      pcall(M.close_window, w)
     end
   end
   for _, key in ipairs({ "<C-h>", "<C-k>", "<C-l>" }) do
@@ -677,7 +685,7 @@ local function attach_term_close(buf)
       clear_bufnr_for_buf(buf)
       vim.schedule(function()
         if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
-          pcall(vim.api.nvim_win_close, win, false)
+          pcall(M.close_window, win)
         end
         if vim.api.nvim_buf_is_valid(buf) then
           pcall(vim.api.nvim_buf_delete, buf, { force = true })
@@ -766,7 +774,7 @@ end
 local function open_terminal_split(opts)
   local reuse_win = opts and opts.reuse_win
   if reuse_win and vim.api.nvim_win_is_valid(reuse_win) and vim.api.nvim_win_get_config(reuse_win).relative ~= "" then
-    pcall(vim.api.nvim_win_close, reuse_win, false)
+    pcall(M.close_window, reuse_win)
     reuse_win = nil
   end
   local win
@@ -804,7 +812,7 @@ local function open_terminal_float(opts)
   local buf = vim.api.nvim_create_buf(false, true)
   local reuse_win = opts and opts.reuse_win
   if reuse_win and vim.api.nvim_win_is_valid(reuse_win) and vim.api.nvim_win_get_config(reuse_win).relative == "" then
-    pcall(vim.api.nvim_win_close, reuse_win, false)
+    pcall(M.close_window, reuse_win)
     reuse_win = nil
   end
   local win
@@ -844,7 +852,7 @@ local function show_terminal_split(bufnr, opts)
   if not cur then return end
   local reuse_win = opts and opts.reuse_win
   if reuse_win and vim.api.nvim_win_is_valid(reuse_win) and vim.api.nvim_win_get_config(reuse_win).relative ~= "" then
-    pcall(vim.api.nvim_win_close, reuse_win, false)
+    pcall(M.close_window, reuse_win)
     reuse_win = nil
   end
   local win
@@ -874,7 +882,7 @@ local function show_terminal_float(bufnr, opts)
   if not cur then return end
   local reuse_win = opts and opts.reuse_win
   if reuse_win and vim.api.nvim_win_is_valid(reuse_win) and vim.api.nvim_win_get_config(reuse_win).relative == "" then
-    pcall(vim.api.nvim_win_close, reuse_win, false)
+    pcall(M.close_window, reuse_win)
     reuse_win = nil
   end
   local win
@@ -913,7 +921,7 @@ function API.toggle()
   if cur and term_buffer_alive(cur) then
     local win = win_for_buf(cur)
     if win then
-      vim.api.nvim_win_close(win, false)
+      M.close_window(win)
       return
     end
     show_terminal()
@@ -944,7 +952,7 @@ function API.set_position(pos)
     return true
   end
   save_terminal_view(win)
-  pcall(vim.api.nvim_win_close, win, false)
+  pcall(M.close_window, win)
   show_terminal(cur, { view_mode = vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t" })
   return true
 end
@@ -1162,7 +1170,7 @@ function API.setup(opts)
       local win = win_for_buf(cur)
       if win then
         state.visibility[old] = true
-        pcall(vim.api.nvim_win_close, win, false)
+        pcall(M.close_window, win)
       else
         state.visibility[old] = false
       end
