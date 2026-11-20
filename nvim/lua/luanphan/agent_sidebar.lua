@@ -87,6 +87,23 @@ local function close_sidebar()
   if valid(win) then vim.api.nvim_win_close(win, true) end
 end
 
+local function focus_terminal()
+  if not valid(main) then return end
+  vim.api.nvim_set_current_win(main)
+  if return_to_input then vim.cmd.startinsert() end
+end
+
+local function set_sidebar_hidden(hidden)
+  vim.api.nvim_win_set_config(sidebar, { hide = hidden, focusable = not hidden, mouse = not hidden })
+end
+
+local function toggle_sidebar()
+  if not valid(sidebar) then return end
+  local hide = not vim.api.nvim_win_get_config(sidebar).hide
+  if hide and vim.api.nvim_get_current_win() == sidebar then focus_terminal() end
+  set_sidebar_hidden(hide)
+end
+
 function M.layout(win, width)
   if width == 0 then
     if main == win then close_sidebar() end
@@ -131,11 +148,9 @@ function M.layout(win, width)
     vim.keymap.set("n", key, open_selected, opts)
   end
   vim.keymap.set("n", "<LeftMouse>", click_row, vim.tbl_extend("force", opts, { expr = true }))
-  vim.keymap.set("n", "<C-l>", function()
-    if not valid(main) then return end
-    vim.api.nvim_set_current_win(main)
-    if return_to_input then vim.cmd.startinsert() end
-  end, opts)
+  vim.keymap.set("n", "<C-l>", focus_terminal, opts)
+  vim.keymap.set("n", "<leader>e", focus_terminal, vim.tbl_extend("force", opts, { desc = "Focus agent terminal" }))
+  vim.keymap.set("n", "<leader>b", toggle_sidebar, vim.tbl_extend("force", opts, { desc = "Toggle agent sidebar" }))
   local function close_panel()
     if valid(main) then close_window(main) end
   end
@@ -152,18 +167,22 @@ function M.attach(buf, win)
     for _, mode in ipairs({ "n", "t" }) do
       pcall(vim.keymap.del, mode, "<LeftMouse>", { buffer = buf })
     end
-    pcall(vim.keymap.del, "n", "<leader>e", { buffer = buf })
+    for _, key in ipairs({ "<leader>e", "<leader>b" }) do
+      pcall(vim.keymap.del, "n", key, { buffer = buf })
+    end
     return
   end
   local function focus_sidebar()
     if main ~= win or not valid(sidebar) then return end
     return_to_input = vim.api.nvim_get_mode().mode == "t"
     vim.cmd.stopinsert()
+    if vim.api.nvim_win_get_config(sidebar).hide then set_sidebar_hidden(false) end
     M.refresh()
     vim.api.nvim_set_current_win(sidebar)
   end
   vim.keymap.set({ "n", "t" }, "<C-h>", focus_sidebar, opts)
   vim.keymap.set("n", "<leader>e", focus_sidebar, vim.tbl_extend("force", opts, { desc = "Focus agent sidebar" }))
+  vim.keymap.set("n", "<leader>b", toggle_sidebar, vim.tbl_extend("force", opts, { desc = "Toggle agent sidebar" }))
   vim.keymap.set({ "n", "t" }, "<LeftMouse>", click_row, vim.tbl_extend("force", opts, { expr = true }))
   M.refresh()
 end
