@@ -8,6 +8,16 @@
 --   - full: @path:start-end header, then full selected text (truncated by max_send_chars).
 
 local M = {}
+local preserve_windows = false
+
+function M.with_preserved_windows(callback)
+  local previous = preserve_windows
+  preserve_windows = true
+  local ok, result = pcall(callback)
+  preserve_windows = previous
+  if not ok then error(result) end
+  return result
+end
 
 local BASE_DEFAULTS = {
   window_mode = "float",
@@ -39,6 +49,8 @@ local BASE_DEFAULTS = {
 ---@field on_show? fun(bufnr: integer, win: integer, cwd: string)
 ---@field on_close? fun(bufnr: integer, cwd: string)
 ---@field on_quit? fun(bufnr: integer, cwd: string)
+---@field float_sidebar_width? integer Maximum sidebar width
+---@field on_float_layout? fun(win: integer, sidebar_width: integer)
 function M.create(profile)
   profile = vim.tbl_extend("force", {
     g_bufnr = "terminal_agent_bufnr",
@@ -349,40 +361,32 @@ local function get_target_split_dims()
   return nil, nil
 end
 
---- Columns to pad on the left so a float doesn't overlap an open nvim-tree.
---- Returns `tree_width + 1` (extra cell for the split separator) only when
---- BOTH the tree is open AND at least one normal-buffer editor window is
---- visible. If the tree is alone (no editing buffer), we let the float take
---- the full screen and cover it.
-local function tree_padding()
-  local tree_w = 0
-  local has_editor = false
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local buf = vim.api.nvim_win_get_buf(win)
-    local bt = vim.bo[buf].buftype
-    local ft = vim.bo[buf].filetype
-    if ft == "NvimTree" then
-      tree_w = math.max(tree_w, vim.api.nvim_win_get_width(win))
-    elseif bt == "" then
-      has_editor = true
-    end
-  end
-  if tree_w == 0 or not has_editor then return 0 end
-  return tree_w + 1
-end
-
 --- Geometry for the full overlay. Left and right positions use vertical splits.
---- @return { row: integer, col: integer, width: integer, height: integer }
 local function get_float_geometry()
   local lines_avail = math.max(1, vim.o.lines - vim.o.cmdheight)
   local h = math.max(10, lines_avail - 2)  -- full height; -2 for borders
 
-  -- full: width 80% of (cols - tree_pad), centered horizontally; full height
-  local pad = tree_padding()
-  local cols = vim.o.columns - pad
-  local w = math.max(40, math.min(math.floor(cols * 0.80), cols - 2))
-  local col = math.max(pad, pad + math.floor((cols - w) / 2))
-  return { row = 0, col = col, width = w, height = h }
+  local cols = vim.o.columns
+  local outer_width = math.max(3, math.floor(cols * 0.80))
+  local available = outer_width - 2
+  local sidebar_width = math.min(profile.float_sidebar_width or 0, math.floor(available / 4))
+  local offset = sidebar_width > 0 and sidebar_width + 1 or 0
+  local col = math.floor((cols - outer_width) / 2) + offset
+  return { row = 0, col = col, width = available - offset, height = h }, sidebar_width
+end
+
+local function open_agent_float(bufnr)
+  local geometry, sidebar_width = get_float_geometry()
+  local win = vim.api.nvim_open_win(bufnr, true, vim.tbl_extend("force", geometry, {
+    relative = "editor",
+    style = "minimal",
+    border = config.float_border or "single",
+    zindex = config.float_zindex,
+  }))
+  if profile.on_float_layout then
+    profile.on_float_layout(win, sidebar_width)
+  end
+  return win
 end
 
 local function save_float_geometry(win)
@@ -517,7 +521,7 @@ local function sync_float_after_resize()
   if not win or not vim.api.nvim_win_is_valid(win) then
     return
   end
-  local g = get_float_geometry()
+  local g, sidebar_width = get_float_geometry()
   local cfg = {
     relative = "editor",
     row = g.row,
@@ -527,6 +531,9 @@ local function sync_float_after_resize()
   }
   vim.api.nvim_win_set_config(win, cfg)
   state.float_geometry = cfg
+  if profile.on_float_layout then
+    profile.on_float_layout(win, sidebar_width)
+  end
   sync_terminal_grid(win, cur)
 end
 
@@ -747,7 +754,11 @@ local function restore_agent_bufnr()
       if profile.on_show then
         pcall(profile.on_show, cur, rwin, vim.b[cur].luanphan_agent_cwd or cwd_key())
       end
-      sync_terminal_grid(rwin, cur)
+      if profile.on_float_layout and vim.api.nvim_win_get_config(rwin).relative ~= "" then
+        sync_float_after_resize()
+      else
+        sync_terminal_grid(rwin, cur)
+      end
     end
   end
 end
@@ -802,16 +813,7 @@ local function open_terminal_float(opts)
     vim.api.nvim_win_set_buf(win, buf)
     vim.api.nvim_set_current_win(win)
   else
-    local g = get_float_geometry()
-    win = vim.api.nvim_open_win(buf, true, {
-      relative = "editor",
-      row = g.row,
-      col = g.col,
-      width = g.width,
-      height = g.height,
-      style = "minimal",
-      border = config.float_border or "single",
-    })
+    win = open_agent_float(buf)
   end
   vim.api.nvim_win_set_config(win, { zindex = config.float_zindex })
   prepare_terminal_window(win)
@@ -883,16 +885,7 @@ local function show_terminal_float(bufnr, opts)
     vim.api.nvim_set_current_win(win)
   else
     local placeholder = vim.api.nvim_create_buf(false, true)
-    local g = get_float_geometry()
-    win = vim.api.nvim_open_win(placeholder, true, {
-      relative = "editor",
-      row = g.row,
-      col = g.col,
-      width = g.width,
-      height = g.height,
-      style = "minimal",
-      border = config.float_border or "single",
-    })
+    win = open_agent_float(placeholder)
     prepare_terminal_window(win)
     vim.api.nvim_win_set_buf(win, cur)
     pcall(vim.api.nvim_buf_delete, placeholder, { force = true })
@@ -1146,10 +1139,7 @@ function API.setup(opts)
     })
   end
 
-  -- Nvim-tree toggle doesn't fire VimResized (total editor columns don't
-  -- change), so the "full" float's tree-padding stays stale. Listen for
-  -- WinNew / WinClosed and run the same debounced resync — the geometry
-  -- recomputes tree_padding() and nudges the float into the new area.
+  -- Opening or closing splits can change docked widths without firing VimResized.
   if resize_ok and config.window_mode == "float" then
     vim.api.nvim_create_autocmd({ "WinNew", "WinClosed" }, {
       group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "TreeResize", { clear = true }),
@@ -1162,6 +1152,7 @@ function API.setup(opts)
   vim.api.nvim_create_autocmd("DirChangedPre", {
     group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "DirPre", { clear = true }),
     callback = function()
+      if preserve_windows then return end
       local old = cwd_key()
       local cur = current_bufnr(old)
       if not cur or not term_buffer_alive(cur) then
@@ -1181,6 +1172,7 @@ function API.setup(opts)
   vim.api.nvim_create_autocmd("DirChanged", {
     group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Dir", { clear = true }),
     callback = function()
+      if preserve_windows then return end
       local new = cwd_key()
       if not state.visibility[new] then return end
       local cur = current_bufnr(new)

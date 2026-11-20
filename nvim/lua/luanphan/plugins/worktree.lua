@@ -308,17 +308,32 @@ local function setup()
     return false
   end
 
-  local function close_diffview_tabs()
+  local function close_diffview_tabs(agent_windows)
     local original = vim.api.nvim_get_current_tabpage()
     local tabs = {}
+    local fallback
     for _, tabid in ipairs(vim.api.nvim_list_tabpages()) do
       if tab_has_diffview(tabid) then
         tabs[#tabs + 1] = tabid
+      else
+        fallback = fallback or tabid
       end
     end
 
     for _, tabid in ipairs(tabs) do
       if vim.api.nvim_tabpage_is_valid(tabid) then
+        if agent_windows and vim.api.nvim_win_get_tabpage(agent_windows[1]) == tabid then
+          if not fallback then
+            vim.cmd.tabnew()
+            fallback = vim.api.nvim_get_current_tabpage()
+          end
+          local destination = vim.api.nvim_tabpage_get_win(fallback)
+          for _, win in ipairs(agent_windows) do
+            local config = vim.api.nvim_win_get_config(win)
+            vim.api.nvim_win_set_config(win, { relative = "win", win = destination, row = 0, col = 0 })
+            vim.api.nvim_win_set_config(win, { relative = "editor", row = config.row, col = config.col })
+          end
+        end
         local tabnr = vim.api.nvim_tabpage_get_number(tabid)
         pcall(vim.api.nvim_set_current_tabpage, tabid)
         pcall(vim.cmd, "DiffviewClose")
@@ -1289,9 +1304,9 @@ local function setup()
     return a.bufnr < b.bufnr
   end
 
-  local function list_active_agents()
-    local agent_status = require("luanphan.agent_status")
+  local function list_agent_sessions()
     local instances = {}
+    local roots = {}
     for _, agent in ipairs(AGENT_BUFFER_KEYS) do
       local buffers = vim.g[agent.key]
       if type(buffers) == "table" then
@@ -1299,37 +1314,44 @@ local function setup()
           local bufnrs = registered_agent_buffers(value)
           for index, bufnr in ipairs(bufnrs) do
             if type(cwd) == "string" and dir_exists(cwd) and terminal_job_running(bufnr) then
-              local root = git_root(cwd) or cwd
-              local context = vim.fn.fnamemodify(root, ":t")
-              local marker = "/" .. WS_CONTAINER .. "/"
-              local marker_start = root:find(marker, 1, true)
-              if marker_start then
-                local workspace = root:sub(marker_start + #marker):match("^([^/]+)")
-                if workspace then
-                  context = workspace .. "/" .. context
-                end
-              end
-              if cwd ~= root and path_is_in_dir(cwd, root) then
-                context = context .. "/" .. cwd:sub(#root + 2)
-              end
+              local root = roots[cwd] or git_root(cwd) or cwd
+              roots[cwd] = root
               instances[#instances + 1] = {
                 agent = agent.name,
                 agent_label = require("luanphan.view_container").tab_label(
                   bufnr,
                   #bufnrs > 1 and (agent.name .. " " .. index) or agent.name
                 ),
-                branch = project_branch(root),
                 bufnr = bufnr,
-                context = context,
                 destination = root,
                 path = cwd,
-                status = agent_status.read(agent.name, cwd),
+                workspace = workspace_root_for_path(cwd) or root,
                 last_used = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0,
               }
             end
           end
         end
       end
+    end
+    return instances
+  end
+
+  local function list_active_agents()
+    local agent_status = require("luanphan.agent_status")
+    local instances = list_agent_sessions()
+    for _, instance in ipairs(instances) do
+      local root, cwd = instance.destination, instance.path
+      local context = vim.fn.fnamemodify(root, ":t")
+      local workspace = workspace_root_for_path(root)
+      if workspace then
+        context = vim.fn.fnamemodify(workspace, ":t") .. "/" .. context
+      end
+      if cwd ~= root and path_is_in_dir(cwd, root) then
+        context = context .. "/" .. cwd:sub(#root + 2)
+      end
+      instance.context = context
+      instance.branch = project_branch(root)
+      instance.status = agent_status.read(instance.agent, cwd)
     end
 
     table.sort(instances, agent_before)
@@ -1358,10 +1380,10 @@ local function setup()
     return instances
   end
 
-  switch_to = function(path, kind, visit_path)
+  switch_to = function(path, kind, visit_path, agent_windows)
     if vim.fn.isdirectory(path) == 0 then
       vim.notify("worktree path not found: " .. path, vim.log.levels.ERROR)
-      return
+      return false
     end
 
     -- 1. Snapshot the OLD cwd's open file list before we touch anything else.
@@ -1391,14 +1413,21 @@ local function setup()
     -- 2b. Close any open diffview tab — it's bound to the OLD cwd's git
     --     repo and trying to survive the cd produces ghost diffview://
     --     buffers that won't refresh against the new worktree.
-    close_diffview_tabs()
+    close_diffview_tabs(agent_windows)
 
     -- 2c. Toggle off the right-side toggleterm terminal before changing cwd.
     pcall(vim.api.nvim_exec_autocmds, "User", { pattern = "LuanphanWorktreeSwitchPre" })
     close_toggleterm_windows()
 
     -- 3. cd. Fires DirChangedPre/DirChanged for the persistent-terminal modules.
-    vim.cmd("cd " .. vim.fn.fnameescape(path))
+    local function change_directory()
+      vim.cmd.cd({ args = { path } })
+    end
+    if agent_windows then
+      require("luanphan.terminal_agent").with_preserved_windows(change_directory)
+    else
+      change_directory()
+    end
     recent_paths.touch(visit_path or path)
 
     -- 4. Stop every LSP client AND wipe the diagnostics each one published.
@@ -1471,7 +1500,11 @@ local function setup()
       pcall(tree_api.tree.change_root, cwd)
     end
 
-    -- 10. Always hide the shared agent panel after switching workspaces. Its
+    if agent_windows then
+      return true
+    end
+
+    -- 10. Hide the shared agent panel after switching workspaces. Its
     --     terminal buffers and jobs remain alive for an explicit reopen.
     agents.hide()
 
@@ -1483,6 +1516,7 @@ local function setup()
       msg = msg .. string.format(" (restored %d buffer%s)", restored, restored == 1 and "" or "s")
     end
     vim.notify(msg, vim.log.levels.INFO)
+    return true
   end
 
   local function telescope_modules()
@@ -2039,17 +2073,28 @@ local function setup()
     }):find()
   end
 
-  local function activate_agent(instance)
+  local function activate_agent(instance, agent_windows)
+    if agent_windows and not terminal_job_running(instance.bufnr) then
+      return false
+    end
     if instance.path ~= safe_getcwd() then
-      switch_to(instance.path, "agent project")
+      if not switch_to(instance.path, "agent project", nil, agent_windows) then
+        return false
+      end
     else
       recent_paths.touch(instance.path)
     end
-    close_other_agent_windows(instance.bufnr)
-    local ok, agents = pcall(require, "luanphan.plugins.agents")
-    if not ok or type(agents.focus) ~= "function" or not agents.focus(instance.agent, instance.bufnr) then
+    local focused
+    if agent_windows then
+      focused = agents.open(instance.agent, instance.bufnr)
+    else
+      close_other_agent_windows(instance.bufnr)
+      focused = agents.focus(instance.agent, instance.bufnr)
+    end
+    if not focused then
       vim.notify("could not focus " .. instance.agent .. " agent", vim.log.levels.ERROR)
     end
+    return focused
   end
 
   local function agent_switch_targets(instances)
@@ -2170,6 +2215,7 @@ local function setup()
     make_project_sorter = make_project_sorter,
     move_project_selection = move_project_selection,
     list_active_agents = list_active_agents,
+    list_agent_sessions = list_agent_sessions,
     agent_switch_targets = agent_switch_targets,
     add_repository = add_repository,
     remove_repository = remove_repository,
@@ -2196,29 +2242,37 @@ local function picker(method)
   end
 end
 
-return {
-  {
-    "luanphan-worktree",
-    virtual = true,
-    init = init,
-    cmd = {
-      "WorktreeSwitch",
-      "FolderSwitch",
-      "ProjectSwitch",
-      "RepositorySwitch",
-      "RepositoryAdd",
-      "RepositoryRemove",
-      "AgentSwitch",
-    },
-    keys = {
-      { "<leader>ww", picker("pick_worktree"), desc = "Switch workspace" },
-      { "<leader>wf", picker("pick_folder"), desc = "Pick workspace folder" },
-      { "<leader>wA", picker("pick_add_repository"), desc = "Add repository" },
-      { "<leader>wd", picker("pick_remove_repository"), desc = "Remove repository" },
-      { "<leader>wr", picker("pick_project"), desc = "Pick repository" },
-      { "<leader>wp", picker("pick_workspace_project"), desc = "Pick workspace" },
-      { "<leader>wa", picker("pick_agent"), desc = "Switch active agent" },
-    },
-    config = ensure_setup,
+local spec = {
+  "luanphan-worktree",
+  virtual = true,
+  init = init,
+  cmd = {
+    "WorktreeSwitch",
+    "FolderSwitch",
+    "ProjectSwitch",
+    "RepositorySwitch",
+    "RepositoryAdd",
+    "RepositoryRemove",
+    "AgentSwitch",
   },
+  keys = {
+    { "<leader>ww", picker("pick_worktree"), desc = "Switch workspace" },
+    { "<leader>wf", picker("pick_folder"), desc = "Pick workspace folder" },
+    { "<leader>wA", picker("pick_add_repository"), desc = "Add repository" },
+    { "<leader>wd", picker("pick_remove_repository"), desc = "Remove repository" },
+    { "<leader>wr", picker("pick_project"), desc = "Pick repository" },
+    { "<leader>wp", picker("pick_workspace_project"), desc = "Pick workspace" },
+    { "<leader>wa", picker("pick_agent"), desc = "Switch active agent" },
+  },
+  config = ensure_setup,
+  list_agent_sessions = function()
+    return ensure_setup().list_agent_sessions()
+  end,
+  activate_sidebar_agent = function(instance, windows)
+    return ensure_setup().activate_agent(instance, windows)
+  end,
 }
+
+-- Share the same setup between Lazy's spec import and sidebar calls.
+package.loaded["luanphan.plugins.worktree"] = spec
+return spec

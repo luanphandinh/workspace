@@ -252,6 +252,7 @@ local function get_agent(name)
   end
 
   local def = agent_defs[name]
+  local sidebar = require("luanphan.agent_sidebar")
   apis[name] = require("luanphan.terminal_agent").create({
     status_name = name,
     g_bufnr = def.g_bufnr,
@@ -259,17 +260,21 @@ local function get_agent(name)
     augroup_prefix = def.augroup_prefix,
     hint_open = agent_key,
     defaults = vim.tbl_extend("force", def.defaults, { float_position = M.agent_position() }),
+    float_sidebar_width = 32,
+    on_float_layout = sidebar.layout,
     on_prepare = function(win)
       agent_container:reserve(win)
     end,
     on_show = function(bufnr, win, cwd)
       agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
+      sidebar.attach(bufnr, win)
       vim.keymap.set("n", "<leader>fN", function()
         agent_container:pick(cwd)
       end, { buffer = bufnr, silent = true, nowait = true, desc = "Select terminal agent" })
     end,
     on_close = function(bufnr, cwd)
       agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
+      vim.schedule(sidebar.refresh)
     end,
     on_quit = function(bufnr, cwd)
       local tabs = open_tabs(cwd, bufnr)

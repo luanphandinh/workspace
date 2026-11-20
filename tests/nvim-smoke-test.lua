@@ -1307,9 +1307,11 @@ end
 
 local function close_agent_terminals()
   for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local buf = vim.api.nvim_win_get_buf(win)
-    if vim.bo[buf].buftype == "terminal" and vim.b[buf].luanphan_persist_term then
-      pcall(vim.api.nvim_win_close, win, true)
+    if vim.api.nvim_win_is_valid(win) then
+      local buf = vim.api.nvim_win_get_buf(win)
+      if vim.bo[buf].buftype == "terminal" and vim.b[buf].luanphan_persist_term then
+        pcall(vim.api.nvim_win_close, win, true)
+      end
     end
   end
 
@@ -5001,6 +5003,55 @@ local function test_agent_view_container(repo)
         and vim.api.nvim_get_current_buf() == first_cursor_buf
     end, 3000)
     assert_true(not vim.api.nvim_buf_is_valid(second_codex_buf), "exited agent process kept its terminal buffer")
+
+    agents.hide()
+    agents.set_agent_position("full")
+    local other_workspace = temp_root .. "/local_workspaces/example-agent"
+    local other_path = other_workspace .. "/nested folder"
+    vim.fn.mkdir(other_path, "p")
+    vim.cmd.cd({ args = { other_path } })
+    local editor = vim.api.nvim_get_current_win()
+    local other_buf = agents.new("codex")
+    local main = vim.api.nvim_get_current_win()
+    invoke_map("<C-h>")
+    local sidebar = vim.api.nvim_get_current_win()
+    local sidebar_buf = vim.api.nvim_get_current_buf()
+    assert_true(sidebar ~= main and vim.bo[sidebar_buf].filetype == "agent-sidebar", "Ctrl+h did not focus the sidebar")
+    local main_config = vim.api.nvim_win_get_config(main)
+    local sidebar_config = vim.api.nvim_win_get_config(sidebar)
+    assert_true(sidebar_config.col < main_config.col, "sidebar opened right of the terminal")
+    local overlay_width = main_config.col + main_config.width + 2 - sidebar_config.col
+    assert_true(overlay_width == math.floor(vim.o.columns * 0.80), "combined float is not 80% of the window")
+    assert_true(sidebar_config.col == math.floor((vim.o.columns - overlay_width) / 2), "agent float is not centered")
+    invoke_map("<C-l>")
+    assert_true(vim.api.nvim_get_current_win() == main, "Ctrl+l did not return to the terminal")
+
+    local title = "Workspace switch thread"
+    vim.fn.chansend(vim.b[first_cursor_buf].terminal_job_id, "\27]2;" .. title .. "\7")
+    local thread_row
+    wait_until("sidebar thread title", function()
+      local lines = vim.api.nvim_buf_get_lines(sidebar_buf, 0, -1, false)
+      for index, line in ipairs(lines) do
+        if line:find(title, 1, true) then thread_row = index end
+      end
+      return thread_row and vim.tbl_contains(lines, "▾ example-agent")
+    end, 3000)
+
+    invoke_map("<leader>e")
+    assert_true(vim.api.nvim_get_current_win() == sidebar, "<leader>e did not focus the sidebar")
+    vim.api.nvim_win_set_cursor(sidebar, { thread_row, 0 })
+    invoke_map("o")
+    assert_true(realpath(vim.fn.getcwd()) == realpath(repo), "sidebar selection did not change workspace")
+    assert_true(vim.api.nvim_get_current_win() == main, "workspace switch replaced the agent float")
+    assert_true(vim.api.nvim_get_current_buf() == first_cursor_buf, "sidebar opened the wrong thread")
+    assert_true(vim.api.nvim_win_get_buf(sidebar) == sidebar_buf, "workspace switch replaced the sidebar")
+    assert_true(vim.fn.jobwait({ vim.b[other_buf].terminal_job_id }, 0)[1] == -1, "workspace switch stopped the previous terminal")
+    assert_true(rendered_winbar(main):find(title, 1, true), "workspace switch lost the top tabs")
+    vim.api.nvim_set_current_win(editor)
+    wait_until("agent float hides when editor gains focus", function()
+      return not vim.api.nvim_win_is_valid(main) and not vim.api.nvim_win_is_valid(sidebar)
+    end, 3000)
+    assert_true(vim.fn.jobwait({ vim.b[first_cursor_buf].terminal_job_id }, 0)[1] == -1, "hiding the float stopped the agent")
   end, debug.traceback)
 
   vim.env.PATH = old_path
