@@ -33,37 +33,20 @@ hs.hotkey.bind({ "cmd", "shift" }, "e", function()
 end)
 
 local browserBundleID = "com.ardia.browser"
-local browserBundleIDs = {
-    [browserBundleID] = true,
-    ["company.thebrowser.Browser"] = true,
-    ["com.brave.Browser"] = true,
-    ["company.thebrowser.dia"] = true,
-    ["com.google.Chrome"] = true,
-    ["com.apple.Safari"] = true,
-    ["app.zen-browser.zen"] = true,
-    ["com.citrolabs.ego.lite"] = true,
-}
-local browserHotkey = hs.hotkey.bind({ "cmd", "shift" }, "b", function()
-    hs.application.launchOrFocusByBundleID(browserBundleID)
-end)
-
-local function setHotkeyActive(hotkey, active)
-    if active then
-        hotkey:enable()
+local previousBrowserApp
+hs.hotkey.bind({ "cmd", "shift" }, "b", function()
+    local app = hs.application.frontmostApplication()
+    if app and app:bundleID() == browserBundleID then
+        app:hide()
+        if previousBrowserApp and previousBrowserApp:isRunning() then
+            previousBrowserApp:activate()
+        end
+        previousBrowserApp = nil
     else
-        hotkey:disable()
+        previousBrowserApp = app
+        hs.application.launchOrFocusByBundleID(browserBundleID)
     end
-end
-
-local function updateAppHotkeys(app)
-    local bundleID = app and app:bundleID()
-    setHotkeyActive(browserHotkey, not browserBundleIDs[bundleID])
-end
-
-appFocusWatcher = hs.application.watcher.new(function(_, event, app)
-    if event == hs.application.watcher.activated then updateAppHotkeys(app) end
-end):start()
-updateAppHotkeys(hs.application.frontmostApplication())
+end)
 
 local sessionPath = os.getenv("HOME") .. "/Library/Application Support/" .. browserBundleID .. "/session.json"
 local types = hs.eventtap.event.types
