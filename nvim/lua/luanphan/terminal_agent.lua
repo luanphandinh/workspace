@@ -378,7 +378,8 @@ local function get_float_geometry()
   local outer_width = math.max(3, math.floor(cols * 0.80))
   local available = outer_width - 2
   local sidebar_width = math.min(profile.float_sidebar_width or 0, math.floor(available / 4))
-  local offset = sidebar_width > 0 and sidebar_width + 1 or 0
+  -- Leave one column between the two bordered windows.
+  local offset = sidebar_width > 0 and sidebar_width + 3 or 0
   local col = math.floor((cols - outer_width) / 2) + offset
   return { row = 0, col = col, width = available - offset, height = h }, sidebar_width
 end

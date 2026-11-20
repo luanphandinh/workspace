@@ -96,10 +96,10 @@ function M.layout(win, width)
   local position = {
     relative = "editor",
     row = geometry.row,
-    col = geometry.col - width - 1,
+    col = geometry.col - width - 3,
     width = width,
     height = geometry.height,
-    zindex = geometry.zindex - 1,
+    zindex = geometry.zindex,
   }
   if main == win and valid(sidebar) then
     vim.api.nvim_win_set_config(sidebar, position)
