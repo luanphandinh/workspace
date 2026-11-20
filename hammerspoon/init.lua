@@ -16,8 +16,20 @@ hs.hotkey.bind({ "cmd", "shift" }, "j", function()
     end
 end)
 
-local editorHotkey = hs.hotkey.bind({ "cmd", "shift" }, "e", function()
-    hs.application.launchOrFocus(os.getenv("HOME") .. "/.nix-profile/Applications/Neovide.app")
+local previousEditorApp
+hs.hotkey.bind({ "cmd", "shift" }, "e", function()
+    local app = hs.application.frontmostApplication()
+    -- Command-line launches of the editor have no bundle ID.
+    if app and (app:bundleID() == "com.neovide.neovide" or app:name():lower() == "neovide") then
+        app:hide()
+        if previousEditorApp and previousEditorApp:isRunning() then
+            previousEditorApp:activate()
+        end
+        previousEditorApp = nil
+    else
+        previousEditorApp = app
+        hs.application.launchOrFocus(os.getenv("HOME") .. "/.nix-profile/Applications/Neovide.app")
+    end
 end)
 
 local browserBundleID = "com.ardia.browser"
@@ -45,9 +57,6 @@ end
 
 local function updateAppHotkeys(app)
     local bundleID = app and app:bundleID()
-    local name = app and app:name():lower() or ""
-    -- Command-line launches of the editor have no bundle ID.
-    setHotkeyActive(editorHotkey, bundleID ~= "com.neovide.neovide" and name ~= "neovide")
     setHotkeyActive(browserHotkey, not browserBundleIDs[bundleID])
 end
 
