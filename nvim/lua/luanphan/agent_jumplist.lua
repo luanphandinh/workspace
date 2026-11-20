@@ -36,7 +36,7 @@ function M.jump(direction, count, available, activate)
     if not ok then error(focused) end
     if focused then
       current = index
-      return
+      return true
     end
     remove(index)
     if direction < 0 then index = index - 1 end

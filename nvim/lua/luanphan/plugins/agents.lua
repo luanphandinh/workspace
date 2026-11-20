@@ -111,8 +111,8 @@ local function jump_available(bufnr)
   return type(cwd) == "string" and vim.fn.isdirectory(cwd) == 1
 end
 
-local function jump_session(direction)
-  jumplist.jump(direction, vim.v.count1, jump_available, function(bufnr)
+local function jump_session(direction, count)
+  return jumplist.jump(direction, count or vim.v.count1, jump_available, function(bufnr)
     local buf = vim.b[bufnr]
     return require("luanphan.agent_sidebar").select_session({
       agent = buf.luanphan_agent_name,
@@ -312,11 +312,13 @@ local function get_agent(name)
         end
       end
       agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
-      vim.schedule(function()
-        if next_tab then
-          M.open(next_tab.agent, next_tab.bufnr, { view_mode = true })
+      return function()
+        if next_tab and jump_available(next_tab.bufnr)
+          and M.open(next_tab.agent, next_tab.bufnr, { view_mode = true }) then
+          return
         end
-      end)
+        if not jump_session(1, 1) then jump_session(-1, 1) end
+      end
     end,
   })
   return apis[name]

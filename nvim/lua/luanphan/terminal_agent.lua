@@ -56,7 +56,7 @@ local BASE_DEFAULTS = {
 ---@field on_prepare? fun(win: integer)
 ---@field on_show? fun(bufnr: integer, win: integer, cwd: string)
 ---@field on_close? fun(bufnr: integer, cwd: string)
----@field on_quit? fun(bufnr: integer, cwd: string)
+---@field on_quit? fun(bufnr: integer, cwd: string): function?
 ---@field float_sidebar_width? integer Maximum sidebar width
 ---@field on_float_layout? fun(win: integer, sidebar_width: integer)
 function M.create(profile)
@@ -671,6 +671,14 @@ local function attach_status_tracking(bufnr, cwd, initial_status)
   end, { buffer = bufnr, expr = true, silent = true })
 end
 
+local function quit_action(buf)
+  local cwd = vim.b[buf].luanphan_agent_cwd
+  if cwd and profile.on_quit then
+    local ok, action = pcall(profile.on_quit, buf, cwd)
+    if ok and type(action) == "function" then return action end
+  end
+end
+
 local function attach_term_close(buf)
   local ag = vim.api.nvim_create_augroup(profile.augroup_prefix .. "TermClose_" .. buf, { clear = true })
   vim.api.nvim_create_autocmd("TermClose", {
@@ -679,12 +687,12 @@ local function attach_term_close(buf)
     once = true,
     callback = function()
       local win = win_for_buf(buf)
-      local cwd = vim.b[buf].luanphan_agent_cwd
-      if win and not vim.b[buf].luanphan_agent_quitting and cwd and profile.on_quit then
-        pcall(profile.on_quit, buf, cwd)
-      end
+      local action = win and not vim.b[buf].luanphan_agent_quitting and quit_action(buf)
       clear_bufnr_for_buf(buf)
       vim.schedule(function()
+        if action and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
+          pcall(action)
+        end
         if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
           pcall(M.close_window, win)
         end
@@ -701,16 +709,31 @@ local function attach_quit_detach(buf)
     return
   end
   local ag = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Quit_" .. buf, { clear = true })
+  if profile.on_quit then
+    vim.api.nvim_create_autocmd("CmdlineLeave", {
+      group = ag,
+      buffer = buf,
+      callback = function()
+        if vim.fn.getcmdtype() ~= ":" or vim.v.event.abort then return end
+        local command = vim.trim(vim.fn.getcmdline()):gsub("!$", "")
+        if command == "" or not vim.startswith("quit", command) then return end
+        local job = vim.b[buf].terminal_job_id
+        if not valid_job_id(job) then return end
+        -- Let TermClose choose a replacement before the window is closed.
+        vim.cmd("let v:event.abort = v:true")
+        vim.schedule(function()
+          pcall(vim.fn.jobstop, job)
+        end)
+      end,
+    })
+  end
   vim.api.nvim_create_autocmd("QuitPre", {
     group = ag,
     buffer = buf,
     once = true,
     callback = function()
       vim.b[buf].luanphan_agent_quitting = true
-      local cwd = vim.b[buf].luanphan_agent_cwd
-      if cwd and profile.on_quit then
-        pcall(profile.on_quit, buf, cwd)
-      end
+      local action = quit_action(buf)
       local ok, job = pcall(vim.fn.getbufvar, buf, "terminal_job_id")
       if ok and valid_job_id(job) then
         pcall(vim.fn.jobstop, job)
@@ -718,6 +741,7 @@ local function attach_quit_detach(buf)
       end
       clear_bufnr_for_buf(buf)
       vim.schedule(function()
+        if action then pcall(action) end
         if vim.api.nvim_buf_is_valid(buf) then
           pcall(vim.api.nvim_buf_delete, buf, { force = true })
         end
