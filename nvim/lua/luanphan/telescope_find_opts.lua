@@ -15,6 +15,16 @@ function M.find_command(command, rules)
   return result
 end
 
+function M.get_selection_window(picker)
+  local editor = require("luanphan.editor_window")
+  local source = picker.original_win_id
+  if editor.is_editor(source) then return source end
+  local target = editor.find(source)
+  if target then return target end
+  vim.cmd("botright new")
+  return vim.api.nvim_get_current_win()
+end
+
 function M.find_files()
   local configured = require("telescope.config").pickers.find_files or {}
   local rules = require("luanphan.search_priority").read_rules()

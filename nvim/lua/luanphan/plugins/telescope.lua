@@ -1,4 +1,4 @@
-local find_files = require("luanphan.telescope_find_opts").find_files
+local file_picker = require("luanphan.telescope_find_opts")
 local live_grep = require("luanphan.telescope_grep_opts").live_grep
 local open_global_settings = require("luanphan.global_settings").open_editor
 local open_search_settings = require("luanphan.search_priority").open_editor
@@ -58,8 +58,8 @@ return {
     "nvim-telescope/telescope.nvim",
     cmd = "Telescope",
     keys = {
-      { "<leader>ff", find_files, desc = "Find files" },
-      { "<leader>p", find_files, desc = "Telescope: find files" },
+      { "<leader>ff", file_picker.find_files, desc = "Find files" },
+      { "<leader>p", file_picker.find_files, desc = "Telescope: find files" },
       { "g/", live_grep, desc = "Telescope: live grep" },
       { "g/", live_grep_selection, mode = "x", desc = "Telescope: live grep selection" },
       { "<leader>sg", open_global_settings, desc = "Global settings" },
@@ -100,6 +100,7 @@ return {
         pickers = {
           find_files = {
             find_command = { "rg", "--files", "--follow" },
+            get_selection_window = file_picker.get_selection_window,
           },
           live_grep = {
             -- Used by |luanphan.telescope_grep_opts.live_grep()| (|g/|). Not applied by :Telescope live_grep alone.

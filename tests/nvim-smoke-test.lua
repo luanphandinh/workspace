@@ -3236,6 +3236,8 @@ local function test_workspace_folder_browser()
 
   local shim_dir = temp_root .. "/folder-picker-shims"
   write_executable(shim_dir .. "/mcodex", { "#!/bin/sh", "exec cat" })
+  local editor_file = station .. "/local_workspaces/open-from-agent.txt"
+  write(editor_file, { "File picker destination" })
   local script = temp_root .. "/workspace-folder-picker.lua"
   write(script, {
     "local function assert_true(value, message) if not value then error(message, 0) end end",
@@ -3325,6 +3327,15 @@ local function test_workspace_folder_browser()
     "expect_jump('<C-o>', second)",
     "expect_jump('<C-i>', first)",
     "expect_jump('<C-i>', third)",
+    "vim.b[third].luanphan_agent_name = nil",
+    "vim.fn.maparg('<leader>p', 'n', false, true).callback()",
+    "prompt_bufnr = vim.api.nvim_get_current_buf()",
+    "picker = action_state.get_current_picker(prompt_bufnr)",
+    "picker:set_prompt('open-from-agent')",
+    "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and tostring(selection.value):find('open-from-agent.txt', 1, true) end, 20), 'file picker did not find the fixture')",
+    "actions.select_default(prompt_bufnr)",
+    "assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(" .. string.format("%q", editor_file) .. "), 'file picker did not open the selected file')",
+    "assert_true(vim.api.nvim_win_get_config(0).relative == '' and vim.bo[third].buftype == 'terminal', 'file picker replaced the agent terminal pane')",
   })
   local output = vim.fn.systemlist(child_nvim_luafile_command(station, script))
   assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))

@@ -393,31 +393,6 @@ function M.toggle()
   return M.set_enabled(not enabled)
 end
 
-local function is_editor_window(win)
-  if not vim.api.nvim_win_is_valid(win) then
-    return false
-  end
-  local config = vim.api.nvim_win_get_config(win)
-  if config.relative and config.relative ~= "" then
-    return false
-  end
-  local buf = vim.api.nvim_win_get_buf(win)
-  return vim.bo[buf].buftype == "" and vim.bo[buf].filetype ~= "NvimTree"
-end
-
-local function find_editor_window(source)
-  local previous = vim.fn.win_getid(vim.fn.winnr("#"))
-  if previous ~= source and is_editor_window(previous) then
-    return previous
-  end
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    if win ~= source and is_editor_window(win) then
-      return win
-    end
-  end
-  return nil
-end
-
 function M.open_url(url)
   if not is_web_url(url) then
     return false
@@ -448,12 +423,13 @@ function M.open(path, line, column)
   local close_agent_float = source_config.relative ~= ""
     and vim.bo[source_buf].buftype == "terminal"
     and vim.b[source_buf].luanphan_persist_term
-  local target = find_editor_window(source)
+  local editor_window = require("luanphan.editor_window")
+  local target = editor_window.find(source)
 
   if not target and close_agent_float then
     require("luanphan.terminal_agent").close_window(source)
     source = nil
-    target = find_editor_window(-1)
+    target = editor_window.find()
   end
   if not target then
     vim.cmd("new")
