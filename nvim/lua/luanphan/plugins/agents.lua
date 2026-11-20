@@ -1,4 +1,5 @@
 local M = {}
+local jumplist = require("luanphan.agent_jumplist")
 local terminal_agent = require("luanphan.terminal_agent")
 
 local agent_order = { "codex", "cursor", "claude" }
@@ -102,6 +103,23 @@ local function terminal_running(bufnr)
   end
   local ok, status = pcall(vim.fn.jobwait, { job }, 0)
   return ok and status[1] == -1
+end
+
+local function jump_available(bufnr)
+  if not terminal_running(bufnr) then return false end
+  local cwd = vim.b[bufnr].luanphan_agent_cwd
+  return type(cwd) == "string" and vim.fn.isdirectory(cwd) == 1
+end
+
+local function jump_session(direction)
+  jumplist.jump(direction, vim.v.count1, jump_available, function(bufnr)
+    local buf = vim.b[bufnr]
+    return require("luanphan.agent_sidebar").select_session({
+      agent = buf.luanphan_agent_name,
+      bufnr = bufnr,
+      path = buf.luanphan_agent_cwd,
+    }, { view_mode = true })
+  end)
 end
 
 local function normalize_bufnrs(value)
@@ -267,8 +285,15 @@ local function get_agent(name)
       agent_container:reserve(win)
     end,
     on_show = function(bufnr, win, cwd)
+      jumplist.record(bufnr)
       agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
       sidebar.attach(bufnr, win)
+      vim.keymap.set("n", "<C-o>", function()
+        jump_session(-1)
+      end, { buffer = bufnr, silent = true, desc = "Older agent session" })
+      vim.keymap.set("n", "<C-i>", function()
+        jump_session(1)
+      end, { buffer = bufnr, silent = true, desc = "Newer agent session" })
       vim.keymap.set("n", "<leader>fN", function()
         agent_container:pick(cwd)
       end, { buffer = bufnr, silent = true, nowait = true, desc = "Select terminal agent" })

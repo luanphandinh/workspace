@@ -57,15 +57,17 @@ function M.refresh()
   end
 end
 
-local function select_session(session)
-  if session and valid(main) and valid(sidebar) then
-    vim.cmd.stopinsert()
-    local activate = require("luanphan.plugins.worktree").activate_sidebar_agent
-    switching_workspace = true
-    local ok, err = pcall(activate, session, { main, sidebar })
-    switching_workspace = false
-    if not ok then error(err) end
-  end
+function M.select_session(session, opts)
+  if not session then return false end
+  local activate = require("luanphan.plugins.worktree").activate_agent
+  if not valid(main) or not valid(sidebar) then return activate(session, nil, opts) end
+
+  vim.cmd.stopinsert()
+  switching_workspace = true
+  local ok, result = pcall(activate, session, { main, sidebar }, opts)
+  switching_workspace = false
+  if not ok then error(result) end
+  return result
 end
 
 local function click_row()
@@ -73,9 +75,9 @@ local function click_row()
   if not valid(sidebar) or mouse.winid ~= sidebar or mouse.line < 1 then
     return "<LeftMouse>"
   end
-  local session = rows[mouse.line]
+  local session, win = rows[mouse.line], sidebar
   vim.schedule(function()
-    select_session(session)
+    if sidebar == win and valid(win) then M.select_session(session) end
   end)
   return ""
 end
@@ -142,7 +144,7 @@ function M.layout(win, width)
 
   local opts = { buffer = buf, silent = true, nowait = true }
   local function open_selected()
-    select_session(rows[vim.api.nvim_win_get_cursor(sidebar)[1]])
+    M.select_session(rows[vim.api.nvim_win_get_cursor(sidebar)[1]])
   end
   for _, key in ipairs({ "<CR>", "o" }) do
     vim.keymap.set("n", key, open_selected, opts)

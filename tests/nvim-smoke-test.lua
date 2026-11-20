@@ -3302,6 +3302,18 @@ local function test_workspace_folder_browser()
     "assert_true(not vim.api.nvim_win_is_valid(main) and not vim.api.nvim_win_is_valid(sidebar), 'folder switch left an agent pane open')",
     "assert_true(vim.fn.jobwait({vim.b[agent_buf].terminal_job_id}, 0)[1] == -1, 'folder switch stopped the agent session')",
     "assert_true(vim.fn.exists(':FolderSwitch') == 2, 'FolderSwitch command is missing')",
+    "local middle_agent = agents.new('codex')",
+    "local newest_agent = agents.new('codex')",
+    "main = vim.api.nvim_get_current_win()",
+    "sidebar = vim.w[main].luanphan_agent_sidebar",
+    "vim.fn.maparg('<C-o>', 'n', false, true).callback()",
+    "assert_true(vim.api.nvim_get_current_buf() == middle_agent, 'older agent jump missed the previous session')",
+    "vim.fn.maparg('<C-o>', 'n', false, true).callback()",
+    "assert_true(vim.api.nvim_get_current_buf() == agent_buf and realpath(vim.fn.getcwd()) == realpath(" .. string.format("%q", station) .. "), 'older agent jump did not switch workspaces')",
+    "vim.api.nvim_buf_delete(middle_agent, { force = true })",
+    "vim.fn.maparg('<C-i>', 'n', false, true).callback()",
+    "assert_true(vim.api.nvim_get_current_buf() == newest_agent and realpath(vim.fn.getcwd()) == realpath(target), 'newer agent jump did not skip the closed session')",
+    "assert_true(vim.api.nvim_get_current_win() == main and vim.api.nvim_win_is_valid(sidebar), 'agent jumps replaced the float')",
   })
   local output = vim.fn.systemlist(child_nvim_luafile_command(station, script))
   assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))

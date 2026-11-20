@@ -2074,8 +2074,8 @@ local function setup()
     }):find()
   end
 
-  local function activate_agent(instance, agent_windows)
-    if agent_windows and not terminal_job_running(instance.bufnr) then
+  local function activate_agent(instance, agent_windows, opts)
+    if instance.bufnr and not terminal_job_running(instance.bufnr) then
       return false
     end
     if instance.path ~= safe_getcwd() then
@@ -2087,10 +2087,10 @@ local function setup()
     end
     local focused
     if agent_windows then
-      focused = agents.open(instance.agent, instance.bufnr)
+      focused = agents.open(instance.agent, instance.bufnr, opts)
     else
       close_other_agent_windows(instance.bufnr)
-      focused = agents.focus(instance.agent, instance.bufnr)
+      focused = agents.focus(instance.agent, instance.bufnr, opts)
     end
     if not focused then
       vim.notify("could not focus " .. instance.agent .. " agent", vim.log.levels.ERROR)
@@ -2269,8 +2269,8 @@ local spec = {
   list_agent_sessions = function()
     return ensure_setup().list_agent_sessions()
   end,
-  activate_sidebar_agent = function(instance, windows)
-    return ensure_setup().activate_agent(instance, windows)
+  activate_agent = function(instance, windows, opts)
+    return ensure_setup().activate_agent(instance, windows, opts)
   end,
 }
 
