@@ -4,7 +4,7 @@ local terminal_agent = require("luanphan.agents.terminal-chat")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
 
-local agent_order = { "codex", "cursor", "claude" }
+local agent_order = { "codex", "cursor", "claude", "terminal" }
 local agent_key = "<leader>a"
 
 local agent_defs = {}
@@ -17,6 +17,11 @@ local apis = {}
 local configured = {}
 local agent_container
 local setup_agent
+local restored_cwds = {}
+
+local function is_agent(name)
+  return agent_defs[name] and not agent_defs[name].shell
+end
 
 local function default_agent_file()
   return vim.g.luanphan_default_agent_file or (vim.fn.stdpath("data") .. "/default-agent")
@@ -25,11 +30,11 @@ end
 function M.default_agent()
   local ok, lines = pcall(vim.fn.readfile, default_agent_file(), "", 1)
   local name = ok and vim.trim(lines[1] or "") or ""
-  return agent_defs[name] and name or agent_order[1]
+  return is_agent(name) and name or agent_order[1]
 end
 
 function M.set_default_agent(name)
-  if not agent_defs[name] then
+  if not is_agent(name) then
     return false
   end
   local path = default_agent_file()
@@ -121,12 +126,12 @@ local function open_tabs(cwd, closing_bufnr)
   return tabs
 end
 
-local function most_recent_tab(cwd)
+local function most_recent_tab(cwd, agents_only)
   local selected = nil
   local selected_sequence = -1
   for _, tab in ipairs(open_tabs(cwd)) do
     local sequence = tonumber(vim.b[tab.bufnr].luanphan_agent_last_used) or 0
-    if sequence > selected_sequence then
+    if (not agents_only or is_agent(tab.agent)) and sequence > selected_sequence then
       selected = tab
       selected_sequence = sequence
     end
@@ -137,12 +142,9 @@ end
 local function agent_choices()
   local choices = {}
   for _, name in ipairs(agent_order) do
-    choices[#choices + 1] = {
-      id = name,
-      label = name,
-      display = name,
-      ordinal = name,
-    }
+    if is_agent(name) then
+      choices[#choices + 1] = { id = name, label = name, display = name, ordinal = name }
+    end
   end
   return choices
 end
@@ -211,12 +213,63 @@ function M.names()
   return vim.list_slice(agent_order)
 end
 
-local function bind_agent_pane(win, bufnr, cwd)
+function M.map_create_shortcuts(bufnr)
+  local opts = { buffer = bufnr, silent = true, nowait = true }
+  -- Keep the editor's New buffer mapping from replacing a panel buffer.
+  vim.keymap.set("n", "<leader>fn", "<Nop>", opts)
+  vim.keymap.set("n", "<leader>nt", function() M.new("terminal") end,
+    vim.tbl_extend("force", opts, { desc = "New terminal" }))
+  vim.keymap.set("n", "<leader>na", function() M.new(M.default_agent()) end,
+    vim.tbl_extend("force", opts, { desc = "New default terminal agent" }))
+  vim.keymap.set("n", "<leader>nA", function() agent_container:pick() end,
+    vim.tbl_extend("force", opts, { desc = "Select terminal agent" }))
+  if not vim.b[bufnr].luanphan_agent_new_menu then
+    local ok, which_key = pcall(require, "which-key")
+    if ok then
+      which_key.add({ { "<leader>n", group = "New", buffer = bufnr } })
+      vim.b[bufnr].luanphan_agent_new_menu = true
+    end
+  end
+end
+
+local function bind_agent_pane(win, bufnr)
   require("luanphan.agents.sidebar").attach(bufnr, win)
   M.map_jump_keys(bufnr)
-  vim.keymap.set("n", "<leader>fN", function()
-    agent_container:pick(cwd)
-  end, { buffer = bufnr, silent = true, nowait = true, desc = "Select terminal agent" })
+  M.map_create_shortcuts(bufnr)
+end
+
+local function resume_options(session)
+  local provider = agent_defs[session.agent]
+  return {
+    args = provider.resume(session.thread_id),
+    thread_id = session.thread_id,
+    agent_label = not provider.restore_on_open and session.agent_label or nil,
+  }
+end
+
+local function restore_panel_sessions(cwd)
+  if restored_cwds[cwd] then return end
+  restored_cwds[cwd] = true
+  local path = vim.uv.fs_realpath(cwd) or cwd
+  for _, name in ipairs(agent_order) do
+    if agent_defs[name].restore_on_open then
+      local live = {}
+      for _, buf in ipairs(agent_buffers(name, cwd)) do
+        local id = vim.b[buf].luanphan_agent_thread_id
+        if id then live[id] = true end
+      end
+      local saved_sessions = sessions.list(name)
+      table.sort(saved_sessions, function(a, b)
+        if a.last_used ~= b.last_used then return a.last_used < b.last_used end
+        return a.thread_id < b.thread_id
+      end)
+      for _, session in ipairs(saved_sessions) do
+        if session.path == path and not live[session.thread_id] then
+          setup_agent(name).start_hidden(cwd, resume_options(session))
+        end
+      end
+    end
+  end
 end
 
 local function layout_agent(win, width, col, height, geometry, style)
@@ -233,7 +286,7 @@ local function layout_agent(win, width, col, height, geometry, style)
       local tab = pane.tab
       if pane.opened or pane.win == anchor then
         agent_container:bind(tab.bufnr, cwd)
-        bind_agent_pane(pane.win, tab.bufnr, cwd)
+        bind_agent_pane(pane.win, tab.bufnr)
       end
       local api = apis[tab.agent] or setup_agent(tab.agent)
       api.prepare_tile(pane.win, pane.opened)
@@ -242,7 +295,7 @@ local function layout_agent(win, width, col, height, geometry, style)
     local buf = vim.api.nvim_win_get_buf(anchor)
     local name = vim.b[buf].luanphan_agent_name
     agent_container:attach(anchor, buf, name .. ":" .. buf, cwd)
-    bind_agent_pane(anchor, buf, cwd)
+    bind_agent_pane(anchor, buf)
     apis[name].prepare_tile(anchor, false)
   end
   sidebar.layout(anchor, width, col, height)
@@ -259,6 +312,7 @@ local function get_agent(name)
   apis[name] = terminal_agent.create({
     status_name = name,
     native_status = def.native_status,
+    new_session_id = def.new_session_id,
     g_bufnr = def.g_bufnr,
     notify_prefix = def.notify_prefix,
     augroup_prefix = def.augroup_prefix,
@@ -275,8 +329,9 @@ local function get_agent(name)
         vim.b[bufnr].luanphan_agent_saved_use = seconds + microseconds / 1000000
         sessions.save(bufnr)
       end
+      restore_panel_sessions(cwd)
       agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
-      bind_agent_pane(win, bufnr, cwd)
+      bind_agent_pane(win, bufnr)
       apis[name].layout(win)
     end,
     on_close = function(bufnr, cwd)
@@ -369,12 +424,7 @@ end
 
 function M.resume(session, opts)
   if not sessions.supported(session.agent) or not sessions.valid_id(session.thread_id) then return false end
-  local args = agent_defs[session.agent].resume(session.thread_id)
-  return M.new(session.agent, vim.tbl_extend("force", opts or {}, {
-    args = args,
-    thread_id = session.thread_id,
-    agent_label = session.agent_label,
-  }))
+  return M.new(session.agent, vim.tbl_extend("force", opts or {}, resume_options(session)))
 end
 
 function M.toggle_agent(name)
@@ -458,13 +508,12 @@ end
 
 function M.send_selection(name)
   local visible = visible_agent()
-  local active = most_recent_tab(vim.fn.getcwd())
-  name = name or (visible and visible.name) or (active and active.agent) or M.default_agent()
-  if not agent_defs[name] then
+  local active = most_recent_tab(vim.fn.getcwd(), true)
+  name = name or (visible and is_agent(visible.name) and visible.name) or (active and active.agent) or M.default_agent()
+  if not is_agent(name) then
     return false
   end
   local target = agent_buffer(name, vim.fn.getcwd())
-  local visible = visible_agent()
   local opts
   if visible and visible.bufnr ~= target then
     setup_agent(visible.name).save_view(visible.win)
@@ -487,9 +536,7 @@ agent_container = require("luanphan.view_container").create({
   create = function(choice)
     M.new(choice.id)
   end,
-  new = function()
-    M.new(M.default_agent())
-  end,
+  create_key = false,
   picker_title = "Terminal Agents",
   picker_opts = {
     layout_strategy = "center",
@@ -497,7 +544,6 @@ agent_container = require("luanphan.view_container").create({
   },
   empty_message = "no terminal agents registered",
   cycle_desc = "Next terminal agent",
-  new_desc = "New default terminal agent",
 })
 
 function M.refresh_tabs(win)

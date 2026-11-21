@@ -56,6 +56,7 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
 ---@param profile table
 ---@field status_name? string stable name used by the cross-process status store
 ---@field native_status? boolean whether the program reports its own status
+---@field new_session_id? fun(): string
 ---@field g_bufnr string vim.g key for buffer reuse after reload
 ---@field notify_prefix string prefix for :vim.notify
 ---@field augroup_prefix string prefix for autocmd groups
@@ -197,6 +198,7 @@ end
 
 local function argv_for_termopen(opts)
   local cmd = config.cmd
+  if type(cmd) == "function" then cmd = cmd() end
   local args = (opts and opts.args) or config.args or {}
   if type(cmd) == "table" then
     local out = vim.deepcopy(cmd)
@@ -704,9 +706,11 @@ local function start_terminal(buf, cwd, opts)
   configure_terminal_buffer(buf)
   apply_agent_scrollback(buf)
   set_agent_bufnr(buf, cwd)
-  if opts and opts.thread_id then
-    vim.b[buf].luanphan_agent_thread_id = opts.thread_id
-    vim.b[buf].luanphan_agent_saved_label = opts.agent_label
+  local thread_id = opts and opts.thread_id
+  if not thread_id and profile.new_session_id then thread_id = profile.new_session_id() end
+  if thread_id then
+    vim.b[buf].luanphan_agent_thread_id = thread_id
+    vim.b[buf].luanphan_agent_saved_label = opts and opts.agent_label
   end
   attach_term_close(buf)
   attach_quit_detach(buf)
@@ -780,6 +784,11 @@ end
 
 function API.new(opts)
   return open_terminal(opts)
+end
+
+function API.start_hidden(cwd, opts)
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_call(buf, function() start_terminal(buf, cwd, opts) end)
 end
 
 --- Focus an agent terminal, showing its buffer when hidden.

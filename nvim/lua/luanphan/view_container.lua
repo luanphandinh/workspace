@@ -337,9 +337,11 @@ function Container:bind(bufnr, context)
 	vim.keymap.set("n", "<S-Tab>", function()
 		self:cycle(context, -1)
 	end, vim.tbl_extend("force", opts, { desc = "Previous view" }))
-	vim.keymap.set("n", "<leader>fn", function()
-		self:create(context)
-	end, vim.tbl_extend("force", opts, { desc = self.opts.new_desc or "New view" }))
+	if self.opts.create_key ~= false then
+		vim.keymap.set("n", self.opts.create_key or "<leader>fn", function()
+			self:create(context)
+		end, vim.tbl_extend("force", opts, { desc = self.opts.new_desc or "New view" }))
+	end
 end
 
 function Container:attach(win, bufnr, id, context)

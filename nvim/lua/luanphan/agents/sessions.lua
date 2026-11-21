@@ -72,7 +72,8 @@ local function list(agent)
   return records
 end
 
-function M.list()
+function M.list(agent)
+  if agent then return M.supported(agent) and list(agent) or {} end
   local result = {}
   for _, agent in ipairs(names) do
     if M.supported(agent) then vim.list_extend(result, list(agent)) end

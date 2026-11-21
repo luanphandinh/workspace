@@ -4735,6 +4735,7 @@ local function test_agent_sidebar_restore(repo, agent)
     "local first, second = " .. string.format("%q, %q", first, second),
     "vim.g.luanphan_codex_sessions_dir = root .. '/codex-state'",
     "vim.g.luanphan_cursor_sessions_dir = root .. '/cursor-state'",
+    "vim.g.luanphan_terminal_sessions_dir = root .. '/terminal-state'",
     "vim.g.luanphan_agent_status_dir = root .. '/status'",
     "vim.g.luanphan_default_agent_file = root .. '/default'",
     "vim.g.luanphan_recent_paths_file = root .. '/recent'",
@@ -4836,6 +4837,84 @@ local function test_agent_sidebar_restore(repo, agent)
   end
 end
 
+local function test_panel_shell_sessions(repo)
+  local root = temp_root .. "/panel-shell"
+  write_executable(root .. "/bin/mcodex", { "#!/bin/sh", "exec cat" })
+  write(root .. "/settings.toml", { "[agent_float]", 'display_style = "tile"' })
+  local script = root .. "/session.lua"
+  local setup = {
+    "local root = " .. string.format("%q", root),
+    "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
+    "vim.g.luanphan_recent_paths_file = root .. '/recent.json'",
+    "vim.g.luanphan_codex_sessions_dir = root .. '/codex-state'",
+    "vim.g.luanphan_cursor_sessions_dir = root .. '/cursor-state'",
+    "vim.g.luanphan_terminal_sessions_dir = root .. '/terminal-state'",
+    "vim.env.PATH = root .. '/bin:' .. vim.env.PATH",
+    "vim.env.ENV = nil",
+    "vim.o.shell = '/bin/sh'",
+    "vim.o.columns = 160",
+    "vim.o.lines = 48",
+    "local agents = require('luanphan.agents.main')",
+    "local sessions = require('luanphan.agents.sessions')",
+    "local terminal = require('luanphan.agents.terminal-chat')",
+    "local agent_id = '00000000-0000-4000-8000-000000000001'",
+    "local function press(key) vim.fn.maparg(key, 'n', false, true).callback() end",
+  }
+  local function run(body)
+    write(script, vim.list_extend(vim.list_slice(setup), vim.split(body, "\n", { plain = true })))
+    local output = vim.fn.systemlist(child_nvim_luafile_command(repo, script))
+    assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+  end
+  run([=[
+local agent = assert(agents.new('codex', { thread_id = agent_id, view_mode = true }))
+press('<leader>nt')
+local first = vim.api.nvim_get_current_buf()
+assert(vim.b[first].luanphan_agent_name == 'terminal', 'new terminal did not create a shell')
+press('<C-h>')
+assert(vim.bo.filetype == 'agent-sidebar', 'could not focus the sidebar from the shell')
+press('<leader>nt')
+local second = vim.api.nvim_get_current_buf()
+assert(first ~= second and vim.b[second].luanphan_agent_name == 'terminal', 'sidebar reused the first shell')
+for _, buf in ipairs({ agent, first, second }) do
+  local win = vim.fn.bufwinid(buf)
+  assert(win ~= -1 and vim.w[win].luanphan_view_anchor, 'shell and agent do not share the tiled panel')
+  press('<Tab>')
+  assert(vim.api.nvim_get_current_buf() == buf, 'Tab did not follow shell and agent order')
+end
+assert(agents.send_selection('terminal') == false, 'shell was accepted as an agent prompt destination')
+local marker = 'PANEL_SHELL_OUTPUT'
+vim.fn.chansend(vim.b[first].terminal_job_id, "printf '\\n%s\\n' " .. marker .. "\n")
+assert(vim.wait(3000, function()
+  return vim.tbl_contains(vim.api.nvim_buf_get_lines(first, 0, -1, false), marker)
+end, 20), 'plain shell could not execute a command')
+local ids = { vim.b[first].luanphan_agent_thread_id, vim.b[second].luanphan_agent_thread_id }
+assert(#sessions.list('terminal') == 2 and ids[1] ~= ids[2], 'shell slots were not saved independently')
+vim.fn.writefile(ids, root .. '/ids')
+assert(agents.open('codex', agent, { view_mode = true }))
+os.exit(0)
+]=])
+  run([=[
+agents.toggle()
+assert(vim.b.luanphan_agent_thread_id == agent_id, 'restored shells took focus from the agent')
+local shells = {}
+for _, item in ipairs(sessions.instances(false)) do
+  if item.agent == 'terminal' then shells[vim.b[item.bufnr].luanphan_agent_thread_id] = item end
+end
+local ids = vim.fn.readfile(root .. '/ids')
+assert(vim.tbl_count(shells) == 2, 'panel did not recreate both shell slots')
+for _, id in ipairs(ids) do
+  local item = assert(shells[id], 'restored shell lost its saved ID')
+  assert(item.path == vim.fn.getcwd() and terminal.running(item.bufnr), 'restored shell has the wrong working directory')
+  assert(vim.fn.bufwinid(item.bufnr) ~= -1, 'restored shell was missing from the tiled panel')
+  local lines = vim.api.nvim_buf_get_lines(item.bufnr, 0, -1, false)
+  assert(not table.concat(lines, '\n'):find('PANEL_SHELL_OUTPUT', 1, true), 'old shell output survived restart')
+end
+vim.fn.chansend(vim.b[shells[ids[1]].bufnr].terminal_job_id, 'exit\n')
+assert(vim.wait(3000, function() return #sessions.list('terminal') == 1 end, 20),
+  'exiting a shell did not remove its saved slot')
+]=])
+end
+
 local function test_agent_view_container(repo)
   local shim_dir = temp_root .. "/agent-view-shims"
   local status_dir = temp_root .. "/agent-view-status"
@@ -4864,6 +4943,7 @@ local function test_agent_view_container(repo)
   local old_global_settings = vim.g.luanphan_global_settings_path
   local old_codex_sessions = vim.g.luanphan_codex_sessions_dir
   local old_cursor_sessions = vim.g.luanphan_cursor_sessions_dir
+  local old_terminal_sessions = vim.g.luanphan_terminal_sessions_dir
   local settings_path = temp_root .. "/agent-view-settings.toml"
   local agents = require("luanphan.agents.main")
   vim.env.PATH = shim_dir .. ":" .. old_path
@@ -4873,6 +4953,7 @@ local function test_agent_view_container(repo)
   vim.g.luanphan_global_settings_path = settings_path
   vim.g.luanphan_codex_sessions_dir = temp_root .. "/agent-view-codex-sessions"
   vim.g.luanphan_cursor_sessions_dir = temp_root .. "/agent-view-cursor-sessions"
+  vim.g.luanphan_terminal_sessions_dir = temp_root .. "/agent-view-terminal-sessions"
   write(settings_path, { "[recent_folder]", "max_cache_entry = 3" })
   close_agent_terminals()
 
@@ -4917,12 +4998,15 @@ local function test_agent_view_container(repo)
 
     vim.cmd("stopinsert")
     local next_map = vim.fn.maparg("<Tab>", "n", false, true)
-    local new_map = vim.fn.maparg("<leader>fn", "n", false, true)
-    local select_map = vim.fn.maparg("<leader>fN", "n", false, true)
+    local new_map = vim.fn.maparg("<leader>na", "n", false, true)
+    local select_map = vim.fn.maparg("<leader>nA", "n", false, true)
     assert_nonrecursive_map("<Tab>", "n", cursor_buf)
     assert_nonrecursive_map("<S-Tab>", "n", cursor_buf)
-    assert_nonrecursive_map("<leader>fn", "n", cursor_buf)
-    assert_nonrecursive_map("<leader>fN", "n", cursor_buf)
+    assert_nonrecursive_map("<leader>na", "n", cursor_buf)
+    assert_nonrecursive_map("<leader>nA", "n", cursor_buf)
+    assert_nonrecursive_map("<leader>nt", "n", cursor_buf)
+    assert_true(vim.fn.maparg("<leader>fn", "n") == "<Nop>" and vim.fn.maparg("<leader>fN", "n") == "",
+      "old shortcuts are still active in the agent panel")
     assert_true(type(next_map) == "table" and type(next_map.callback) == "function", "agent view mode is missing tab cycling")
     assert_true(type(new_map) == "table" and type(new_map.callback) == "function" and new_map.desc == "New default terminal agent", "agent view mode is missing default-agent creation")
     assert_true(type(select_map) == "table" and type(select_map.callback) == "function" and select_map.desc == "Select terminal agent", "agent view mode is missing the new-agent picker")
@@ -4937,7 +5021,7 @@ local function test_agent_view_container(repo)
     new_map.callback()
     agents.default_agent = original_default_agent
     agents.new = original_new
-    assert_true(created_agent == "cursor", "<leader>fn did not create the configured default agent")
+    assert_true(created_agent == "cursor", "<leader>na did not create the configured default agent")
     next_map.callback()
     wait_until("cycled agent tab", function()
       return visible_agent_window_count() == 1
@@ -4959,7 +5043,7 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_get_current_win() == agent_win, "cycling mixed agents replaced the container window")
     assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "cycling mixed agents resized the container")
 
-    select_map = vim.fn.maparg("<leader>fN", "n", false, true)
+    select_map = vim.fn.maparg("<leader>nA", "n", false, true)
     select_map.callback()
     local prompt_buf = nil
     wait_until("agent tab picker", function()
@@ -5521,6 +5605,7 @@ local function test_agent_view_container(repo)
   close_agent_terminals()
   vim.g.luanphan_codex_sessions_dir = old_codex_sessions
   vim.g.luanphan_cursor_sessions_dir = old_cursor_sessions
+  vim.g.luanphan_terminal_sessions_dir = old_terminal_sessions
   local source_buf = vim.fn.bufnr(source)
   if source_buf >= 0 and vim.api.nvim_buf_is_valid(source_buf) then
     pcall(vim.api.nvim_buf_delete, source_buf, { force = true })
@@ -7677,6 +7762,7 @@ local agent_tests = {
   default_setting = test_default_agent_setting,
   keys = test_agent_keys_invoke_cli_commands,
   lifecycle = test_agent_terminal_lifecycle,
+  panel_shells = test_panel_shell_sessions,
   reference_links = test_terminal_reference_links,
   reference_view = test_agent_terminal_reference_restores_view,
   send_selection = test_leader_a_sends_visual_selection_to_active_agent,
@@ -7939,6 +8025,9 @@ local setup_ok, setup_err = xpcall(function()
 
   test("agent terminals share a tabbed view container", function()
     agent_tests.view_container(repo)
+  end)
+  test("plain shells tile with agents and reopen after a restart", function()
+    agent_tests.panel_shells(repo)
   end)
   test("active agent picker keeps the tiled panel together", function()
     agent_tests.tiled_workspace_picker(repo, worktree)

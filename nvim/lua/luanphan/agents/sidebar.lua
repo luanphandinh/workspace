@@ -350,6 +350,7 @@ function M.layout(win, width, col, height)
   vim.wo[sidebar].winhighlight = "CursorLine:Visual"
   vim.wo[sidebar].winbar = "%#TabLineFill# Workspaces"
   agents.map_jump_keys(buf, true)
+  agents.map_create_shortcuts(buf)
 
   local opts = { buffer = buf, silent = true, nowait = true }
   local function open_selected()
