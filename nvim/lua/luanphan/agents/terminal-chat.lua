@@ -40,14 +40,8 @@ function M.running(bufnr)
 end
 
 local BASE_DEFAULTS = {
-  window_mode = "float",
   cmd = "agent",
   args = {},
-  split = "vertical",
-  width = nil,
-  height = nil,
-  split_ratio = 0.45,
-  lock_split = true,
   resize_debounce_ms = 250,
   float_border = "single",
   float_zindex = 40,
@@ -332,48 +326,10 @@ local function resume_terminal_view(win, bufnr, opts)
   end, 10)
 end
 
-local function vsplit_at(position)
-  local saved = vim.o.splitright
-  vim.o.splitright = position ~= "left"
-  vim.cmd("vsplit")
-  vim.o.splitright = saved
-end
-
-local function uses_float_window()
-  return config.window_mode == "float"
-    and config.float_position ~= "left"
-    and config.float_position ~= "right"
-end
-
---- @return integer|nil dim, string|nil axis "w"|"h"
-local function get_target_split_dims()
-  if config.split == "vertical" then
-    if config.width then
-      local total = vim.o.columns
-      return math.max(20, math.min(tonumber(config.width) or 80, total - 10)), "w"
-    elseif config.split_ratio then
-      local total = vim.o.columns
-      local w = math.floor(total * config.split_ratio)
-      return math.max(20, math.min(w, total - 10)), "w"
-    end
-  else
-    if config.height then
-      local total = vim.o.lines - vim.o.cmdheight - 1
-      return math.max(8, math.min(tonumber(config.height) or 20, total - 2)), "h"
-    elseif config.split_ratio then
-      local total = vim.o.lines - vim.o.cmdheight - 1
-      local h = math.floor(total * config.split_ratio)
-      return math.max(8, math.min(h, total - 2)), "h"
-    end
-  end
-  return nil, nil
-end
-
 local function is_full_screen(total_width_percent)
   return total_width_percent == 100
 end
 
---- Geometry for the full overlay. Left and right positions use vertical splits.
 local function get_float_geometry()
   local lines_avail = math.max(1, vim.o.lines - vim.o.cmdheight)
   local sidebar_height = math.max(10, lines_avail - 2)
@@ -428,18 +384,6 @@ local function save_float_geometry(win)
     width = win_config.width,
     height = win_config.height,
   }
-end
-
-local function apply_split_size()
-  local dim, axis = get_target_split_dims()
-  if not dim then
-    return
-  end
-  if axis == "w" then
-    vim.cmd("vertical resize " .. dim)
-  else
-    vim.cmd("resize " .. dim)
-  end
 end
 
 local function apply_agent_scrollback(buf)
@@ -517,20 +461,6 @@ local function prepare_terminal_window(win)
   end
 end
 
-local function lock_cursor_window(win)
-  if uses_float_window() or not config.lock_split then
-    return
-  end
-  win = win or vim.api.nvim_get_current_win()
-  if config.split == "vertical" then
-    vim.wo[win].winfixwidth = true
-    vim.wo[win].winfixheight = false
-  else
-    vim.wo[win].winfixheight = true
-    vim.wo[win].winfixwidth = false
-  end
-end
-
 local function term_buffer_alive(bufnr)
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
     return false
@@ -560,51 +490,8 @@ local function sync_float_after_resize()
   sync_terminal_grid(win, cur)
 end
 
---- After outer resize: re-apply ratio only if the agent window size drifted; always refresh winfix*.
-local function sync_agent_split_after_resize()
-  if not config.lock_split then
-    return
-  end
-  local cur = current_bufnr()
-  if not cur or not term_buffer_alive(cur) then
-    return
-  end
-  local win = win_for_buf(cur)
-  if not win then
-    return
-  end
-  local target, axis = get_target_split_dims()
-  if not target then
-    return
-  end
-  local cur_dim = axis == "w" and vim.api.nvim_win_get_width(win) or vim.api.nvim_win_get_height(win)
-  local saved = vim.api.nvim_get_current_win()
-  if cur_dim ~= target and vim.api.nvim_win_is_valid(saved) then
-    vim.api.nvim_set_current_win(win)
-    apply_split_size()
-    if vim.api.nvim_win_is_valid(saved) then
-      vim.api.nvim_set_current_win(saved)
-    end
-  end
-  if vim.api.nvim_win_is_valid(win) then
-    lock_cursor_window(win)
-    sync_terminal_grid(win, cur)
-  end
-end
-
-local function sync_agent_after_resize()
-  if uses_float_window() then
-    sync_float_after_resize()
-  else
-    sync_agent_split_after_resize()
-  end
-end
-
 local function schedule_resize_sync()
   local ms = config.resize_debounce_ms
-  if not ms or ms <= 0 then
-    return
-  end
   if state.resize_timer then
     state.resize_timer:stop()
     state.resize_timer:close()
@@ -618,14 +505,14 @@ local function schedule_resize_sync()
     if state.resize_timer == timer then
       state.resize_timer = nil
     end
-    vim.schedule(sync_agent_after_resize)
+    vim.schedule(sync_float_after_resize)
   end)
 end
 
 --- While the outer frame is resized, snap the float back to the last applied size so the PTY does not
---- get a SIGWINCH per drag step; debounced sync_agent_after_resize applies the final size once idle.
+--- get a SIGWINCH per drag step; apply the final size once idle.
 local function on_vim_resized()
-  if uses_float_window() and state.float_geometry then
+  if state.float_geometry then
     local cur = current_bufnr()
     if cur then
       local win = win_for_buf(cur)
@@ -637,19 +524,9 @@ local function on_vim_resized()
   schedule_resize_sync()
 end
 
---- Bind <C-h/j/k/l> inside the agent's float buffer to close the float. One
---- muscle-memory "move window" stroke dismisses the overlay. No-op in split
---- mode — those are useful window-nav keys when the agent is a real split.
+--- Window navigation keys dismiss the agent float.
 local function set_float_close_keymaps(bufnr)
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
-  if not uses_float_window() then
-    for _, mode in ipairs({ "t", "n" }) do
-      for _, key in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
-        pcall(vim.keymap.del, mode, key, { buffer = bufnr })
-      end
-    end
-    return
-  end
   local opts = { buffer = bufnr, silent = true, nowait = true }
   local function close_float()
     local w = win_for_buf(bufnr)
@@ -798,11 +675,10 @@ local function restore_agent_bufnr()
     if rwin then
       prepare_terminal_window(rwin)
       configure_terminal_window(rwin)
-      lock_cursor_window(rwin)
       if profile.on_show then
         pcall(profile.on_show, cur, rwin, vim.b[cur].luanphan_agent_cwd or cwd_key())
       end
-      if profile.on_float_layout and vim.api.nvim_win_get_config(rwin).relative ~= "" then
+      if profile.on_float_layout then
         sync_float_after_resize()
       else
         sync_terminal_grid(rwin, cur)
@@ -826,43 +702,9 @@ local function start_terminal(buf, cwd, opts)
   attach_status_tracking(buf, cwd, "idle")
 end
 
-local function open_terminal_split(opts)
-  local reuse_win = opts and opts.reuse_win
-  if reuse_win and vim.api.nvim_win_is_valid(reuse_win) and vim.api.nvim_win_get_config(reuse_win).relative ~= "" then
-    pcall(M.close_window, reuse_win)
-    reuse_win = nil
-  end
-  local win
-  if reuse_win and vim.api.nvim_win_is_valid(reuse_win) then
-    win = reuse_win
-    vim.api.nvim_set_current_win(win)
-  else
-    if config.split == "vertical" then
-      vsplit_at(config.float_position)
-    else
-      vim.cmd("split")
-    end
-    win = vim.api.nvim_get_current_win()
-  end
-  vim.cmd("enew")
-  prepare_terminal_window(win)
-  configure_terminal_window(win)
-  apply_split_size()
-  lock_cursor_window()
-  local buf = vim.api.nvim_get_current_buf()
-  local cwd = cwd_key()
-  start_terminal(buf, cwd, opts)
-  resume_terminal_view(win, buf, opts)
-  return buf
-end
-
-local function open_terminal_float(opts)
+local function open_terminal(opts)
   local buf = vim.api.nvim_create_buf(false, true)
   local reuse_win = opts and opts.reuse_win
-  if reuse_win and vim.api.nvim_win_is_valid(reuse_win) and vim.api.nvim_win_get_config(reuse_win).relative == "" then
-    pcall(M.close_window, reuse_win)
-    reuse_win = nil
-  end
   local win
   if reuse_win and vim.api.nvim_win_is_valid(reuse_win) then
     win = reuse_win
@@ -881,51 +723,10 @@ local function open_terminal_float(opts)
   return buf
 end
 
-local function open_terminal(opts)
-  if uses_float_window() then
-    return open_terminal_float(opts)
-  end
-  return open_terminal_split(opts)
-end
-
-local function show_terminal_split(bufnr, opts)
+local function show_terminal(bufnr, opts)
   local cur = bufnr or current_bufnr()
   if not cur then return end
   local reuse_win = opts and opts.reuse_win
-  if reuse_win and vim.api.nvim_win_is_valid(reuse_win) and vim.api.nvim_win_get_config(reuse_win).relative ~= "" then
-    pcall(M.close_window, reuse_win)
-    reuse_win = nil
-  end
-  local win
-  if reuse_win and vim.api.nvim_win_is_valid(reuse_win) then
-    win = reuse_win
-    vim.api.nvim_set_current_win(win)
-  else
-    if config.split == "vertical" then
-      vsplit_at(config.float_position)
-    else
-      vim.cmd("split")
-    end
-    win = vim.api.nvim_get_current_win()
-  end
-  vim.api.nvim_win_set_buf(win, cur)
-  prepare_terminal_window(win)
-  configure_terminal_window(win)
-  apply_agent_scrollback(cur)
-  apply_split_size()
-  lock_cursor_window()
-  set_float_close_keymaps(cur)
-  resume_terminal_view(win, cur, opts)
-end
-
-local function show_terminal_float(bufnr, opts)
-  local cur = bufnr or current_bufnr()
-  if not cur then return end
-  local reuse_win = opts and opts.reuse_win
-  if reuse_win and vim.api.nvim_win_is_valid(reuse_win) and vim.api.nvim_win_get_config(reuse_win).relative == "" then
-    pcall(M.close_window, reuse_win)
-    reuse_win = nil
-  end
   local win
   if reuse_win and vim.api.nvim_win_is_valid(reuse_win) then
     win = reuse_win
@@ -945,14 +746,6 @@ local function show_terminal_float(bufnr, opts)
   apply_agent_scrollback(cur)
   set_float_close_keymaps(cur)
   resume_terminal_view(win, cur, opts)
-end
-
-local function show_terminal(bufnr, opts)
-  if uses_float_window() then
-    show_terminal_float(bufnr, opts)
-  else
-    show_terminal_split(bufnr, opts)
-  end
 end
 
 local API = {}
@@ -977,27 +770,6 @@ function API.new(opts)
   return open_terminal(opts)
 end
 
-function API.set_position(pos)
-  if pos ~= "full" and pos ~= "left" and pos ~= "right" then
-    nx("invalid position: " .. tostring(pos), vim.log.levels.WARN)
-    return
-  end
-  local cur = current_bufnr()
-  local win = cur and win_for_buf(cur) or nil
-  config.float_position = pos
-  if not win or not vim.api.nvim_win_is_valid(win) then
-    return true
-  end
-  if uses_float_window() and vim.api.nvim_win_get_config(win).relative ~= "" then
-    sync_float_after_resize()
-    return true
-  end
-  save_terminal_view(win)
-  pcall(M.close_window, win)
-  show_terminal(cur, { view_mode = vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t" })
-  return true
-end
-
 --- Focus an agent terminal, showing its buffer when hidden.
 function API.focus(bufnr, opts)
   local cur = bufnr or current_bufnr()
@@ -1011,7 +783,6 @@ function API.focus(bufnr, opts)
     return true
   end
   configure_terminal_window(win)
-  lock_cursor_window(win)
   vim.api.nvim_set_current_win(win)
   resume_terminal_view(win, cur, opts)
   return true
@@ -1165,7 +936,7 @@ end
 
 function API.setup(opts)
   config = merge(vim.deepcopy(DEFAULTS), opts or {})
-  if uses_float_window() and (not config.resize_debounce_ms or config.resize_debounce_ms <= 0) then
+  if not config.resize_debounce_ms or config.resize_debounce_ms <= 0 then
     config.resize_debounce_ms = 250
   end
   restore_agent_bufnr()
@@ -1179,33 +950,20 @@ function API.setup(opts)
     end,
   })
 
-  local resize_ok = config.resize_debounce_ms and config.resize_debounce_ms > 0
-  local want_resize = resize_ok and (uses_float_window() or config.lock_split)
-  if want_resize then
-    vim.api.nvim_create_autocmd("VimResized", {
-      group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Resize", { clear = true }),
-      callback = on_vim_resized,
-    })
-  end
+  vim.api.nvim_create_autocmd("VimResized", {
+    group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Resize", { clear = true }),
+    callback = on_vim_resized,
+  })
 
   if profile.on_float_layout then
     vim.api.nvim_create_autocmd("BufWritePost", {
       group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "FloatSettings", { clear = true }),
       callback = function(args)
-        if not uses_float_window() then return end
         local path = vim.uv.fs_realpath(require("luanphan.global_settings").config_path())
         if path and path == vim.uv.fs_realpath(vim.api.nvim_buf_get_name(args.buf)) then
           sync_float_after_resize()
         end
       end,
-    })
-  end
-
-  -- Opening or closing splits can change docked widths without firing VimResized.
-  if resize_ok and config.window_mode == "float" then
-    vim.api.nvim_create_autocmd({ "WinNew", "WinClosed" }, {
-      group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "TreeResize", { clear = true }),
-      callback = schedule_resize_sync,
     })
   end
 

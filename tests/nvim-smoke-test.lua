@@ -1249,27 +1249,9 @@ local function visible_agent_window_count()
   return count
 end
 
-local function assert_right_agent_position(win, label)
+local function assert_agent_float(win, label)
   local config = vim.api.nvim_win_get_config(win)
-  local width = math.max(30, math.min(math.floor(vim.o.columns * 0.45), vim.o.columns - 2))
-  local _, column = unpack(vim.api.nvim_win_get_position(win))
-  assert_true(config.relative == "", label .. " is floating instead of docked")
-  assert_true(config.width == width, label .. " has the wrong width")
-  for _, other in ipairs(vim.api.nvim_list_wins()) do
-    if other ~= win and vim.api.nvim_win_get_config(other).relative == "" then
-      local _, other_column = unpack(vim.api.nvim_win_get_position(other))
-      assert_true(other_column <= column, label .. " is not the rightmost split")
-    end
-  end
-end
-
-local function assert_left_agent_position(win, label)
-  local config = vim.api.nvim_win_get_config(win)
-  local width = math.max(30, math.min(math.floor(vim.o.columns * 0.45), vim.o.columns - 2))
-  local _, column = unpack(vim.api.nvim_win_get_position(win))
-  assert_true(config.relative == "", label .. " is floating instead of docked")
-  assert_true(config.width == width, label .. " has the wrong width")
-  assert_true(column == 0, label .. " is not the leftmost split")
+  assert_true(config.relative == "editor", label .. " is not an editor-relative float")
 end
 
 local function terminal_grid_size(bufnr)
@@ -3240,7 +3222,6 @@ local function test_workspace_folder_browser()
     "recent.touch(" .. string.format("%q", recent_b) .. ")",
     "recent.touch(" .. string.format("%q", station) .. ")",
     "vim.env.PATH = " .. string.format("%q", shim_dir .. ":") .. " .. vim.env.PATH",
-    "vim.g.luanphan_agent_position_file = " .. string.format("%q", temp_root .. "/folder-picker-agent-position"),
     "vim.g.luanphan_agent_status_dir = " .. string.format("%q", temp_root .. "/folder-picker-agent-status"),
     "local agents = require('luanphan.agents.main')",
     "local agent_buf = agents.new('codex')",
@@ -3866,17 +3847,11 @@ local function test_default_agent_setting()
   local agents = require("luanphan.agents.main")
   local container = require("luanphan.view_container")
   local original_file = vim.g.luanphan_default_agent_file
-  local original_position_file = vim.g.luanphan_agent_position_file
-  local original_position = agents.agent_position()
   local original_select = container.select
   local original_open = agents.open
-  local original_position_picker = agents.pick_agent_position
   local setting_file = temp_root .. "/default-agent"
-  local position_file = temp_root .. "/agent-position"
   vim.g.luanphan_default_agent_file = setting_file
-  vim.g.luanphan_agent_position_file = position_file
   vim.fn.delete(setting_file)
-  vim.fn.delete(position_file)
   close_agent_terminals()
 
   local ok, err = xpcall(function()
@@ -3902,30 +3877,7 @@ local function test_default_agent_setting()
     assert_true(agents.default_agent() == "cursor", "selected default agent was not persisted")
     assert_true(read_lines(setting_file)[1] == "cursor", "default-agent setting file has the wrong value")
     assert_true(vim.fn.maparg("<leader>sa", "n") == "", "<leader>sa still shadows the agent settings group")
-
-    container.select = function(title, choices, on_select)
-      assert_true(title == "Agent Position", "agent-position picker has the wrong title")
-      assert_true(#choices == 3, "agent-position picker did not list every position")
-      assert_true(choices[1].id == "full", "agent-position picker omitted full")
-      assert_true(choices[2].id == "left", "agent-position picker omitted left")
-      assert_true(choices[3].id == "right", "agent-position picker omitted right")
-      assert_true(choices[1].display == "full (current)", "agent-position picker did not mark the current position")
-      on_select(choices[3])
-    end
-    map = vim.fn.maparg("<leader>sap", "n", false, true)
-    assert_true(type(map) == "table" and type(map.callback) == "function", "<leader>sap is missing its picker")
-    assert_true(map.desc == "Agent position", "<leader>sap has the wrong description")
-    map.callback()
-    assert_true(agents.agent_position() == "right", "selected agent position was not persisted")
-    assert_true(read_lines(position_file)[1] == "right", "agent-position setting file has the wrong value")
-
-    local routed_to_runtime = false
-    agents.pick_agent_position = function()
-      routed_to_runtime = true
-    end
-    map.callback()
-    agents.pick_agent_position = original_position_picker
-    assert_true(routed_to_runtime, "<leader>sap bypassed the runtime agent module")
+    assert_true(vim.fn.maparg("<leader>sap", "n") == "", "old agent position shortcut is still mapped")
 
     local opened
     agents.open = function(name, bufnr)
@@ -3941,13 +3893,9 @@ local function test_default_agent_setting()
   end, debug.traceback)
 
   agents.open = original_open
-  agents.pick_agent_position = original_position_picker
   container.select = original_select
-  agents.set_agent_position(original_position)
   vim.g.luanphan_default_agent_file = original_file
-  vim.g.luanphan_agent_position_file = original_position_file
   vim.fn.delete(setting_file)
-  vim.fn.delete(position_file)
   assert_true(ok, tostring(err))
 end
 
@@ -4605,21 +4553,15 @@ local function test_agent_keys_invoke_cli_commands()
   local old_log = vim.env.NVIM_AGENT_SMOKE_LOG
   local agents = require("luanphan.agents.main")
   local original_default_file = vim.g.luanphan_default_agent_file
-  local original_position_file = vim.g.luanphan_agent_position_file
-  local original_position = agents.agent_position()
   local default_file = temp_root .. "/agent-cli-default"
-  local position_file = temp_root .. "/agent-cli-position"
   vim.env.PATH = shim_dir .. ":" .. old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = log
   vim.g.luanphan_default_agent_file = default_file
-  vim.g.luanphan_agent_position_file = position_file
   vim.fn.delete(vim.g.luanphan_recent_paths_file)
   vim.fn.delete(default_file)
-  vim.fn.delete(position_file)
   local expected_recent_folder = vim.fn.getcwd()
 
   local ok, err = xpcall(function()
-    assert_true(agents.set_agent_position("left"), "could not set agent position before lazy load")
     local normal_map = vim.fn.maparg("<leader>a", "n", false, true)
     local visual_map = vim.fn.maparg("<leader>a", "x", false, true)
     local select_map = vim.fn.maparg("<leader>a", "s", false, true)
@@ -4644,7 +4586,7 @@ local function test_agent_keys_invoke_cli_commands()
       wait_until(item.command .. " invocation", function()
         return log_has_prefix(log, item.command .. "|")
       end, 3000)
-      assert_left_agent_position(vim.api.nvim_get_current_win(), item.command .. " initial position")
+      assert_agent_float(vim.api.nvim_get_current_win(), item.command .. " terminal")
       close_agent_terminals()
     end
     assert_true(plugin_loaded("luanphan-codex-agent"), "shared agent mapping did not lazy-load")
@@ -4666,11 +4608,8 @@ local function test_agent_keys_invoke_cli_commands()
 
   vim.env.PATH = old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = old_log
-  agents.set_agent_position(original_position)
   vim.g.luanphan_default_agent_file = original_default_file
-  vim.g.luanphan_agent_position_file = original_position_file
   vim.fn.delete(default_file)
-  vim.fn.delete(position_file)
   close_agent_terminals()
   assert_true(ok, tostring(err))
 end
@@ -4789,7 +4728,6 @@ local function test_agent_sidebar_restore(repo, agent)
     "vim.g.luanphan_codex_sessions_dir = root .. '/codex-state'",
     "vim.g.luanphan_cursor_sessions_dir = root .. '/cursor-state'",
     "vim.g.luanphan_agent_status_dir = root .. '/status'",
-    "vim.g.luanphan_agent_position_file = root .. '/position'",
     "vim.g.luanphan_default_agent_file = root .. '/default'",
     "vim.g.luanphan_recent_paths_file = root .. '/recent'",
     "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
@@ -4919,20 +4857,14 @@ local function test_agent_view_container(repo)
   local old_cursor_sessions = vim.g.luanphan_cursor_sessions_dir
   local settings_path = temp_root .. "/agent-view-settings.toml"
   local agents = require("luanphan.agents.main")
-  local original_position_file = vim.g.luanphan_agent_position_file
-  local original_position = agents.agent_position()
-  local position_file = temp_root .. "/agent-view-position"
   vim.env.PATH = shim_dir .. ":" .. old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = invoke_log
   vim.env.NVIM_AGENT_SMOKE_INPUT = input_log
-  vim.g.luanphan_agent_position_file = position_file
   vim.g.luanphan_agent_status_dir = status_dir
   vim.g.luanphan_global_settings_path = settings_path
   vim.g.luanphan_codex_sessions_dir = temp_root .. "/agent-view-codex-sessions"
   vim.g.luanphan_cursor_sessions_dir = temp_root .. "/agent-view-cursor-sessions"
   write(settings_path, { "[recent_folder]", "max_cache_entry = 3" })
-  vim.fn.delete(position_file)
-  agents.set_agent_position("full")
   close_agent_terminals()
 
   local ok, err = xpcall(function()
@@ -4947,6 +4879,7 @@ local function test_agent_view_container(repo)
     end, 3000)
     local codex_buf = agent_bufnr("codex_agent_bufnr")
     local agent_win = vim.api.nvim_get_current_win()
+    assert_agent_float(agent_win, "first agent container")
     local agent_height = vim.api.nvim_win_get_height(agent_win)
     local winbar = rendered_winbar(agent_win)
     assert_true(
@@ -4956,19 +4889,6 @@ local function test_agent_view_container(repo)
     assert_terminal_grid_matches(codex_buf, agent_win, "first agent")
     invoke_map("<S-Tab>")
     assert_true(vim.api.nvim_get_current_buf() == codex_buf, "backward cycling changed a single agent tab")
-
-    assert_true(agents.set_agent_position("left"), "could not move the agent container left")
-    assert_true(visible_agent_window_count() == 1, "moving the agent container changed its visibility")
-    assert_true(vim.api.nvim_get_current_buf() == codex_buf, "moving the agent container changed its active terminal")
-    agent_win = vim.api.nvim_get_current_win()
-    assert_left_agent_position(agent_win, "left agent container")
-
-    assert_true(agents.set_agent_position("right"), "could not move the agent container right")
-    assert_true(visible_agent_window_count() == 1, "moving the agent container right changed its visibility")
-    assert_true(vim.api.nvim_get_current_buf() == codex_buf, "moving the agent container right changed its active terminal")
-    agent_win = vim.api.nvim_get_current_win()
-    agent_height = vim.api.nvim_win_get_height(agent_win)
-    assert_right_agent_position(agent_win, "moved agent container")
 
     assert_true(agents.open("cursor"), "could not open the second terminal agent")
     wait_until("second agent tab", function()
@@ -4981,7 +4901,6 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_buf_is_valid(codex_buf), "opening another tab deleted the first terminal")
     assert_true(vim.api.nvim_get_current_win() == agent_win, "opening another agent replaced the container window")
     assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "opening another agent resized the container")
-    assert_right_agent_position(agent_win, "switched agent container")
     assert_terminal_grid_matches(cursor_buf, agent_win, "second agent")
     winbar = rendered_winbar(agent_win)
     assert_true(winbar:find("codex", 1, true) ~= nil, "agent tab bar omitted the first terminal")
@@ -5166,7 +5085,7 @@ local function test_agent_view_container(repo)
     end, 3000)
     local reopened_win = vim.api.nvim_get_current_win()
     assert_true(vim.api.nvim_win_get_height(reopened_win) == agent_height, "reopened agent container changed height")
-    assert_right_agent_position(reopened_win, "toggled agent container")
+    assert_agent_float(reopened_win, "toggled agent container")
     winbar = rendered_winbar(reopened_win)
     assert_true(winbar:find("[cursor", 1, true) ~= nil, "reopened agent container did not reserve its tab bar")
 
@@ -5212,7 +5131,6 @@ local function test_agent_view_container(repo)
 
     agents.hide()
     vim.o.columns = 160
-    agents.set_agent_position("full")
     local other_workspace = temp_root .. "/local_workspaces/example-agent"
     local other_path = other_workspace .. "/nested folder"
     vim.fn.mkdir(other_path, "p")
@@ -5448,9 +5366,6 @@ local function test_agent_view_container(repo)
   close_agent_terminals()
   vim.g.luanphan_codex_sessions_dir = old_codex_sessions
   vim.g.luanphan_cursor_sessions_dir = old_cursor_sessions
-  agents.set_agent_position(original_position)
-  vim.g.luanphan_agent_position_file = original_position_file
-  vim.fn.delete(position_file)
   local source_buf = vim.fn.bufnr(source)
   if source_buf >= 0 and vim.api.nvim_buf_is_valid(source_buf) then
     pcall(vim.api.nvim_buf_delete, source_buf, { force = true })
@@ -6553,7 +6468,7 @@ local function test_worktree_switch_hides_agent_terminal(repo, worktree)
     notify_prefix = "smoke_agent",
     augroup_prefix = "SmokeAgent",
     hint_open = "<smoke>",
-    defaults = { cmd = "sh", float_position = "right" },
+    defaults = { cmd = "sh" },
   })
   agent.setup()
   agent.toggle()
@@ -6561,7 +6476,7 @@ local function test_worktree_switch_hides_agent_terminal(repo, worktree)
   wait_until("repo agent terminal open", function()
     return visible_agent_window_count() == 1
   end, 1000)
-  assert_right_agent_position(vim.api.nvim_get_current_win(), "repository agent container")
+  assert_agent_float(vim.api.nvim_get_current_win(), "repository agent container")
 
   worktree_test_api().switch_to(worktree)
   local expected_worktree = realpath(worktree)
@@ -6574,7 +6489,7 @@ local function test_worktree_switch_hides_agent_terminal(repo, worktree)
   wait_until("worktree agent terminal open", function()
     return visible_agent_window_count() == 1
   end, 1000)
-  assert_right_agent_position(vim.api.nvim_get_current_win(), "workspace agent container")
+  assert_agent_float(vim.api.nvim_get_current_win(), "workspace agent container")
 
   worktree_test_api().switch_to(repo)
   local expected_repo = realpath(repo)

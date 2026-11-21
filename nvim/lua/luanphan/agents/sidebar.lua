@@ -380,15 +380,6 @@ end
 
 function M.attach(buf, win)
   local opts = { buffer = buf, silent = true, nowait = true }
-  if vim.api.nvim_win_get_config(win).relative == "" then
-    for _, mode in ipairs({ "n", "t" }) do
-      pcall(vim.keymap.del, mode, "<LeftMouse>", { buffer = buf })
-    end
-    for _, key in ipairs({ "<leader>e", "<leader>b" }) do
-      pcall(vim.keymap.del, "n", key, { buffer = buf })
-    end
-    return
-  end
   local function focus_sidebar()
     if main ~= win or not valid(sidebar) then return end
     return_to_input = vim.api.nvim_get_mode().mode == "t"
