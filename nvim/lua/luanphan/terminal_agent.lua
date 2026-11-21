@@ -379,9 +379,16 @@ local function get_float_geometry()
   local total = math.max(3, math.floor(cols * total_percent / 100))
   local left = math.floor((cols - total) / 2)
   local terminal, sidebar = total, 0
-  if settings and total >= 7 then
-    terminal = math.min(total - 4, math.max(3, math.floor(total * settings.terminal_width_percent / 100)))
-    sidebar = math.min(total - terminal - 1, math.max(3, math.floor(total * settings.sidebar_width_percent / 100)))
+  if settings and total >= 6 then
+    local terminal_percent = settings.terminal_width_percent
+    local sidebar_percent = settings.sidebar_width_percent
+    terminal = math.min(total - 3, math.max(3, math.floor(total * terminal_percent / 100)))
+    local available = total - terminal
+    if terminal_percent + sidebar_percent >= 100 - 1e-9 then
+      sidebar = available
+    else
+      sidebar = math.min(available, math.max(3, math.floor(total * sidebar_percent / 100)))
+    end
   end
   return { row = 0, col = left + total - terminal, width = terminal - 2, height = h }, math.max(0, sidebar - 2), left
 end
