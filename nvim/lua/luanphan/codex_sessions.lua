@@ -9,7 +9,7 @@ local function state_dir()
 end
 
 function M.launch_args(id)
-  local args = { "resume", "-c", 'tui.terminal_title=["session-id","thread-name","project-name"]' }
+  local args = { "resume", "-c", 'tui.terminal_title=["session-id","thread-name"]' }
   if id then table.insert(args, 2, id) end
   return args
 end
