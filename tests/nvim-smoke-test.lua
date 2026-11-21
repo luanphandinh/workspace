@@ -5073,7 +5073,7 @@ local function test_agent_view_container(repo)
       local sidebar_buf = vim.api.nvim_win_get_buf(sidebar)
       local ns = vim.api.nvim_create_namespace("LuanphanAgentSidebarStatus")
       local mark = vim.api.nvim_buf_get_extmark_by_id(sidebar_buf, ns, bufnr, { details = true })
-      return mark[3] and mark[3].virt_text[1][1]
+      if mark[3] then return mark[3].virt_text[1][1], mark[3].virt_text_win_col end
     end
     vim.fn.chansend(vim.b[codex_buf].terminal_job_id, "\27]7501;state=done:app=codex\27\\")
     vim.fn.chansend(vim.b[second_codex_buf].terminal_job_id, "\27]7501;state=working:app=codex\27\\")
@@ -5126,7 +5126,6 @@ local function test_agent_view_container(repo)
     for _, label in ipairs({ "codex 1", "codex 2", "cursor 1", "cursor 2", "claude 1", "claude 2" }) do
       assert_true(winbar:find(label, 1, true) ~= nil, "agent tab bar omitted " .. label)
     end
-
     local active_instances = worktree_test_api().list_active_agents()
     local repo_instances = 0
     for _, instance in ipairs(active_instances) do
@@ -5223,6 +5222,16 @@ local function test_agent_view_container(repo)
     assert_true(sidebar ~= main and vim.bo[sidebar_buf].filetype == "agent-sidebar", "Ctrl+h did not focus the sidebar")
     local main_config = vim.api.nvim_win_get_config(main)
     local sidebar_config = vim.api.nvim_win_get_config(sidebar)
+    local sidebar_lines = vim.api.nvim_buf_get_lines(sidebar_buf, 0, -1, false)
+    local ns = vim.api.nvim_create_namespace("LuanphanAgentSidebar")
+    local marks = vim.api.nvim_buf_get_extmarks(sidebar_buf, ns, 0, -1, { details = true })
+    for session, icon in pairs({ codex = "\u{ec81}", cursor = "\u{ec5c}", ["claude 1"] = "\u{ec82}", ["claude 2"] = "\u{ec82}" }) do
+      assert_true(vim.iter(marks):any(function(mark)
+        local details = mark[4]
+        return details.virt_text_win_col == sidebar_config.width - 2 and details.virt_text[1][1] == icon
+          and vim.trim(sidebar_lines[mark[2] + 1]):gsub("^-?%d+%s+", "") == session
+      end), "sidebar omitted right-aligned provider icon for " .. session)
+    end
     assert_true(sidebar_config.width == 43, "sidebar did not use the remaining width at 160 columns")
     assert_true(sidebar_config.col + sidebar_config.width + 2 == main_config.col, "agent panes left a gap at 100% combined width")
     assert_true(sidebar_config.zindex == main_config.zindex, "agent panes are on different layers")
@@ -5232,7 +5241,8 @@ local function test_agent_view_container(repo)
     local agent_status = require("luanphan.agent_status")
     assert_true(agent_status.write("codex", other_path, "done"), "could not record the hook's completion state")
     wait_until("sidebar receives hook completion without switching focus", function()
-      return status_icon(main, other_buf) == "✓"
+      local icon, col = status_icon(main, other_buf)
+      return icon == "✓" and col == sidebar_config.width - 4
     end, 3000)
     vim.fn.chansend(vim.b[other_buf].terminal_job_id, "\27]7501;state=working:app=codex\27\\")
     local frame
@@ -5309,7 +5319,8 @@ local function test_agent_view_container(repo)
       local lines = vim.api.nvim_buf_get_lines(sidebar_buf, 0, -1, false)
       return vim.tbl_contains(lines, string.format(" %2d %s", number, label))
     end
-    assert_true(has_jump_number(0, title) and has_jump_number(-1, "codex"), "sidebar did not number the current and older sessions")
+    assert_true(has_jump_number(0, title) and has_jump_number(-1, "codex"),
+      "sidebar did not number the current and older sessions")
     vim.api.nvim_set_current_win(sidebar)
     invoke_map("<C-o>")
     assert_true(vim.api.nvim_win_get_buf(main) == other_buf, "sidebar Ctrl+o did not jump to the older agent")

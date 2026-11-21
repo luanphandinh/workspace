@@ -9,6 +9,7 @@ local agent_key = "<leader>a"
 
 local agent_defs = {
   cursor = {
+    icon = "\u{ec5c}",
     plugin = "luanphan-cursor-agent",
     g_bufnr = "cursor_agent_bufnr",
     notify_prefix = "cursor_agent",
@@ -22,6 +23,7 @@ local agent_defs = {
     },
   },
   claude = {
+    icon = "\u{ec82}",
     plugin = "luanphan-claude-agent",
     g_bufnr = "claude_agent_bufnr",
     notify_prefix = "claude_agent",
@@ -29,6 +31,7 @@ local agent_defs = {
     defaults = { cmd = "claude" },
   },
   codex = {
+    icon = "\u{ec81}",
     plugin = "luanphan-codex-agent",
     g_bufnr = "codex_agent_bufnr",
     notify_prefix = "codex_agent",
@@ -271,6 +274,10 @@ local function close_visible_agents(except_bufnr)
       end
     end
   end
+end
+
+function M.agent_icon(name)
+  return agent_defs[name].icon
 end
 
 function M.agent_buffer_keys()

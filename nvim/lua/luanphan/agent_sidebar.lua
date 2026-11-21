@@ -1,4 +1,5 @@
 local M = {}
+local agents = require("luanphan.plugins.agents")
 local codex_sessions = require("luanphan.codex_sessions")
 local agent_sessions = require("luanphan.agent_sessions")
 local jumplist = require("luanphan.agent_jumplist")
@@ -115,7 +116,7 @@ function M.refresh(keep_cursor)
   table.sort(workspaces)
   local active = vim.api.nvim_win_get_buf(main)
   local width = vim.api.nvim_win_get_width(sidebar) - 1
-  local lines, headings = {}, {}
+  local lines, headings, provider_marks = {}, {}, {}
   local active_row
   rows = {}
   thread_lines = {}
@@ -132,16 +133,26 @@ function M.refresh(keep_cursor)
     local recent = threads[1]
     for _, thread in ipairs(threads) do
       local prefix = string.format(number_format, offsets[thread.bufnr] or "")
-      local title_width = width - vim.fn.strdisplaywidth(prefix) - 2
+      local icon = agents.agent_icon(thread.agent)
+      local icon_col = width - vim.fn.strdisplaywidth(icon)
+      local status_col = icon_col - 2
+      local title_width = status_col - #prefix - 1
       local status_path = status_paths[thread.bufnr]
       lines[#lines + 1] = prefix .. fit(thread.agent_label, title_width)
       rows[#lines] = thread
+      if icon_col >= #prefix then
+        provider_marks[#lines] = {
+          virt_text = { { icon, "Comment" } },
+          virt_text_win_col = icon_col,
+          hl_mode = "combine",
+        }
+      end
       if thread.bufnr then
         thread_lines[thread.bufnr] = {
           row = #lines,
           title_col = #prefix,
           title_width = title_width,
-          status_col = title_width >= 0 and width - 1 or nil,
+          status_col = title_width >= 0 and status_col or nil,
           status_path = status_counts[status_path] == 1 and status_path or nil,
         }
         if thread.bufnr == active then active_row = #lines end
@@ -159,6 +170,9 @@ function M.refresh(keep_cursor)
   vim.api.nvim_buf_clear_namespace(buf, status_ns, 0, -1)
   for _, heading in ipairs(headings) do
     vim.api.nvim_buf_set_extmark(buf, ns, heading - 1, 0, { line_hl_group = "Directory" })
+  end
+  for row, mark in pairs(provider_marks) do
+    vim.api.nvim_buf_set_extmark(buf, ns, row - 1, 0, mark)
   end
   for _, thread in pairs(thread_lines) do
     vim.api.nvim_buf_set_extmark(buf, ns, thread.row - 1, 0, {
@@ -262,7 +276,7 @@ function M.layout(win, width, col)
   vim.wo[sidebar].cursorlineopt = "line"
   vim.wo[sidebar].winhighlight = "NormalFloat:Normal,CursorLine:Visual"
   vim.wo[sidebar].winbar = "%#TabLineFill# Workspaces"
-  require("luanphan.plugins.agents").map_jump_keys(buf, true)
+  agents.map_jump_keys(buf, true)
 
   local opts = { buffer = buf, silent = true, nowait = true }
   local function open_selected()
