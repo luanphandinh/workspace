@@ -4654,7 +4654,7 @@ local function test_agent_keys_invoke_cli_commands()
       "<leader>a did not cache current folder"
     )
     local cursor_regular = false
-    local plugin_args = "--plugin-dir " .. vim.fn.stdpath("config") .. "/lua/luanphan/agents/plugins/cursor-hooks"
+    local plugin_args = "--plugin-dir " .. vim.fn.stdpath("config") .. "/lua/luanphan/agents/plugins/cursor"
     for _, line in ipairs(read_log(log)) do
       local command, _, args = line:match("^([^|]+)|([^|]*)|(.*)$")
       if command == "cursor-agent" and args == plugin_args then

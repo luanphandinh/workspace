@@ -8,7 +8,7 @@ local M = {
   defaults = {
     cmd = {
       "sh", "-c", [[export NVIM_CURSOR_AGENT_TTY="$(tty)"; exec cursor-agent --plugin-dir "$0" "$@"]],
-      vim.fn.stdpath("config") .. "/lua/luanphan/agents/plugins/cursor-hooks",
+      vim.fn.stdpath("config") .. "/lua/luanphan/agents/plugins/cursor",
     },
     detach_on_quit = true,
   },

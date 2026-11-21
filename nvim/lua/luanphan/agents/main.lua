@@ -9,7 +9,7 @@ local agent_key = "<leader>a"
 
 local agent_defs = {}
 for _, name in ipairs(agent_order) do
-  agent_defs[name] = require("luanphan.agents.plugins." .. name)
+  agent_defs[name] = require("luanphan.agents.plugins." .. name .. "." .. name)
 end
 sessions.setup(agent_defs, agent_order)
 
