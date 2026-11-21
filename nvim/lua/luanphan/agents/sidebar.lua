@@ -1,10 +1,9 @@
 local M = {}
-local agents = require("luanphan.plugins.agents")
-local codex_sessions = require("luanphan.codex_sessions")
-local agent_sessions = require("luanphan.agent_sessions")
-local jumplist = require("luanphan.agent_jumplist")
-local agent_status = require("luanphan.agent_status")
-local close_window = require("luanphan.terminal_agent").close_window
+local agents = require("luanphan.agents.main")
+local agent_sessions = require("luanphan.agents.sessions")
+local jumplist = require("luanphan.agents.jumplist")
+local agent_status = require("luanphan.agents.status")
+local close_window = require("luanphan.agents.terminal-chat").close_window
 
 local main, sidebar
 local rows = {}
@@ -41,8 +40,7 @@ local function render_statuses()
   local buf = vim.api.nvim_win_get_buf(sidebar)
   for bufnr, thread in pairs(thread_lines) do
     if thread.status_col and vim.api.nvim_buf_is_valid(bufnr) then
-      local status = vim.b[bufnr].luanphan_agent_program_status
-      if not status and thread.status_path then status = agent_status.read_path(thread.status_path) end
+      local status = agent_status.current(bufnr, thread.status_path)
       local icon = status_icons[status]
       if status == "working" or status == "running" then
         icon = { spinner[spinner_frame], "DiagnosticInfo" }
@@ -366,63 +364,16 @@ vim.api.nvim_create_autocmd("WinEnter", {
   end,
 })
 
-vim.api.nvim_create_autocmd("TermRequest", {
-  group = group,
-  callback = function(args)
-    local sequence = args.data and args.data.sequence
-    if not sequence then return end
-    local cursor_id = sequence:match("^\27%]39001;cursor%-session=([%x-]+)$")
-    if cursor_id and vim.b[args.buf].luanphan_agent_name == "cursor" then
-      vim.schedule(function()
-        if not vim.api.nvim_buf_is_valid(args.buf) then return end
-        if not vim.b[args.buf].luanphan_agent_program_status then
-          vim.b[args.buf].luanphan_agent_program_status = "idle"
-        end
-        agent_sessions.capture(args.buf, cursor_id)
-      end)
-      return
-    end
-    local status = sequence:match("^\27%]7501;state=(%a+)")
-    if status and vim.b[args.buf].luanphan_agent_name then
-      if status == "working" or status_icons[status] or status == "clear" then
-        vim.b[args.buf].luanphan_agent_program_status = status
-      end
-      if status == "working" or status == "done" then
-        vim.schedule(function() codex_sessions.observe(args.buf) end)
-      end
-      return
-    end
-    local title = sequence:match("^\27%][02];(.*)$")
-    if not title then return end
-    local terminal = vim.b[args.buf]
-    if terminal.luanphan_agent_name == "cursor" then
-      local name, state = agent_sessions.cursor_title(title)
-      if state then
-        local previous = terminal.luanphan_agent_program_status
-        if state == "idle" and (previous == "working" or previous == "blocked" or previous == "done") then
-          state = "done"
-        end
-        terminal.luanphan_agent_program_status = state == "loading" and "idle" or state
-      end
-      if terminal.luanphan_cursor_title == name then return end
-      terminal.luanphan_cursor_title = name
-    end
-    vim.schedule(function()
-      codex_sessions.observe(args.buf)
-      if vim.api.nvim_buf_is_valid(args.buf) and vim.b[args.buf].luanphan_agent_name == "cursor" then
-        agent_sessions.save(args.buf)
-      end
-      local thread = thread_lines[args.buf]
-      if not thread or not valid(sidebar) or not vim.api.nvim_buf_is_valid(args.buf) then return end
-      local buf = vim.api.nvim_win_get_buf(sidebar)
-      local line = thread.row
-      local text = vim.api.nvim_buf_get_lines(buf, line - 1, line, false)[1]
-      local label = fit(require("luanphan.view_container").tab_label(args.buf, rows[line].agent_label), thread.title_width)
-      vim.bo[buf].modifiable = true
-      vim.api.nvim_buf_set_text(buf, line - 1, thread.title_col, line - 1, #text, { label })
-      vim.bo[buf].modifiable = false
-    end)
-  end,
-})
+function M.update_title(bufnr)
+  local thread = thread_lines[bufnr]
+  if not thread or not valid(sidebar) then return end
+  local buf = vim.api.nvim_win_get_buf(sidebar)
+  local line = thread.row
+  local text = vim.api.nvim_buf_get_lines(buf, line - 1, line, false)[1]
+  local label = fit(require("luanphan.view_container").tab_label(bufnr, rows[line].agent_label), thread.title_width)
+  vim.bo[buf].modifiable = true
+  vim.api.nvim_buf_set_text(buf, line - 1, thread.title_col, line - 1, #text, { label })
+  vim.bo[buf].modifiable = false
+end
 
 return M

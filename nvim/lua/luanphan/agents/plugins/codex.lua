@@ -1,14 +1,21 @@
-local M = {}
-local sessions = require("luanphan.agent_sessions")
+local M = {
+  icon = "\u{ec81}",
+  plugin = "luanphan-codex-agent",
+  g_bufnr = "codex_agent_bufnr",
+  notify_prefix = "codex_agent",
+  augroup_prefix = "CodexAgent",
+}
 local pending = {}
 local uuid_prefix = string.rep("%x", 8) .. ("%-" .. string.rep("%x", 4)):rep(3) .. "%-" .. string.rep("%x", 5)
 local uuid = "^" .. uuid_prefix .. string.rep("%x", 7) .. "$"
 
-function M.launch_args(id)
+function M.resume(id)
   local args = { "resume", "-c", 'tui.terminal_title=["session-id","thread-name"]' }
   if id then table.insert(args, 2, id) end
   return args
 end
+
+M.defaults = { cmd = "mcodex", args = M.resume(), detach_on_quit = true }
 
 local function parse_title(title)
   if type(title) ~= "string" then return nil end
@@ -23,12 +30,13 @@ function M.display_title(title)
   return label or title
 end
 
-function M.save(bufnr)
+function M.saved_title(bufnr)
   local buf = vim.b[bufnr]
   local prefix, label = parse_title(buf.term_title)
   if not prefix or vim.startswith(buf.luanphan_agent_thread_id or "", prefix) then
-    sessions.save(bufnr, label)
+    return label
   end
+  return false
 end
 
 local function candidates(output, prefix)
@@ -72,14 +80,13 @@ local function resolve(prefix, callback)
     end))
 end
 
-function M.observe(bufnr, attempt)
-  if not vim.api.nvim_buf_is_valid(bufnr) then return end
+local function observe(bufnr, emit, attempt)
+  if not vim.api.nvim_buf_is_valid(bufnr) or vim.b[bufnr].luanphan_agent_name ~= "codex" then return end
   local buf = vim.b[bufnr]
-  if buf.luanphan_agent_name ~= "codex" then return end
   local prefix = parse_title(buf.term_title)
   if not prefix then return end
   if vim.startswith(buf.luanphan_agent_thread_id or "", prefix) then
-    M.save(bufnr)
+    emit({ thread_id = buf.luanphan_agent_thread_id })
     return
   end
   if pending[bufnr] == prefix then return end
@@ -91,13 +98,21 @@ function M.observe(bufnr, attempt)
     if parse_title(buf.term_title) ~= prefix then return end
     if not id then
       if (attempt or 0) < 3 then
-        vim.defer_fn(function() M.observe(bufnr, (attempt or 0) + 1) end, 500)
+        vim.defer_fn(function() observe(bufnr, emit, (attempt or 0) + 1) end, 500)
       end
       return
     end
-    local _, label = parse_title(buf.term_title)
-    sessions.capture(bufnr, id, label)
+    emit({ thread_id = id })
   end)
+end
+
+function M.decode_event(bufnr, event, emit)
+  if event.title or event.status == "working" or event.status == "done" then
+    vim.schedule(function()
+      observe(bufnr, emit)
+      if event.title then emit({ refresh_title = true }) end
+    end)
+  end
 end
 
 return M

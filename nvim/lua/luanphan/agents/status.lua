@@ -6,6 +6,10 @@ local valid_status = {
   done = true,
 }
 
+local live_status = {
+  idle = true, working = true, done = true, blocked = true, error = true, clear = true,
+}
+
 local function state_dir()
   return vim.g.luanphan_agent_status_dir
     or (vim.fn.stdpath("state") .. "/workspace-agent-status")
@@ -34,6 +38,18 @@ end
 
 function M.read(agent, cwd)
   return M.read_path(M.path(agent, cwd))
+end
+
+function M.update(bufnr, status)
+  if live_status[status] then vim.b[bufnr].luanphan_agent_program_status = status end
+end
+
+function M.from_osc(sequence)
+  return sequence:match("^\27%]7501;state=(%a+)")
+end
+
+function M.current(bufnr, path)
+  return vim.b[bufnr].luanphan_agent_program_status or (path and M.read_path(path))
 end
 
 function M.write(agent, cwd, status)

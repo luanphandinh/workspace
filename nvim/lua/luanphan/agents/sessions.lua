@@ -1,9 +1,15 @@
 local M = {}
 local uv = vim.uv
+local terminal = require("luanphan.agents.terminal-chat")
 local uuid = "^" .. string.rep("%x", 8) .. ("%-" .. string.rep("%x", 4)):rep(3) .. "%-" .. string.rep("%x", 12) .. "$"
+local providers, names = {}, {}
+
+function M.setup(definitions, order)
+  providers, names = definitions, order
+end
 
 function M.supported(agent)
-  return agent == "codex" or agent == "cursor"
+  return providers[agent] and providers[agent].resume ~= nil
 end
 
 function M.valid_id(id)
@@ -45,7 +51,45 @@ local function list(agent)
 end
 
 function M.list()
-  return vim.list_extend(list("codex"), list("cursor"))
+  local result = {}
+  for _, agent in ipairs(names) do
+    if M.supported(agent) then vim.list_extend(result, list(agent)) end
+  end
+  return result
+end
+
+function M.instances(include_saved)
+  local instances, live = {}, {}
+  local tab_label = require("luanphan.view_container").tab_label
+  for _, agent in ipairs(names) do
+    local buffers = vim.g[providers[agent].g_bufnr]
+    for cwd, bufnrs in pairs(type(buffers) == "table" and buffers or {}) do
+      if type(cwd) == "string" and vim.fn.isdirectory(cwd) == 1 and type(bufnrs) == "table" then
+        for index, bufnr in ipairs(bufnrs) do
+          if terminal.running(bufnr) then
+            local buf = vim.b[bufnr]
+            local id = buf.luanphan_agent_thread_id
+            instances[#instances + 1] = {
+              agent = agent,
+              agent_label = tab_label(bufnr, #bufnrs > 1 and (agent .. " " .. index) or agent),
+              bufnr = bufnr,
+              path = cwd,
+              last_used = tonumber(buf.luanphan_agent_last_used) or 0,
+            }
+            if id then live[agent .. ":" .. id] = true end
+          end
+        end
+      end
+    end
+  end
+  if include_saved then
+    for _, record in ipairs(M.list()) do
+      if not live[record.agent .. ":" .. record.thread_id] and vim.fn.isdirectory(record.path) == 1 then
+        instances[#instances + 1] = record
+      end
+    end
+  end
+  return instances
 end
 
 function M.latest(path)
@@ -73,11 +117,13 @@ function M.forget_buffer(bufnr, agent, id)
   M.forget(agent, id)
 end
 
-function M.save(bufnr, label)
+function M.save(bufnr)
   local buf = vim.b[bufnr]
   local agent, id, cwd = buf.luanphan_agent_name, buf.luanphan_agent_thread_id, buf.luanphan_agent_cwd
   if not M.supported(agent) or not M.valid_id(id) or not cwd then return end
-  if agent == "cursor" then label = require("luanphan.view_container").tab_label(bufnr, agent) end
+  local saved_title = providers[agent].saved_title
+  local label = saved_title and saved_title(bufnr)
+  if label == false then return end
   local record = {
     thread_id = id,
     path = uv.fs_realpath(cwd) or cwd,
@@ -96,39 +142,21 @@ function M.save(bufnr, label)
   uv.fs_unlink(tmp)
 end
 
-function M.capture(bufnr, id, label)
+function M.update(bufnr, event)
   local buf = vim.b[bufnr]
   local agent, previous = buf.luanphan_agent_name, buf.luanphan_agent_thread_id
-  if not M.supported(agent) or not M.valid_id(id) then return false end
-  if previous ~= id then
+  local id = event.thread_id
+  local has_id = M.supported(agent) and M.valid_id(id)
+  local changed_id = has_id and previous ~= id
+  if changed_id then
     if previous then
       M.forget_buffer(bufnr, agent, previous)
       buf.luanphan_agent_saved_label = nil
     end
     buf.luanphan_agent_thread_id = id
   end
-  M.save(bufnr, label)
-  if previous ~= id then
-    local sidebar = package.loaded["luanphan.agent_sidebar"]
-    if sidebar then sidebar.refresh(true) end
-  end
-  return true
-end
-
--- Cursor's status indicators prefix the title suffix with these symbols.
-local cursor_status = {
-  ["📤"] = "working", ["📂"] = "loading", ["🔄"] = "working",
-  ["⌨️"] = "working", ["🧭"] = "working", ["⏳"] = "working",
-  ["📋"] = "working", ["📝"] = "working",
-  ["❓"] = "blocked", ["🔐"] = "blocked", ["✅"] = "idle",
-}
-
-function M.cursor_title(title)
-  if type(title) ~= "string" then return title end
-  local name, icon = title:match("^(.*) %- (%S+) ")
-  local status = cursor_status[icon]
-  if not status then return title end
-  return name, status
+  if has_id or event.save_title then M.save(bufnr) end
+  return changed_id
 end
 
 return M

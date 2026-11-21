@@ -32,12 +32,12 @@ local function setup()
   --     } }
   local BUFSTORE_KEY = "luanphan_workspace_buffers"
   local WS_CONTAINER = "local_workspaces"
-  local agents = require("luanphan.plugins.agents")
-  local terminal_agent = require("luanphan.terminal_agent")
-  local AGENT_BUFFER_KEYS = agents.agent_buffer_keys()
+  local agents = require("luanphan.agents.main")
+  local terminal_agent = require("luanphan.agents.terminal-chat")
+  local agent_sessions = require("luanphan.agents.sessions")
   local AGENT_ORDER = {}
-  for index, agent in ipairs(AGENT_BUFFER_KEYS) do
-    AGENT_ORDER[agent.name] = index
+  for index, agent in ipairs(agents.names()) do
+    AGENT_ORDER[agent] = index
   end
   local recent_paths = require("luanphan.recent_paths")
 
@@ -1263,21 +1263,6 @@ local function setup()
     end
   end
 
-  local function terminal_job_running(bufnr)
-    if type(bufnr) ~= "number" or not vim.api.nvim_buf_is_valid(bufnr) then
-      return false
-    end
-    if vim.bo[bufnr].buftype ~= "terminal" then
-      return false
-    end
-    local job = vim.b[bufnr].terminal_job_id
-    if type(job) ~= "number" or job <= 0 then
-      return false
-    end
-    local ok, status = pcall(vim.fn.jobwait, { job }, 0)
-    return ok and status[1] == -1
-  end
-
   local function agent_before(a, b)
     if a.last_used ~= b.last_used then
       return a.last_used > b.last_used
@@ -1294,53 +1279,20 @@ local function setup()
   end
 
   local function list_agent_sessions(include_saved)
-    local instances = {}
+    local instances = agent_sessions.instances(include_saved)
     local roots = {}
-    for _, agent in ipairs(AGENT_BUFFER_KEYS) do
-      local buffers = vim.g[agent.key]
-      if type(buffers) == "table" then
-        for cwd, bufnrs in pairs(buffers) do
-          for index, bufnr in ipairs(type(bufnrs) == "table" and bufnrs or {}) do
-            if type(cwd) == "string" and dir_exists(cwd) and terminal_job_running(bufnr) then
-              local root = roots[cwd] or git_root(cwd) or cwd
-              roots[cwd] = root
-              instances[#instances + 1] = {
-                agent = agent.name,
-                agent_label = require("luanphan.view_container").tab_label(
-                  bufnr,
-                  #bufnrs > 1 and (agent.name .. " " .. index) or agent.name
-                ),
-                bufnr = bufnr,
-                destination = root,
-                path = cwd,
-                workspace = workspace_root_for_path(cwd) or root,
-                last_used = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0,
-              }
-            end
-          end
-        end
-      end
-    end
-    if include_saved then
-      local live = {}
-      for _, instance in ipairs(instances) do
-        local id = vim.b[instance.bufnr].luanphan_agent_thread_id
-        if id then live[instance.agent .. ":" .. id] = true end
-      end
-      for _, record in ipairs(require("luanphan.agent_sessions").list()) do
-        if not live[record.agent .. ":" .. record.thread_id] and dir_exists(record.path) then
-          local root = roots[record.path] or git_root(record.path) or record.path
-          roots[record.path] = root
-          record.workspace = workspace_root_for_path(record.path) or root
-          instances[#instances + 1] = record
-        end
-      end
+    for _, instance in ipairs(instances) do
+      local cwd = instance.path
+      local root = roots[cwd] or git_root(cwd) or cwd
+      roots[cwd] = root
+      if instance.bufnr then instance.destination = root end
+      instance.workspace = workspace_root_for_path(cwd) or root
     end
     return instances
   end
 
   local function list_active_agents()
-    local agent_status = require("luanphan.agent_status")
+    local agent_status = require("luanphan.agents.status")
     local instances = list_agent_sessions()
     for _, instance in ipairs(instances) do
       local root, cwd = instance.destination, instance.path
@@ -1354,7 +1306,7 @@ local function setup()
       end
       instance.context = context
       instance.branch = project_branch(root)
-      instance.status = vim.b[instance.bufnr].luanphan_agent_program_status or agent_status.read(instance.agent, cwd)
+      instance.status = agent_status.current(instance.bufnr, agent_status.path(instance.agent, cwd))
     end
 
     table.sort(instances, agent_before)
@@ -2077,7 +2029,7 @@ local function setup()
   end
 
   local function activate_agent(instance, agent_windows, opts)
-    if instance.bufnr and not terminal_job_running(instance.bufnr) then
+    if instance.bufnr and not terminal_agent.running(instance.bufnr) then
       return false
     end
     if instance.path ~= safe_getcwd() then

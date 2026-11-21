@@ -1,44 +1,17 @@
 local M = {}
-local jumplist = require("luanphan.agent_jumplist")
-local terminal_agent = require("luanphan.terminal_agent")
-local codex_sessions = require("luanphan.codex_sessions")
-local sessions = require("luanphan.agent_sessions")
+local jumplist = require("luanphan.agents.jumplist")
+local terminal_agent = require("luanphan.agents.terminal-chat")
+local sessions = require("luanphan.agents.sessions")
+local status = require("luanphan.agents.status")
 
 local agent_order = { "codex", "cursor", "claude" }
 local agent_key = "<leader>a"
 
-local agent_defs = {
-  cursor = {
-    icon = "\u{ec5c}",
-    plugin = "luanphan-cursor-agent",
-    g_bufnr = "cursor_agent_bufnr",
-    notify_prefix = "cursor_agent",
-    augroup_prefix = "CursorAgent",
-    defaults = {
-      cmd = {
-        "sh", "-c", [[export NVIM_CURSOR_AGENT_TTY="$(tty)"; exec cursor-agent --plugin-dir "$0" "$@"]],
-        vim.fn.stdpath("config") .. "/cursor-session-plugin",
-      },
-      detach_on_quit = true,
-    },
-  },
-  claude = {
-    icon = "\u{ec82}",
-    plugin = "luanphan-claude-agent",
-    g_bufnr = "claude_agent_bufnr",
-    notify_prefix = "claude_agent",
-    augroup_prefix = "ClaudeAgent",
-    defaults = { cmd = "claude" },
-  },
-  codex = {
-    icon = "\u{ec81}",
-    plugin = "luanphan-codex-agent",
-    g_bufnr = "codex_agent_bufnr",
-    notify_prefix = "codex_agent",
-    augroup_prefix = "CodexAgent",
-    defaults = { cmd = "mcodex", args = codex_sessions.launch_args(), detach_on_quit = true },
-  },
-}
+local agent_defs = {}
+for _, name in ipairs(agent_order) do
+  agent_defs[name] = require("luanphan.agents.plugins." .. name)
+end
+sessions.setup(agent_defs, agent_order)
 
 local apis = {}
 local configured = {}
@@ -56,7 +29,7 @@ end
 function M.default_agent()
   local ok, lines = pcall(vim.fn.readfile, default_agent_file(), "", 1)
   local name = ok and vim.trim(lines[1] or "") or ""
-  return agent_defs[name] and name or "codex"
+  return agent_defs[name] and name or agent_order[1]
 end
 
 function M.set_default_agent(name)
@@ -101,23 +74,8 @@ function M.set_agent_position(position)
   return true
 end
 
-local function terminal_running(bufnr)
-  if type(bufnr) ~= "number" or not vim.api.nvim_buf_is_valid(bufnr) then
-    return false
-  end
-  if vim.bo[bufnr].buftype ~= "terminal" then
-    return false
-  end
-  local job = vim.b[bufnr].terminal_job_id
-  if type(job) ~= "number" or job <= 0 then
-    return false
-  end
-  local ok, status = pcall(vim.fn.jobwait, { job }, 0)
-  return ok and status[1] == -1
-end
-
 local function jump_available(bufnr)
-  if not terminal_running(bufnr) then return false end
+  if not terminal_agent.running(bufnr) then return false end
   local cwd = vim.b[bufnr].luanphan_agent_cwd
   return type(cwd) == "string" and vim.fn.isdirectory(cwd) == 1
 end
@@ -125,7 +83,7 @@ end
 local function jump_session(direction, count)
   return jumplist.jump(direction, count or vim.v.count1, jump_available, function(bufnr)
     local buf = vim.b[bufnr]
-    return require("luanphan.agent_sidebar").select_session({
+    return require("luanphan.agents.sidebar").select_session({
       agent = buf.luanphan_agent_name,
       bufnr = bufnr,
       path = buf.luanphan_agent_cwd,
@@ -154,7 +112,7 @@ local function agent_buffers(name, cwd, closing_bufnr)
   local result = {}
   local stored = type(buffers) == "table" and buffers[cwd] or nil
   for _, bufnr in ipairs(type(stored) == "table" and stored or {}) do
-    if bufnr == closing_bufnr or terminal_running(bufnr) then
+    if bufnr == closing_bufnr or terminal_agent.running(bufnr) then
       result[#result + 1] = bufnr
     end
   end
@@ -280,12 +238,14 @@ function M.agent_icon(name)
   return agent_defs[name].icon
 end
 
-function M.agent_buffer_keys()
-  local keys = {}
-  for _, name in ipairs(agent_order) do
-    keys[#keys + 1] = { name = name, key = agent_defs[name].g_bufnr }
-  end
-  return keys
+function M.display_title(name, title)
+  local def = agent_defs[name]
+  if def and def.display_title then return def.display_title(title) end
+  return title
+end
+
+function M.names()
+  return vim.list_slice(agent_order)
 end
 
 local function get_agent(name)
@@ -294,10 +254,10 @@ local function get_agent(name)
   end
 
   local def = agent_defs[name]
-  local sidebar = require("luanphan.agent_sidebar")
+  local sidebar = require("luanphan.agents.sidebar")
   apis[name] = terminal_agent.create({
     status_name = name,
-    native_status = name == "cursor",
+    native_status = def.native_status,
     g_bufnr = def.g_bufnr,
     notify_prefix = def.notify_prefix,
     augroup_prefix = def.augroup_prefix,
@@ -312,11 +272,7 @@ local function get_agent(name)
       if sessions.supported(name) then
         local seconds, microseconds = vim.uv.gettimeofday()
         vim.b[bufnr].luanphan_agent_saved_use = seconds + microseconds / 1000000
-        if name == "codex" then
-          codex_sessions.save(bufnr)
-        else
-          sessions.save(bufnr)
-        end
+        sessions.save(bufnr)
       end
       agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
       sidebar.attach(bufnr, win)
@@ -412,8 +368,7 @@ end
 
 function M.resume(session, opts)
   if not sessions.supported(session.agent) or not sessions.valid_id(session.thread_id) then return false end
-  local args = session.agent == "codex" and codex_sessions.launch_args(session.thread_id)
-    or { "--resume", session.thread_id }
+  local args = agent_defs[session.agent].resume(session.thread_id)
   return M.new(session.agent, vim.tbl_extend("force", opts or {}, {
     args = args,
     thread_id = session.thread_id,
@@ -456,6 +411,33 @@ local function restore_on_first_ui()
   if visible_agent() or most_recent_tab(cwd) then return end
   local saved = sessions.latest(cwd)
   if saved then M.resume(saved, { view_mode = true }) end
+end
+
+local function receive_terminal_event(args)
+  local bufnr = args.buf
+  local name = vim.b[bufnr].luanphan_agent_name
+  local def = agent_defs[name]
+  local sequence = args.data and args.data.sequence
+  if not name or not sequence then return end
+  local osc_status = status.from_osc(sequence)
+  if osc_status then status.update(bufnr, osc_status) end
+  local title = sequence:match("^\27%][02];(.*)$")
+  -- Decoders defer persistence and redraws until the terminal callback has returned.
+  local function emit(event)
+    if not vim.api.nvim_buf_is_valid(bufnr) or vim.b[bufnr].luanphan_agent_name ~= name then return end
+    status.update(bufnr, event.status)
+    local changed_id = sessions.update(bufnr, event)
+    if changed_id then
+      require("luanphan.agents.sidebar").refresh(true)
+    elseif event.refresh_title then
+      require("luanphan.agents.sidebar").update_title(bufnr)
+    end
+  end
+  if def and def.decode_event then
+    def.decode_event(bufnr, { sequence = sequence, title = title, status = osc_status }, emit)
+  elseif title then
+    vim.schedule(function() emit({ refresh_title = true }) end)
+  end
 end
 
 function M.hide()
@@ -521,11 +503,12 @@ agent_container = require("luanphan.view_container").create({
 local function agent_spec(name)
   local def = agent_defs[name]
   local keys = {}
-  if name == "codex" then
+  local primary = name == agent_order[1]
+  if primary then
     keys[#keys + 1] = {
       agent_key,
       function()
-        require("luanphan.plugins.agents").toggle()
+        require("luanphan.agents.main").toggle()
       end,
       mode = "n",
       desc = "Toggle agents",
@@ -533,7 +516,7 @@ local function agent_spec(name)
     keys[#keys + 1] = {
       agent_key,
       function()
-        require("luanphan.plugins.agents").send_selection()
+        require("luanphan.agents.main").send_selection()
       end,
       mode = { "x", "s" },
       desc = "Send to active agent",
@@ -541,14 +524,14 @@ local function agent_spec(name)
     keys[#keys + 1] = {
       "<leader>sad",
       function()
-        require("luanphan.plugins.agents").pick_default_agent()
+        require("luanphan.agents.main").pick_default_agent()
       end,
       desc = "Default agent",
     }
     keys[#keys + 1] = {
       "<leader>sap",
       function()
-        require("luanphan.plugins.agents").pick_agent_position()
+        require("luanphan.agents.main").pick_agent_position()
       end,
       desc = "Agent position",
     }
@@ -557,11 +540,13 @@ local function agent_spec(name)
     def.plugin,
     virtual = true,
     keys = keys,
-    init = name == "codex" and function()
+    init = primary and function()
+      local group = vim.api.nvim_create_augroup("LuanphanAgentStartup", { clear = true })
       vim.api.nvim_create_autocmd({ "VimEnter", "UIEnter" }, {
-        group = vim.api.nvim_create_augroup("LuanphanAgentStartup", { clear = true }),
+        group = group,
         callback = function() vim.schedule(restore_on_first_ui) end,
       })
+      vim.api.nvim_create_autocmd("TermRequest", { group = group, callback = receive_terminal_event })
     end or nil,
     config = function()
       setup_agent(name)

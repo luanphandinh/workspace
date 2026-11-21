@@ -1,5 +1,5 @@
 local M = {}
-local close_agent_window = require("luanphan.terminal_agent").close_window
+local close_agent_window = require("luanphan.agents.terminal-chat").close_window
 local terms = {}
 local active_terms = {}
 local terminal_container

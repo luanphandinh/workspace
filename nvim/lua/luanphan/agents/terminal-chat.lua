@@ -27,6 +27,18 @@ function M.with_preserved_windows(callback)
   return result
 end
 
+function M.running(bufnr)
+  if type(bufnr) ~= "number" or not vim.api.nvim_buf_is_valid(bufnr) or vim.bo[bufnr].buftype ~= "terminal" then
+    return false
+  end
+  local job = vim.b[bufnr].terminal_job_id
+  if type(job) ~= "number" or job <= 0 then
+    return false
+  end
+  local ok, status = pcall(vim.fn.jobwait, { job }, 0)
+  return ok and status[1] == -1
+end
+
 local BASE_DEFAULTS = {
   window_mode = "float",
   cmd = "agent",
@@ -103,23 +115,11 @@ local function normalize_bufnrs(value)
   return result
 end
 
-local function registered_buffer_running(bufnr)
-  if not vim.api.nvim_buf_is_valid(bufnr) or vim.bo[bufnr].buftype ~= "terminal" then
-    return false
-  end
-  local job = vim.b[bufnr].terminal_job_id
-  if type(job) ~= "number" or job <= 0 then
-    return false
-  end
-  local ok, status = pcall(vim.fn.jobwait, { job }, 0)
-  return ok and status[1] == -1
-end
-
 local function current_bufnr(cwd)
   local selected = nil
   local selected_sequence = -1
   for _, nr in ipairs(normalize_bufnrs(state.bufnrs[cwd or cwd_key()])) do
-    if registered_buffer_running(nr) then
+    if M.running(nr) then
       if vim.fn.bufwinid(nr) ~= -1 then
         return nr
       end
@@ -668,7 +668,7 @@ end
 
 local function attach_status_tracking(bufnr, cwd, initial_status)
   if not profile.status_name or profile.native_status then return end
-  local agent_status = require("luanphan.agent_status")
+  local agent_status = require("luanphan.agents.status")
   if initial_status then
     agent_status.write(profile.status_name, cwd, initial_status)
   end

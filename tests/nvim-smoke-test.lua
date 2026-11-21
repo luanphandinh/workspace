@@ -3242,7 +3242,7 @@ local function test_workspace_folder_browser()
     "vim.env.PATH = " .. string.format("%q", shim_dir .. ":") .. " .. vim.env.PATH",
     "vim.g.luanphan_agent_position_file = " .. string.format("%q", temp_root .. "/folder-picker-agent-position"),
     "vim.g.luanphan_agent_status_dir = " .. string.format("%q", temp_root .. "/folder-picker-agent-status"),
-    "local agents = require('luanphan.plugins.agents')",
+    "local agents = require('luanphan.agents.main')",
     "local agent_buf = agents.new('codex')",
     "local main = vim.api.nvim_get_current_win()",
     "vim.fn.maparg('<C-h>', 'n', false, true).callback()",
@@ -3623,7 +3623,7 @@ end
 
 local function test_active_agent_discovery(repo, worktree)
   local api = worktree_test_api()
-  local agent_status = require("luanphan.agent_status")
+  local agent_status = require("luanphan.agents.status")
   local original_buf = vim.api.nvim_get_current_buf()
   local original_cwd = vim.fn.getcwd()
   local original_status_dir = vim.g.luanphan_agent_status_dir
@@ -3722,7 +3722,7 @@ local function test_active_agent_discovery(repo, worktree)
     assert_true(cursor.display:find("%[feature%]") ~= nil, "agent display omitted branch context")
     assert_true(vim.fn.exists(":AgentSwitch") == 2, "AgentSwitch command is missing")
 
-    agents_module = require("luanphan.plugins.agents")
+    agents_module = require("luanphan.agents.main")
     original_focus = agents_module.focus
     local focused = nil
     agents_module.focus = function(name)
@@ -3762,7 +3762,7 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
   local original_buf = vim.api.nvim_get_current_buf()
   local original_codex = vim.g.codex_agent_bufnr
   local original_cursor = vim.g.cursor_agent_bufnr
-  local agents = require("luanphan.plugins.agents")
+  local agents = require("luanphan.agents.main")
   local original_focus = agents.focus
   local jobs = {}
   local buffers = {}
@@ -3863,7 +3863,7 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
 end
 
 local function test_default_agent_setting()
-  local agents = require("luanphan.plugins.agents")
+  local agents = require("luanphan.agents.main")
   local container = require("luanphan.view_container")
   local original_file = vim.g.luanphan_default_agent_file
   local original_position_file = vim.g.luanphan_agent_position_file
@@ -4522,7 +4522,7 @@ local function test_agent_terminal_reference_restores_view(repo)
   write(target_path, { "target" })
   vim.cmd("edit " .. vim.fn.fnameescape(target_path))
 
-  local agent = require("luanphan.terminal_agent").create({
+  local agent = require("luanphan.agents.terminal-chat").create({
     g_bufnr = "terminal_reference_view_agent_bufnr",
     notify_prefix = "terminal_reference_view_agent",
     augroup_prefix = "TerminalReferenceViewAgent",
@@ -4603,7 +4603,7 @@ local function test_agent_keys_invoke_cli_commands()
 
   local old_path = vim.env.PATH
   local old_log = vim.env.NVIM_AGENT_SMOKE_LOG
-  local agents = require("luanphan.plugins.agents")
+  local agents = require("luanphan.agents.main")
   local original_default_file = vim.g.luanphan_default_agent_file
   local original_position_file = vim.g.luanphan_agent_position_file
   local original_position = agents.agent_position()
@@ -4654,7 +4654,7 @@ local function test_agent_keys_invoke_cli_commands()
       "<leader>a did not cache current folder"
     )
     local cursor_regular = false
-    local plugin_args = "--plugin-dir " .. vim.fn.stdpath("config") .. "/cursor-session-plugin"
+    local plugin_args = "--plugin-dir " .. vim.fn.stdpath("config") .. "/lua/luanphan/agents/plugins/cursor-hooks"
     for _, line in ipairs(read_log(log)) do
       local command, _, args = line:match("^([^|]+)|([^|]*)|(.*)$")
       if command == "cursor-agent" and args == plugin_args then
@@ -4798,7 +4798,7 @@ local function test_agent_sidebar_restore(repo, agent)
     "vim.env.TEST_AGENT_LOG = root .. '/invocations'",
     "vim.env.PATH = root .. '/bin:' .. vim.env.PATH",
     "vim.o.columns = 160",
-    "local agents = require('luanphan.plugins.agents')",
+    "local agents = require('luanphan.agents.main')",
     "assert(agents.set_default_agent('codex'))",
   }
   local function run(lines)
@@ -4807,7 +4807,7 @@ local function test_agent_sidebar_restore(repo, agent)
     assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
   end
   run({
-    "local sessions = require('luanphan.agent_sessions')",
+    "local sessions = require('luanphan.agents.sessions')",
     "for _, id in ipairs({ first, second }) do",
     "  vim.env.TEST_AGENT_THREAD = id",
     "  local buf = assert(agents.new(agent))",
@@ -4853,14 +4853,14 @@ local function test_agent_sidebar_restore(repo, agent)
     "    and vim.tbl_contains(lines, resume .. '|' .. cwd .. '|' .. second)",
     "end), 'agent did not receive the exact IDs and original directory')",
     "vim.cmd('quit')",
-    "local sessions = require('luanphan.agent_sessions')",
+    "local sessions = require('luanphan.agents.sessions')",
     "assert(vim.wait(3000, function()",
     "  local saved = sessions.list()",
     "  return #saved == 1 and saved[1].thread_id == second",
     "end), 'closing one agent should remove only its saved record')",
   })
   run({
-    "local saved = require('luanphan.agent_sessions').list()",
+    "local saved = require('luanphan.agents.sessions').list()",
     "assert(#saved == 1 and saved[1].thread_id == second, 'editor exit should preserve the remaining agent')",
   })
   if agent == "cursor" then
@@ -4916,7 +4916,7 @@ local function test_agent_view_container(repo)
   local old_status_dir = vim.g.luanphan_agent_status_dir
   local old_global_settings = vim.g.luanphan_global_settings_path
   local settings_path = temp_root .. "/agent-view-settings.toml"
-  local agents = require("luanphan.plugins.agents")
+  local agents = require("luanphan.agents.main")
   local original_position_file = vim.g.luanphan_agent_position_file
   local original_position = agents.agent_position()
   local position_file = temp_root .. "/agent-view-position"
@@ -5238,7 +5238,19 @@ local function test_agent_view_container(repo)
     local overlay_width = main_config.col + main_config.width + 2 - sidebar_config.col
     assert_true(overlay_width == 144 and sidebar_config.col == 8, "combined float did not center at 90% width")
     assert_true(main_config.width == 97, "centering changed the terminal width")
-    local agent_status = require("luanphan.agent_status")
+    wait_until("sidebar renders an idle dot", function()
+      return status_icon(main, other_buf) == "·"
+    end, 3000)
+    local first_cursor_job = vim.b[first_cursor_buf].terminal_job_id
+    vim.fn.chansend(first_cursor_job, "\27]7501;state=done\27\\")
+    wait_until("sidebar accepts terminal status from Cursor", function()
+      return status_icon(main, first_cursor_buf) == "✓"
+    end, 3000)
+    vim.fn.chansend(first_cursor_job, "\27]7501;state=clear\27\\")
+    wait_until("sidebar clears the terminal status icon", function()
+      return status_icon(main, first_cursor_buf) == nil
+    end, 3000)
+    local agent_status = require("luanphan.agents.status")
     assert_true(agent_status.write("codex", other_path, "done"), "could not record the hook's completion state")
     wait_until("sidebar receives hook completion without switching focus", function()
       local icon, col = status_icon(main, other_buf)
@@ -5248,7 +5260,7 @@ local function test_agent_view_container(repo)
     local frame
     wait_until("sidebar uses terminal status ahead of the hook status", function()
       frame = status_icon(main, other_buf)
-      return frame and frame ~= "✓"
+      return frame and vim.fn.char2nr(frame) >= 0x2800 and vim.fn.char2nr(frame) <= 0x28ff
     end, 3000)
     wait_until("running status spinner animates", function()
       local next_frame = status_icon(main, other_buf)
@@ -6379,12 +6391,12 @@ end
 
 local function test_agent_terminal_lifecycle(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
-  local agent_status = require("luanphan.agent_status")
+  local agent_status = require("luanphan.agents.status")
   local original_status_dir = vim.g.luanphan_agent_status_dir
   local status_dir = vim.fn.tempname()
   vim.g.luanphan_agent_status_dir = status_dir
 
-  local agent = require("luanphan.terminal_agent").create({
+  local agent = require("luanphan.agents.terminal-chat").create({
     status_name = "example-agent",
     g_bufnr = "toggleterm_hide_agent_bufnr",
     notify_prefix = "toggleterm_hide_agent",
@@ -6467,7 +6479,7 @@ end
 local function test_worktree_switch_hides_agent_terminal(repo, worktree)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
 
-  local agent = require("luanphan.terminal_agent").create({
+  local agent = require("luanphan.agents.terminal-chat").create({
     g_bufnr = "smoke_agent_bufnr",
     notify_prefix = "smoke_agent",
     augroup_prefix = "SmokeAgent",

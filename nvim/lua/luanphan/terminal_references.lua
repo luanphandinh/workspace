@@ -427,7 +427,7 @@ function M.open(path, line, column)
   local target = editor_window.find(source)
 
   if not target and close_agent_float then
-    require("luanphan.terminal_agent").close_window(source)
+    require("luanphan.agents.terminal-chat").close_window(source)
     source = nil
     target = editor_window.find()
   end
@@ -445,7 +445,7 @@ function M.open(path, line, column)
   vim.api.nvim_win_set_cursor(target, { target_line, target_column })
 
   if close_agent_float and source and vim.api.nvim_win_is_valid(source) then
-    require("luanphan.terminal_agent").close_window(source)
+    require("luanphan.agents.terminal-chat").close_window(source)
   end
   return true
 end
