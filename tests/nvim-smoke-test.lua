@@ -4915,6 +4915,8 @@ local function test_agent_view_container(repo)
   local old_columns = vim.o.columns
   local old_status_dir = vim.g.luanphan_agent_status_dir
   local old_global_settings = vim.g.luanphan_global_settings_path
+  local old_codex_sessions = vim.g.luanphan_codex_sessions_dir
+  local old_cursor_sessions = vim.g.luanphan_cursor_sessions_dir
   local settings_path = temp_root .. "/agent-view-settings.toml"
   local agents = require("luanphan.agents.main")
   local original_position_file = vim.g.luanphan_agent_position_file
@@ -4926,6 +4928,8 @@ local function test_agent_view_container(repo)
   vim.g.luanphan_agent_position_file = position_file
   vim.g.luanphan_agent_status_dir = status_dir
   vim.g.luanphan_global_settings_path = settings_path
+  vim.g.luanphan_codex_sessions_dir = temp_root .. "/agent-view-codex-sessions"
+  vim.g.luanphan_cursor_sessions_dir = temp_root .. "/agent-view-cursor-sessions"
   write(settings_path, { "[recent_folder]", "max_cache_entry = 3" })
   vim.fn.delete(position_file)
   agents.set_agent_position("full")
@@ -5271,6 +5275,53 @@ local function test_agent_view_container(repo)
       return status_icon(main, other_buf) == "✓"
     end, 3000)
     assert_true(vim.api.nvim_get_current_win() == sidebar, "status update moved focus")
+
+    local function read_sidebar()
+      return vim.api.nvim_buf_get_lines(sidebar_buf, 0, -1, false)
+    end
+    local function focus_sidebar_row(line)
+      vim.api.nvim_win_set_cursor(sidebar, { line, 0 })
+    end
+    local original_rows = read_sidebar()
+    local example_row = vim.fn.index(original_rows, " example-agent") + 1
+    local example_session = original_rows[example_row + 1]
+    assert_true(example_row > 0 and example_session and example_session:match("codex$"), "sidebar fixture missing its session")
+    focus_sidebar_row(example_row + 1)
+    invoke_map("J")
+    invoke_map("K")
+    assert_true(vim.deep_equal(read_sidebar(), original_rows), "session moved outside its workspace")
+    invoke_map("h")
+    local folded_rows = vim.deepcopy(original_rows)
+    table.remove(folded_rows, example_row + 1)
+    folded_rows[example_row] = "▸ example-agent"
+    assert_true(vim.deep_equal(read_sidebar(), folded_rows), "fold did not hide just the selected workspace's sessions")
+    assert_true(vim.api.nvim_win_get_cursor(sidebar)[1] == example_row, "fold did not focus the workspace header")
+    invoke_map("l")
+    assert_true(vim.deep_equal(read_sidebar(), original_rows), "unfold did not restore the workspace's sessions")
+
+    local repo_row = vim.fn.index(original_rows, " " .. vim.fn.fnamemodify(repo, ":t")) + 1
+    assert_true(repo_row > 0, "sidebar fixture missing repository workspace")
+    focus_sidebar_row(repo_row + 1)
+    invoke_map("J")
+    require("luanphan.agents.sidebar").refresh(true)
+    local swapped = vim.deepcopy(original_rows)
+    swapped[repo_row + 1], swapped[repo_row + 2] = swapped[repo_row + 2], swapped[repo_row + 1]
+    assert_true(vim.deep_equal(read_sidebar(), swapped), "session order did not survive sidebar refresh")
+    assert_true(vim.api.nvim_win_get_cursor(sidebar)[1] == repo_row + 2, "cursor did not follow the moved session")
+    invoke_map("K")
+    assert_true(vim.deep_equal(read_sidebar(), original_rows), "moving the session back did not restore its order")
+
+    local second_workspace = math.max(example_row, repo_row)
+    local swapped_groups = vim.list_extend(vim.list_slice(original_rows, second_workspace),
+      vim.list_slice(original_rows, 1, second_workspace - 1))
+    focus_sidebar_row(1)
+    invoke_map("J")
+    assert_true(vim.deep_equal(read_sidebar(), swapped_groups), "workspace move did not carry all its sessions")
+    assert_true(vim.api.nvim_win_get_cursor(sidebar)[1] == #original_rows - second_workspace + 2,
+      "cursor did not follow the moved workspace")
+    invoke_map("K")
+    assert_true(vim.deep_equal(read_sidebar(), original_rows), "moving the workspace back did not restore its order")
+
     invoke_map("<C-l>")
     assert_true(vim.api.nvim_get_current_win() == main, "Ctrl+l did not return to the terminal")
     invoke_map("<leader>b")
@@ -5379,6 +5430,8 @@ local function test_agent_view_container(repo)
   vim.g.luanphan_agent_status_dir = old_status_dir
   vim.g.luanphan_global_settings_path = old_global_settings
   close_agent_terminals()
+  vim.g.luanphan_codex_sessions_dir = old_codex_sessions
+  vim.g.luanphan_cursor_sessions_dir = old_cursor_sessions
   agents.set_agent_position(original_position)
   vim.g.luanphan_agent_position_file = original_position_file
   vim.fn.delete(position_file)

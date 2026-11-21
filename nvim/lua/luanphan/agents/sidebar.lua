@@ -8,6 +8,9 @@ local close_window = require("luanphan.agents.terminal-chat").close_window
 local main, sidebar
 local rows = {}
 local thread_lines = {}
+local folded = {}
+local workspace_order
+local session_order = {}
 local return_to_input = false
 local switching_workspace = false
 local ns = vim.api.nvim_create_namespace("LuanphanAgentSidebar")
@@ -87,6 +90,26 @@ local function fit(text, width)
   return prefix .. "…"
 end
 
+local function session_key(session)
+  return session.bufnr or session.agent .. ":" .. session.thread_id
+end
+
+local function ordered(items, order, key)
+  if not order then return items end
+  local remaining, result = {}, {}
+  for _, item in ipairs(items) do remaining[key and key(item) or item] = item end
+  for _, id in ipairs(order) do
+    if remaining[id] then
+      result[#result + 1] = remaining[id]
+      remaining[id] = nil
+    end
+  end
+  for _, item in ipairs(items) do
+    if remaining[key and key(item) or item] then result[#result + 1] = item end
+  end
+  return result
+end
+
 function M.refresh(keep_cursor)
   if not valid(sidebar) or not valid(main) then return end
   local sessions = require("luanphan.plugins.worktree").list_agent_sessions(true)
@@ -112,24 +135,33 @@ function M.refresh(keep_cursor)
 
   local workspaces = vim.tbl_keys(groups)
   table.sort(workspaces)
+  workspaces = ordered(workspaces, workspace_order)
   local active = vim.api.nvim_win_get_buf(main)
   local width = vim.api.nvim_win_get_width(sidebar) - 1
   local lines, headings, provider_marks = {}, {}, {}
   local active_row
   rows = {}
   thread_lines = {}
-  for _, workspace in ipairs(workspaces) do
+  for workspace_index, workspace in ipairs(workspaces) do
     local threads = groups[workspace]
     table.sort(threads, function(a, b)
       if a.bufnr or b.bufnr then return (a.bufnr or math.huge) < (b.bufnr or math.huge) end
       if a.last_used ~= b.last_used then return a.last_used > b.last_used end
       return a.thread_id < b.thread_id
     end)
-    lines[#lines + 1] = " " .. fit(vim.fn.fnamemodify(workspace, ":t"), width - 1)
+    local is_folded = folded[workspace]
+    local prefix = is_folded and "▸ " or " "
+    lines[#lines + 1] = prefix .. fit(vim.fn.fnamemodify(workspace, ":t"), width - vim.fn.strdisplaywidth(prefix))
     local heading = #lines
     headings[#headings + 1] = heading
     local recent = threads[1]
     for _, thread in ipairs(threads) do
+      if thread.bufnr and thread.last_used > recent.last_used then recent = thread end
+      if is_folded and thread.bufnr == active then active_row = heading end
+    end
+    rows[heading] = { workspace = workspace, session = recent, items = workspaces, index = workspace_index }
+    threads = ordered(threads, session_order[workspace], session_key)
+    for thread_index, thread in ipairs(is_folded and {} or threads) do
       local prefix = string.format(number_format, offsets[thread.bufnr] or "")
       local icon = agents.agent_icon(thread.agent)
       local icon_col = width - vim.fn.strdisplaywidth(icon)
@@ -137,7 +169,9 @@ function M.refresh(keep_cursor)
       local title_width = status_col - #prefix - 1
       local status_path = status_paths[thread.bufnr]
       lines[#lines + 1] = prefix .. fit(thread.agent_label, title_width)
-      rows[#lines] = thread
+      rows[#lines] = {
+        workspace = workspace, session = thread, items = threads, index = thread_index, key = session_key(thread),
+      }
       if icon_col >= #prefix then
         provider_marks[#lines] = {
           virt_text = { { icon, "Comment" } },
@@ -154,10 +188,8 @@ function M.refresh(keep_cursor)
           status_path = status_counts[status_path] == 1 and status_path or nil,
         }
         if thread.bufnr == active then active_row = #lines end
-        if thread.last_used > recent.last_used then recent = thread end
       end
     end
-    rows[heading] = recent
   end
 
   local buf = vim.api.nvim_win_get_buf(sidebar)
@@ -185,6 +217,42 @@ function M.refresh(keep_cursor)
   refresh_statuses()
 end
 
+local function selected_row()
+  return rows[vim.api.nvim_win_get_cursor(sidebar)[1]]
+end
+
+local function refresh_at(workspace, key)
+  M.refresh(true)
+  for line, row in ipairs(rows) do
+    if row.workspace == workspace and row.key == key then
+      vim.api.nvim_win_set_cursor(sidebar, { line, 0 })
+      return
+    end
+  end
+end
+
+local function set_folded(value)
+  local row = selected_row()
+  if not row or folded[row.workspace] == value then return end
+  folded[row.workspace] = value
+  refresh_at(row.workspace)
+end
+
+local function move_row(delta)
+  local row = selected_row()
+  if not row then return end
+  local items, index = row.items, row.index
+  local target = index + delta
+  if not items[target] then return end
+  items[index], items[target] = items[target], items[index]
+  if row.key then
+    session_order[row.workspace] = vim.tbl_map(session_key, items)
+  else
+    workspace_order = items
+  end
+  refresh_at(row.workspace, row.key)
+end
+
 function M.select_session(session, opts)
   if not session then return false end
   local activate = require("luanphan.plugins.worktree").activate_agent
@@ -203,9 +271,9 @@ local function click_row()
   if not valid(sidebar) or mouse.winid ~= sidebar or mouse.line < 1 then
     return "<LeftMouse>"
   end
-  local session, win = rows[mouse.line], sidebar
+  local row, win = rows[mouse.line], sidebar
   vim.schedule(function()
-    if sidebar == win and valid(win) then M.select_session(session) end
+    if row and sidebar == win and valid(win) then M.select_session(row.session) end
   end)
   return ""
 end
@@ -278,10 +346,12 @@ function M.layout(win, width, col)
 
   local opts = { buffer = buf, silent = true, nowait = true }
   local function open_selected()
-    M.select_session(rows[vim.api.nvim_win_get_cursor(sidebar)[1]])
+    local row = selected_row()
+    if row then M.select_session(row.session) end
   end
   vim.keymap.set("n", "d", function()
-    local session = rows[vim.api.nvim_win_get_cursor(sidebar)[1]]
+    local row = selected_row()
+    local session = row and row.session
     if session and session.thread_id and not session.bufnr then
       agent_sessions.forget(session.agent, session.thread_id)
       M.refresh(true)
@@ -290,6 +360,10 @@ function M.layout(win, width, col)
   for _, key in ipairs({ "<CR>", "o" }) do
     vim.keymap.set("n", key, open_selected, opts)
   end
+  vim.keymap.set("n", "h", function() set_folded(true) end, opts)
+  vim.keymap.set("n", "l", function() set_folded(nil) end, opts)
+  vim.keymap.set("n", "J", function() move_row(1) end, opts)
+  vim.keymap.set("n", "K", function() move_row(-1) end, opts)
   vim.keymap.set("n", "<LeftMouse>", click_row, vim.tbl_extend("force", opts, { expr = true }))
   vim.keymap.set("n", "<C-l>", focus_terminal, opts)
   vim.keymap.set("n", "<leader>e", focus_terminal, vim.tbl_extend("force", opts, { desc = "Focus agent terminal" }))
@@ -370,7 +444,7 @@ function M.update_title(bufnr)
   local buf = vim.api.nvim_win_get_buf(sidebar)
   local line = thread.row
   local text = vim.api.nvim_buf_get_lines(buf, line - 1, line, false)[1]
-  local label = fit(require("luanphan.view_container").tab_label(bufnr, rows[line].agent_label), thread.title_width)
+  local label = fit(require("luanphan.view_container").tab_label(bufnr, rows[line].session.agent_label), thread.title_width)
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_text(buf, line - 1, thread.title_col, line - 1, #text, { label })
   vim.bo[buf].modifiable = false
