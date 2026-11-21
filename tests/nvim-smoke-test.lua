@@ -5170,6 +5170,10 @@ local function test_agent_view_container(repo)
       invoke_map("<C-h>")
       invoke_map("K")
       assert_tab_order("[cursor]", "claude 1", "claude 2")
+      invoke_map("K")
+      assert_tab_order("claude 1", "claude 2", "[cursor]")
+      invoke_map("J")
+      assert_tab_order("[cursor]", "claude 1", "claude 2")
       invoke_map("<C-l>")
     end
 
@@ -5488,6 +5492,14 @@ local function test_agent_view_container(repo)
       return not vim.api.nvim_buf_is_valid(tile_buffers[2]) and visible_agent_window_count() == 2
     end, 3000)
     assert_true(vim.api.nvim_get_current_buf() == tile_buffers[3], "tile exit did not focus its neighbor")
+    invoke_map("<C-h>")
+    for _, key in ipairs({ "J", "K" }) do
+      invoke_map(key)
+      assert_true(tile_config(3).col == bounds[1][1], key .. " did not move the selected tile to the first slot")
+      invoke_map(key)
+      assert_true(tile_config(3).col == bounds[2][1], key .. " did not move the selected tile back to the second slot")
+    end
+    invoke_map("<C-l>")
     vim.fn.jobstop(vim.b[tile_buffers[3]].terminal_job_id)
     wait_until("remaining tile expands", function()
       return not vim.api.nvim_buf_is_valid(tile_buffers[3]) and visible_agent_window_count() == 1

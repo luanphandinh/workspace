@@ -246,8 +246,9 @@ local function move_row(delta)
   if not row then return end
   local items, index = row.items, row.index
   local target = index + delta
-  if not items[target] then return end
-  items[index], items[target] = items[target], items[index]
+  if row.key then target = (target - 1) % #items + 1 end
+  if target == index or not items[target] then return end
+  table.insert(items, target, table.remove(items, index))
   if row.key then
     agent_sessions.set_order(items)
     agents.refresh_tabs(main)
