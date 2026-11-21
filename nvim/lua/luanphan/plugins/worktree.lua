@@ -1353,6 +1353,8 @@ local function setup()
       recent_paths.touch(git_root(old_cwd) or workspace_root_for_path(old_cwd) or old_cwd)
     end
 
+    if not agent_windows then agents.hide() end
+
     -- 2a. Close nvim-tree first if it's open. The tree pane has its own
     --     buffer-list / cwd-tracking quirks (auto-attach, change_root timing,
     --     window-pick fallback) that have repeatedly interfered with the
@@ -1378,14 +1380,9 @@ local function setup()
     close_toggleterm_windows()
 
     -- 3. cd. Fires DirChangedPre/DirChanged for the persistent-terminal modules.
-    local function change_directory()
+    terminal_agent.with_preserved_windows(function()
       vim.cmd.cd({ args = { path } })
-    end
-    if agent_windows then
-      terminal_agent.with_preserved_windows(change_directory)
-    else
-      change_directory()
-    end
+    end)
     recent_paths.touch(visit_path or path)
 
     -- 4. Stop every LSP client AND wipe the diagnostics each one published.
@@ -1462,11 +1459,7 @@ local function setup()
       return true
     end
 
-    -- 10. Hide the shared agent panel after switching workspaces. Its
-    --     terminal buffers and jobs remain alive for an explicit reopen.
-    agents.hide()
-
-    -- 11. Focus priority: reopened active file > nvim-tree.
+    -- 10. Focus priority: reopened active file > nvim-tree.
     focus_after_switch(reopened)
 
     local msg = "Switched to " .. (kind or "worktree") .. ": " .. vim.fn.fnamemodify(path, ":t")
@@ -2108,7 +2101,7 @@ local function setup()
           end
           local instance = selection.value
           vim.schedule(function()
-            activate_agent(instance)
+            require("luanphan.agents.sidebar").select_session(instance)
           end)
         end)
         return true

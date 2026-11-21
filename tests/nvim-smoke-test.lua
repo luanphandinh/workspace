@@ -3224,8 +3224,14 @@ local function test_workspace_folder_browser()
     "vim.env.PATH = " .. string.format("%q", shim_dir .. ":") .. " .. vim.env.PATH",
     "vim.g.luanphan_agent_status_dir = " .. string.format("%q", temp_root .. "/folder-picker-agent-status"),
     "local agents = require('luanphan.agents.main')",
+    "local global_settings = vim.g.luanphan_global_settings_path",
+    "vim.g.luanphan_global_settings_path = " .. string.format("%q", temp_root .. "/folder-picker-agent-settings.toml"),
+    "vim.fn.writefile({'[agent_float]', 'display_style = \"tile\"'}, vim.g.luanphan_global_settings_path)",
+    "local first_tile = agents.new('codex')",
     "local agent_buf = agents.new('codex')",
     "local main = vim.api.nvim_get_current_win()",
+    "local other_tile = vim.fn.bufwinid(first_tile)",
+    "assert_true(other_tile ~= -1 and other_tile ~= main, 'folder switch fixture did not open two tiles')",
     "vim.fn.maparg('<C-h>', 'n', false, true).callback()",
     "local sidebar = vim.api.nvim_get_current_win()",
     "assert_true(vim.bo.filetype == 'agent-sidebar', 'folder switch fixture could not open the agent sidebar')",
@@ -3272,8 +3278,10 @@ local function test_workspace_folder_browser()
     "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return action_state.get_current_line() == target and selection and selection.value and selection.value.current and realpath(selection.value.path) == realpath(target) end, 20), 'resolved folder did not repopulate after child navigation')",
     "actions.select_default(prompt_bufnr)",
     "assert_true(vim.wait(3000, function() return realpath(vim.fn.getcwd()) == realpath(target) end, 20), 'absolute folder input did not switch workspaces')",
-    "assert_true(not vim.api.nvim_win_is_valid(main) and not vim.api.nvim_win_is_valid(sidebar), 'folder switch left an agent pane open')",
-    "assert_true(vim.fn.jobwait({vim.b[agent_buf].terminal_job_id}, 0)[1] == -1, 'folder switch stopped the agent session')",
+    "assert_true(not vim.api.nvim_win_is_valid(main) and not vim.api.nvim_win_is_valid(sidebar) and not vim.api.nvim_win_is_valid(other_tile), 'folder switch left an agent pane open')",
+    "for _, buf in ipairs({ first_tile, agent_buf }) do assert_true(vim.fn.jobwait({vim.b[buf].terminal_job_id}, 0)[1] == -1, 'folder switch stopped an agent session') end",
+    "vim.g.luanphan_global_settings_path = global_settings",
+    "vim.api.nvim_buf_delete(first_tile, { force = true })",
     "assert_true(vim.fn.exists(':FolderSwitch') == 2, 'FolderSwitch command is missing')",
     "local middle_agent = agents.new('codex')",
     "local newest_agent = agents.new('codex')",
@@ -5488,6 +5496,7 @@ local function test_agent_view_container(repo)
     assert_true(remaining.width == single.width and (remaining.border == "none" or remaining.border == nil),
       "remaining tile did not fill the panel without a border")
 
+
   end, debug.traceback)
 
   vim.env.PATH = old_path
@@ -5508,6 +5517,83 @@ local function test_agent_view_container(repo)
     pcall(vim.cmd, "cd " .. vim.fn.fnameescape(old_cwd))
   end
   assert_true(ok, tostring(err))
+end
+
+local function test_tiled_agent_workspace_picker(repo, worktree)
+  local fixture = temp_root .. "/tiled-agent-picker"
+  write_executable(fixture .. "/bin/mcodex", { "#!/bin/sh", "exec cat" })
+  write(fixture .. "/settings.toml", { "[agent_float]", 'display_style = "tile"' })
+  local script = fixture .. "/picker.lua"
+  local script_lines = {
+    "vim.env.PATH = " .. string.format("%q", fixture .. "/bin:") .. " .. vim.env.PATH",
+    "vim.g.luanphan_global_settings_path = " .. string.format("%q", fixture .. "/settings.toml"),
+    "vim.g.luanphan_recent_paths_file = " .. string.format("%q", fixture .. "/recent.json"),
+    "local destination = " .. string.format("%q", worktree),
+  }
+  vim.list_extend(script_lines, vim.split([[
+vim.o.columns = 160
+vim.o.lines = 48
+require('lazy').load({ plugins = { 'luanphan-worktree' } })
+local agents = require('luanphan.agents.main')
+local terminal = require('luanphan.agents.terminal-chat')
+local view = require('luanphan.view_container')
+local actions = require('telescope.actions')
+local action_state = require('telescope.actions.state')
+local function new_agent()
+  return agents.new('codex', { view_mode = true })
+end
+local home, home_peer = new_agent(), new_agent()
+agents.hide()
+vim.cmd.cd({ args = { destination } })
+local away, away_peer = new_agent(), new_agent()
+local anchor = view.group_anchor(vim.api.nvim_get_current_win())
+local sidebar = assert(vim.w[anchor].luanphan_agent_sidebar)
+
+local function choose_agent(buf)
+  vim.fn.maparg('<leader>wa', 'n', false, true).callback()
+  local prompt = vim.api.nvim_get_current_buf()
+  local picker = assert(action_state.get_current_picker(prompt), 'active agent picker did not open')
+  assert(vim.wait(3000, function()
+    return picker.manager and picker.manager:num_results() == 4
+  end, 20), 'active agent picker did not list both tiled workspaces')
+  for _ = 1, 4 do
+    local selected = picker:get_selection()
+    if selected and selected.value.bufnr == buf then break end
+    actions.move_selection_next(prompt)
+  end
+  assert(picker:get_selection().value.bufnr == buf, 'active agent picker omitted the target tile')
+  actions.select_default(prompt)
+  assert(vim.wait(3000, function()
+    return vim.api.nvim_get_current_buf() == buf
+  end, 20), 'active agent picker did not focus the target tile')
+  assert(#view.group_windows(anchor) == 3 and vim.w[anchor].luanphan_agent_sidebar == sidebar,
+    'active agent picker did not keep the tiles and sidebar together')
+end
+
+choose_agent(home)
+assert(vim.fn.bufwinid(away) == -1 and vim.fn.bufwinid(away_peer) == -1,
+  'active agent picker left tiles from the previous workspace')
+choose_agent(away_peer)
+assert(vim.fn.bufwinid(home) == -1 and vim.fn.bufwinid(home_peer) == -1,
+  'active agent picker left tiles on the return switch')
+
+local windows = view.group_windows(anchor)
+vim.api.nvim_create_autocmd('User', {
+  pattern = 'SmokeHideAgentPanel',
+  once = true,
+  callback = function() terminal.close_window(sidebar) end,
+})
+vim.api.nvim_exec_autocmds('User', { pattern = 'SmokeHideAgentPanel' })
+for _, win in ipairs(windows) do
+  assert(not vim.api.nvim_win_is_valid(win), 'closing the panel inside an autocmd left a window behind')
+end
+for _, buf in ipairs({ home, home_peer, away, away_peer }) do
+  assert(terminal.running(buf), 'hiding the panel stopped an agent job')
+end
+]], "\n", { plain = true }))
+  write(script, script_lines)
+  local output = vim.fn.systemlist(child_nvim_luafile_command(repo, script))
+  assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
 end
 
 local function test_terminal_view_container(repo)
@@ -7583,6 +7669,7 @@ local agent_tests = {
   reference_view = test_agent_terminal_reference_restores_view,
   send_selection = test_leader_a_sends_visual_selection_to_active_agent,
   terminal_shortcuts = test_terminal_normal_mode_shows_shortcuts,
+  tiled_workspace_picker = test_tiled_agent_workspace_picker,
   view_container = test_agent_view_container,
 }
 
@@ -7840,6 +7927,9 @@ local setup_ok, setup_err = xpcall(function()
 
   test("agent terminals share a tabbed view container", function()
     agent_tests.view_container(repo)
+  end)
+  test("active agent picker keeps the tiled panel together", function()
+    agent_tests.tiled_workspace_picker(repo, worktree)
   end)
   test("Codex sidebar restores exact threads across editor restarts", function()
     agent_tests.sidebar_restore(repo, "codex")

@@ -4,6 +4,7 @@ local agent_sessions = require("luanphan.agents.sessions")
 local jumplist = require("luanphan.agents.jumplist")
 local agent_status = require("luanphan.agents.status")
 local close_window = require("luanphan.agents.terminal-chat").close_window
+local view_container = require("luanphan.view_container")
 
 local main, sidebar, focused_terminal
 local rows = {}
@@ -261,10 +262,7 @@ function M.select_session(session, opts)
   local activate = require("luanphan.plugins.worktree").activate_agent
   if not valid(main) or not valid(sidebar) then return activate(session, nil, opts) end
 
-  local windows = { main, sidebar }
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(main))) do
-    if win ~= main and vim.w[win].luanphan_view_anchor == main then windows[#windows + 1] = win end
-  end
+  local windows = view_container.group_windows(main)
   vim.cmd.stopinsert()
   switching_workspace = true
   local ok, result = pcall(activate, session, windows, opts)
@@ -343,6 +341,7 @@ function M.layout(win, width, col, height)
     border = "single",
   }))
   vim.w[main].luanphan_agent_sidebar = sidebar
+  vim.w[sidebar].luanphan_view_companion_anchor = main
   vim.wo[sidebar].wrap = false
   vim.wo[sidebar].winfixbuf = true
   vim.wo[sidebar].cursorline = true
@@ -412,14 +411,12 @@ vim.api.nvim_create_autocmd("WinClosed", {
   callback = function(args)
     local win = tonumber(args.match)
     if win ~= main and win ~= sidebar then return end
-    local closing_main = win == main
-    local other = sidebar
-    if not closing_main then other = main end
+    local anchor = main
     main, sidebar, focused_terminal = nil, nil, nil
     rows = {}
     thread_lines = {}
     stop_status_timer()
-    if valid(other) then vim.api.nvim_win_close(other, closing_main) end
+    if anchor then view_container.close_group(anchor, win) end
   end,
 })
 

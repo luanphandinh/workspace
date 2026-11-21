@@ -8,16 +8,12 @@
 --   - full: @path:start-end header, then full selected text (truncated by max_send_chars).
 
 local M = {}
+local view_container = require("luanphan.view_container")
 local preserve_windows = false
 local pending_tile_close = {}
 
 function M.close_window(win)
-  win = vim.w[win].luanphan_view_anchor or win
-  local sidebar = vim.w[win].luanphan_agent_sidebar
-  vim.api.nvim_win_close(win, false)
-  if sidebar and vim.api.nvim_win_is_valid(sidebar) then
-    vim.api.nvim_win_close(sidebar, true)
-  end
+  return view_container.close_group(view_container.group_anchor(win))
 end
 
 function M.with_preserved_windows(callback)

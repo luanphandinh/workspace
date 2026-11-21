@@ -392,10 +392,7 @@ end
 
 function M.toggle()
   require("luanphan.recent_paths").touch(vim.fn.getcwd())
-  if visible_agent() then
-    close_visible_agents()
-    return
-  end
+  if M.hide() then return end
   local active = most_recent_tab(vim.fn.getcwd())
   local default = M.default_agent()
   if not active then
@@ -446,11 +443,13 @@ function M.hide()
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_is_valid(win) then
       local bufnr = vim.api.nvim_win_get_buf(win)
-      if vim.bo[bufnr].buftype == "terminal"
+      if vim.bo[bufnr].filetype == "agent-sidebar"
+        or (vim.bo[bufnr].buftype == "terminal"
         and vim.b[bufnr].luanphan_persist_term
-        and not vim.b[bufnr].luanphan_toggleterm
+        and not vim.b[bufnr].luanphan_toggleterm)
       then
-        hidden = pcall(terminal_agent.close_window, win) or hidden
+        local ok, closed = pcall(terminal_agent.close_window, win)
+        hidden = (ok and closed) or hidden
       end
     end
   end

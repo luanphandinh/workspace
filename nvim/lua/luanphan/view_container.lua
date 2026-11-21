@@ -3,6 +3,39 @@ local M = {}
 local Container = {}
 Container.__index = Container
 local focused_tile_border = "FloatBorder:DiagnosticOk"
+local closing_groups = {}
+
+function M.group_anchor(win)
+	if not vim.api.nvim_win_is_valid(win) then return win end
+	return vim.w[win].luanphan_view_anchor or vim.w[win].luanphan_view_companion_anchor or win
+end
+
+function M.group_windows(anchor)
+	local windows = vim.api.nvim_win_is_valid(anchor) and { anchor } or {}
+	for _, win in ipairs(vim.api.nvim_list_wins()) do
+		if win ~= anchor and M.group_anchor(win) == anchor then windows[#windows + 1] = win end
+	end
+	return windows
+end
+
+function M.close_group(anchor, closing)
+	if closing_groups[anchor] then return false end
+	local windows = M.group_windows(anchor)
+	local closed, failure
+	if vim.tbl_contains(windows, vim.api.nvim_get_current_win()) then vim.cmd.stopinsert() end
+	closing_groups[anchor] = true
+	-- WinClosed can be suppressed when the group is closed inside another autocmd.
+	for index = #windows, 1, -1 do
+		local win = windows[index]
+		if win ~= closing and vim.api.nvim_win_is_valid(win) then
+			local ok, err = pcall(vim.api.nvim_win_close, win, true)
+			if ok then closed = true else failure = err end
+		end
+	end
+	closing_groups[anchor] = nil
+	if failure then error(failure) end
+	return closed or false
+end
 
 function M.tab_label(bufnr, fallback)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -160,7 +193,7 @@ local function set_tile_border_highlight(win, focused)
 	if highlights ~= current then vim.wo[win].winhighlight = highlights end
 end
 
-local function clear_tiles(self, closing)
+local function reset_tiles(self, closing)
 	local anchor, windows = self.tile_anchor, self.tile_windows
 	if anchor ~= closing then set_tile_border_highlight(anchor, false) end
 	self.tile_anchor, self.tile_windows, self.focused_tile = nil, nil, nil
@@ -169,8 +202,12 @@ local function clear_tiles(self, closing)
 		self.tile_autocmd = nil
 	end
 	if anchor and vim.api.nvim_win_is_valid(anchor) then vim.w[anchor].luanphan_view_anchor = nil end
-	for _, win in pairs(windows or {}) do
-		if win ~= closing and vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+	return windows or {}
+end
+
+local function clear_tiles(self)
+	for _, win in pairs(reset_tiles(self)) do
+		if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
 	end
 end
 
@@ -209,11 +246,9 @@ local function tile(self, anchor, context, geometry)
 			callback = function(args)
 				if args.event == "WinEnter" then return highlight_focused_tile(self) end
 				local win = tonumber(args.match)
-				if win == anchor then
-					clear_tiles(self, win)
-				elseif vim.tbl_contains(self.tile_windows or {}, win) then
-					clear_tiles(self, win)
-					if vim.api.nvim_win_is_valid(anchor) then vim.api.nvim_win_close(anchor, true) end
+				if win == anchor or vim.tbl_contains(self.tile_windows or {}, win) then
+					reset_tiles(self, win)
+					M.close_group(anchor, win)
 				end
 			end,
 		})
