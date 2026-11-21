@@ -4755,6 +4755,88 @@ local function test_leader_a_sends_visual_selection_to_active_agent()
   assert_true(ok, tostring(err))
 end
 
+local function test_codex_sidebar_restore(repo)
+  local root = temp_root .. "/codex-sidebar"
+  local first = "00000000-0001-4000-8000-000000000001"
+  local second = "00000000-0002-4000-8000-000000000002"
+  for _, id in ipairs({ first, second }) do
+    write(root .. "/codex/sessions/rollout-example-" .. id .. ".jsonl", {})
+  end
+  write_executable(root .. "/bin/mcodex", {
+    "#!/bin/sh",
+    'id="$2"',
+    '[ "$id" != "-c" ] || id="$TEST_CODEX_THREAD"',
+    'printf "%s|%s|%s\\n" "$1" "$(pwd -P)" "$2" >> "$TEST_CODEX_LOG"',
+    'printf "\\033]0;%.29s... | Example %s\\007" "$id" "${id##*-}"',
+    "exec cat",
+  })
+  local script = root .. "/session.lua"
+  local setup = {
+    "local root = " .. string.format("%q", root),
+    "local first, second = " .. string.format("%q, %q", first, second),
+    "vim.g.luanphan_codex_sessions_dir = root .. '/state'",
+    "vim.g.luanphan_agent_status_dir = root .. '/status'",
+    "vim.g.luanphan_agent_position_file = root .. '/position'",
+    "vim.g.luanphan_default_agent_file = root .. '/default'",
+    "vim.g.luanphan_recent_paths_file = root .. '/recent'",
+    "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
+    "vim.env.CODEX_HOME = root .. '/codex'",
+    "vim.env.CODEX_SQLITE_HOME = root .. '/codex'",
+    "vim.env.TEST_CODEX_LOG = root .. '/invocations'",
+    "vim.env.PATH = root .. '/bin:' .. vim.env.PATH",
+    "vim.o.columns = 160",
+    "local agents = require('luanphan.plugins.agents')",
+  }
+  local function run(lines)
+    write(script, vim.list_extend(vim.list_slice(setup), lines))
+    local output = vim.fn.systemlist(child_nvim_luafile_command(repo, script))
+    assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+  end
+  run({
+    "local sessions = require('luanphan.codex_sessions')",
+    "for _, id in ipairs({ first, second }) do",
+    "  vim.env.TEST_CODEX_THREAD = id",
+    "  local buf = assert(agents.new('codex'))",
+    "  assert(vim.wait(3000, function() return vim.b[buf].luanphan_agent_thread_id == id end), 'missing exact thread ID')",
+    "end",
+    "assert(#sessions.list() == 2, 'both same-directory threads should be saved')",
+    "os.exit(0)",
+  })
+  run({
+    "agents.toggle()",
+    "local main = vim.api.nvim_get_current_win()",
+    "local sidebar = assert(vim.w[main].luanphan_agent_sidebar)",
+    "assert(vim.b.luanphan_agent_thread_id == second, 'did not resume the most recent thread')",
+    "local rows = vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(sidebar), 0, -1, false)",
+    "local selected",
+    "for i, line in ipairs(rows) do",
+    "  if line:find('Example 000000000001', 1, true) then selected = i end",
+    "end",
+    "assert(selected, 'saved thread was missing from the sidebar')",
+    "vim.cmd.stopinsert()",
+    "vim.api.nvim_set_current_win(sidebar)",
+    "vim.api.nvim_win_set_cursor(sidebar, { selected, 0 })",
+    "vim.fn.maparg('o', 'n', false, true).callback()",
+    "assert(vim.api.nvim_get_current_win() == main and vim.b.luanphan_agent_thread_id == first, 'wrong sidebar thread resumed')",
+    "local cwd = vim.uv.fs_realpath(vim.fn.getcwd())",
+    "assert(vim.wait(3000, function()",
+    "  local lines = vim.fn.readfile(root .. '/invocations')",
+    "  return vim.tbl_contains(lines, 'resume|' .. cwd .. '|' .. first)",
+    "    and vim.tbl_contains(lines, 'resume|' .. cwd .. '|' .. second)",
+    "end), 'mcodex did not receive the exact IDs and original directory')",
+    "vim.cmd('quit')",
+    "local sessions = require('luanphan.codex_sessions')",
+    "assert(vim.wait(3000, function()",
+    "  local saved = sessions.list()",
+    "  return #saved == 1 and saved[1].thread_id == second",
+    "end), 'closing one agent should remove only its saved record')",
+  })
+  run({
+    "local saved = require('luanphan.codex_sessions').list()",
+    "assert(#saved == 1 and saved[1].thread_id == second, 'editor exit should preserve the remaining agent')",
+  })
+end
+
 local function test_agent_view_container(repo)
   local shim_dir = temp_root .. "/agent-view-shims"
   local status_dir = temp_root .. "/agent-view-status"
@@ -7299,6 +7381,7 @@ local search_and_navigation_tests = {
 
 local agent_tests = {
   cli_commands = test_agent_cli_commands_available,
+  codex_sidebar_restore = test_codex_sidebar_restore,
   default_setting = test_default_agent_setting,
   keys = test_agent_keys_invoke_cli_commands,
   lifecycle = test_agent_terminal_lifecycle,
@@ -7563,6 +7646,9 @@ local setup_ok, setup_err = xpcall(function()
 
   test("agent terminals share a tabbed view container", function()
     agent_tests.view_container(repo)
+  end)
+  test("Codex sidebar restores exact threads across editor restarts", function()
+    agent_tests.codex_sidebar_restore(repo)
   end)
 
   test("deleted startup workspace falls back to master worktree", function()

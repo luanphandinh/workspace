@@ -202,9 +202,9 @@ local function merge(dst, src)
   return dst
 end
 
-local function argv_for_termopen()
+local function argv_for_termopen(opts)
   local cmd = config.cmd
-  local args = config.args or {}
+  local args = (opts and opts.args) or config.args or {}
   if type(cmd) == "table" then
     local out = vim.deepcopy(cmd)
     vim.list_extend(out, args)
@@ -695,8 +695,9 @@ local function attach_term_close(buf)
     buffer = buf,
     once = true,
     callback = function()
+      if vim.b[buf].luanphan_agent_quitting then return end
       local win = win_for_buf(buf)
-      local action = win and not vim.b[buf].luanphan_agent_quitting and quit_action(buf)
+      local action = win and quit_action(buf)
       clear_bufnr_for_buf(buf)
       vim.schedule(function()
         if action and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
@@ -805,6 +806,21 @@ local function restore_agent_bufnr()
   end
 end
 
+local function start_terminal(buf, cwd, opts)
+  vim.fn.termopen(argv_for_termopen(opts), { cwd = cwd })
+  configure_terminal_buffer(buf)
+  apply_agent_scrollback(buf)
+  set_agent_bufnr(buf, cwd)
+  if opts and opts.thread_id then
+    vim.b[buf].luanphan_agent_thread_id = opts.thread_id
+    vim.b[buf].luanphan_agent_saved_label = opts.agent_label
+  end
+  attach_term_close(buf)
+  attach_quit_detach(buf)
+  set_float_close_keymaps(buf)
+  attach_status_tracking(buf, cwd, "idle")
+end
+
 local function open_terminal_split(opts)
   local reuse_win = opts and opts.reuse_win
   if reuse_win and vim.api.nvim_win_is_valid(reuse_win) and vim.api.nvim_win_get_config(reuse_win).relative ~= "" then
@@ -830,14 +846,7 @@ local function open_terminal_split(opts)
   lock_cursor_window()
   local buf = vim.api.nvim_get_current_buf()
   local cwd = cwd_key()
-  vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
-  configure_terminal_buffer(buf)
-  apply_agent_scrollback(buf)
-  set_agent_bufnr(buf, cwd)
-  attach_term_close(buf)
-  attach_quit_detach(buf)
-  set_float_close_keymaps(buf)
-  attach_status_tracking(buf, cwd, "idle")
+  start_terminal(buf, cwd, opts)
   resume_terminal_view(win, buf, opts)
   return buf
 end
@@ -862,14 +871,7 @@ local function open_terminal_float(opts)
   configure_terminal_window(win)
   save_float_geometry(win)
   local cwd = cwd_key()
-  vim.fn.termopen(argv_for_termopen(), { cwd = cwd })
-  configure_terminal_buffer(buf)
-  apply_agent_scrollback(buf)
-  set_agent_bufnr(buf, cwd)
-  attach_term_close(buf)
-  attach_quit_detach(buf)
-  set_float_close_keymaps(buf)
-  attach_status_tracking(buf, cwd, "idle")
+  start_terminal(buf, cwd, opts)
   resume_terminal_view(win, buf, opts)
   return buf
 end

@@ -1,6 +1,7 @@
 local M = {}
 local jumplist = require("luanphan.agent_jumplist")
 local terminal_agent = require("luanphan.terminal_agent")
+local codex_sessions = require("luanphan.codex_sessions")
 
 local agent_order = { "codex", "cursor", "claude" }
 local agent_key = "<leader>a"
@@ -25,7 +26,7 @@ local agent_defs = {
     g_bufnr = "codex_agent_bufnr",
     notify_prefix = "codex_agent",
     augroup_prefix = "CodexAgent",
-    defaults = { cmd = "mcodex", detach_on_quit = true },
+    defaults = { cmd = "mcodex", args = codex_sessions.launch_args(), detach_on_quit = true },
   },
 }
 
@@ -300,6 +301,11 @@ local function get_agent(name)
     end,
     on_show = function(bufnr, win, cwd)
       jumplist.record(bufnr)
+      if name == "codex" then
+        local seconds, microseconds = vim.uv.gettimeofday()
+        vim.b[bufnr].luanphan_agent_saved_use = seconds + microseconds / 1000000
+        codex_sessions.save(bufnr)
+      end
       agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
       sidebar.attach(bufnr, win)
       M.map_jump_keys(bufnr)
@@ -308,8 +314,14 @@ local function get_agent(name)
       end, { buffer = bufnr, silent = true, nowait = true, desc = "Select terminal agent" })
     end,
     on_close = function(bufnr, cwd)
+      local id = name == "codex" and vim.b[bufnr].luanphan_agent_thread_id
       agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
-      vim.schedule(sidebar.refresh)
+      vim.schedule(function()
+        if id and type(vim.v.exiting) ~= "number" then
+          codex_sessions.forget_buffer(bufnr, id)
+        end
+        sidebar.refresh()
+      end)
     end,
     on_quit = function(bufnr, cwd)
       local tabs = open_tabs(cwd, bufnr)
@@ -373,18 +385,25 @@ function M.open(name, bufnr, opts)
   return setup_agent(name).new(opts)
 end
 
-function M.new(name)
+function M.new(name, opts)
   if not agent_defs[name] then
     return false
   end
   local visible = visible_agent()
-  local opts
   if visible then
     setup_agent(visible.name).save_view(visible.win)
     close_visible_agents(visible.bufnr)
-    opts = { reuse_win = visible.win }
+    opts = vim.tbl_extend("force", opts or {}, { reuse_win = visible.win })
   end
   return setup_agent(name).new(opts)
+end
+
+function M.resume(session, opts)
+  return M.new("codex", vim.tbl_extend("force", opts or {}, {
+    args = codex_sessions.launch_args(session.thread_id),
+    thread_id = session.thread_id,
+    agent_label = session.agent_label,
+  }))
 end
 
 function M.toggle_agent(name)
@@ -407,6 +426,10 @@ function M.toggle()
     return
   end
   local active = most_recent_tab(vim.fn.getcwd())
+  if not active and M.default_agent() == "codex" then
+    local saved = codex_sessions.latest(vim.fn.getcwd())
+    if saved then return M.resume(saved) end
+  end
   M.open(active and active.agent or M.default_agent(), active and active.bufnr or nil)
 end
 

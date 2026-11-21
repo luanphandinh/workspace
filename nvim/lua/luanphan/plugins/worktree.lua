@@ -1305,7 +1305,7 @@ local function setup()
     return a.bufnr < b.bufnr
   end
 
-  local function list_agent_sessions()
+  local function list_agent_sessions(include_saved)
     local instances = {}
     local roots = {}
     for _, agent in ipairs(AGENT_BUFFER_KEYS) do
@@ -1331,6 +1331,22 @@ local function setup()
               }
             end
           end
+        end
+      end
+    end
+    if include_saved then
+      local live = {}
+      for _, instance in ipairs(instances) do
+        local id = vim.b[instance.bufnr].luanphan_agent_thread_id
+        if id then live[id] = true end
+      end
+      for _, record in ipairs(require("luanphan.codex_sessions").list()) do
+        if not live[record.thread_id] and dir_exists(record.path) then
+          local root = roots[record.path] or git_root(record.path) or record.path
+          roots[record.path] = root
+          record.agent = "codex"
+          record.workspace = workspace_root_for_path(record.path) or root
+          instances[#instances + 1] = record
         end
       end
     end
@@ -2085,6 +2101,9 @@ local function setup()
     else
       recent_paths.touch(instance.path)
     end
+    if instance.thread_id and not instance.bufnr then
+      return agents.resume(instance, opts)
+    end
     local focused
     if agent_windows then
       focused = agents.open(instance.agent, instance.bufnr, opts)
@@ -2266,8 +2285,8 @@ local spec = {
     { "<leader>wa", picker("pick_agent"), desc = "Switch active agent" },
   },
   config = ensure_setup,
-  list_agent_sessions = function()
-    return ensure_setup().list_agent_sessions()
+  list_agent_sessions = function(include_saved)
+    return ensure_setup().list_agent_sessions(include_saved)
   end,
   activate_agent = function(instance, windows, opts)
     return ensure_setup().activate_agent(instance, windows, opts)

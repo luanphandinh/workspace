@@ -1,4 +1,5 @@
 local M = {}
+local codex_sessions = require("luanphan.codex_sessions")
 local jumplist = require("luanphan.agent_jumplist")
 local agent_status = require("luanphan.agent_status")
 local close_window = require("luanphan.terminal_agent").close_window
@@ -88,17 +89,19 @@ end
 
 function M.refresh(keep_cursor)
   if not valid(sidebar) or not valid(main) then return end
-  local sessions = require("luanphan.plugins.worktree").list_agent_sessions()
+  local sessions = require("luanphan.plugins.worktree").list_agent_sessions(true)
   local groups = {}
   local live = {}
   local status_paths, status_counts = {}, {}
   for _, session in ipairs(sessions) do
     groups[session.workspace] = groups[session.workspace] or {}
     table.insert(groups[session.workspace], session)
-    live[session.bufnr] = true
-    local path = agent_status.path(session.agent, session.path)
-    status_paths[session.bufnr] = path
-    status_counts[path] = (status_counts[path] or 0) + 1
+    if session.bufnr then
+      live[session.bufnr] = true
+      local path = agent_status.path(session.agent, session.path)
+      status_paths[session.bufnr] = path
+      status_counts[path] = (status_counts[path] or 0) + 1
+    end
   end
   local offsets = jumplist.offsets(live)
   local number_width = 2
@@ -117,7 +120,11 @@ function M.refresh(keep_cursor)
   thread_lines = {}
   for _, workspace in ipairs(workspaces) do
     local threads = groups[workspace]
-    table.sort(threads, function(a, b) return a.bufnr < b.bufnr end)
+    table.sort(threads, function(a, b)
+      if a.bufnr or b.bufnr then return (a.bufnr or math.huge) < (b.bufnr or math.huge) end
+      if a.last_used ~= b.last_used then return a.last_used > b.last_used end
+      return a.thread_id < b.thread_id
+    end)
     lines[#lines + 1] = " " .. fit(vim.fn.fnamemodify(workspace, ":t"), width - 1)
     local heading = #lines
     headings[#headings + 1] = heading
@@ -128,15 +135,17 @@ function M.refresh(keep_cursor)
       local status_path = status_paths[thread.bufnr]
       lines[#lines + 1] = prefix .. fit(thread.agent_label, title_width)
       rows[#lines] = thread
-      thread_lines[thread.bufnr] = {
-        row = #lines,
-        title_col = #prefix,
-        title_width = title_width,
-        status_col = title_width >= 0 and width - 1 or nil,
-        status_path = status_counts[status_path] == 1 and status_path or nil,
-      }
-      if thread.bufnr == active then active_row = #lines end
-      if thread.last_used > recent.last_used then recent = thread end
+      if thread.bufnr then
+        thread_lines[thread.bufnr] = {
+          row = #lines,
+          title_col = #prefix,
+          title_width = title_width,
+          status_col = title_width >= 0 and width - 1 or nil,
+          status_path = status_counts[status_path] == 1 and status_path or nil,
+        }
+        if thread.bufnr == active then active_row = #lines end
+        if thread.last_used > recent.last_used then recent = thread end
+      end
     end
     rows[heading] = recent
   end
@@ -258,6 +267,13 @@ function M.layout(win, width, col)
   local function open_selected()
     M.select_session(rows[vim.api.nvim_win_get_cursor(sidebar)[1]])
   end
+  vim.keymap.set("n", "d", function()
+    local session = rows[vim.api.nvim_win_get_cursor(sidebar)[1]]
+    if session and session.thread_id and not session.bufnr then
+      codex_sessions.forget(session.thread_id)
+      M.refresh(true)
+    end
+  end, vim.tbl_extend("force", opts, { desc = "Forget saved Codex session" }))
   for _, key in ipairs({ "<CR>", "o" }) do
     vim.keymap.set("n", key, open_selected, opts)
   end
@@ -345,10 +361,14 @@ vim.api.nvim_create_autocmd("TermRequest", {
       if status == "working" or status_icons[status] or status == "clear" then
         vim.b[args.buf].luanphan_agent_program_status = status
       end
+      if status == "working" or status == "done" then
+        vim.schedule(function() codex_sessions.observe(args.buf) end)
+      end
       return
     end
-    if not thread_lines[args.buf] or not sequence:match("^\27%][02];") then return end
+    if not sequence:match("^\27%][02];") then return end
     vim.schedule(function()
+      codex_sessions.observe(args.buf)
       local thread = thread_lines[args.buf]
       if not thread or not valid(sidebar) or not vim.api.nvim_buf_is_valid(args.buf) then return end
       local buf = vim.api.nvim_win_get_buf(sidebar)
