@@ -3,6 +3,7 @@ local M = {}
 local valid_status = {
   idle = true,
   running = true,
+  done = true,
 }
 
 local function state_dir()
@@ -19,17 +20,20 @@ function M.path(agent, cwd)
   return state_dir() .. "/" .. vim.fn.sha256(key)
 end
 
-function M.read(agent, cwd)
-  local path = M.path(agent, cwd)
+function M.read_path(path)
   if vim.fn.filereadable(path) ~= 1 then
     return "unknown"
   end
-  local lines = vim.fn.readfile(path, "", 1)
-  local status = lines[1]
+  local ok, lines = pcall(vim.fn.readfile, path, "", 1)
+  local status = ok and lines[1]
   if not valid_status[status] then
     return "unknown"
   end
   return status
+end
+
+function M.read(agent, cwd)
+  return M.read_path(M.path(agent, cwd))
 end
 
 function M.write(agent, cwd, status)

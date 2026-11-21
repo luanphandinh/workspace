@@ -294,7 +294,6 @@ local function get_agent(name)
     augroup_prefix = def.augroup_prefix,
     hint_open = agent_key,
     defaults = vim.tbl_extend("force", def.defaults, { float_position = M.agent_position() }),
-    float_sidebar_width = 32,
     on_float_layout = sidebar.layout,
     on_prepare = function(win)
       agent_container:reserve(win)

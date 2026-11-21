@@ -57,8 +57,7 @@ local BASE_DEFAULTS = {
 ---@field on_show? fun(bufnr: integer, win: integer, cwd: string)
 ---@field on_close? fun(bufnr: integer, cwd: string)
 ---@field on_quit? fun(bufnr: integer, cwd: string): function?
----@field float_sidebar_width? integer Maximum sidebar width
----@field on_float_layout? fun(win: integer, sidebar_width: integer)
+---@field on_float_layout? fun(win: integer, sidebar_width: integer, sidebar_col: integer)
 function M.create(profile)
   profile = vim.tbl_extend("force", {
     g_bufnr = "terminal_agent_bufnr",
@@ -375,17 +374,20 @@ local function get_float_geometry()
   local h = math.max(10, lines_avail - 2)  -- full height; -2 for borders
 
   local cols = vim.o.columns
-  local outer_width = math.max(3, math.floor(cols * 0.80))
-  local available = outer_width - 2
-  local sidebar_width = math.min(profile.float_sidebar_width or 0, math.floor(available / 4))
-  -- Leave one column between the two bordered windows.
-  local offset = sidebar_width > 0 and sidebar_width + 3 or 0
-  local col = math.floor((cols - outer_width) / 2) + offset
-  return { row = 0, col = col, width = available - offset, height = h }, sidebar_width
+  local settings = profile.on_float_layout and require("luanphan.global_settings").read().agent_float
+  local total_percent = settings and settings.total_width_percent or 80
+  local total = math.max(3, math.floor(cols * total_percent / 100))
+  local left = math.floor((cols - total) / 2)
+  local terminal, sidebar = total, 0
+  if settings and total >= 7 then
+    terminal = math.min(total - 4, math.max(3, math.floor(total * settings.terminal_width_percent / 100)))
+    sidebar = math.min(total - terminal - 1, math.max(3, math.floor(total * settings.sidebar_width_percent / 100)))
+  end
+  return { row = 0, col = left + total - terminal, width = terminal - 2, height = h }, math.max(0, sidebar - 2), left
 end
 
 local function open_agent_float(bufnr)
-  local geometry, sidebar_width = get_float_geometry()
+  local geometry, sidebar_width, sidebar_col = get_float_geometry()
   local win = vim.api.nvim_open_win(bufnr, true, vim.tbl_extend("force", geometry, {
     relative = "editor",
     style = "minimal",
@@ -393,7 +395,7 @@ local function open_agent_float(bufnr)
     zindex = config.float_zindex,
   }))
   if profile.on_float_layout then
-    profile.on_float_layout(win, sidebar_width)
+    profile.on_float_layout(win, sidebar_width, sidebar_col)
   end
   return win
 end
@@ -530,7 +532,7 @@ local function sync_float_after_resize()
   if not win or not vim.api.nvim_win_is_valid(win) then
     return
   end
-  local g, sidebar_width = get_float_geometry()
+  local g, sidebar_width, sidebar_col = get_float_geometry()
   local cfg = {
     relative = "editor",
     row = g.row,
@@ -541,7 +543,7 @@ local function sync_float_after_resize()
   vim.api.nvim_win_set_config(win, cfg)
   state.float_geometry = cfg
   if profile.on_float_layout then
-    profile.on_float_layout(win, sidebar_width)
+    profile.on_float_layout(win, sidebar_width, sidebar_col)
   end
   sync_terminal_grid(win, cur)
 end
@@ -1169,6 +1171,19 @@ function API.setup(opts)
     vim.api.nvim_create_autocmd("VimResized", {
       group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Resize", { clear = true }),
       callback = on_vim_resized,
+    })
+  end
+
+  if profile.on_float_layout then
+    vim.api.nvim_create_autocmd("BufWritePost", {
+      group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "FloatSettings", { clear = true }),
+      callback = function(args)
+        if not uses_float_window() then return end
+        local path = vim.uv.fs_realpath(require("luanphan.global_settings").config_path())
+        if path and path == vim.uv.fs_realpath(vim.api.nvim_buf_get_name(args.buf)) then
+          sync_float_after_resize()
+        end
+      end,
     })
   end
 

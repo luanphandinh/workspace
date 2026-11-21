@@ -91,6 +91,6 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
 	status_key="$(printf '%s\n%s' example-agent "$project" | shasum -a 256 | awk '{ print $1 }')"
 fi
-[ "$(cat "$TMP/state/nvim/workspace-agent-status/$status_key")" = "idle" ]
+[ "$(cat "$TMP/state/nvim/workspace-agent-status/$status_key")" = "done" ]
 
 printf 'agent status hooks smoke test passed\n'

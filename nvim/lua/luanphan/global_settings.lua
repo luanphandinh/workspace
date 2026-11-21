@@ -2,58 +2,65 @@ local M = {}
 
 local DEFAULT_MAX_CACHE_ENTRY = 5
 local DIFF_REPO_IGNORE_SECTION = "diff-repo-ignore"
+local AGENT_FLOAT_SECTION = "agent_float"
+local DEFAULT_AGENT_FLOAT = {
+  total_width_percent = 90,
+  sidebar_width_percent = 31,
+  terminal_width_percent = 69,
+}
 
 function M.config_path()
   return vim.g.luanphan_global_settings_path
     or (vim.fn.stdpath("data") .. "/global-settings.toml")
 end
 
-local function default_lines()
-  return {
-    "[recent_folder]",
-    "max_cache_entry = " .. DEFAULT_MAX_CACHE_ENTRY,
-    "",
-    "[" .. DIFF_REPO_IGNORE_SECTION .. "]",
-    "repositories = []",
-  }
-end
-
 function M.ensure_config(path)
   path = path or M.config_path()
-  if vim.fn.filereadable(path) == 1 then
-    local lines = vim.fn.readfile(path)
-    for _, line in ipairs(lines) do
-      if vim.trim(line:gsub("#.*$", "")) == "[" .. DIFF_REPO_IGNORE_SECTION .. "]" then
-        return path
-      end
-    end
-    if #lines > 0 and lines[#lines] ~= "" then
-      lines[#lines + 1] = ""
-    end
-    lines[#lines + 1] = "[" .. DIFF_REPO_IGNORE_SECTION .. "]"
-    lines[#lines + 1] = "repositories = []"
-    local ok, err = pcall(vim.fn.writefile, lines, path)
-    if not ok then
-      vim.notify("Could not update global settings: " .. tostring(err), vim.log.levels.WARN)
-    end
-    return path
+  local exists = vim.fn.filereadable(path) == 1
+  local lines = exists and vim.fn.readfile(path) or {
+    "[recent_folder]", "max_cache_entry = " .. DEFAULT_MAX_CACHE_ENTRY,
+  }
+  local headings = {}
+  for _, line in ipairs(lines) do
+    headings[vim.trim(line:gsub("#.*$", ""))] = true
   end
-
-  vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
-  local ok, err = pcall(vim.fn.writefile, default_lines(), path)
-  if not ok then
-    vim.notify("Could not create global settings: " .. tostring(err), vim.log.levels.WARN)
+  local changed = not exists
+  for _, section in ipairs({
+    { "[" .. DIFF_REPO_IGNORE_SECTION .. "]", "repositories = []" },
+    {
+      "[" .. AGENT_FLOAT_SECTION .. "]",
+      "# Percentage of the editor width.",
+      "total_width_percent = " .. DEFAULT_AGENT_FLOAT.total_width_percent,
+      "# Percentages of the total float width. Unused width becomes the gap.",
+      "sidebar_width_percent = " .. DEFAULT_AGENT_FLOAT.sidebar_width_percent,
+      "terminal_width_percent = " .. DEFAULT_AGENT_FLOAT.terminal_width_percent,
+    },
+  }) do
+    if not headings[section[1]] then
+      if #lines > 0 and lines[#lines] ~= "" then lines[#lines + 1] = "" end
+      vim.list_extend(lines, section)
+      changed = true
+    end
+  end
+  if changed then
+    vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
+    local ok, result = pcall(vim.fn.writefile, lines, path)
+    if not ok or result ~= 0 then
+      vim.notify("Could not write global settings: " .. tostring(result), vim.log.levels.WARN)
+    end
   end
   return path
 end
 
 function M.read(path)
   path = M.ensure_config(path)
+  local agent_float = vim.deepcopy(DEFAULT_AGENT_FLOAT)
   local ok, lines = pcall(vim.fn.readfile, path)
   if not ok then
     return {
       recent_folder = { max_cache_entry = DEFAULT_MAX_CACHE_ENTRY },
       diff_repo_ignore = { repositories = {} },
+      agent_float = agent_float,
     }
   end
 
@@ -73,6 +80,12 @@ function M.read(path)
       if configured and configured >= 1 then
         max_cache_entry = math.floor(configured)
       end
+    elseif section == AGENT_FLOAT_SECTION then
+      local key, raw = value:match("^([%w_]+)%s*=%s*([%d.]+)$")
+      local percent = tonumber(raw)
+      if DEFAULT_AGENT_FLOAT[key] and percent and percent >= 1 and percent <= 100 then
+        agent_float[key] = percent
+      end
     elseif section == DIFF_REPO_IGNORE_SECTION then
       local array = reading_ignored_repositories and value
         or value:match("^repositories%s*=%s*(%[.*)$")
@@ -91,6 +104,7 @@ function M.read(path)
   return {
     recent_folder = { max_cache_entry = max_cache_entry },
     diff_repo_ignore = { repositories = ignored_repositories },
+    agent_float = agent_float,
   }
 end
 

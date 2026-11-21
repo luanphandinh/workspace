@@ -4757,6 +4757,7 @@ end
 
 local function test_agent_view_container(repo)
   local shim_dir = temp_root .. "/agent-view-shims"
+  local status_dir = temp_root .. "/agent-view-status"
   local invoke_log = temp_root .. "/agent-view-invocations.log"
   local input_log = temp_root .. "/agent-view-input"
   local source = repo .. "/agent-view.txt"
@@ -4777,6 +4778,9 @@ local function test_agent_view_container(repo)
   local old_log = vim.env.NVIM_AGENT_SMOKE_LOG
   local old_input = vim.env.NVIM_AGENT_SMOKE_INPUT
   local old_columns = vim.o.columns
+  local old_status_dir = vim.g.luanphan_agent_status_dir
+  local old_global_settings = vim.g.luanphan_global_settings_path
+  local settings_path = temp_root .. "/agent-view-settings.toml"
   local agents = require("luanphan.plugins.agents")
   local original_position_file = vim.g.luanphan_agent_position_file
   local original_position = agents.agent_position()
@@ -4785,6 +4789,9 @@ local function test_agent_view_container(repo)
   vim.env.NVIM_AGENT_SMOKE_LOG = invoke_log
   vim.env.NVIM_AGENT_SMOKE_INPUT = input_log
   vim.g.luanphan_agent_position_file = position_file
+  vim.g.luanphan_agent_status_dir = status_dir
+  vim.g.luanphan_global_settings_path = settings_path
+  write(settings_path, { "[recent_folder]", "max_cache_entry = 3" })
   vim.fn.delete(position_file)
   agents.set_agent_position("full")
   close_agent_terminals()
@@ -4926,6 +4933,19 @@ local function test_agent_view_container(repo)
     assert_true(second_codex_buf ~= codex_buf, "new-tab picker reused the existing Codex terminal")
     assert_true(vim.api.nvim_get_current_win() == agent_win, "new agent tab replaced the container window")
     assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "new agent tab resized the container")
+    local function status_icon(win, bufnr)
+      local sidebar = vim.w[win].luanphan_agent_sidebar
+      local sidebar_buf = vim.api.nvim_win_get_buf(sidebar)
+      local ns = vim.api.nvim_create_namespace("LuanphanAgentSidebarStatus")
+      local mark = vim.api.nvim_buf_get_extmark_by_id(sidebar_buf, ns, bufnr, { details = true })
+      return mark[3] and mark[3].virt_text[1][1]
+    end
+    vim.fn.chansend(vim.b[codex_buf].terminal_job_id, "\27]7501;state=done:app=codex\27\\")
+    vim.fn.chansend(vim.b[second_codex_buf].terminal_job_id, "\27]7501;state=working:app=codex\27\\")
+    wait_until("separate terminal status for sessions in the same folder", function()
+      return vim.b[codex_buf].luanphan_agent_program_status == "done"
+        and vim.b[second_codex_buf].luanphan_agent_program_status == "working"
+    end, 3000)
 
     vim.cmd("stopinsert")
     for _, expected_buf in ipairs({ codex_buf, cursor_buf, second_codex_buf }) do
@@ -5068,11 +5088,32 @@ local function test_agent_view_container(repo)
     assert_true(sidebar ~= main and vim.bo[sidebar_buf].filetype == "agent-sidebar", "Ctrl+h did not focus the sidebar")
     local main_config = vim.api.nvim_win_get_config(main)
     local sidebar_config = vim.api.nvim_win_get_config(sidebar)
+    assert_true(sidebar_config.width == 42, "sidebar did not widen at 160 columns")
     assert_true(sidebar_config.col + sidebar_config.width + 3 == main_config.col, "agent panes do not have separate borders and a gap")
     assert_true(sidebar_config.zindex == main_config.zindex, "agent panes are on different layers")
     local overlay_width = main_config.col + main_config.width + 2 - sidebar_config.col
-    assert_true(overlay_width == math.floor(vim.o.columns * 0.80), "combined float is not 80% of the window")
-    assert_true(sidebar_config.col == math.floor((vim.o.columns - overlay_width) / 2), "agent float is not centered")
+    assert_true(overlay_width == 144 and sidebar_config.col == 8, "combined float did not center at 90% width")
+    assert_true(main_config.width == 97, "centering changed the terminal width")
+    local agent_status = require("luanphan.agent_status")
+    assert_true(agent_status.write("codex", other_path, "done"), "could not record the hook's completion state")
+    wait_until("sidebar receives hook completion without switching focus", function()
+      return status_icon(main, other_buf) == "✓"
+    end, 3000)
+    vim.fn.chansend(vim.b[other_buf].terminal_job_id, "\27]7501;state=working:app=codex\27\\")
+    local frame
+    wait_until("sidebar uses terminal status ahead of the hook status", function()
+      frame = status_icon(main, other_buf)
+      return frame and frame ~= "✓"
+    end, 3000)
+    wait_until("running status spinner animates", function()
+      local next_frame = status_icon(main, other_buf)
+      return next_frame and next_frame ~= frame
+    end, 3000)
+    vim.fn.chansend(vim.b[other_buf].terminal_job_id, "\27]7501;state=done:app=codex\27\\")
+    wait_until("spinner turns into a checkmark", function()
+      return status_icon(main, other_buf) == "✓"
+    end, 3000)
+    assert_true(vim.api.nvim_get_current_win() == sidebar, "status update moved focus")
     invoke_map("<C-l>")
     assert_true(vim.api.nvim_get_current_win() == main, "Ctrl+l did not return to the terminal")
     invoke_map("<leader>b")
@@ -5085,6 +5126,28 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_get_current_win() == sidebar, "<leader>e did not focus the sidebar")
     invoke_map("<leader>e")
     assert_true(vim.api.nvim_get_current_win() == main, "<leader>e did not return from the sidebar to the terminal")
+
+    invoke_map("<leader>sg")
+    local settings_buf = vim.api.nvim_get_current_buf()
+    local defaults = vim.api.nvim_buf_get_lines(settings_buf, 0, -1, false)
+    assert_true(vim.tbl_contains(defaults, "[agent_float]") and vim.tbl_contains(defaults, "max_cache_entry = 3"),
+      "settings migration did not add the float section or preserve the existing setting")
+    local custom = vim.tbl_map(function(line)
+      return line:gsub("^total_width_percent = .+$", "total_width_percent = 80")
+        :gsub("^sidebar_width_percent = .+$", "sidebar_width_percent = 20.5")
+        :gsub("^terminal_width_percent = .+$", "terminal_width_percent = 60")
+    end, defaults)
+    vim.api.nvim_buf_set_lines(settings_buf, 0, -1, false, custom)
+    invoke_map("q")
+    local custom_main = vim.api.nvim_win_get_config(main)
+    local custom_sidebar = vim.api.nvim_win_get_config(sidebar)
+    assert_true(custom_sidebar.col == 16 and custom_sidebar.width == 24, "sidebar width did not use the configured percentage")
+    assert_true(custom_main.col == 68 and custom_main.width == 74, "terminal width or gap did not use the configured percentages")
+    assert_true(custom_main.col + custom_main.width + 2 - custom_sidebar.col == 128, "configured total width was not applied")
+    invoke_map("<leader>sg")
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, defaults)
+    invoke_map("q")
+    assert_true(vim.deep_equal(vim.api.nvim_win_get_config(main), main_config), "saving defaults did not restore the terminal size")
 
     local title = "Workspace switch thread"
     vim.fn.chansend(vim.b[first_cursor_buf].terminal_job_id, "\27]2;" .. title .. "\7")
@@ -5155,6 +5218,8 @@ local function test_agent_view_container(repo)
   vim.env.NVIM_AGENT_SMOKE_LOG = old_log
   vim.env.NVIM_AGENT_SMOKE_INPUT = old_input
   vim.o.columns = old_columns
+  vim.g.luanphan_agent_status_dir = old_status_dir
+  vim.g.luanphan_global_settings_path = old_global_settings
   close_agent_terminals()
   agents.set_agent_position(original_position)
   vim.g.luanphan_agent_position_file = original_position_file

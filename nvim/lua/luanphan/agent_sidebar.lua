@@ -1,5 +1,6 @@
 local M = {}
 local jumplist = require("luanphan.agent_jumplist")
+local agent_status = require("luanphan.agent_status")
 local close_window = require("luanphan.terminal_agent").close_window
 
 local main, sidebar
@@ -8,9 +9,67 @@ local thread_lines = {}
 local return_to_input = false
 local switching_workspace = false
 local ns = vim.api.nvim_create_namespace("LuanphanAgentSidebar")
+local status_ns = vim.api.nvim_create_namespace("LuanphanAgentSidebarStatus")
+local spinner = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+local spinner_frame = 1
+local status_timer
+local status_icons = {
+  idle = { "·", "Comment" },
+  done = { "✓", "DiagnosticOk" },
+  blocked = { "!", "DiagnosticWarn" },
+  error = { "!", "DiagnosticError" },
+}
 
 local function valid(win)
   return win and vim.api.nvim_win_is_valid(win)
+end
+
+local function stop_status_timer()
+  if status_timer then vim.fn.timer_stop(status_timer) end
+  status_timer = nil
+end
+
+local function render_statuses()
+  if not valid(sidebar) or not valid(main) or vim.w[main].luanphan_agent_sidebar ~= sidebar
+    or vim.api.nvim_win_get_config(sidebar).hide then
+    stop_status_timer()
+    return
+  end
+  local buf = vim.api.nvim_win_get_buf(sidebar)
+  for bufnr, thread in pairs(thread_lines) do
+    if thread.status_col and vim.api.nvim_buf_is_valid(bufnr) then
+      local status = vim.b[bufnr].luanphan_agent_program_status
+      if not status and thread.status_path then status = agent_status.read_path(thread.status_path) end
+      local icon = status_icons[status]
+      if status == "working" or status == "running" then
+        icon = { spinner[spinner_frame], "DiagnosticInfo" }
+      end
+      local glyph, highlight
+      if icon then glyph, highlight = unpack(icon) end
+      if glyph ~= thread.glyph or highlight ~= thread.highlight then
+        if glyph then
+          vim.api.nvim_buf_set_extmark(buf, status_ns, thread.row - 1, 0, {
+            id = bufnr,
+            virt_text = { { glyph, highlight } },
+            virt_text_win_col = thread.status_col,
+            hl_mode = "combine",
+          })
+        else
+          vim.api.nvim_buf_del_extmark(buf, status_ns, bufnr)
+        end
+        thread.glyph, thread.highlight = glyph, highlight
+      end
+    end
+  end
+end
+
+local function refresh_statuses()
+  render_statuses()
+  if status_timer or not valid(sidebar) or vim.api.nvim_win_get_config(sidebar).hide then return end
+  status_timer = vim.fn.timer_start(130, function()
+    spinner_frame = spinner_frame % #spinner + 1
+    render_statuses()
+  end, { ["repeat"] = -1 })
 end
 
 local function fit(text, width)
@@ -32,10 +91,14 @@ function M.refresh(keep_cursor)
   local sessions = require("luanphan.plugins.worktree").list_agent_sessions()
   local groups = {}
   local live = {}
+  local status_paths, status_counts = {}, {}
   for _, session in ipairs(sessions) do
     groups[session.workspace] = groups[session.workspace] or {}
     table.insert(groups[session.workspace], session)
     live[session.bufnr] = true
+    local path = agent_status.path(session.agent, session.path)
+    status_paths[session.bufnr] = path
+    status_counts[path] = (status_counts[path] or 0) + 1
   end
   local offsets = jumplist.offsets(live)
   local number_width = 2
@@ -61,10 +124,17 @@ function M.refresh(keep_cursor)
     local recent = threads[1]
     for _, thread in ipairs(threads) do
       local prefix = string.format(number_format, offsets[thread.bufnr] or "")
-      local title_width = width - vim.fn.strdisplaywidth(prefix)
+      local title_width = width - vim.fn.strdisplaywidth(prefix) - 2
+      local status_path = status_paths[thread.bufnr]
       lines[#lines + 1] = prefix .. fit(thread.agent_label, title_width)
       rows[#lines] = thread
-      thread_lines[thread.bufnr] = { row = #lines, title_col = #prefix, title_width = title_width }
+      thread_lines[thread.bufnr] = {
+        row = #lines,
+        title_col = #prefix,
+        title_width = title_width,
+        status_col = title_width >= 0 and width - 1 or nil,
+        status_path = status_counts[status_path] == 1 and status_path or nil,
+      }
       if thread.bufnr == active then active_row = #lines end
       if thread.last_used > recent.last_used then recent = thread end
     end
@@ -76,6 +146,7 @@ function M.refresh(keep_cursor)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+  vim.api.nvim_buf_clear_namespace(buf, status_ns, 0, -1)
   for _, heading in ipairs(headings) do
     vim.api.nvim_buf_set_extmark(buf, ns, heading - 1, 0, { line_hl_group = "Directory" })
   end
@@ -89,6 +160,7 @@ function M.refresh(keep_cursor)
     vim.api.nvim_buf_set_extmark(buf, ns, active_row - 1, 0, { line_hl_group = "Title" })
     if not keep_cursor then vim.api.nvim_win_set_cursor(sidebar, { active_row, 0 }) end
   end
+  refresh_statuses()
 end
 
 function M.select_session(session, opts)
@@ -119,6 +191,7 @@ end
 local function close_sidebar()
   local win = sidebar
   sidebar = nil
+  stop_status_timer()
   if valid(main) then vim.w[main].luanphan_agent_sidebar = nil end
   if valid(win) then vim.api.nvim_win_close(win, true) end
 end
@@ -131,6 +204,7 @@ end
 
 local function set_sidebar_hidden(hidden)
   vim.api.nvim_win_set_config(sidebar, { hide = hidden, focusable = not hidden, mouse = not hidden })
+  refresh_statuses()
 end
 
 local function toggle_sidebar()
@@ -140,7 +214,7 @@ local function toggle_sidebar()
   set_sidebar_hidden(hide)
 end
 
-function M.layout(win, width)
+function M.layout(win, width, col)
   if width == 0 then
     if main == win then close_sidebar() end
     return
@@ -149,7 +223,7 @@ function M.layout(win, width)
   local position = {
     relative = "editor",
     row = geometry.row,
-    col = geometry.col - width - 3,
+    col = col,
     width = width,
     height = geometry.height,
     zindex = geometry.zindex,
@@ -243,6 +317,7 @@ vim.api.nvim_create_autocmd("WinClosed", {
     main, sidebar = nil, nil
     rows = {}
     thread_lines = {}
+    stop_status_timer()
     if valid(other) then vim.api.nvim_win_close(other, closing_main) end
   end,
 })
@@ -264,7 +339,15 @@ vim.api.nvim_create_autocmd("TermRequest", {
   group = group,
   callback = function(args)
     local sequence = args.data and args.data.sequence
-    if not thread_lines[args.buf] or not sequence or not sequence:match("^\27%][02];") then return end
+    if not sequence then return end
+    local status = sequence:match("^\27%]7501;state=(%a+)")
+    if status and vim.b[args.buf].luanphan_agent_name then
+      if status == "working" or status_icons[status] or status == "clear" then
+        vim.b[args.buf].luanphan_agent_program_status = status
+      end
+      return
+    end
+    if not thread_lines[args.buf] or not sequence:match("^\27%][02];") then return end
     vim.schedule(function()
       local thread = thread_lines[args.buf]
       if not thread or not valid(sidebar) or not vim.api.nvim_buf_is_valid(args.buf) then return end
