@@ -58,6 +58,9 @@ local BASE_DEFAULTS = {
   detach_on_quit = false,
 }
 
+local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,WinBarNC:Normal,"
+  .. "TabLineSel:Title,TabLine:LineNr,TabLineFill:Normal"
+
 ---@param profile table
 ---@field status_name? string stable name used by the cross-process status store
 ---@field native_status? boolean whether the program reports its own status
@@ -70,7 +73,7 @@ local BASE_DEFAULTS = {
 ---@field on_show? fun(bufnr: integer, win: integer, cwd: string)
 ---@field on_close? fun(bufnr: integer, cwd: string)
 ---@field on_quit? fun(bufnr: integer, cwd: string): function?
----@field on_float_layout? fun(win: integer, sidebar_width: integer, sidebar_col: integer)
+---@field on_float_layout? fun(win: integer, sidebar_width: integer, sidebar_col: integer, sidebar_height: integer)
 function M.create(profile)
   profile = vim.tbl_extend("force", {
     g_bufnr = "terminal_agent_bufnr",
@@ -366,14 +369,20 @@ local function get_target_split_dims()
   return nil, nil
 end
 
+local function is_full_screen(total_width_percent)
+  return total_width_percent == 100
+end
+
 --- Geometry for the full overlay. Left and right positions use vertical splits.
 local function get_float_geometry()
   local lines_avail = math.max(1, vim.o.lines - vim.o.cmdheight)
-  local h = math.max(10, lines_avail - 2)  -- full height; -2 for borders
+  local sidebar_height = math.max(10, lines_avail - 2)
 
   local cols = vim.o.columns
   local settings = profile.on_float_layout and require("luanphan.global_settings").read().agent_float
   local total_percent = settings and settings.total_width_percent or 80
+  local border = is_full_screen(total_percent) and "none" or config.float_border or "single"
+  local border_size = border == "none" and 0 or 2
   local total = math.max(3, math.floor(cols * total_percent / 100))
   local left = math.floor((cols - total) / 2)
   local terminal, sidebar = total, 0
@@ -388,19 +397,24 @@ local function get_float_geometry()
       sidebar = math.min(available, math.max(3, math.floor(total * sidebar_percent / 100)))
     end
   end
-  return { row = 0, col = left + total - terminal, width = terminal - 2, height = h }, math.max(0, sidebar - 2), left
+  return {
+    relative = "editor",
+    row = 0,
+    col = left + total - terminal,
+    width = terminal - border_size,
+    height = sidebar_height + 2 - border_size,
+    border = border,
+  }, math.max(0, sidebar - 2), left, sidebar_height
 end
 
 local function open_agent_float(bufnr)
-  local geometry, sidebar_width, sidebar_col = get_float_geometry()
+  local geometry, sidebar_width, sidebar_col, sidebar_height = get_float_geometry()
   local win = vim.api.nvim_open_win(bufnr, true, vim.tbl_extend("force", geometry, {
-    relative = "editor",
     style = "minimal",
-    border = config.float_border or "single",
     zindex = config.float_zindex,
   }))
   if profile.on_float_layout then
-    profile.on_float_layout(win, sidebar_width, sidebar_col)
+    profile.on_float_layout(win, sidebar_width, sidebar_col, sidebar_height)
   end
   return win
 end
@@ -489,7 +503,7 @@ local function configure_terminal_window(win)
     winfixbuf = false,
     winfixheight = false,
     winfixwidth = false,
-    winhighlight = "NormalFloat:Normal,EndOfBuffer:",
+    winhighlight = TERMINAL_WINHIGHLIGHT,
     wrap = false,
   }
   for name, value in pairs(options) do
@@ -537,18 +551,11 @@ local function sync_float_after_resize()
   if not win or not vim.api.nvim_win_is_valid(win) then
     return
   end
-  local g, sidebar_width, sidebar_col = get_float_geometry()
-  local cfg = {
-    relative = "editor",
-    row = g.row,
-    col = g.col,
-    width = g.width,
-    height = g.height,
-  }
+  local cfg, sidebar_width, sidebar_col, sidebar_height = get_float_geometry()
   vim.api.nvim_win_set_config(win, cfg)
   state.float_geometry = cfg
   if profile.on_float_layout then
-    profile.on_float_layout(win, sidebar_width, sidebar_col)
+    profile.on_float_layout(win, sidebar_width, sidebar_col, sidebar_height)
   end
   sync_terminal_grid(win, cur)
 end

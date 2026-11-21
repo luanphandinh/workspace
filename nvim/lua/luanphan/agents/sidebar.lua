@@ -304,7 +304,7 @@ local function toggle_sidebar()
   set_sidebar_hidden(hide)
 end
 
-function M.layout(win, width, col)
+function M.layout(win, width, col, height)
   if width == 0 then
     if main == win then close_sidebar() end
     return
@@ -315,7 +315,7 @@ function M.layout(win, width, col)
     row = geometry.row,
     col = col,
     width = width,
-    height = geometry.height,
+    height = height,
     zindex = geometry.zindex,
   }
   if main == win and valid(sidebar) then

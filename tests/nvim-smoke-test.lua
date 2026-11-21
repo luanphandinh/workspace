@@ -5352,6 +5352,22 @@ local function test_agent_view_container(repo)
     assert_true(custom_sidebar.col == 16 and custom_sidebar.width == 24, "sidebar width did not use the configured percentage")
     assert_true(custom_main.col == 68 and custom_main.width == 74, "terminal width or gap did not use the configured percentages")
     assert_true(custom_main.col + custom_main.width + 2 - custom_sidebar.col == 128, "configured total width was not applied")
+
+    invoke_map("<leader>sg")
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, vim.tbl_map(function(line)
+      return line:gsub("^total_width_percent = .+$", "total_width_percent = 100")
+    end, defaults))
+    invoke_map("q")
+    local full_main = vim.api.nvim_win_get_config(main)
+    local full_sidebar = vim.api.nvim_win_get_config(sidebar)
+    assert_true(full_main.border == "none" or full_main.border == nil, "fullscreen terminal still has a border")
+    assert_true(vim.deep_equal(full_sidebar.border, sidebar_config.border), "fullscreen removed the sidebar border")
+    assert_true(full_sidebar.col == 0 and full_sidebar.col + full_sidebar.width + 2 == full_main.col
+      and full_main.col + full_main.width == vim.o.columns, "fullscreen panes did not fill the editor width")
+    assert_true(full_sidebar.row == full_main.row and full_sidebar.height + 2 == full_main.height,
+      "fullscreen terminal did not fill the sidebar's outer height")
+    assert_terminal_grid_matches(other_buf, main, "fullscreen agent")
+
     invoke_map("<leader>sg")
     vim.api.nvim_buf_set_lines(0, 0, -1, false, defaults)
     invoke_map("q")
