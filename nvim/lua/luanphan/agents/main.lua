@@ -16,6 +16,7 @@ sessions.setup(agent_defs, agent_order)
 local apis = {}
 local configured = {}
 local agent_container
+local setup_agent
 
 local function default_agent_file()
   return vim.g.luanphan_default_agent_file or (vim.fn.stdpath("data") .. "/default-agent")
@@ -113,6 +114,9 @@ local function open_tabs(cwd, closing_bufnr)
       }
     end
   end
+  if agent_container.display_style == "tile" then
+    table.sort(tabs, function(a, b) return a.bufnr < b.bufnr end)
+  end
   sessions.sort_by_order(tabs)
   return tabs
 end
@@ -160,6 +164,12 @@ function M.pick_default_agent()
 end
 
 local function visible_agent()
+  local current = vim.api.nvim_get_current_win()
+  local selected = vim.api.nvim_win_get_buf(current)
+  local name = vim.b[selected].luanphan_agent_name
+  if agent_defs[name] and vim.w[current].luanphan_view_anchor then
+    return { name = name, bufnr = selected, win = current }
+  end
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_is_valid(win) then
       local bufnr = vim.api.nvim_win_get_buf(win)
@@ -173,11 +183,14 @@ local function visible_agent()
 end
 
 local function close_visible_agents(except_bufnr)
+  local keep_win = except_bufnr and vim.fn.bufwinid(except_bufnr) or -1
+  local keep_group = keep_win ~= -1 and vim.w[keep_win].luanphan_view_anchor
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_is_valid(win) then
       local bufnr = vim.api.nvim_win_get_buf(win)
       local name = vim.b[bufnr].luanphan_agent_name
-      if bufnr ~= except_bufnr and agent_defs[name] and vim.b[bufnr].luanphan_persist_term then
+      if bufnr ~= except_bufnr and agent_defs[name] and vim.b[bufnr].luanphan_persist_term
+          and (not keep_group or vim.w[win].luanphan_view_anchor ~= keep_group) then
         pcall(terminal_agent.close_window, win)
       end
     end
@@ -198,6 +211,44 @@ function M.names()
   return vim.list_slice(agent_order)
 end
 
+local function bind_agent_pane(win, bufnr, cwd)
+  require("luanphan.agents.sidebar").attach(bufnr, win)
+  M.map_jump_keys(bufnr)
+  vim.keymap.set("n", "<leader>fN", function()
+    agent_container:pick(cwd)
+  end, { buffer = bufnr, silent = true, nowait = true, desc = "Select terminal agent" })
+end
+
+local function layout_agent(win, width, col, height, geometry, style)
+  local sidebar = require("luanphan.agents.sidebar")
+  local anchor = vim.w[win].luanphan_view_anchor or win
+  if not geometry then
+    sidebar.layout(anchor, width, col, height)
+    return
+  end
+  local cwd = vim.b[vim.api.nvim_win_get_buf(win)].luanphan_agent_cwd
+  local panes = agent_container:display(anchor, cwd, geometry, style)
+  if panes then
+    for _, pane in ipairs(panes) do
+      local tab = pane.tab
+      if pane.opened or pane.win == anchor then
+        agent_container:bind(tab.bufnr, cwd)
+        bind_agent_pane(pane.win, tab.bufnr, cwd)
+      end
+      local api = apis[tab.agent] or setup_agent(tab.agent)
+      api.prepare_tile(pane.win, pane.opened)
+    end
+  else
+    local buf = vim.api.nvim_win_get_buf(anchor)
+    local name = vim.b[buf].luanphan_agent_name
+    agent_container:attach(anchor, buf, name .. ":" .. buf, cwd)
+    bind_agent_pane(anchor, buf, cwd)
+    apis[name].prepare_tile(anchor, false)
+  end
+  sidebar.layout(anchor, width, col, height)
+  sidebar.refresh()
+end
+
 local function get_agent(name)
   if apis[name] then
     return apis[name]
@@ -213,7 +264,7 @@ local function get_agent(name)
     augroup_prefix = def.augroup_prefix,
     hint_open = agent_key,
     defaults = def.defaults,
-    on_float_layout = sidebar.layout,
+    on_float_layout = layout_agent,
     on_prepare = function(win)
       agent_container:reserve(win)
     end,
@@ -225,19 +276,19 @@ local function get_agent(name)
         sessions.save(bufnr)
       end
       agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
-      sidebar.attach(bufnr, win)
-      M.map_jump_keys(bufnr)
-      vim.keymap.set("n", "<leader>fN", function()
-        agent_container:pick(cwd)
-      end, { buffer = bufnr, silent = true, nowait = true, desc = "Select terminal agent" })
+      bind_agent_pane(win, bufnr, cwd)
+      apis[name].layout(win)
     end,
     on_close = function(bufnr, cwd)
       local id = sessions.supported(name) and vim.b[bufnr].luanphan_agent_thread_id
+      local win = vim.fn.bufwinid(bufnr)
+      local reflow = win ~= -1 and win ~= vim.api.nvim_get_current_win() and vim.w[win].luanphan_view_anchor
       agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
       vim.schedule(function()
         if id and type(vim.v.exiting) ~= "number" then
           sessions.forget_buffer(bufnr, name, id)
         end
+        if reflow and vim.api.nvim_win_is_valid(reflow) then M.refresh_tabs(reflow) end
         sidebar.refresh()
       end)
     end,
@@ -263,7 +314,7 @@ local function get_agent(name)
   return apis[name]
 end
 
-local function setup_agent(name)
+setup_agent = function(name)
   local api = get_agent(name)
   if not configured[name] then
     api.setup()
@@ -293,7 +344,7 @@ function M.open(name, bufnr, opts)
   if visible and visible.bufnr ~= target then
     setup_agent(visible.name).save_view(visible.win)
     close_visible_agents(visible.bufnr)
-    opts = vim.tbl_extend("force", opts or {}, { reuse_win = visible.win })
+    opts = vim.tbl_extend("force", opts or {}, { reuse_win = vim.w[visible.win].luanphan_view_anchor or visible.win })
   else
     close_visible_agents(target)
   end
@@ -311,7 +362,7 @@ function M.new(name, opts)
   if visible then
     setup_agent(visible.name).save_view(visible.win)
     close_visible_agents(visible.bufnr)
-    opts = vim.tbl_extend("force", opts or {}, { reuse_win = visible.win })
+    opts = vim.tbl_extend("force", opts or {}, { reuse_win = vim.w[visible.win].luanphan_view_anchor or visible.win })
   end
   return setup_agent(name).new(opts)
 end
@@ -419,7 +470,7 @@ function M.send_selection(name)
   if visible and visible.bufnr ~= target then
     setup_agent(visible.name).save_view(visible.win)
     close_visible_agents(visible.bufnr)
-    opts = { reuse_win = visible.win }
+    opts = { reuse_win = vim.w[visible.win].luanphan_view_anchor or visible.win }
   else
     close_visible_agents(target)
   end
@@ -452,7 +503,11 @@ agent_container = require("luanphan.view_container").create({
 
 function M.refresh_tabs(win)
   local bufnr = vim.api.nvim_win_get_buf(win)
-  agent_container:render(win, vim.b[bufnr].luanphan_agent_cwd)
+  if vim.w[win].luanphan_view_anchor then
+    setup_agent(vim.b[bufnr].luanphan_agent_name).layout(win)
+  else
+    agent_container:render(win, vim.b[bufnr].luanphan_agent_cwd)
+  end
 end
 
 local function agent_spec(name)

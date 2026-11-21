@@ -275,10 +275,13 @@ local function setup()
   end
 
   local function close_other_agent_windows(target_bufnr)
+    local target_win = target_bufnr and vim.fn.bufwinid(target_bufnr) or -1
+    local group = target_win ~= -1 and vim.w[target_win].luanphan_view_anchor
     for _, win in ipairs(vim.api.nvim_list_wins()) do
       if vim.api.nvim_win_is_valid(win) then
         local buf = vim.api.nvim_win_get_buf(win)
         if buf ~= target_bufnr
+          and (not group or vim.w[win].luanphan_view_anchor ~= group)
           and vim.bo[buf].buftype == "terminal"
           and vim.b[buf].luanphan_persist_term
           and not vim.b[buf].luanphan_toggleterm

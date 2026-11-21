@@ -4851,6 +4851,7 @@ local function test_agent_view_container(repo)
   local old_log = vim.env.NVIM_AGENT_SMOKE_LOG
   local old_input = vim.env.NVIM_AGENT_SMOKE_INPUT
   local old_columns = vim.o.columns
+  local old_lines = vim.o.lines
   local old_status_dir = vim.g.luanphan_agent_status_dir
   local old_global_settings = vim.g.luanphan_global_settings_path
   local old_codex_sessions = vim.g.luanphan_codex_sessions_dir
@@ -5390,12 +5391,100 @@ local function test_agent_view_container(repo)
     vim.api.nvim_win_close(sidebar, false)
     assert_true(not vim.api.nvim_win_is_valid(main), "closing the sidebar left the terminal visible")
 
+    close_agent_terminals()
+    vim.o.lines = 48
+    write(settings_path, {
+      "[agent_float]", 'display_style = "tile"', "total_width_percent = 100",
+      "sidebar_width_percent = 20", "terminal_width_percent = 80",
+    })
+    local tile_buffers = { agents.new("codex", { view_mode = true }) }
+    local function tile_window(buf)
+      local win = vim.fn.bufwinid(buf)
+      assert_true(win ~= -1 and vim.w[win].luanphan_view_anchor, "agent session is missing its tile")
+      return win
+    end
+    local function tile_config(index)
+      return vim.api.nvim_win_get_config(tile_window(tile_buffers[index]))
+    end
+    local single = tile_config(1)
+    assert_true(single.border == "none" or single.border == nil, "single tile has a border")
+    for _, provider in ipairs({ "cursor", "codex", "claude" }) do
+      tile_buffers[#tile_buffers + 1] = agents.new(provider, { view_mode = true })
+    end
+    local bottom = vim.o.lines - vim.o.cmdheight
+    local cut = math.floor(bottom / 2)
+    local bounds = { { 32, 0, 64, bottom }, { 96, 0, 64, cut }, { 96, cut, 32, bottom - cut }, { 128, cut, 32, bottom - cut } }
+    for index, label in ipairs({ "codex 1", "cursor", "codex 2", "claude" }) do
+      local cfg = tile_config(index)
+      assert_true(cfg.border and cfg.border ~= "none", "multiple tiles need borders")
+      assert_true(vim.deep_equal({ cfg.col, cfg.row, cfg.width + 2, cfg.height + 2 }, bounds[index]), "wrong bounds for tile " .. index)
+      local win = tile_window(tile_buffers[index])
+      assert_true(vim.trim(rendered_winbar(win)) == "[" .. label .. "]", "tile has the wrong single-session title")
+      assert_terminal_grid_matches(tile_buffers[index], win, "tile " .. index)
+    end
+
+    for _, index in ipairs({ 1, 2, 3, 4 }) do
+      invoke_map("<Tab>")
+      assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[index]), "Tab ignored tile order")
+    end
+    invoke_map("<S-Tab>")
+    assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[3]), "Shift-Tab ignored tile order")
+    invoke_map("<C-h>")
+    local tile_sidebar = vim.api.nvim_get_current_win()
+    invoke_map("K")
+    assert_true(tile_config(3).row == 0 and tile_config(2).row == cut, "sidebar reorder did not move the tiles")
+    assert_true(vim.api.nvim_get_current_win() == tile_sidebar, "tile reorder took focus from the sidebar")
+    invoke_map("<C-l>")
+    assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[3]), "sidebar did not return to its focused tile")
+    invoke_map("<Tab>")
+    assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[2]), "Tab reverted the tile order")
+
+    vim.fn.jobstop(vim.b[tile_buffers[4]].terminal_job_id)
+    wait_until("exited tile leaves a three-pane layout", function()
+      return not vim.api.nvim_buf_is_valid(tile_buffers[4]) and visible_agent_window_count() == 3
+        and tile_config(2).width == 62
+    end, 3000)
+    assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[2]), "background tile exit changed focus")
+
+    local function display_style(style)
+      invoke_map("<leader>sg")
+      local settings_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, vim.tbl_map(function(line)
+        return line:gsub('^display_style = "[^"]+"$', 'display_style = "' .. style .. '"')
+      end, settings_lines))
+      invoke_map("q")
+    end
+    display_style("tabs")
+    assert_true(visible_agent_window_count() == 1, "changing display style did not collapse the tiles")
+    assert_true(vim.api.nvim_get_current_buf() == tile_buffers[2], "changing display style lost the active session")
+    display_style("tile")
+    assert_true(visible_agent_window_count() == 3, "saving tile style did not reopen the panes")
+
+    agents.toggle()
+    assert_true(visible_agent_window_count() == 0 and not vim.api.nvim_win_is_valid(tile_sidebar),
+      "hiding the tiled panel left a pane or sidebar visible")
+    assert_true(agents.open("cursor", tile_buffers[2], { view_mode = true }), "failed to reopen the tiled panel")
+    assert_true(visible_agent_window_count() == 3, "reopening the panel did not restore all live panes")
+    vim.fn.jobstop(vim.b[tile_buffers[2]].terminal_job_id)
+    wait_until("focused tile exit", function()
+      return not vim.api.nvim_buf_is_valid(tile_buffers[2]) and visible_agent_window_count() == 2
+    end, 3000)
+    assert_true(vim.api.nvim_get_current_buf() == tile_buffers[3], "tile exit did not focus its neighbor")
+    vim.fn.jobstop(vim.b[tile_buffers[3]].terminal_job_id)
+    wait_until("remaining tile expands", function()
+      return not vim.api.nvim_buf_is_valid(tile_buffers[3]) and visible_agent_window_count() == 1
+    end, 3000)
+    local remaining = tile_config(1)
+    assert_true(remaining.width == single.width and (remaining.border == "none" or remaining.border == nil),
+      "remaining tile did not fill the panel without a border")
+
   end, debug.traceback)
 
   vim.env.PATH = old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = old_log
   vim.env.NVIM_AGENT_SMOKE_INPUT = old_input
   vim.o.columns = old_columns
+  vim.o.lines = old_lines
   vim.g.luanphan_agent_status_dir = old_status_dir
   vim.g.luanphan_global_settings_path = old_global_settings
   close_agent_terminals()

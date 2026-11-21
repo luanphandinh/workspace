@@ -4,10 +4,12 @@ local DEFAULT_MAX_CACHE_ENTRY = 5
 local DIFF_REPO_IGNORE_SECTION = "diff-repo-ignore"
 local AGENT_FLOAT_SECTION = "agent_float"
 local DEFAULT_AGENT_FLOAT = {
+  display_style = "tabs",
   total_width_percent = 90,
   sidebar_width_percent = 31,
   terminal_width_percent = 69,
 }
+local DISPLAY_STYLE_SETTING = 'display_style = "' .. DEFAULT_AGENT_FLOAT.display_style .. '"'
 
 function M.config_path()
   return vim.g.luanphan_global_settings_path
@@ -21,14 +23,28 @@ function M.ensure_config(path)
     "[recent_folder]", "max_cache_entry = " .. DEFAULT_MAX_CACHE_ENTRY,
   }
   local headings = {}
-  for _, line in ipairs(lines) do
-    headings[vim.trim(line:gsub("#.*$", ""))] = true
+  local in_agent_float, agent_float_line, has_display_style
+  for index, line in ipairs(lines) do
+    local value = vim.trim(line:gsub("#.*$", ""))
+    headings[value] = true
+    if value:match("^%[") then
+      in_agent_float = value == "[" .. AGENT_FLOAT_SECTION .. "]"
+      if in_agent_float then agent_float_line = index end
+    elseif in_agent_float and value:match("^display_style%s*=") then
+      has_display_style = true
+    end
   end
   local changed = not exists
+  if agent_float_line and not has_display_style then
+    table.insert(lines, agent_float_line + 1, DISPLAY_STYLE_SETTING)
+    changed = true
+  end
   for _, section in ipairs({
     { "[" .. DIFF_REPO_IGNORE_SECTION .. "]", "repositories = []" },
     {
       "[" .. AGENT_FLOAT_SECTION .. "]",
+      '# Display style: "tabs" or "tile".',
+      DISPLAY_STYLE_SETTING,
       "# Percentage of the editor width.",
       "total_width_percent = " .. DEFAULT_AGENT_FLOAT.total_width_percent,
       "# Percentages of the total float width. Unused width becomes the gap.",
@@ -83,9 +99,12 @@ function M.read(path)
     elseif section == AGENT_FLOAT_SECTION then
       local key, raw = value:match("^([%w_]+)%s*=%s*([%d.]+)$")
       local percent = tonumber(raw)
-      if DEFAULT_AGENT_FLOAT[key] and percent and percent >= 1 and percent <= 100 then
+      if type(DEFAULT_AGENT_FLOAT[key]) == "number" and percent and percent >= 1 and percent <= 100 then
         agent_float[key] = percent
       end
+      local style = value:match('^display_style%s*=%s*"([%a]+)"$')
+        or value:match("^display_style%s*=%s*'([%a]+)'$")
+      if style == "tile" or style == "tabs" then agent_float.display_style = style end
     elseif section == DIFF_REPO_IGNORE_SECTION then
       local array = reading_ignored_repositories and value
         or value:match("^repositories%s*=%s*(%[.*)$")

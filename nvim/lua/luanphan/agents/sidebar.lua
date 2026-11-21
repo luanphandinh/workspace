@@ -5,7 +5,7 @@ local jumplist = require("luanphan.agents.jumplist")
 local agent_status = require("luanphan.agents.status")
 local close_window = require("luanphan.agents.terminal-chat").close_window
 
-local main, sidebar
+local main, sidebar, focused_terminal
 local rows = {}
 local thread_lines = {}
 local folded = {}
@@ -26,6 +26,13 @@ local status_icons = {
 
 local function valid(win)
   return win and vim.api.nvim_win_is_valid(win)
+end
+
+local function active_terminal()
+  if valid(focused_terminal) and vim.w[focused_terminal].luanphan_view_anchor == main then
+    return focused_terminal
+  end
+  return main
 end
 
 local function stop_status_timer()
@@ -131,7 +138,7 @@ function M.refresh(keep_cursor)
   local workspaces = vim.tbl_keys(groups)
   table.sort(workspaces)
   workspaces = ordered(workspaces, workspace_order)
-  local active = vim.api.nvim_win_get_buf(main)
+  local active = vim.api.nvim_win_get_buf(active_terminal())
   local width = vim.api.nvim_win_get_width(sidebar) - 1
   local lines, headings, provider_marks = {}, {}, {}
   local active_row
@@ -254,9 +261,13 @@ function M.select_session(session, opts)
   local activate = require("luanphan.plugins.worktree").activate_agent
   if not valid(main) or not valid(sidebar) then return activate(session, nil, opts) end
 
+  local windows = { main, sidebar }
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(main))) do
+    if win ~= main and vim.w[win].luanphan_view_anchor == main then windows[#windows + 1] = win end
+  end
   vim.cmd.stopinsert()
   switching_workspace = true
-  local ok, result = pcall(activate, session, { main, sidebar }, opts)
+  local ok, result = pcall(activate, session, windows, opts)
   switching_workspace = false
   if not ok then error(result) end
   return result
@@ -284,7 +295,7 @@ end
 
 local function focus_terminal()
   if not valid(main) then return end
-  vim.api.nvim_set_current_win(main)
+  vim.api.nvim_set_current_win(active_terminal())
   if return_to_input then vim.cmd.startinsert() end
 end
 
@@ -377,7 +388,8 @@ end
 function M.attach(buf, win)
   local opts = { buffer = buf, silent = true, nowait = true }
   local function focus_sidebar()
-    if main ~= win or not valid(sidebar) then return end
+    if not valid(sidebar) or not valid(win) or (main ~= win and vim.w[win].luanphan_view_anchor ~= main) then return end
+    focused_terminal = win
     return_to_input = vim.api.nvim_get_mode().mode == "t"
     vim.cmd.stopinsert()
     if vim.api.nvim_win_get_config(sidebar).hide then set_sidebar_hidden(false) end
@@ -388,7 +400,6 @@ function M.attach(buf, win)
   vim.keymap.set("n", "<leader>e", focus_sidebar, vim.tbl_extend("force", opts, { desc = "Focus agent sidebar" }))
   vim.keymap.set("n", "<leader>b", toggle_sidebar, vim.tbl_extend("force", opts, { desc = "Toggle agent sidebar" }))
   vim.keymap.set({ "n", "t" }, "<LeftMouse>", click_row, vim.tbl_extend("force", opts, { expr = true }))
-  M.refresh()
 end
 
 local function split_focused()
@@ -404,7 +415,7 @@ vim.api.nvim_create_autocmd("WinClosed", {
     local closing_main = win == main
     local other = sidebar
     if not closing_main then other = main end
-    main, sidebar = nil, nil
+    main, sidebar, focused_terminal = nil, nil, nil
     rows = {}
     thread_lines = {}
     stop_status_timer()
@@ -415,6 +426,11 @@ vim.api.nvim_create_autocmd("WinClosed", {
 vim.api.nvim_create_autocmd("WinEnter", {
   group = group,
   callback = function()
+    local current = vim.api.nvim_get_current_win()
+    if main and vim.w[current].luanphan_view_anchor == main then
+      focused_terminal = current
+      return
+    end
     if switching_workspace or not valid(main) or not split_focused() then return end
     local win = main
     vim.schedule(function()

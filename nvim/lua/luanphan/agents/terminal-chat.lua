@@ -11,6 +11,7 @@ local M = {}
 local preserve_windows = false
 
 function M.close_window(win)
+  win = vim.w[win].luanphan_view_anchor or win
   local sidebar = vim.w[win].luanphan_agent_sidebar
   vim.api.nvim_win_close(win, false)
   if sidebar and vim.api.nvim_win_is_valid(sidebar) then
@@ -67,7 +68,7 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
 ---@field on_show? fun(bufnr: integer, win: integer, cwd: string)
 ---@field on_close? fun(bufnr: integer, cwd: string)
 ---@field on_quit? fun(bufnr: integer, cwd: string): function?
----@field on_float_layout? fun(win: integer, sidebar_width: integer, sidebar_col: integer, sidebar_height: integer)
+---@field on_float_layout? fun(win: integer, sidebar_width: integer, sidebar_col: integer, sidebar_height: integer, geometry?: table, style?: string)
 function M.create(profile)
   profile = vim.tbl_extend("force", {
     g_bufnr = "terminal_agent_bufnr",
@@ -360,14 +361,14 @@ local function get_float_geometry()
     width = terminal - border_size,
     height = sidebar_height + 2 - border_size,
     border = border,
-  }, math.max(0, sidebar - 2), left, sidebar_height
+    zindex = config.float_zindex,
+  }, math.max(0, sidebar - 2), left, sidebar_height, settings and settings.display_style
 end
 
 local function open_agent_float(bufnr)
   local geometry, sidebar_width, sidebar_col, sidebar_height = get_float_geometry()
   local win = vim.api.nvim_open_win(bufnr, true, vim.tbl_extend("force", geometry, {
     style = "minimal",
-    zindex = config.float_zindex,
   }))
   if profile.on_float_layout then
     profile.on_float_layout(win, sidebar_width, sidebar_col, sidebar_height)
@@ -472,6 +473,17 @@ local function term_buffer_alive(bufnr)
   return ok and valid_job_id(job)
 end
 
+local function layout_float(win)
+  local cfg, sidebar_width, sidebar_col, sidebar_height, style = get_float_geometry()
+  state.float_geometry = cfg
+  if profile.on_float_layout then
+    profile.on_float_layout(win, sidebar_width, sidebar_col, sidebar_height, cfg, style)
+  else
+    vim.api.nvim_win_set_config(win, cfg)
+    sync_terminal_grid(win, vim.api.nvim_win_get_buf(win))
+  end
+end
+
 local function sync_float_after_resize()
   local cur = current_bufnr()
   if not cur or not term_buffer_alive(cur) then
@@ -481,13 +493,7 @@ local function sync_float_after_resize()
   if not win or not vim.api.nvim_win_is_valid(win) then
     return
   end
-  local cfg, sidebar_width, sidebar_col, sidebar_height = get_float_geometry()
-  vim.api.nvim_win_set_config(win, cfg)
-  state.float_geometry = cfg
-  if profile.on_float_layout then
-    profile.on_float_layout(win, sidebar_width, sidebar_col, sidebar_height)
-  end
-  sync_terminal_grid(win, cur)
+  layout_float(win)
 end
 
 local function schedule_resize_sync()
@@ -516,7 +522,7 @@ local function on_vim_resized()
     local cur = current_bufnr()
     if cur then
       local win = win_for_buf(cur)
-      if win and vim.api.nvim_win_is_valid(win) then
+      if win and vim.api.nvim_win_is_valid(win) and not vim.w[win].luanphan_view_anchor then
         vim.api.nvim_win_set_config(win, state.float_geometry)
       end
     end
@@ -579,14 +585,19 @@ local function attach_term_close(buf)
     callback = function()
       if vim.b[buf].luanphan_agent_quitting then return end
       local win = win_for_buf(buf)
-      local action = win and quit_action(buf)
+      local tile = win and vim.w[win].luanphan_view_anchor
+      local action = win and (not tile or win == vim.api.nvim_get_current_win()) and quit_action(buf)
       clear_bufnr_for_buf(buf)
       vim.schedule(function()
         if action and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
           pcall(action)
         end
         if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
-          pcall(M.close_window, win)
+          if tile and win ~= tile then
+            pcall(vim.api.nvim_win_close, win, true)
+          else
+            pcall(M.close_window, win)
+          end
         end
         if vim.api.nvim_buf_is_valid(buf) then
           pcall(vim.api.nvim_buf_delete, buf, { force = true })
@@ -790,6 +801,22 @@ end
 
 function API.save_view(win)
   save_terminal_view(win)
+end
+
+function API.layout(win)
+  layout_float(win)
+end
+
+function API.prepare_tile(win, opened)
+  local buf = vim.api.nvim_win_get_buf(win)
+  if opened then
+    configure_terminal_window(win)
+    local saved = vim.b[buf].luanphan_terminal_view
+    if saved and saved.follow == false and saved.view then
+      vim.api.nvim_win_call(win, function() vim.fn.winrestview(saved.view) end)
+    end
+  end
+  sync_terminal_grid(win, buf)
 end
 
 local function get_job_id(bufnr)
