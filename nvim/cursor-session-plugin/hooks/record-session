@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Pass the current Cursor conversation ID to its Neovim terminal."""
+
+import json
+import os
+import re
+import sys
+
+
+def record_session():
+    tty = os.environ.get("NVIM_CURSOR_AGENT_TTY", "")
+    if not re.fullmatch(r"/dev/(?:pts/[0-9]+|ttys[0-9A-Za-z]+)", tty):
+        return
+    event = json.load(sys.stdin)
+    if not isinstance(event, dict) or event.get("is_background_agent"):
+        return
+    conversation = event.get("conversation_id") or event.get("session_id")
+    if not isinstance(conversation, str) or not re.fullmatch(
+        r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", conversation
+    ):
+        return
+    fd = os.open(tty, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
+    try:
+        os.write(fd, f"\x1b]39001;cursor-session={conversation.lower()}\x07".encode("ascii"))
+    finally:
+        os.close(fd)
+
+
+if __name__ == "__main__":
+    try:
+        record_session()
+    except (ValueError, OSError):
+        pass
+    print('{"continue":true}')

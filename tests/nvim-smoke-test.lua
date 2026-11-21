@@ -4654,9 +4654,10 @@ local function test_agent_keys_invoke_cli_commands()
       "<leader>a did not cache current folder"
     )
     local cursor_regular = false
+    local plugin_args = "--plugin-dir " .. vim.fn.stdpath("config") .. "/cursor-session-plugin"
     for _, line in ipairs(read_log(log)) do
       local command, _, args = line:match("^([^|]+)|([^|]*)|(.*)$")
-      if command == "cursor-agent" and args == "" then
+      if command == "cursor-agent" and args == plugin_args then
         cursor_regular = true
       end
     end
@@ -4745,28 +4746,48 @@ local function test_leader_a_sends_visual_selection_to_active_agent()
   assert_true(ok, tostring(err))
 end
 
-local function test_codex_sidebar_restore(repo)
-  local root = temp_root .. "/codex-sidebar"
+local function test_agent_sidebar_restore(repo, agent)
+  local root = temp_root .. "/" .. agent .. "-sidebar"
   local first = "00000000-0001-4000-8000-000000000001"
   local second = "00000000-0002-4000-8000-000000000002"
-  for _, id in ipairs({ first, second }) do
-    write(root .. "/codex/sessions/rollout-example-" .. id .. ".jsonl", {})
+  if agent == "codex" then
+    for _, id in ipairs({ first, second }) do
+      write(root .. "/codex/sessions/rollout-example-" .. id .. ".jsonl", {})
+    end
+    write_executable(root .. "/bin/mcodex", {
+      "#!/bin/sh",
+      'id="$2"',
+      '[ "$id" != "-c" ] || id="$TEST_AGENT_THREAD"',
+      'printf "%s|%s|%s\\n" "$1" "$(pwd -P)" "$2" >> "$TEST_AGENT_LOG"',
+      'title="Example ${id##*-}"',
+      'case "$*" in *project-name*) title="$title | $(basename "$PWD")";; esac',
+      'printf "\\033]0;%.29s... | %s\\007" "$id" "$title"',
+      "exec cat",
+    })
+  else
+    write_executable(root .. "/bin/cursor-agent", {
+      "#!/bin/sh",
+      '[ "$1" = "--plugin-dir" ] || exit 1',
+      'hook="$2/hooks/record-session"',
+      "shift 2",
+      'id="${2:-$TEST_AGENT_THREAD}"',
+      'printf "%s|%s|%s\\n" "$1" "$(pwd -P)" "$2" >> "$TEST_AGENT_LOG"',
+      'printf "\\033]0;Example %s - ✅ Ready\\007" "${id##*-}"',
+      [[printf '{"conversation_id":"%s"}\n' "$id" | "$hook" >/dev/null]],
+      "while IFS= read -r phase; do",
+      [[  case "$phase" in submit) state="⏳ Working ..." ;; stop) state="✅ Ready" ;; esac]],
+      '  printf "\\033]0;Example %s - %s\\007" "${id##*-}" "$state"',
+      "done",
+    })
   end
-  write_executable(root .. "/bin/mcodex", {
-    "#!/bin/sh",
-    'id="$2"',
-    '[ "$id" != "-c" ] || id="$TEST_CODEX_THREAD"',
-    'printf "%s|%s|%s\\n" "$1" "$(pwd -P)" "$2" >> "$TEST_CODEX_LOG"',
-    'title="Example ${id##*-}"',
-    'case "$*" in *project-name*) title="$title | $(basename "$PWD")";; esac',
-    'printf "\\033]0;%.29s... | %s\\007" "$id" "$title"',
-    "exec cat",
-  })
   local script = root .. "/session.lua"
   local setup = {
     "local root = " .. string.format("%q", root),
+    "local agent = " .. string.format("%q", agent),
+    "local resume = " .. string.format("%q", agent == "codex" and "resume" or "--resume"),
     "local first, second = " .. string.format("%q, %q", first, second),
-    "vim.g.luanphan_codex_sessions_dir = root .. '/state'",
+    "vim.g.luanphan_codex_sessions_dir = root .. '/codex-state'",
+    "vim.g.luanphan_cursor_sessions_dir = root .. '/cursor-state'",
     "vim.g.luanphan_agent_status_dir = root .. '/status'",
     "vim.g.luanphan_agent_position_file = root .. '/position'",
     "vim.g.luanphan_default_agent_file = root .. '/default'",
@@ -4774,10 +4795,11 @@ local function test_codex_sidebar_restore(repo)
     "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
     "vim.env.CODEX_HOME = root .. '/codex'",
     "vim.env.CODEX_SQLITE_HOME = root .. '/codex'",
-    "vim.env.TEST_CODEX_LOG = root .. '/invocations'",
+    "vim.env.TEST_AGENT_LOG = root .. '/invocations'",
     "vim.env.PATH = root .. '/bin:' .. vim.env.PATH",
     "vim.o.columns = 160",
     "local agents = require('luanphan.plugins.agents')",
+    "assert(agents.set_default_agent('codex'))",
   }
   local function run(lines)
     write(script, vim.list_extend(vim.list_slice(setup), lines))
@@ -4785,10 +4807,10 @@ local function test_codex_sidebar_restore(repo)
     assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
   end
   run({
-    "local sessions = require('luanphan.codex_sessions')",
+    "local sessions = require('luanphan.agent_sessions')",
     "for _, id in ipairs({ first, second }) do",
-    "  vim.env.TEST_CODEX_THREAD = id",
-    "  local buf = assert(agents.new('codex'))",
+    "  vim.env.TEST_AGENT_THREAD = id",
+    "  local buf = assert(agents.new(agent))",
     "  assert(vim.wait(3000, function() return vim.b[buf].luanphan_agent_thread_id == id end), 'missing exact thread ID')",
     "end",
     "assert(#sessions.list() == 2, 'both same-directory threads should be saved')",
@@ -4798,6 +4820,7 @@ local function test_codex_sidebar_restore(repo)
     "agents.toggle()",
     "local main = vim.api.nvim_get_current_win()",
     "local sidebar = assert(vim.w[main].luanphan_agent_sidebar)",
+    "local second_buf = vim.api.nvim_get_current_buf()",
     "assert(vim.b.luanphan_agent_thread_id == second, 'did not resume the most recent thread')",
     "local rows = vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(sidebar), 0, -1, false)",
     "local selected",
@@ -4811,26 +4834,60 @@ local function test_codex_sidebar_restore(repo)
     "vim.fn.maparg('o', 'n', false, true).callback()",
     "assert(vim.api.nvim_get_current_win() == main and vim.b.luanphan_agent_thread_id == first, 'wrong sidebar thread resumed')",
     "assert(vim.wait(3000, function()",
-    "  return (vim.b.term_title or ''):find('%.%.%. | Example')",
-    "end), 'Codex title included the folder suffix')",
-    "assert(require('luanphan.view_container').tab_label(vim.api.nvim_get_current_buf()) == 'Example 000000000001', 'unexpected Codex tab label')",
+    "  return (vim.b.term_title or ''):find('Example', 1, true)",
+    "end), 'missing agent title')",
+    "assert(require('luanphan.view_container').tab_label(vim.api.nvim_get_current_buf()) == 'Example 000000000001', 'unexpected agent tab label')",
+    "if agent == 'cursor' then",
+    "  local job = vim.b.terminal_job_id",
+    "  assert(vim.wait(3000, function() return vim.b.luanphan_agent_program_status == 'idle' end), 'Cursor has no startup status')",
+    "  vim.fn.chansend(job, 'submit\\n')",
+    "  assert(vim.wait(3000, function() return vim.b.luanphan_agent_program_status == 'working' end), 'Cursor has no working status')",
+    "  assert(vim.b[second_buf].luanphan_agent_program_status == 'idle', 'another Cursor terminal was marked working')",
+    "  vim.fn.chansend(job, 'stop\\n')",
+    "  assert(vim.wait(3000, function() return vim.b.luanphan_agent_program_status == 'done' end), 'Cursor kept its working status')",
+    "end",
     "local cwd = vim.uv.fs_realpath(vim.fn.getcwd())",
     "assert(vim.wait(3000, function()",
     "  local lines = vim.fn.readfile(root .. '/invocations')",
-    "  return vim.tbl_contains(lines, 'resume|' .. cwd .. '|' .. first)",
-    "    and vim.tbl_contains(lines, 'resume|' .. cwd .. '|' .. second)",
-    "end), 'mcodex did not receive the exact IDs and original directory')",
+    "  return vim.tbl_contains(lines, resume .. '|' .. cwd .. '|' .. first)",
+    "    and vim.tbl_contains(lines, resume .. '|' .. cwd .. '|' .. second)",
+    "end), 'agent did not receive the exact IDs and original directory')",
     "vim.cmd('quit')",
-    "local sessions = require('luanphan.codex_sessions')",
+    "local sessions = require('luanphan.agent_sessions')",
     "assert(vim.wait(3000, function()",
     "  local saved = sessions.list()",
     "  return #saved == 1 and saved[1].thread_id == second",
     "end), 'closing one agent should remove only its saved record')",
   })
   run({
-    "local saved = require('luanphan.codex_sessions').list()",
+    "local saved = require('luanphan.agent_sessions').list()",
     "assert(#saved == 1 and saved[1].thread_id == second, 'editor exit should preserve the remaining agent')",
   })
+  if agent == "cursor" then
+    write(script, setup)
+    local socket = vim.fn.tempname() .. ".sock"
+    local child = vim.fn.jobstart({
+      "nvim", "--headless", "--embed", "--listen", socket, "-c", "luafile " .. vim.fn.fnameescape(script),
+    }, {
+      cwd = repo,
+      on_stdout = function() end,
+    })
+    assert_true(child > 0, "could not start embedded Neovim")
+    local ok, err = xpcall(function()
+      vim.api.nvim_chan_send(child, vim.mpack.encode({
+        0, 1, "nvim_ui_attach", { 160, 40, { rgb = true, ext_linegrid = true } },
+      }))
+      wait_until("the embedded Neovim socket", function() return uv.fs_stat(socket) ~= nil end, 3000)
+      local rpc = vim.fn.sockconnect("pipe", socket, { rpc = true })
+      assert_true(rpc > 0, "could not connect to embedded Neovim")
+      wait_until("the first UI restores the saved Cursor terminal", function()
+        return vim.rpcrequest(rpc, "nvim_eval", "get(b:, 'luanphan_agent_thread_id', '')") == second
+      end, 4000)
+    end, debug.traceback)
+    pcall(vim.api.nvim_chan_send, child, vim.mpack.encode({ 2, "nvim_command", { "qa!" } }))
+    if vim.fn.jobwait({ child }, 1000)[1] == -1 then vim.fn.jobstop(child) end
+    assert_true(ok, tostring(err))
+  end
 end
 
 local function test_agent_view_container(repo)
@@ -7377,7 +7434,7 @@ local search_and_navigation_tests = {
 
 local agent_tests = {
   cli_commands = test_agent_cli_commands_available,
-  codex_sidebar_restore = test_codex_sidebar_restore,
+  sidebar_restore = test_agent_sidebar_restore,
   default_setting = test_default_agent_setting,
   keys = test_agent_keys_invoke_cli_commands,
   lifecycle = test_agent_terminal_lifecycle,
@@ -7644,7 +7701,10 @@ local setup_ok, setup_err = xpcall(function()
     agent_tests.view_container(repo)
   end)
   test("Codex sidebar restores exact threads across editor restarts", function()
-    agent_tests.codex_sidebar_restore(repo)
+    agent_tests.sidebar_restore(repo, "codex")
+  end)
+  test("Cursor sidebar restores exact threads across editor restarts", function()
+    agent_tests.sidebar_restore(repo, "cursor")
   end)
 
   test("deleted startup workspace falls back to master worktree", function()

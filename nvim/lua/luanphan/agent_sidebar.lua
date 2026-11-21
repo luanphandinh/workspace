@@ -1,5 +1,6 @@
 local M = {}
 local codex_sessions = require("luanphan.codex_sessions")
+local agent_sessions = require("luanphan.agent_sessions")
 local jumplist = require("luanphan.agent_jumplist")
 local agent_status = require("luanphan.agent_status")
 local close_window = require("luanphan.terminal_agent").close_window
@@ -270,10 +271,10 @@ function M.layout(win, width, col)
   vim.keymap.set("n", "d", function()
     local session = rows[vim.api.nvim_win_get_cursor(sidebar)[1]]
     if session and session.thread_id and not session.bufnr then
-      codex_sessions.forget(session.thread_id)
+      agent_sessions.forget(session.agent, session.thread_id)
       M.refresh(true)
     end
-  end, vim.tbl_extend("force", opts, { desc = "Forget saved Codex session" }))
+  end, vim.tbl_extend("force", opts, { desc = "Forget saved agent session" }))
   for _, key in ipairs({ "<CR>", "o" }) do
     vim.keymap.set("n", key, open_selected, opts)
   end
@@ -356,6 +357,17 @@ vim.api.nvim_create_autocmd("TermRequest", {
   callback = function(args)
     local sequence = args.data and args.data.sequence
     if not sequence then return end
+    local cursor_id = sequence:match("^\27%]39001;cursor%-session=([%x-]+)$")
+    if cursor_id and vim.b[args.buf].luanphan_agent_name == "cursor" then
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(args.buf) then return end
+        if not vim.b[args.buf].luanphan_agent_program_status then
+          vim.b[args.buf].luanphan_agent_program_status = "idle"
+        end
+        agent_sessions.capture(args.buf, cursor_id)
+      end)
+      return
+    end
     local status = sequence:match("^\27%]7501;state=(%a+)")
     if status and vim.b[args.buf].luanphan_agent_name then
       if status == "working" or status_icons[status] or status == "clear" then
@@ -366,16 +378,32 @@ vim.api.nvim_create_autocmd("TermRequest", {
       end
       return
     end
-    if not sequence:match("^\27%][02];") then return end
+    local title = sequence:match("^\27%][02];(.*)$")
+    if not title then return end
+    local terminal = vim.b[args.buf]
+    if terminal.luanphan_agent_name == "cursor" then
+      local name, state = agent_sessions.cursor_title(title)
+      if state then
+        local previous = terminal.luanphan_agent_program_status
+        if state == "idle" and (previous == "working" or previous == "blocked" or previous == "done") then
+          state = "done"
+        end
+        terminal.luanphan_agent_program_status = state == "loading" and "idle" or state
+      end
+      if terminal.luanphan_cursor_title == name then return end
+      terminal.luanphan_cursor_title = name
+    end
     vim.schedule(function()
       codex_sessions.observe(args.buf)
+      if vim.api.nvim_buf_is_valid(args.buf) and vim.b[args.buf].luanphan_agent_name == "cursor" then
+        agent_sessions.save(args.buf)
+      end
       local thread = thread_lines[args.buf]
       if not thread or not valid(sidebar) or not vim.api.nvim_buf_is_valid(args.buf) then return end
       local buf = vim.api.nvim_win_get_buf(sidebar)
       local line = thread.row
       local text = vim.api.nvim_buf_get_lines(buf, line - 1, line, false)[1]
-      local title = require("luanphan.view_container").tab_label(args.buf, rows[line].agent_label)
-      local label = fit(title, thread.title_width)
+      local label = fit(require("luanphan.view_container").tab_label(args.buf, rows[line].agent_label), thread.title_width)
       vim.bo[buf].modifiable = true
       vim.api.nvim_buf_set_text(buf, line - 1, thread.title_col, line - 1, #text, { label })
       vim.bo[buf].modifiable = false

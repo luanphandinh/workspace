@@ -2,6 +2,7 @@ local M = {}
 local jumplist = require("luanphan.agent_jumplist")
 local terminal_agent = require("luanphan.terminal_agent")
 local codex_sessions = require("luanphan.codex_sessions")
+local sessions = require("luanphan.agent_sessions")
 
 local agent_order = { "codex", "cursor", "claude" }
 local agent_key = "<leader>a"
@@ -12,7 +13,13 @@ local agent_defs = {
     g_bufnr = "cursor_agent_bufnr",
     notify_prefix = "cursor_agent",
     augroup_prefix = "CursorAgent",
-    defaults = { cmd = "cursor-agent", detach_on_quit = true },
+    defaults = {
+      cmd = {
+        "sh", "-c", [[export NVIM_CURSOR_AGENT_TTY="$(tty)"; exec cursor-agent --plugin-dir "$0" "$@"]],
+        vim.fn.stdpath("config") .. "/cursor-session-plugin",
+      },
+      detach_on_quit = true,
+    },
   },
   claude = {
     plugin = "luanphan-claude-agent",
@@ -283,6 +290,7 @@ local function get_agent(name)
   local sidebar = require("luanphan.agent_sidebar")
   apis[name] = terminal_agent.create({
     status_name = name,
+    native_status = name == "cursor",
     g_bufnr = def.g_bufnr,
     notify_prefix = def.notify_prefix,
     augroup_prefix = def.augroup_prefix,
@@ -294,10 +302,14 @@ local function get_agent(name)
     end,
     on_show = function(bufnr, win, cwd)
       jumplist.record(bufnr)
-      if name == "codex" then
+      if sessions.supported(name) then
         local seconds, microseconds = vim.uv.gettimeofday()
         vim.b[bufnr].luanphan_agent_saved_use = seconds + microseconds / 1000000
-        codex_sessions.save(bufnr)
+        if name == "codex" then
+          codex_sessions.save(bufnr)
+        else
+          sessions.save(bufnr)
+        end
       end
       agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
       sidebar.attach(bufnr, win)
@@ -307,11 +319,11 @@ local function get_agent(name)
       end, { buffer = bufnr, silent = true, nowait = true, desc = "Select terminal agent" })
     end,
     on_close = function(bufnr, cwd)
-      local id = name == "codex" and vim.b[bufnr].luanphan_agent_thread_id
+      local id = sessions.supported(name) and vim.b[bufnr].luanphan_agent_thread_id
       agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
       vim.schedule(function()
         if id and type(vim.v.exiting) ~= "number" then
-          codex_sessions.forget_buffer(bufnr, id)
+          sessions.forget_buffer(bufnr, name, id)
         end
         sidebar.refresh()
       end)
@@ -392,8 +404,11 @@ function M.new(name, opts)
 end
 
 function M.resume(session, opts)
-  return M.new("codex", vim.tbl_extend("force", opts or {}, {
-    args = codex_sessions.launch_args(session.thread_id),
+  if not sessions.supported(session.agent) or not sessions.valid_id(session.thread_id) then return false end
+  local args = session.agent == "codex" and codex_sessions.launch_args(session.thread_id)
+    or { "--resume", session.thread_id }
+  return M.new(session.agent, vim.tbl_extend("force", opts or {}, {
+    args = args,
     thread_id = session.thread_id,
     agent_label = session.agent_label,
   }))
@@ -419,11 +434,21 @@ function M.toggle()
     return
   end
   local active = most_recent_tab(vim.fn.getcwd())
-  if not active and M.default_agent() == "codex" then
-    local saved = codex_sessions.latest(vim.fn.getcwd())
+  local default = M.default_agent()
+  if not active then
+    local saved = sessions.latest(vim.fn.getcwd())
     if saved then return M.resume(saved) end
   end
-  M.open(active and active.agent or M.default_agent(), active and active.bufnr or nil)
+  M.open(active and active.agent or default, active and active.bufnr or nil)
+end
+
+local function restore_on_first_ui()
+  if vim.g.luanphan_agent_startup_restored or vim.v.vim_did_enter == 0 or #vim.api.nvim_list_uis() == 0 then return end
+  vim.g.luanphan_agent_startup_restored = true
+  local cwd = vim.fn.getcwd()
+  if visible_agent() or most_recent_tab(cwd) then return end
+  local saved = sessions.latest(cwd)
+  if saved then M.resume(saved, { view_mode = true }) end
 end
 
 function M.hide()
@@ -525,6 +550,12 @@ local function agent_spec(name)
     def.plugin,
     virtual = true,
     keys = keys,
+    init = name == "codex" and function()
+      vim.api.nvim_create_autocmd({ "VimEnter", "UIEnter" }, {
+        group = vim.api.nvim_create_augroup("LuanphanAgentStartup", { clear = true }),
+        callback = function() vim.schedule(restore_on_first_ui) end,
+      })
+    end or nil,
     config = function()
       setup_agent(name)
     end,

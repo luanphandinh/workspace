@@ -1325,13 +1325,12 @@ local function setup()
       local live = {}
       for _, instance in ipairs(instances) do
         local id = vim.b[instance.bufnr].luanphan_agent_thread_id
-        if id then live[id] = true end
+        if id then live[instance.agent .. ":" .. id] = true end
       end
-      for _, record in ipairs(require("luanphan.codex_sessions").list()) do
-        if not live[record.thread_id] and dir_exists(record.path) then
+      for _, record in ipairs(require("luanphan.agent_sessions").list()) do
+        if not live[record.agent .. ":" .. record.thread_id] and dir_exists(record.path) then
           local root = roots[record.path] or git_root(record.path) or record.path
           roots[record.path] = root
-          record.agent = "codex"
           record.workspace = workspace_root_for_path(record.path) or root
           instances[#instances + 1] = record
         end
@@ -1355,7 +1354,7 @@ local function setup()
       end
       instance.context = context
       instance.branch = project_branch(root)
-      instance.status = agent_status.read(instance.agent, cwd)
+      instance.status = vim.b[instance.bufnr].luanphan_agent_program_status or agent_status.read(instance.agent, cwd)
     end
 
     table.sort(instances, agent_before)

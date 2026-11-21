@@ -48,6 +48,7 @@ local BASE_DEFAULTS = {
 
 ---@param profile table
 ---@field status_name? string stable name used by the cross-process status store
+---@field native_status? boolean whether the program reports its own status
 ---@field g_bufnr string vim.g key for buffer reuse after reload
 ---@field notify_prefix string prefix for :vim.notify
 ---@field augroup_prefix string prefix for autocmd groups (CursorAgent / ClaudeAgent)
@@ -666,7 +667,7 @@ local function set_float_close_keymaps(bufnr)
 end
 
 local function attach_status_tracking(bufnr, cwd, initial_status)
-  if not profile.status_name then return end
+  if not profile.status_name or profile.native_status then return end
   local agent_status = require("luanphan.agent_status")
   if initial_status then
     agent_status.write(profile.status_name, cwd, initial_status)

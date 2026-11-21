@@ -168,6 +168,7 @@ nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	rm -rf ~/.config/nvim/*
 	cp -r ./nvim/. ~/.config/nvim/
+	python3 ./scripts/sync-cursor-cli-config.py
 	nvim --headless "+Lazy! $(lazy_command)" +qa
 
 nvim-lock: ## Refresh nvim/lazy-lock.json from the installed Neovim config.

@@ -1,12 +1,8 @@
 local M = {}
-local uv = vim.uv
+local sessions = require("luanphan.agent_sessions")
 local pending = {}
 local uuid_prefix = string.rep("%x", 8) .. ("%-" .. string.rep("%x", 4)):rep(3) .. "%-" .. string.rep("%x", 5)
 local uuid = "^" .. uuid_prefix .. string.rep("%x", 7) .. "$"
-
-local function state_dir()
-  return vim.g.luanphan_codex_sessions_dir or (vim.fn.stdpath("state") .. "/workspace-codex-sessions")
-end
 
 function M.launch_args(id)
   local args = { "resume", "-c", 'tui.terminal_title=["session-id","thread-name"]' }
@@ -27,78 +23,12 @@ function M.display_title(title)
   return label or title
 end
 
-local function read(id)
-  local ok, lines = pcall(vim.fn.readfile, state_dir() .. "/" .. id .. ".json")
-  if not ok then return nil end
-  local decoded, record = pcall(vim.json.decode, table.concat(lines, "\n"))
-  if not decoded or type(record) ~= "table" or record.thread_id ~= id
-    or type(record.path) ~= "string" or record.path:sub(1, 1) ~= "/"
-    or type(record.agent_label) ~= "string" or type(record.last_used) ~= "number" then
-    return nil
-  end
-  return record
-end
-
-function M.list()
-  local dir = state_dir()
-  local records = {}
-  if vim.fn.isdirectory(dir) ~= 1 then return records end
-  for name, kind in vim.fs.dir(dir) do
-    local id = name:match("^(.*)%.json$")
-    if kind == "file" and id and id:match(uuid) then
-      local record = read(id)
-      if record then records[#records + 1] = record end
-    end
-  end
-  return records
-end
-
-function M.latest(path)
-  local real = uv.fs_realpath(path) or path
-  local latest
-  for _, record in ipairs(M.list()) do
-    if record.path == real and (not latest or record.last_used > latest.last_used) then latest = record end
-  end
-  return latest
-end
-
-function M.forget(id)
-  if type(id) == "string" and id:match(uuid) then
-    uv.fs_unlink(state_dir() .. "/" .. id .. ".json")
-  end
-end
-
-function M.forget_buffer(bufnr, id)
-  id = id or vim.b[bufnr].luanphan_agent_thread_id
-  if not id then return end
-  for _, other in ipairs(vim.api.nvim_list_bufs()) do
-    if other ~= bufnr and vim.b[other].luanphan_agent_thread_id == id then return end
-  end
-  M.forget(id)
-end
-
 function M.save(bufnr)
   local buf = vim.b[bufnr]
-  local id, cwd = buf.luanphan_agent_thread_id, buf.luanphan_agent_cwd
-  if not id or not id:match(uuid) or not cwd then return end
   local prefix, label = parse_title(buf.term_title)
-  if prefix and not vim.startswith(id, prefix) then return end
-  local record = {
-    thread_id = id,
-    path = uv.fs_realpath(cwd) or cwd,
-    agent_label = label and label ~= "" and label or buf.luanphan_agent_saved_label or "codex",
-    last_used = buf.luanphan_agent_saved_use or os.time(),
-  }
-  if vim.deep_equal(read(id), record) then return end
-  local dir = state_dir()
-  if not pcall(vim.fn.mkdir, dir, "p", 448) then return end
-  local path = dir .. "/" .. id .. ".json"
-  local tmp = path .. "." .. vim.fn.getpid() .. ".tmp"
-  local wrote, result = pcall(vim.fn.writefile, { vim.json.encode(record) }, tmp, "s")
-  if wrote and result == 0 then
-    uv.fs_rename(tmp, path)
+  if not prefix or vim.startswith(buf.luanphan_agent_thread_id or "", prefix) then
+    sessions.save(bufnr, label)
   end
-  uv.fs_unlink(tmp)
 end
 
 local function candidates(output, prefix)
@@ -165,11 +95,8 @@ function M.observe(bufnr, attempt)
       end
       return
     end
-    M.forget_buffer(bufnr)
-    buf.luanphan_agent_thread_id = id
-    M.save(bufnr)
-    local sidebar = package.loaded["luanphan.agent_sidebar"]
-    if sidebar then sidebar.refresh(true) end
+    local _, label = parse_title(buf.term_title)
+    sessions.capture(bufnr, id, label)
   end)
 end
 

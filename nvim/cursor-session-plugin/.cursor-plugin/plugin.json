@@ -1,0 +1,5 @@
+{
+  "name": "workspace-terminal-session",
+  "version": "1.0.0",
+  "description": "Reports the active conversation ID to the editor terminal."
+}
