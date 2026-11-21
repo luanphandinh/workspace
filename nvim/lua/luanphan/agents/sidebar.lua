@@ -272,7 +272,7 @@ function M.layout(win, width, col)
   vim.wo[sidebar].winfixbuf = true
   vim.wo[sidebar].cursorline = true
   vim.wo[sidebar].cursorlineopt = "line"
-  vim.wo[sidebar].winhighlight = "NormalFloat:Normal,CursorLine:Visual"
+  vim.wo[sidebar].winhighlight = "CursorLine:Visual"
   vim.wo[sidebar].winbar = "%#TabLineFill# Workspaces"
   agents.map_jump_keys(buf, true)
 

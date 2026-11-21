@@ -489,7 +489,7 @@ local function configure_terminal_window(win)
     winfixbuf = false,
     winfixheight = false,
     winfixwidth = false,
-    winhighlight = "EndOfBuffer:",
+    winhighlight = "NormalFloat:Normal,EndOfBuffer:",
     wrap = false,
   }
   for name, value in pairs(options) do
