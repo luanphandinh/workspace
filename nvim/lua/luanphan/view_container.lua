@@ -2,6 +2,7 @@ local M = {}
 
 local Container = {}
 Container.__index = Container
+local focused_tile_border = "FloatBorder:DiagnosticOk"
 
 function M.tab_label(bufnr, fallback)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -151,17 +152,38 @@ local function tile_geometry(geometry, count)
 	return tiles
 end
 
+local function set_tile_border_highlight(win, focused)
+	if not win or not vim.api.nvim_win_is_valid(win) then return end
+	local current = vim.wo[win].winhighlight
+	local highlights = current:gsub(",?" .. focused_tile_border, "")
+	if focused then highlights = highlights == "" and focused_tile_border or highlights .. "," .. focused_tile_border end
+	if highlights ~= current then vim.wo[win].winhighlight = highlights end
+end
+
 local function clear_tiles(self, closing)
 	local anchor, windows = self.tile_anchor, self.tile_windows
-	self.tile_anchor, self.tile_windows = nil, nil
-	if self.tile_close_autocmd then
-		pcall(vim.api.nvim_del_autocmd, self.tile_close_autocmd)
-		self.tile_close_autocmd = nil
+	if anchor ~= closing then set_tile_border_highlight(anchor, false) end
+	self.tile_anchor, self.tile_windows, self.focused_tile = nil, nil, nil
+	if self.tile_autocmd then
+		pcall(vim.api.nvim_del_autocmd, self.tile_autocmd)
+		self.tile_autocmd = nil
 	end
 	if anchor and vim.api.nvim_win_is_valid(anchor) then vim.w[anchor].luanphan_view_anchor = nil end
 	for _, win in pairs(windows or {}) do
 		if win ~= closing and vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
 	end
+end
+
+local function highlight_focused_tile(self)
+	local current = vim.api.nvim_get_current_win()
+	local focused
+	if next(self.tile_windows or {}) and vim.w[current].luanphan_view_anchor == self.tile_anchor then
+		focused = current
+	end
+	local previous = self.focused_tile
+	if previous ~= focused then set_tile_border_highlight(previous, false) end
+	set_tile_border_highlight(focused, true)
+	self.focused_tile = focused
 end
 
 local function untile(self, anchor, context)
@@ -183,8 +205,9 @@ local function tile(self, anchor, context, geometry)
 	if self.tile_anchor ~= anchor then
 		clear_tiles(self)
 		self.tile_anchor = anchor
-		self.tile_close_autocmd = vim.api.nvim_create_autocmd("WinClosed", {
+		self.tile_autocmd = vim.api.nvim_create_autocmd({ "WinEnter", "WinClosed" }, {
 			callback = function(args)
+				if args.event == "WinEnter" then return highlight_focused_tile(self) end
 				local win = tonumber(args.match)
 				if win == anchor then
 					clear_tiles(self, win)
@@ -220,6 +243,7 @@ local function tile(self, anchor, context, geometry)
 	for buf, win in pairs(previous) do
 		if not windows[buf] and vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
 	end
+	highlight_focused_tile(self)
 	return panes
 end
 

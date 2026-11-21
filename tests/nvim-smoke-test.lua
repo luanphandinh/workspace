@@ -5423,14 +5423,24 @@ local function test_agent_view_container(repo)
       assert_terminal_grid_matches(tile_buffers[index], win, "tile " .. index)
     end
 
+    local function assert_focused_tile(index)
+      for i = 1, #tile_buffers do
+        local highlights = vim.wo[tile_window(tile_buffers[i])].winhighlight
+        local focused = highlights:find("FloatBorder:DiagnosticOk", 1, true) ~= nil
+        assert_true(focused == (i == index), "wrong focus border for tile " .. i)
+      end
+    end
+    assert_focused_tile(4)
     for _, index in ipairs({ 1, 2, 3, 4 }) do
       invoke_map("<Tab>")
       assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[index]), "Tab ignored tile order")
+      assert_focused_tile(index)
     end
     invoke_map("<S-Tab>")
     assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[3]), "Shift-Tab ignored tile order")
     invoke_map("<C-h>")
     local tile_sidebar = vim.api.nvim_get_current_win()
+    assert_focused_tile(nil)
     invoke_map("K")
     assert_true(tile_config(3).row == 0 and tile_config(2).row == cut, "sidebar reorder did not move the tiles")
     assert_true(vim.api.nvim_get_current_win() == tile_sidebar, "tile reorder took focus from the sidebar")

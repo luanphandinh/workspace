@@ -9,6 +9,7 @@
 
 local M = {}
 local preserve_windows = false
+local pending_tile_close = {}
 
 function M.close_window(win)
   win = vim.w[win].luanphan_view_anchor or win
@@ -474,6 +475,7 @@ local function term_buffer_alive(bufnr)
 end
 
 local function layout_float(win)
+  if pending_tile_close[vim.w[win].luanphan_view_anchor] then return end
   local cfg, sidebar_width, sidebar_col, sidebar_height, style = get_float_geometry()
   state.float_geometry = cfg
   if profile.on_float_layout then
@@ -587,8 +589,11 @@ local function attach_term_close(buf)
       local win = win_for_buf(buf)
       local tile = win and vim.w[win].luanphan_view_anchor
       local action = win and (not tile or win == vim.api.nvim_get_current_win()) and quit_action(buf)
+      -- Let the closing tile select its neighbor before any pending resize reflows the panel.
+      if action and tile then pending_tile_close[tile] = true end
       clear_bufnr_for_buf(buf)
       vim.schedule(function()
+        if action and tile then pending_tile_close[tile] = nil end
         if action and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
           pcall(action)
         end
