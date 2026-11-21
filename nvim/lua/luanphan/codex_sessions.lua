@@ -18,7 +18,7 @@ local function parse_title(title)
   if type(title) ~= "string" then return nil end
   local prefix, label = title:match("^(" .. uuid_prefix .. ")%.%.%.(.*)$")
   if not prefix then return nil end
-  label = vim.trim(label):gsub("^·%s*", ""):gsub("^•%s*", ""):gsub("^|%s*", "")
+  label = vim.trim(label):gsub("^|%s*", "")
   return prefix:lower(), label
 end
 

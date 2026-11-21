@@ -138,19 +138,12 @@ function M.map_jump_keys(bufnr, keep_focus)
   end
 end
 
-local function normalize_bufnrs(value)
-  if type(value) == "number" then
-    return { value }
-  end
-  return type(value) == "table" and value or {}
-end
-
 local function agent_buffers(name, cwd, closing_bufnr)
   local def = agent_defs[name]
   local buffers = def and vim.g[def.g_bufnr] or nil
   local result = {}
   local stored = type(buffers) == "table" and buffers[cwd] or nil
-  for _, bufnr in ipairs(normalize_bufnrs(stored)) do
+  for _, bufnr in ipairs(type(stored) == "table" and stored or {}) do
     if bufnr == closing_bufnr or terminal_running(bufnr) then
       result[#result + 1] = bufnr
     end

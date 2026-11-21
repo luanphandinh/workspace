@@ -619,13 +619,8 @@ local function setup()
   local function restore_buffers(cwd)
     local store = vim.g[BUFSTORE_KEY] or {}
     local entry = store[cwd]
-    if not entry then return 0, nil end
-
-    -- Tolerate either the new struct or the old flat-list format.
-    local files = (type(entry) == "table" and entry.files) or entry
-    local active = type(entry) == "table" and entry.active or nil
-    local positions = type(entry) == "table" and entry.positions or {}
-    if not files or #files == 0 then return 0, nil end
+    if type(entry) ~= "table" or type(entry.files) ~= "table" or #entry.files == 0 then return 0, nil end
+    local files, active, positions = entry.files, entry.active, entry.positions
 
     local restored = 0
     for _, path in ipairs(files) do
@@ -1283,13 +1278,6 @@ local function setup()
     return ok and status[1] == -1
   end
 
-  local function registered_agent_buffers(value)
-    if type(value) == "number" then
-      return { value }
-    end
-    return type(value) == "table" and value or {}
-  end
-
   local function agent_before(a, b)
     if a.last_used ~= b.last_used then
       return a.last_used > b.last_used
@@ -1311,9 +1299,8 @@ local function setup()
     for _, agent in ipairs(AGENT_BUFFER_KEYS) do
       local buffers = vim.g[agent.key]
       if type(buffers) == "table" then
-        for cwd, value in pairs(buffers) do
-          local bufnrs = registered_agent_buffers(value)
-          for index, bufnr in ipairs(bufnrs) do
+        for cwd, bufnrs in pairs(buffers) do
+          for index, bufnr in ipairs(type(bufnrs) == "table" and bufnrs or {}) do
             if type(cwd) == "string" and dir_exists(cwd) and terminal_job_running(bufnr) then
               local root = roots[cwd] or git_root(cwd) or cwd
               roots[cwd] = root

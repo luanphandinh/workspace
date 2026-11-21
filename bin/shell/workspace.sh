@@ -41,5 +41,3 @@ elif [ -n "${BASH_VERSION:-}" ] && [ -z "${POSIXLY_CORRECT:-}" ] && command -v z
   eval "$(zoxide init bash --cmd z)"
 fi
 unset -f meta-hub 2>/dev/null || true
-unalias mcodex 2>/dev/null || true
-unset -f mcodex 2>/dev/null || true

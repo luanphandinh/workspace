@@ -13,25 +13,25 @@ import pathlib
 import sys
 
 home = pathlib.Path(sys.argv[1])
-old = str(home / "bin" / "codex-turn-ended-notify")
+status = str(home / "bin" / "agent-turn-ended-status")
 fixtures = {
     home / ".claude" / "settings.json": {
         "agentPushNotifEnabled": True,
         "hooks": {"Stop": [{"hooks": [
-            {"type": "command", "command": old},
+            {"type": "command", "command": f"{status} claude"},
             {"type": "command", "command": "custom-claude-hook"},
         ]}]},
     },
     home / ".cursor" / "hooks.json": {
         "version": 1,
         "hooks": {"stop": [
-            {"command": old},
+            {"command": f"{status} cursor"},
             {"command": "custom-cursor-hook"},
         ]},
     },
     home / ".codex" / "hooks.json": {
         "hooks": {"Stop": [{"hooks": [
-            {"type": "command", "command": old},
+            {"type": "command", "command": f"{status} codex"},
             {"type": "command", "command": "custom-codex-hook"},
         ]}]},
     },
@@ -40,7 +40,7 @@ for path, data in fixtures.items():
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data), encoding="utf-8")
 (home / ".codex" / "config.toml").write_text(
-    f'model = "example-model"\nnotify = ["{old}"]\n\n[features]\nmulti_agent = true\n',
+    'model = "example-model"\nnotify = ["custom-notify"]\n\n[features]\nmulti_agent = true\n',
     encoding="utf-8",
 )
 PY
@@ -72,13 +72,8 @@ codex_commands = [hook["command"] for group in codex["hooks"]["Stop"] for hook i
 assert codex_commands.count("custom-codex-hook") == 1
 assert sum(status in value and value.endswith(" codex") for value in codex_commands) == 1
 
-for commands in (claude_commands, cursor_commands, codex_commands):
-    assert all("codex-turn-ended-notify" not in value for value in commands)
-
 config = (home / ".codex" / "config.toml").read_text()
-assert "notify =" not in config
-assert 'model = "example-model"' in config
-assert "multi_agent = true" in config
+assert config == 'model = "example-model"\nnotify = ["custom-notify"]\n\n[features]\nmulti_agent = true\n'
 PY
 
 (

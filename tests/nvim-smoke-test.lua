@@ -1344,21 +1344,11 @@ end
 
 local function registered_agent_bufnrs(global_name, cwd)
   local stored = vim.g[global_name]
+  if type(stored) ~= "table" then return {} end
+  cwd = cwd and realpath(cwd)
   local result = {}
-  local function append(value)
-    if type(value) == "number" then
-      result[#result + 1] = value
-    elseif type(value) == "table" then
-      for _, nested in pairs(value) do
-        append(nested)
-      end
-    end
-  end
-
-  if type(stored) == "table" and cwd and stored[cwd] ~= nil then
-    append(stored[cwd])
-  else
-    append(stored)
+  for path, bufnrs in pairs(stored) do
+    if not cwd or realpath(path) == cwd then vim.list_extend(result, bufnrs) end
   end
   return result
 end
@@ -3670,9 +3660,9 @@ local function test_active_agent_discovery(repo, worktree)
     vim.b[repo_codex_buf].luanphan_agent_last_used = 3
     vim.b[worktree_codex_buf].luanphan_agent_last_used = 2
     vim.b[worktree_cursor_buf].luanphan_agent_last_used = 1
-    vim.g.codex_agent_bufnr = { [repo] = repo_codex_buf, [worktree] = worktree_codex_buf }
-    vim.g.cursor_agent_bufnr = { [worktree] = worktree_cursor_buf }
-    vim.g.claude_agent_bufnr = { [repo] = 999999 }
+    vim.g.codex_agent_bufnr = { [repo] = { repo_codex_buf }, [worktree] = { worktree_codex_buf } }
+    vim.g.cursor_agent_bufnr = { [worktree] = { worktree_cursor_buf } }
+    vim.g.claude_agent_bufnr = { [repo] = { 999999 } }
     assert_true(agent_status.write("codex", repo, "running"), "failed to record first agent state")
     assert_true(agent_status.write("cursor", worktree, "idle"), "failed to record second agent state")
     wait_until("agent picker terminal titles", function()
@@ -3803,8 +3793,8 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
     vim.cmd("cd " .. vim.fn.fnameescape(repo))
     local old_buf = start_terminal(repo)
     local target_buf = start_terminal(worktree)
-    vim.g.codex_agent_bufnr = { [repo] = old_buf }
-    vim.g.cursor_agent_bufnr = { [worktree] = target_buf }
+    vim.g.codex_agent_bufnr = { [repo] = { old_buf } }
+    vim.g.cursor_agent_bufnr = { [worktree] = { target_buf } }
     vim.b[old_buf].luanphan_agent_name = "codex"
     vim.b[old_buf].luanphan_agent_cwd = repo
     vim.b[old_buf].luanphan_agent_last_used = 1

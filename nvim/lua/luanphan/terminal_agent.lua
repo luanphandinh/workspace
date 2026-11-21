@@ -90,9 +90,6 @@ local function cwd_key()
 end
 
 local function normalize_bufnrs(value)
-  if type(value) == "number" then
-    return { value }
-  end
   if type(value) ~= "table" then
     return {}
   end

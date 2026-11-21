@@ -7,7 +7,6 @@ import sys
 
 HOME = pathlib.Path.home()
 STATUS_COMMAND = HOME / "bin" / "agent-turn-ended-status"
-MANAGED_COMMANDS = ("agent-turn-ended-status", "codex-turn-ended-notify")
 
 
 def read_json(path, default):
@@ -34,7 +33,7 @@ def is_managed_hook(hook):
     if not isinstance(hook, dict):
         return False
     value = hook.get("command")
-    return isinstance(value, str) and any(name in value for name in MANAGED_COMMANDS)
+    return isinstance(value, str) and STATUS_COMMAND.name in value
 
 
 def remove_nested_hooks(hooks):
@@ -84,34 +83,6 @@ def add_nested_stop(hooks, agent):
     )
 
 
-def remove_legacy_codex_notify():
-    path = HOME / ".codex" / "config.toml"
-    if not path.exists():
-        return
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    output = []
-    index = 0
-    in_table = False
-    while index < len(lines):
-        line = lines[index]
-        stripped = line.lstrip()
-        if stripped.startswith("["):
-            in_table = True
-        if not in_table and stripped.startswith("notify") and stripped.split("=", 1)[0].strip() == "notify":
-            block = [line]
-            index += 1
-            while index < len(lines) and "".join(block).count("[") > "".join(block).count("]"):
-                block.append(lines[index])
-                index += 1
-            if any(name in "".join(block) for name in MANAGED_COMMANDS):
-                continue
-            output.extend(block)
-            continue
-        output.append(line)
-        index += 1
-    path.write_text("".join(output), encoding="utf-8")
-
-
 def sync_claude():
     path = HOME / ".claude" / "settings.json"
     data = read_json(path, {})
@@ -141,7 +112,6 @@ def sync_cursor():
 
 
 def sync_codex():
-    remove_legacy_codex_notify()
     path = HOME / ".codex" / "hooks.json"
     data = read_json(path, {})
     if not isinstance(data, dict):
