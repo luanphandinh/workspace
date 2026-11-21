@@ -4776,6 +4776,7 @@ local function test_agent_view_container(repo)
   local old_path = vim.env.PATH
   local old_log = vim.env.NVIM_AGENT_SMOKE_LOG
   local old_input = vim.env.NVIM_AGENT_SMOKE_INPUT
+  local old_columns = vim.o.columns
   local agents = require("luanphan.plugins.agents")
   local original_position_file = vim.g.luanphan_agent_position_file
   local original_position = agents.agent_position()
@@ -5052,6 +5053,7 @@ local function test_agent_view_container(repo)
     assert_true(not vim.api.nvim_buf_is_valid(second_codex_buf), "exited agent process kept its terminal buffer")
 
     agents.hide()
+    vim.o.columns = 160
     agents.set_agent_position("full")
     local other_workspace = temp_root .. "/local_workspaces/example-agent"
     local other_path = other_workspace .. "/nested folder"
@@ -5092,7 +5094,7 @@ local function test_agent_view_container(repo)
       for index, line in ipairs(lines) do
         if line:find(title, 1, true) then thread_row = index end
       end
-      return thread_row and vim.tbl_contains(lines, "▾ example-agent")
+      return thread_row and vim.tbl_contains(lines, " example-agent")
     end, 3000)
 
     invoke_map("<leader>e")
@@ -5105,8 +5107,29 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_win_get_buf(sidebar) == sidebar_buf, "workspace switch replaced the sidebar")
     assert_true(vim.fn.jobwait({ vim.b[other_buf].terminal_job_id }, 0)[1] == -1, "workspace switch stopped the previous terminal")
     assert_true(rendered_winbar(main):find(title, 1, true), "workspace switch lost the top tabs")
+    local function has_jump_number(number, label)
+      local lines = vim.api.nvim_buf_get_lines(sidebar_buf, 0, -1, false)
+      return vim.tbl_contains(lines, string.format(" %2d %s", number, label))
+    end
+    assert_true(has_jump_number(0, title) and has_jump_number(-1, "codex"), "sidebar did not number the current and older sessions")
+    vim.api.nvim_set_current_win(sidebar)
     invoke_map("<C-o>")
-    assert_true(vim.api.nvim_get_current_buf() == other_buf, "agent history did not return to the workspace with one session")
+    assert_true(vim.api.nvim_win_get_buf(main) == other_buf, "sidebar Ctrl+o did not jump to the older agent")
+    assert_true(has_jump_number(1, title), "sidebar did not number the newer session after a jump")
+    local renamed = "Renamed thread 界界界界 with a long title"
+    vim.fn.chansend(vim.b[first_cursor_buf].terminal_job_id, "\27]2;" .. renamed .. "\7")
+    wait_until("renamed sidebar thread keeps its jump number and fits", function()
+      local line = vim.api.nvim_buf_get_lines(sidebar_buf, thread_row - 1, thread_row, false)[1]
+      return vim.startswith(line, "  1 Renamed thread 界") and vim.endswith(line, "…")
+        and vim.fn.strdisplaywidth(line) < vim.api.nvim_win_get_width(sidebar)
+    end, 3000)
+    invoke_map("<C-i>")
+    assert_true(vim.api.nvim_win_get_buf(main) == first_cursor_buf, "sidebar Ctrl+i did not jump to the newer agent")
+    assert_true(vim.api.nvim_get_current_win() == sidebar and vim.api.nvim_get_current_buf() == sidebar_buf,
+      "agent jump moved focus or replaced the sidebar buffer")
+    assert_true(not pcall(vim.cmd, "buffer " .. first_cursor_buf), "sidebar accepted a different buffer")
+    invoke_map("<C-o>")
+    assert_true(vim.api.nvim_win_get_buf(main) == other_buf, "agent history did not return to the workspace with one session")
     vim.fn.jobstop(vim.b[other_buf].terminal_job_id)
     wait_until("last session exit selects the newer history entry", function()
       return not vim.api.nvim_buf_is_valid(other_buf) and vim.api.nvim_get_current_buf() == first_cursor_buf
@@ -5131,6 +5154,7 @@ local function test_agent_view_container(repo)
   vim.env.PATH = old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = old_log
   vim.env.NVIM_AGENT_SMOKE_INPUT = old_input
+  vim.o.columns = old_columns
   close_agent_terminals()
   agents.set_agent_position(original_position)
   vim.g.luanphan_agent_position_file = original_position_file

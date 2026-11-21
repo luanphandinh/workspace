@@ -122,6 +122,21 @@ local function jump_session(direction, count)
   end)
 end
 
+function M.map_jump_keys(bufnr, keep_focus)
+  for _, binding in ipairs({
+    { "<C-o>", -1, "Older agent session" },
+    { "<C-i>", 1, "Newer agent session" },
+  }) do
+    local key, direction, description = unpack(binding)
+    vim.keymap.set("n", key, function()
+      local win = keep_focus and vim.api.nvim_get_current_win()
+      if jump_session(direction) and win and vim.api.nvim_win_is_valid(win) then
+        vim.api.nvim_set_current_win(win)
+      end
+    end, { buffer = bufnr, silent = true, desc = description })
+  end
+end
+
 local function normalize_bufnrs(value)
   if type(value) == "number" then
     return { value }
@@ -288,12 +303,7 @@ local function get_agent(name)
       jumplist.record(bufnr)
       agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
       sidebar.attach(bufnr, win)
-      vim.keymap.set("n", "<C-o>", function()
-        jump_session(-1)
-      end, { buffer = bufnr, silent = true, desc = "Older agent session" })
-      vim.keymap.set("n", "<C-i>", function()
-        jump_session(1)
-      end, { buffer = bufnr, silent = true, desc = "Newer agent session" })
+      M.map_jump_keys(bufnr)
       vim.keymap.set("n", "<leader>fN", function()
         agent_container:pick(cwd)
       end, { buffer = bufnr, silent = true, nowait = true, desc = "Select terminal agent" })

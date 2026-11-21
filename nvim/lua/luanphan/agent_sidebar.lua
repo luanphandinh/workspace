@@ -1,4 +1,5 @@
 local M = {}
+local jumplist = require("luanphan.agent_jumplist")
 local close_window = require("luanphan.terminal_agent").close_window
 
 local main, sidebar
@@ -7,39 +8,63 @@ local thread_lines = {}
 local return_to_input = false
 local switching_workspace = false
 local ns = vim.api.nvim_create_namespace("LuanphanAgentSidebar")
-local tree_indent = #"  ├─ "
 
 local function valid(win)
   return win and vim.api.nvim_win_is_valid(win)
 end
 
-function M.refresh()
+local function fit(text, width)
+  if width < 1 then return "" end
+  if vim.fn.strdisplaywidth(text) <= width then return text end
+  local limit = width - vim.fn.strdisplaywidth("…")
+  if limit < 0 then return "" end
+  local characters = limit
+  local prefix = vim.fn.strcharpart(text, 0, characters, true)
+  while vim.fn.strdisplaywidth(prefix) > limit do
+    characters = characters - 1
+    prefix = vim.fn.strcharpart(text, 0, characters, true)
+  end
+  return prefix .. "…"
+end
+
+function M.refresh(keep_cursor)
   if not valid(sidebar) or not valid(main) then return end
   local sessions = require("luanphan.plugins.worktree").list_agent_sessions()
   local groups = {}
+  local live = {}
   for _, session in ipairs(sessions) do
     groups[session.workspace] = groups[session.workspace] or {}
     table.insert(groups[session.workspace], session)
+    live[session.bufnr] = true
   end
+  local offsets = jumplist.offsets(live)
+  local number_width = 2
+  for _, offset in pairs(offsets) do
+    number_width = math.max(number_width, #tostring(offset))
+  end
+  local number_format = " %" .. number_width .. "s "
 
   local workspaces = vim.tbl_keys(groups)
   table.sort(workspaces)
   local active = vim.api.nvim_win_get_buf(main)
-  local lines = {}
+  local width = vim.api.nvim_win_get_width(sidebar) - 1
+  local lines, headings = {}, {}
   local active_row
   rows = {}
   thread_lines = {}
   for _, workspace in ipairs(workspaces) do
     local threads = groups[workspace]
     table.sort(threads, function(a, b) return a.bufnr < b.bufnr end)
-    lines[#lines + 1] = "▾ " .. vim.fn.fnamemodify(workspace, ":t")
+    lines[#lines + 1] = " " .. fit(vim.fn.fnamemodify(workspace, ":t"), width - 1)
     local heading = #lines
+    headings[#headings + 1] = heading
     local recent = threads[1]
-    for index, thread in ipairs(threads) do
-      local branch = index == #threads and "└─ " or "├─ "
-      lines[#lines + 1] = "  " .. branch .. thread.agent_label
+    for _, thread in ipairs(threads) do
+      local prefix = string.format(number_format, offsets[thread.bufnr] or "")
+      local title_width = width - vim.fn.strdisplaywidth(prefix)
+      lines[#lines + 1] = prefix .. fit(thread.agent_label, title_width)
       rows[#lines] = thread
-      thread_lines[thread.bufnr] = #lines
+      thread_lines[thread.bufnr] = { row = #lines, title_col = #prefix, title_width = title_width }
       if thread.bufnr == active then active_row = #lines end
       if thread.last_used > recent.last_used then recent = thread end
     end
@@ -51,9 +76,18 @@ function M.refresh()
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+  for _, heading in ipairs(headings) do
+    vim.api.nvim_buf_set_extmark(buf, ns, heading - 1, 0, { line_hl_group = "Directory" })
+  end
+  for _, thread in pairs(thread_lines) do
+    vim.api.nvim_buf_set_extmark(buf, ns, thread.row - 1, 0, {
+      end_col = thread.title_col,
+      hl_group = "Comment",
+    })
+  end
   if active_row then
     vim.api.nvim_buf_set_extmark(buf, ns, active_row - 1, 0, { line_hl_group = "Title" })
-    vim.api.nvim_win_set_cursor(sidebar, { active_row, 0 })
+    if not keep_cursor then vim.api.nvim_win_set_cursor(sidebar, { active_row, 0 }) end
   end
 end
 
@@ -121,7 +155,9 @@ function M.layout(win, width)
     zindex = geometry.zindex,
   }
   if main == win and valid(sidebar) then
+    local resized = vim.api.nvim_win_get_width(sidebar) ~= width
     vim.api.nvim_win_set_config(sidebar, position)
+    if resized then M.refresh(true) end
     return
   end
 
@@ -137,10 +173,12 @@ function M.layout(win, width)
   }))
   vim.w[main].luanphan_agent_sidebar = sidebar
   vim.wo[sidebar].wrap = false
+  vim.wo[sidebar].winfixbuf = true
   vim.wo[sidebar].cursorline = true
   vim.wo[sidebar].cursorlineopt = "line"
-  vim.wo[sidebar].winhighlight = "CursorLine:Visual"
+  vim.wo[sidebar].winhighlight = "NormalFloat:Normal,CursorLine:Visual"
   vim.wo[sidebar].winbar = "%#TabLineFill# Workspaces"
+  require("luanphan.plugins.agents").map_jump_keys(buf, true)
 
   local opts = { buffer = buf, silent = true, nowait = true }
   local function open_selected()
@@ -228,13 +266,15 @@ vim.api.nvim_create_autocmd("TermRequest", {
     local sequence = args.data and args.data.sequence
     if not thread_lines[args.buf] or not sequence or not sequence:match("^\27%][02];") then return end
     vim.schedule(function()
-      local line = thread_lines[args.buf]
-      if not line or not valid(sidebar) or not vim.api.nvim_buf_is_valid(args.buf) then return end
+      local thread = thread_lines[args.buf]
+      if not thread or not valid(sidebar) or not vim.api.nvim_buf_is_valid(args.buf) then return end
       local buf = vim.api.nvim_win_get_buf(sidebar)
+      local line = thread.row
       local text = vim.api.nvim_buf_get_lines(buf, line - 1, line, false)[1]
-      local label = require("luanphan.view_container").tab_label(args.buf, rows[line].agent_label)
+      local title = require("luanphan.view_container").tab_label(args.buf, rows[line].agent_label)
+      local label = fit(title, thread.title_width)
       vim.bo[buf].modifiable = true
-      vim.api.nvim_buf_set_text(buf, line - 1, tree_indent, line - 1, #text, { label })
+      vim.api.nvim_buf_set_text(buf, line - 1, thread.title_col, line - 1, #text, { label })
       vim.bo[buf].modifiable = false
     end)
   end,

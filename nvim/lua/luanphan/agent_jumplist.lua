@@ -22,6 +22,20 @@ function M.record(bufnr)
   current = #entries
 end
 
+function M.offsets(live)
+  local offsets = {}
+  local position, origin = 0, 0
+  for index, bufnr in ipairs(entries) do
+    if live[bufnr] or index == current then position = position + 1 end
+    if live[bufnr] then offsets[bufnr] = position end
+    if index == current then origin = position end
+  end
+  for bufnr, position_in_history in pairs(offsets) do
+    offsets[bufnr] = position_in_history - origin
+  end
+  return offsets
+end
+
 function M.jump(direction, count, available, activate)
   if jumping then return end
   for index = #entries, 1, -1 do
@@ -30,14 +44,14 @@ function M.jump(direction, count, available, activate)
 
   local index = current + direction * count
   while entries[index] do
+    local previous = current
+    current = index
     jumping = true
     local ok, focused = pcall(activate, entries[index])
     jumping = false
+    if ok and focused then return true end
+    current = previous
     if not ok then error(focused) end
-    if focused then
-      current = index
-      return true
-    end
     remove(index)
     if direction < 0 then index = index - 1 end
   end
