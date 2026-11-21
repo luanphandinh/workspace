@@ -168,7 +168,10 @@ nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 	test -d ~/.config/nvim || mkdir -p ~/.config/nvim
 	rm -rf ~/.config/nvim/*
 	cp -r ./nvim/. ~/.config/nvim/
-	python3 ./scripts/sync-cursor-cli-config.py
+	@for setup in ./nvim/lua/luanphan/agents/plugins/*/setup.py; do \
+		[ -f "$$setup" ] || continue; \
+		python3 "$$setup" || exit $$?; \
+	done
 	nvim --headless "+Lazy! $(lazy_command)" +qa
 
 nvim-lock: ## Refresh nvim/lazy-lock.json from the installed Neovim config.
@@ -256,7 +259,12 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	find ~/bin -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 	cp -r ./bin/. ~/bin/
 	find ~/bin -type f -exec chmod +x {} +
-	@python3 ./bin/sync-agent-status-hooks
+	@mkdir -p ~/bin/agent-status-hooks
+	@for hook in ./nvim/lua/luanphan/agents/plugins/*/status-hook.json; do \
+		agent=$$(basename "$$(dirname "$$hook")"); \
+		cp "$$hook" ~/bin/agent-status-hooks/"$$agent.json" || exit $$?; \
+	done
+	@python3 ~/bin/sync-agent-status-hooks
 	@sh ./bin/workspace-shell-sync
 	@sh ./bin/tmux-refresh-idle-zshrc
 

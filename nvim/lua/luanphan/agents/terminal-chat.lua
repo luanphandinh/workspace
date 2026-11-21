@@ -63,7 +63,7 @@ local BASE_DEFAULTS = {
 ---@field native_status? boolean whether the program reports its own status
 ---@field g_bufnr string vim.g key for buffer reuse after reload
 ---@field notify_prefix string prefix for :vim.notify
----@field augroup_prefix string prefix for autocmd groups (CursorAgent / ClaudeAgent)
+---@field augroup_prefix string prefix for autocmd groups
 ---@field hint_open string hint when no terminal (e.g. "<leader>a")
 ---@field defaults? table merged into BASE_DEFAULTS (cmd, args, …)
 ---@field on_prepare? fun(win: integer)

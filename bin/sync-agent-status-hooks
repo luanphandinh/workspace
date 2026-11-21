@@ -69,65 +69,39 @@ def remove_flat_hooks(hooks):
             hooks.pop(event, None)
 
 
-def add_nested_stop(hooks, agent):
-    hooks.setdefault("Stop", []).append(
-        {
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": command(agent),
-                    "timeout": 10,
-                }
-            ]
-        }
-    )
-
-
-def sync_claude():
-    path = HOME / ".claude" / "settings.json"
+def sync(agent, spec):
+    path = HOME / spec["path"]
     data = read_json(path, {})
     if not isinstance(data, dict):
         raise SystemExit(f"sync-agent-status-hooks: expected object in {path}")
-    data["agentPushNotifEnabled"] = False
+    for key, value in spec.get("defaults", {}).items():
+        data.setdefault(key, value)
+    data.update(spec.get("settings", {}))
     hooks = data.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise SystemExit(f"sync-agent-status-hooks: expected hooks object in {path}")
-    remove_nested_hooks(hooks)
-    add_nested_stop(hooks, "claude")
-    write_json(path, data)
-
-
-def sync_cursor():
-    path = HOME / ".cursor" / "hooks.json"
-    data = read_json(path, {"version": 1})
-    if not isinstance(data, dict):
-        raise SystemExit(f"sync-agent-status-hooks: expected object in {path}")
-    data.setdefault("version", 1)
-    hooks = data.setdefault("hooks", {})
-    if not isinstance(hooks, dict):
-        raise SystemExit(f"sync-agent-status-hooks: expected hooks object in {path}")
-    remove_flat_hooks(hooks)
-    hooks.setdefault("stop", []).append({"command": command("cursor")})
-    write_json(path, data)
-
-
-def sync_codex():
-    path = HOME / ".codex" / "hooks.json"
-    data = read_json(path, {})
-    if not isinstance(data, dict):
-        raise SystemExit(f"sync-agent-status-hooks: expected object in {path}")
-    hooks = data.setdefault("hooks", {})
-    if not isinstance(hooks, dict):
-        raise SystemExit(f"sync-agent-status-hooks: expected hooks object in {path}")
-    remove_nested_hooks(hooks)
-    add_nested_stop(hooks, "codex")
+    entry = {"command": command(agent)}
+    if spec.get("nested"):
+        remove_nested_hooks(hooks)
+        entry = {"hooks": [{"type": "command", **entry, "timeout": 10}]}
+    else:
+        remove_flat_hooks(hooks)
+    hooks.setdefault(spec["event"], []).append(entry)
     write_json(path, data)
 
 
 def main():
-    sync_claude()
-    sync_cursor()
-    sync_codex()
+    bin_dir = pathlib.Path(__file__).resolve().parent
+    installed = bin_dir / "agent-status-hooks"
+    source = bin_dir.parent / "nvim/lua/luanphan/agents/plugins"
+    if installed.is_dir():
+        definitions = [(path.stem, path) for path in sorted(installed.glob("*.json"))]
+    else:
+        definitions = [(path.parent.name, path) for path in sorted(source.glob("*/status-hook.json"))]
+    if not definitions:
+        raise SystemExit("sync-agent-status-hooks: no hook definitions found")
+    for agent, path in definitions:
+        sync(agent, read_json(path, {}))
     print("sync-agent-status-hooks: updated status-only completion hooks")
 
 
