@@ -3,6 +3,28 @@ local uv = vim.uv
 local terminal = require("luanphan.agents.terminal-chat")
 local uuid = "^" .. string.rep("%x", 8) .. ("%-" .. string.rep("%x", 4)):rep(3) .. "%-" .. string.rep("%x", 12) .. "$"
 local providers, names = {}, {}
+local order = {}
+
+function M.key(session)
+  return session.bufnr or session.agent .. ":" .. session.thread_id
+end
+
+function M.set_order(sessions)
+  for index, session in ipairs(sessions) do order[M.key(session)] = index end
+end
+
+function M.sort_by_order(sessions)
+  if #sessions < 2 or not next(order) then return end
+  local positions, ranks = {}, {}
+  for index, session in ipairs(sessions) do
+    positions[session] = index
+    ranks[session] = order[M.key(session)] or math.huge
+  end
+  table.sort(sessions, function(a, b)
+    if ranks[a] ~= ranks[b] then return ranks[a] < ranks[b] end
+    return positions[a] < positions[b]
+  end)
+end
 
 function M.setup(definitions, order)
   providers, names = definitions, order

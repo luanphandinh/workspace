@@ -5129,6 +5129,41 @@ local function test_agent_view_container(repo)
     end, 3000)
     assert_true(not vim.api.nvim_buf_is_valid(second_codex_buf), "exited agent process kept its terminal buffer")
 
+    do
+      local win = vim.api.nvim_get_current_win()
+      local last_claude = registered_agent_bufnrs("claude_agent_bufnr", repo)[2]
+      local function assert_tab_order(first, second, third)
+        local bar = rendered_winbar(win)
+        local a, b, c = bar:find(first, 1, true), bar:find(second, 1, true), bar:find(third, 1, true)
+        assert_true(a and b and c and a < b and b < c, "unexpected agent tab order: " .. bar)
+      end
+
+      invoke_map("<C-h>")
+      local menu = vim.api.nvim_get_current_win()
+      local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+      local cursor_row
+      for row, line in ipairs(lines) do
+        if line:match(" cursor$") then cursor_row = row end
+      end
+      assert_true(cursor_row, "sidebar omitted the Cursor session")
+      vim.api.nvim_win_set_cursor(menu, { cursor_row, 0 })
+      invoke_map("J")
+      assert_tab_order("claude 1", "[cursor]", "claude 2")
+      assert_true(vim.api.nvim_get_current_win() == menu, "reordering tabs moved focus out of the sidebar")
+
+      invoke_map("<C-l>")
+      invoke_map("<Tab>")
+      assert_true(vim.api.nvim_get_current_buf() == last_claude, "Tab ignored the sidebar order")
+      assert_tab_order("claude 1", "cursor", "[claude 2]")
+      invoke_map("<S-Tab>")
+      assert_true(vim.api.nvim_get_current_buf() == first_cursor_buf, "Shift-Tab ignored the sidebar order")
+
+      invoke_map("<C-h>")
+      invoke_map("K")
+      assert_tab_order("[cursor]", "claude 1", "claude 2")
+      invoke_map("<C-l>")
+    end
+
     agents.hide()
     vim.o.columns = 160
     local other_workspace = temp_root .. "/local_workspaces/example-agent"

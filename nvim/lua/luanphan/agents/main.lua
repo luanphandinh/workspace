@@ -113,6 +113,7 @@ local function open_tabs(cwd, closing_bufnr)
       }
     end
   end
+  sessions.sort_by_order(tabs)
   return tabs
 end
 
@@ -448,6 +449,11 @@ agent_container = require("luanphan.view_container").create({
   cycle_desc = "Next terminal agent",
   new_desc = "New default terminal agent",
 })
+
+function M.refresh_tabs(win)
+  local bufnr = vim.api.nvim_win_get_buf(win)
+  agent_container:render(win, vim.b[bufnr].luanphan_agent_cwd)
+end
 
 local function agent_spec(name)
   local def = agent_defs[name]

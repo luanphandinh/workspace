@@ -10,7 +10,6 @@ local rows = {}
 local thread_lines = {}
 local folded = {}
 local workspace_order
-local session_order = {}
 local return_to_input = false
 local switching_workspace = false
 local ns = vim.api.nvim_create_namespace("LuanphanAgentSidebar")
@@ -90,22 +89,18 @@ local function fit(text, width)
   return prefix .. "…"
 end
 
-local function session_key(session)
-  return session.bufnr or session.agent .. ":" .. session.thread_id
-end
-
-local function ordered(items, order, key)
+local function ordered(items, order)
   if not order then return items end
   local remaining, result = {}, {}
-  for _, item in ipairs(items) do remaining[key and key(item) or item] = item end
+  for _, item in ipairs(items) do remaining[item] = true end
   for _, id in ipairs(order) do
     if remaining[id] then
-      result[#result + 1] = remaining[id]
+      result[#result + 1] = id
       remaining[id] = nil
     end
   end
   for _, item in ipairs(items) do
-    if remaining[key and key(item) or item] then result[#result + 1] = item end
+    if remaining[item] then result[#result + 1] = item end
   end
   return result
 end
@@ -160,7 +155,7 @@ function M.refresh(keep_cursor)
       if is_folded and thread.bufnr == active then active_row = heading end
     end
     rows[heading] = { workspace = workspace, session = recent, items = workspaces, index = workspace_index }
-    threads = ordered(threads, session_order[workspace], session_key)
+    agent_sessions.sort_by_order(threads)
     for thread_index, thread in ipairs(is_folded and {} or threads) do
       local prefix = string.format(number_format, offsets[thread.bufnr] or "")
       local icon = agents.agent_icon(thread.agent)
@@ -170,7 +165,7 @@ function M.refresh(keep_cursor)
       local status_path = status_paths[thread.bufnr]
       lines[#lines + 1] = prefix .. fit(thread.agent_label, title_width)
       rows[#lines] = {
-        workspace = workspace, session = thread, items = threads, index = thread_index, key = session_key(thread),
+        workspace = workspace, session = thread, items = threads, index = thread_index, key = agent_sessions.key(thread),
       }
       if icon_col >= #prefix then
         provider_marks[#lines] = {
@@ -246,7 +241,8 @@ local function move_row(delta)
   if not items[target] then return end
   items[index], items[target] = items[target], items[index]
   if row.key then
-    session_order[row.workspace] = vim.tbl_map(session_key, items)
+    agent_sessions.set_order(items)
+    agents.refresh_tabs(main)
   else
     workspace_order = items
   end
