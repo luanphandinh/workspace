@@ -215,8 +215,9 @@ end
 
 function Bar:attach(buf)
   local opts = { buffer = buf, silent = true, nowait = true }
-  vim.keymap.set("n", "<leader>e", function() self:focus() end,
-    vim.tbl_extend("force", opts, { desc = "Focus window bar" }))
+  vim.keymap.set("n", "<leader>e", function()
+    if api.nvim_get_current_win() == self.win then self:focus_content() else self:focus() end
+  end, vim.tbl_extend("force", opts, { desc = "Switch focus between window bar and content" }))
   vim.keymap.set("n", "<leader>b", function() self:set_hidden(self:visible()) end,
     vim.tbl_extend("force", opts, { desc = "Toggle window bar" }))
   vim.keymap.set({ "n", "t" }, "<LeftMouse>", function() return self:click() end,
@@ -281,7 +282,6 @@ function Bar:layout(anchor, frame, style)
   end
   vim.keymap.set("n", "J", function() self:move(1) end, opts)
   vim.keymap.set("n", "K", function() self:move(-1) end, opts)
-  vim.keymap.set("n", "<leader>e", function() self:focus_content() end, opts)
   for _, key in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
     local to_content = key == (style == "horizontal" and "<C-j>" or "<C-l>")
     vim.keymap.set("n", key, to_content and function() self:focus_content() end or "<Nop>", opts)

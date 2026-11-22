@@ -381,6 +381,12 @@ local function set_diffview_keymaps(buf)
   end, { buffer = buf, expr = true, desc = "Select diff repository" })
 end
 
+local function set_diffview_window_keymaps(win)
+  local buf = vim.api.nvim_win_get_buf(win)
+  if vim.bo[buf].buftype == "terminal" or vim.w[win].luanphan_view_companion_anchor then return end
+  set_diffview_keymaps(buf)
+end
+
 local function set_diffview_tab_keymaps(view)
   local tab = view and view.tabpage or vim.api.nvim_get_current_tabpage()
   if not vim.api.nvim_tabpage_is_valid(tab) then
@@ -388,7 +394,7 @@ local function set_diffview_tab_keymaps(view)
   end
 
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
-    set_diffview_keymaps(vim.api.nvim_win_get_buf(win))
+    set_diffview_window_keymaps(win)
   end
 end
 
@@ -1190,7 +1196,6 @@ return {
             vim.cmd("filetype detect")
 
             set_diffview_tab_keymaps(view)
-            set_diffview_keymaps(0)
             preserve_diffview_folds(view)
             attach_workspace_diff(view)
             vim.schedule(function()
@@ -1217,7 +1222,7 @@ return {
             vim.keymap.set("n", "q", close_diffview_context, { buffer = true, silent = true })
           end
           if current_tab_has_diffview() then
-            set_diffview_keymaps(0)
+            set_diffview_window_keymaps(vim.api.nvim_get_current_win())
           end
         end,
       })

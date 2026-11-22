@@ -99,6 +99,7 @@ function M.create(opts)
       panes = { { win = anchor, opened = desired ~= previous, tab = { bufnr = desired } } }
     end
     for _, pane in ipairs(panes) do
+      bar:attach(pane.tab.bufnr)
       vim.wo[pane.win].winhighlight =
         "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,WinBarNC:Normal,TabLineFill:Normal"
       if pane.opened or (pane.win == anchor and previous ~= pane.tab.bufnr) then
@@ -185,7 +186,6 @@ function M.create(opts)
     end
 
     inner:bind_tile_moves(buf, group)
-    bar:attach(buf)
     bar:map_jumps(buf, false)
     local keys = { buffer = buf, silent = true, nowait = true }
     for _, key in ipairs({ "<leader>nt", "<leader>fn", "<leader>nw" }) do

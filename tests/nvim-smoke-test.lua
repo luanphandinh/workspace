@@ -7215,6 +7215,33 @@ local function test_git_diff_previews(worktree)
   invoke_map("<leader>gd")
   wait_for_diffview()
   assert_true(find_workspace_diff_bar() == nil, "single-repository diff unexpectedly created a repository bar")
+
+  local floating = require("luanphan.terminal.floating")
+  local old_settings, old_shell, old_env = vim.g.luanphan_global_settings_path, vim.o.shell, vim.env.ENV
+  local settings = temp_root .. "/diffview-terminal-settings.toml"
+  vim.g.luanphan_global_settings_path = settings
+  vim.o.shell, vim.env.ENV = "/bin/sh", nil
+  local shell
+  local ok, err = xpcall(function()
+    for _, style in ipairs({ "vertical", "horizontal" }) do
+      write(settings, { "[floating_terminal]", 'window_bar_style = "' .. style .. '"' })
+      floating.toggle()
+      local pane = vim.api.nvim_get_current_win()
+      shell = vim.api.nvim_get_current_buf()
+      local bar = vim.w[pane].luanphan_window_bar
+      assert_true(bar and vim.b[shell].luanphan_floating_terminal, "floating terminal did not open over Diffview")
+      vim.api.nvim_feedkeys(vim.g.mapleader .. "e", "xt", false)
+      assert_true(vim.api.nvim_get_current_win() == bar, "Diffview stole <leader>e from the " .. style .. " terminal")
+      vim.api.nvim_feedkeys(vim.g.mapleader .. "e", "xt", false)
+      assert_true(vim.api.nvim_get_current_win() == pane, "Diffview stole <leader>e from the " .. style .. " bar")
+      floating.hide()
+    end
+  end, debug.traceback)
+  floating.hide()
+  if shell and vim.api.nvim_buf_is_valid(shell) then vim.api.nvim_buf_delete(shell, { force = true }) end
+  vim.g.luanphan_global_settings_path, vim.o.shell, vim.env.ENV = old_settings, old_shell, old_env
+  assert_true(ok, tostring(err))
+
   focus_file_window_inside_diffview_tab(worktree .. "/main.go")
   invoke_map("<leader>gd")
   wait_until("diffview closes from file window", function()
