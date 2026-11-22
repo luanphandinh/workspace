@@ -5540,10 +5540,20 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[1]), "Ctrl+h did not return from the lower tile")
     invoke_map("<C-h>")
     assert_true(vim.bo.filetype == "agent-sidebar", "Ctrl+h did not continue into the sidebar")
-    invoke_map("<C-j>")
-    assert_true(visible_agent_window_count() == 0 and vim.api.nvim_win_get_config(0).relative == "",
-      "Ctrl+j from the sidebar did not return to the editor")
-    assert_true(agents.focus("claude", tile_buffers[4], { view_mode = true }), "could not reopen the tiled panel")
+    for _, key in ipairs({ "<C-j>", "<C-k>", "<C-h>" }) do
+      assert_true(vim.fn.maparg(key, "n") == "<Nop>", key .. " is active past the sidebar edge")
+    end
+    invoke_map("<C-l>")
+    for _, key in ipairs({ "<C-j>", "<C-k>" }) do
+      invoke_map(key)
+      assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[1]), key .. " moved past the left tile edge")
+    end
+    assert_true(agents.focus("claude", tile_buffers[4], { view_mode = true }), "could not focus the last tile")
+    for _, key in ipairs({ "<C-l>", "<C-j>" }) do
+      invoke_map(key)
+      assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[4]) and visible_agent_window_count() == 4,
+        key .. " moved past the last tile edge")
+    end
     for _, index in ipairs({ 1, 2, 3, 4 }) do
       invoke_map("<Tab>")
       assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[index]), "Tab ignored tile order")

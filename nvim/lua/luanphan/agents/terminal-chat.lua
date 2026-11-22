@@ -66,7 +66,7 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
 ---@field on_show? fun(bufnr: integer, win: integer, cwd: string)
 ---@field on_close? fun(bufnr: integer, cwd: string)
 ---@field on_quit? fun(bufnr: integer, cwd: string): function?
----@field on_navigate? fun(win: integer, direction: string): boolean?
+---@field on_navigate? fun(win: integer, direction: string)
 ---@field on_float_layout? fun(win: integer, sidebar_width: integer, sidebar_col: integer, sidebar_height: integer, geometry?: table, style?: string)
 function M.create(profile)
   profile = vim.tbl_extend("force", {
@@ -537,8 +537,11 @@ local function set_float_navigation_keymaps(bufnr)
   local function navigate(direction)
     local win = vim.api.nvim_get_current_win()
     if vim.api.nvim_win_get_buf(win) ~= bufnr then return end
-    if profile.on_navigate and profile.on_navigate(win, direction) then return end
-    pcall(M.close_window, win)
+    if profile.on_navigate then
+      profile.on_navigate(win, direction)
+    else
+      pcall(M.close_window, win)
+    end
   end
   for _, direction in ipairs({ "h", "j", "k", "l" }) do
     local key = "<C-" .. direction .. ">"
