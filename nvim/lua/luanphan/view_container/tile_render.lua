@@ -1,7 +1,17 @@
 local M = {}
 local window = require("luanphan.view_container.window")
-local focused_tile_border = "FloatBorder:DiagnosticOk"
 local inactive_tile_color = "LuanphanInactiveTile"
+local input_border_color = "LuanphanTileInputBorder"
+local thin_border = { "┌", "─", "┐", "│", "┘", "─", "└", "│" }
+local heavy_border = { "┏", "━", "┓", "┃", "┛", "━", "┗", "┃" }
+local ascii_border = { "+", "=", "+", "|", "+", "=", "+", "|" }
+
+local function focused_border()
+	local chars = vim.o.ambiwidth == "double" and ascii_border or heavy_border
+	local highlight = vim.api.nvim_get_mode().mode == "t" and input_border_color or "DiagnosticOk"
+	return vim.tbl_map(function(char) return { char, highlight } end, chars)
+end
+
 local function blend_color(color, target, amount)
 	local result = 0
 	for shift = 16, 0, -8 do
@@ -12,19 +22,20 @@ local function blend_color(color, target, amount)
 	return result
 end
 
-local function update_inactive_tile_color()
+local function update_tile_colors()
 	local normal = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
 	if normal.bg then
 		if normal.fg then normal.fg = blend_color(normal.fg, normal.bg, 0.32) end
 		normal.bg = blend_color(normal.bg, 0, 0.45)
 	end
 	vim.api.nvim_set_hl(0, inactive_tile_color, normal)
+	vim.api.nvim_set_hl(0, input_border_color, { fg = 0xfe8019, ctermfg = 208 })
 end
 
-update_inactive_tile_color()
+update_tile_colors()
 vim.api.nvim_create_autocmd("ColorScheme", {
 	group = vim.api.nvim_create_augroup("LuanphanTileColors", { clear = true }),
-	callback = update_inactive_tile_color,
+	callback = update_tile_colors,
 })
 
 local function tile_geometry(geometry, count)
@@ -56,18 +67,20 @@ function M.can_tile(geometry, count)
 	return tile_geometry(geometry, count) ~= nil
 end
 
-local function set_tile_highlights(win, focused, inactive)
+local function set_tile_highlights(win, border, inactive)
 	if not win or not vim.api.nvim_win_is_valid(win) then return end
+	if border and not vim.deep_equal(vim.api.nvim_win_get_config(win).border, border) then
+		vim.api.nvim_win_set_config(win, { border = border == thin_border and "single" or border })
+	end
 	local current = vim.wo[win].winhighlight
-	local highlights = current:gsub(",?" .. focused_tile_border, ""):gsub(":" .. inactive_tile_color .. "%f[,%z]", ":Normal")
-	if focused then highlights = highlights == "" and focused_tile_border or highlights .. "," .. focused_tile_border end
+	local highlights = current:gsub(":" .. inactive_tile_color .. "%f[,%z]", ":Normal")
 	if inactive then highlights = highlights:gsub(":Normal%f[,%z]", ":" .. inactive_tile_color) end
 	if highlights ~= current then vim.wo[win].winhighlight = highlights end
 end
 
 local function reset_tiles(self, closing)
 	local anchor, windows = self.tile_anchor, self.tile_windows
-	if anchor ~= closing then set_tile_highlights(anchor, false, false) end
+	if anchor ~= closing then set_tile_highlights(anchor, nil, false) end
 	self.tile_anchor, self.tile_windows = nil, nil
 	if self.tile_autocmd then
 		pcall(vim.api.nvim_del_autocmd, self.tile_autocmd)
@@ -87,9 +100,11 @@ function M.refresh_tile_highlights(self)
 	local current = vim.api.nvim_get_current_win()
 	local windows = self.tile_windows or {}
 	local multiple = next(windows) ~= nil
-	set_tile_highlights(self.tile_anchor, multiple and current == self.tile_anchor, multiple and current ~= self.tile_anchor)
+	local border = multiple and focused_border()
+	local anchor_border = multiple and (current == self.tile_anchor and border or thin_border)
+	set_tile_highlights(self.tile_anchor, anchor_border, multiple and current ~= self.tile_anchor)
 	for _, win in pairs(windows) do
-		set_tile_highlights(win, win == current, win ~= current)
+		set_tile_highlights(win, win == current and border or thin_border, win ~= current)
 	end
 end
 
@@ -112,9 +127,9 @@ local function tile(self, anchor, context, geometry)
 	if self.tile_anchor ~= anchor then
 		clear_tiles(self)
 		self.tile_anchor = anchor
-		self.tile_autocmd = vim.api.nvim_create_autocmd({ "WinEnter", "WinClosed" }, {
+		self.tile_autocmd = vim.api.nvim_create_autocmd({ "WinEnter", "WinClosed", "ModeChanged" }, {
 			callback = function(args)
-				if args.event == "WinEnter" then return self:refresh_tile_highlights() end
+				if args.event ~= "WinClosed" then return self:refresh_tile_highlights() end
 				local win = tonumber(args.match)
 				if win == anchor or vim.tbl_contains(self.tile_windows or {}, win) then
 					reset_tiles(self, win)

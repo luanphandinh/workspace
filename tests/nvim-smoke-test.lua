@@ -5565,8 +5565,9 @@ local function test_agent_view_container(repo)
     local function assert_focused_tile(index)
       for i = 1, #tile_buffers do
         local highlights = vim.wo[tile_window(tile_buffers[i])].winhighlight
-        local focused = highlights:find("FloatBorder:DiagnosticOk", 1, true) ~= nil
-        assert_true(focused == (i == index), "wrong focus border for tile " .. i)
+        local corner = tile_config(i).border[1]
+        local expected = i == index and { "┏", "DiagnosticOk" } or "┌"
+        assert_true(vim.deep_equal(corner, expected), "wrong focus border for tile " .. i)
         local muted = highlights:find("NormalFloat:LuanphanInactiveTile", 1, true) ~= nil
         assert_true(muted == (i ~= index), "wrong background for tile " .. i)
       end
@@ -5968,8 +5969,17 @@ assert(type(left.border) == "table" and type(right.border) == "table", "split pa
 assert(left.col == full.col and left.col + left.width + 2 == right.col
   and right.col + right.width + 2 == full.col + full.width and left.height + 2 == full.height,
   "split panes did not fill the Neovim tile area")
-assert(vim.wo[pane_window(second)].winhighlight:find("FloatBorder:DiagnosticOk", 1, true),
-  "active pane lacks the focused tile border")
+assert(vim.deep_equal(right.border[1], { "┏", "DiagnosticOk" }) and left.border[1] == "┌",
+  "view mode should show a heavy green border only on the focused tile")
+local editing_border
+vim.defer_fn(function()
+  if api.nvim_get_mode().mode == "t" then editing_border = config(second).border end
+  api.nvim_input("<Esc>")
+end, 20)
+api.nvim_feedkeys("i", "xt!", false)
+assert(editing_border and vim.deep_equal(editing_border[1], { "┏", "LuanphanTileInputBorder" }),
+  "focused tile did not switch to orange in terminal input mode")
+assert(vim.deep_equal(config(second), right), "leaving terminal input did not restore the view mode border and layout")
 
 local function screen_position(label, offset)
   vim.cmd.redraw({ bang = true })
