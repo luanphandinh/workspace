@@ -3232,7 +3232,7 @@ local function test_workspace_folder_browser()
     "local main = vim.api.nvim_get_current_win()",
     "local other_tile = vim.fn.bufwinid(first_tile)",
     "assert_true(other_tile ~= -1 and other_tile ~= main, 'folder switch fixture did not open two tiles')",
-    "vim.fn.maparg('<C-h>', 'n', false, true).callback()",
+    "vim.fn.maparg('<leader>e', 'n', false, true).callback()",
     "local sidebar = vim.api.nvim_get_current_win()",
     "assert_true(vim.bo.filetype == 'agent-sidebar', 'folder switch fixture could not open the agent sidebar')",
     "vim.fn.maparg('<C-l>', 'n', false, true).callback()",
@@ -4870,7 +4870,7 @@ local agent = assert(agents.new('codex', { thread_id = agent_id, view_mode = tru
 press('<leader>nt')
 local first = vim.api.nvim_get_current_buf()
 assert(vim.b[first].luanphan_agent_name == 'terminal', 'new terminal did not create a shell')
-press('<C-h>')
+press('<leader>e')
 assert(vim.bo.filetype == 'agent-sidebar', 'could not focus the sidebar from the shell')
 press('<leader>nt')
 local second = vim.api.nvim_get_current_buf()
@@ -5527,6 +5527,23 @@ local function test_agent_view_container(repo)
       end
     end
     assert_focused_tile(4)
+    assert_true(agents.focus("codex", tile_buffers[1], { view_mode = true }), "could not focus the left tile")
+    for _, move in ipairs({ { "l", 2 }, { "j", 3 }, { "l", 4 }, { "k", 2 }, { "h", 1 } }) do
+      local key, index = "<C-" .. move[1] .. ">", move[2]
+      invoke_map(key)
+      assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[index]), key .. " missed its neighboring tile")
+      assert_focused_tile(index)
+    end
+    invoke_map("<C-l>")
+    invoke_map("<C-j>")
+    invoke_map("<C-h>")
+    assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[1]), "Ctrl+h did not return from the lower tile")
+    invoke_map("<C-h>")
+    assert_true(vim.bo.filetype == "agent-sidebar", "Ctrl+h did not continue into the sidebar")
+    invoke_map("<C-j>")
+    assert_true(visible_agent_window_count() == 0 and vim.api.nvim_win_get_config(0).relative == "",
+      "Ctrl+j from the sidebar did not return to the editor")
+    assert_true(agents.focus("claude", tile_buffers[4], { view_mode = true }), "could not reopen the tiled panel")
     for _, index in ipairs({ 1, 2, 3, 4 }) do
       invoke_map("<Tab>")
       assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[index]), "Tab ignored tile order")
@@ -5534,7 +5551,7 @@ local function test_agent_view_container(repo)
     end
     invoke_map("<S-Tab>")
     assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[3]), "Shift-Tab ignored tile order")
-    invoke_map("<C-h>")
+    invoke_map("<leader>e")
     local tile_sidebar = vim.api.nvim_get_current_win()
     assert_focused_tile(nil)
     invoke_map("K")
@@ -5576,7 +5593,7 @@ local function test_agent_view_container(repo)
       return not vim.api.nvim_buf_is_valid(tile_buffers[2]) and visible_agent_window_count() == 2
     end, 3000)
     assert_true(vim.api.nvim_get_current_buf() == tile_buffers[3], "tile exit did not focus its neighbor")
-    invoke_map("<C-h>")
+    invoke_map("<leader>e")
     for _, key in ipairs({ "J", "K" }) do
       invoke_map(key)
       assert_true(tile_config(3).col == bounds[1][1], key .. " did not move the selected tile to the first slot")
@@ -6730,10 +6747,14 @@ local function test_agent_terminal_lifecycle(repo)
   for _, lhs in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
     assert_nonrecursive_map(lhs, "n", second_buf)
   end
-  for _, lhs in ipairs({ "<C-h>", "<C-k>", "<C-l>", "<CR>" }) do
-    assert_nonrecursive_map(lhs, "t", second_buf)
+  local terminal_maps = vim.api.nvim_buf_get_keymap(second_buf, "t")
+  for _, lhs in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
+    local expected = vim.api.nvim_replace_termcodes(lhs, true, false, true)
+    for _, map in ipairs(terminal_maps) do
+      local actual = vim.api.nvim_replace_termcodes(map.lhs, true, false, true)
+      assert_true(actual ~= expected, "agent terminal insert mode captured " .. lhs)
+    end
   end
-  assert_true(vim.fn.maparg("<C-j>", "t") == "", "agent terminal insert mode captured <C-j>")
   vim.cmd("stopinsert")
   local view_down_map = vim.fn.maparg("<C-j>", "n", false, true)
   assert_true(

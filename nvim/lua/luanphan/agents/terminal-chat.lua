@@ -66,6 +66,7 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
 ---@field on_show? fun(bufnr: integer, win: integer, cwd: string)
 ---@field on_close? fun(bufnr: integer, cwd: string)
 ---@field on_quit? fun(bufnr: integer, cwd: string): function?
+---@field on_navigate? fun(win: integer, direction: string): boolean?
 ---@field on_float_layout? fun(win: integer, sidebar_width: integer, sidebar_col: integer, sidebar_height: integer, geometry?: table, style?: string)
 function M.create(profile)
   profile = vim.tbl_extend("force", {
@@ -530,29 +531,18 @@ local function on_vim_resized()
   schedule_resize_sync()
 end
 
---- Window navigation keys dismiss the agent float.
-local function set_float_close_keymaps(bufnr)
+local function set_float_navigation_keymaps(bufnr)
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
   local opts = { buffer = bufnr, silent = true, nowait = true }
-  local function close_float()
-    local w = win_for_buf(bufnr)
-    if w and vim.api.nvim_win_is_valid(w) then
-      pcall(M.close_window, w)
-    end
+  local function navigate(direction)
+    local win = vim.api.nvim_get_current_win()
+    if vim.api.nvim_win_get_buf(win) ~= bufnr then return end
+    if profile.on_navigate and profile.on_navigate(win, direction) then return end
+    pcall(M.close_window, win)
   end
-  for _, key in ipairs({ "<C-h>", "<C-k>", "<C-l>" }) do
-    -- Terminal mode: leave the PTY first, then close on the next tick so the
-    -- mode switch finishes before we rip the window out.
-    vim.keymap.set("t", key, function()
-      vim.api.nvim_feedkeys(
-        vim.api.nvim_replace_termcodes("<C-\\><C-n>", true, false, true),
-        "n", false
-      )
-      vim.schedule(close_float)
-    end, opts)
-  end
-  for _, key in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
-    vim.keymap.set("n", key, close_float, opts)
+  for _, direction in ipairs({ "h", "j", "k", "l" }) do
+    local key = "<C-" .. direction .. ">"
+    vim.keymap.set("n", key, function() navigate(direction) end, opts)
   end
 end
 
@@ -674,7 +664,7 @@ local function restore_agent_bufnr()
             attach_term_close(nr)
             attach_quit_detach(nr)
             apply_agent_scrollback(nr)
-            set_float_close_keymaps(nr)
+            set_float_navigation_keymaps(nr)
             attach_status_tracking(nr, cwd)
             require("luanphan.terminal_references").attach(nr, cwd)
           end
@@ -714,7 +704,7 @@ local function start_terminal(buf, cwd, opts)
   end
   attach_term_close(buf)
   attach_quit_detach(buf)
-  set_float_close_keymaps(buf)
+  set_float_navigation_keymaps(buf)
   attach_status_tracking(buf, cwd, "idle")
 end
 
@@ -760,7 +750,7 @@ local function show_terminal(bufnr, opts)
   configure_terminal_window(win)
   save_float_geometry(win)
   apply_agent_scrollback(cur)
-  set_float_close_keymaps(cur)
+  set_float_navigation_keymaps(cur)
   resume_terminal_view(win, cur, opts)
 end
 

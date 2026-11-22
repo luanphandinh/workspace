@@ -18,6 +18,33 @@ function M.group_windows(anchor)
 	return windows
 end
 
+function M.tile_neighbor(win, direction)
+	local anchor = vim.w[win].luanphan_view_anchor
+	if not anchor then return end
+	local horizontal = direction == "h" or direction == "l"
+	local backward = direction == "h" or direction == "k"
+	local function edges(id)
+		local cfg = vim.api.nvim_win_get_config(id)
+		local border = cfg.border and cfg.border ~= "none" and 2 or 0
+		local right, bottom = cfg.col + cfg.width + border, cfg.row + cfg.height + border
+		if horizontal then return cfg.col, right, cfg.row, bottom end
+		return cfg.row, bottom, cfg.col, right
+	end
+	local first, last, cross_first, cross_last = edges(win)
+	local neighbor, nearest
+	for _, candidate in ipairs(M.group_windows(anchor)) do
+		if candidate ~= win and vim.w[candidate].luanphan_view_anchor == anchor then
+			local start, finish, cross_start, cross_finish = edges(candidate)
+			local touches = (backward and finish == first) or (not backward and start == last)
+			if touches and cross_start < cross_last and cross_finish > cross_first then
+				local distance = math.max(0, cross_start - cross_first)
+				if not nearest or distance < nearest then neighbor, nearest = candidate, distance end
+			end
+		end
+	end
+	return neighbor
+end
+
 function M.close_group(anchor, closing)
 	if closing_groups[anchor] then return false end
 	local windows = M.group_windows(anchor)

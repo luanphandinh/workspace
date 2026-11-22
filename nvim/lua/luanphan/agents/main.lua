@@ -232,8 +232,8 @@ function M.map_create_shortcuts(bufnr)
   end
 end
 
-local function bind_agent_pane(win, bufnr)
-  require("luanphan.agents.sidebar").attach(bufnr, win)
+local function bind_agent_pane(bufnr)
+  require("luanphan.agents.sidebar").attach(bufnr)
   M.map_jump_keys(bufnr)
   M.map_create_shortcuts(bufnr)
 end
@@ -286,7 +286,7 @@ local function layout_agent(win, width, col, height, geometry, style)
       local tab = pane.tab
       if pane.opened or pane.win == anchor then
         agent_container:bind(tab.bufnr, cwd)
-        bind_agent_pane(pane.win, tab.bufnr)
+        bind_agent_pane(tab.bufnr)
       end
       local api = apis[tab.agent] or setup_agent(tab.agent)
       api.prepare_tile(pane.win, pane.opened)
@@ -295,7 +295,7 @@ local function layout_agent(win, width, col, height, geometry, style)
     local buf = vim.api.nvim_win_get_buf(anchor)
     local name = vim.b[buf].luanphan_agent_name
     agent_container:attach(anchor, buf, name .. ":" .. buf, cwd)
-    bind_agent_pane(anchor, buf)
+    bind_agent_pane(buf)
     apis[name].prepare_tile(anchor, false)
   end
   sidebar.layout(anchor, width, col, height)
@@ -319,6 +319,7 @@ local function get_agent(name)
     hint_open = agent_key,
     defaults = def.defaults,
     on_float_layout = layout_agent,
+    on_navigate = sidebar.navigate,
     on_prepare = function(win)
       agent_container:reserve(win)
     end,
@@ -331,7 +332,7 @@ local function get_agent(name)
       end
       restore_panel_sessions(cwd)
       agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
-      bind_agent_pane(win, bufnr)
+      bind_agent_pane(bufnr)
       apis[name].layout(win)
     end,
     on_close = function(bufnr, cwd)

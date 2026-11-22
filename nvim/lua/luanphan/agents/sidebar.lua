@@ -379,26 +379,37 @@ function M.layout(win, width, col, height)
   local function close_panel()
     if valid(main) then close_window(main) end
   end
-  for _, key in ipairs({ "<C-h>", "<leader>a" }) do
+  for _, key in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<leader>a" }) do
     vim.keymap.set("n", key, close_panel, opts)
   end
 
   M.refresh()
 end
 
-function M.attach(buf, win)
-  local opts = { buffer = buf, silent = true, nowait = true }
-  local function focus_sidebar()
-    if not valid(sidebar) or not valid(win) or (main ~= win and vim.w[win].luanphan_view_anchor ~= main) then return end
-    focused_terminal = win
-    return_to_input = vim.api.nvim_get_mode().mode == "t"
-    vim.cmd.stopinsert()
-    if vim.api.nvim_win_get_config(sidebar).hide then set_sidebar_hidden(false) end
-    M.refresh()
-    vim.api.nvim_set_current_win(sidebar)
+local function focus_sidebar(win)
+  if not valid(sidebar) or (main ~= win and vim.w[win].luanphan_view_anchor ~= main) then return false end
+  focused_terminal = win
+  return_to_input = vim.api.nvim_get_mode().mode == "t"
+  vim.cmd.stopinsert()
+  if vim.api.nvim_win_get_config(sidebar).hide then set_sidebar_hidden(false) end
+  M.refresh()
+  vim.api.nvim_set_current_win(sidebar)
+  return true
+end
+
+function M.navigate(win, direction)
+  local neighbor = view_container.tile_neighbor(win, direction)
+  if neighbor then
+    local buf = vim.api.nvim_win_get_buf(neighbor)
+    return agents.focus(vim.b[buf].luanphan_agent_name, buf, { view_mode = vim.api.nvim_get_mode().mode ~= "t" })
   end
-  vim.keymap.set({ "n", "t" }, "<C-h>", focus_sidebar, opts)
-  vim.keymap.set("n", "<leader>e", focus_sidebar, vim.tbl_extend("force", opts, { desc = "Focus agent sidebar" }))
+  return direction == "h" and focus_sidebar(win)
+end
+
+function M.attach(buf)
+  local opts = { buffer = buf, silent = true, nowait = true }
+  vim.keymap.set("n", "<leader>e", function() focus_sidebar(vim.api.nvim_get_current_win()) end,
+    vim.tbl_extend("force", opts, { desc = "Focus agent sidebar" }))
   vim.keymap.set("n", "<leader>b", toggle_sidebar, vim.tbl_extend("force", opts, { desc = "Toggle agent sidebar" }))
   vim.keymap.set({ "n", "t" }, "<LeftMouse>", click_row, vim.tbl_extend("force", opts, { expr = true }))
 end
