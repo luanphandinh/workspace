@@ -70,10 +70,16 @@ function Client:flush()
   vim.api.nvim_chan_send(self.job, request.command .. "\n")
 end
 
-function Client:request(args, callback)
-  local tokens = vim.tbl_map(quote, args)
-  self.queue[#self.queue + 1] = { command = table.concat(tokens, " "), callback = callback }
+function Client:request_batch(commands, callback)
+  local lines = vim.tbl_map(function(args) return table.concat(vim.tbl_map(quote, args), " ") end, commands)
+  self.queue[#self.queue + 1] = {
+    command = table.concat(lines, "\n"), count = #commands, replies = {}, callback = callback,
+  }
   self:flush()
+end
+
+function Client:request(args, callback)
+  self:request_batch({ args }, callback and function(replies) callback(replies[1].ok, replies[1].lines) end)
 end
 
 local function decode(bytes)
@@ -89,8 +95,13 @@ function Client:line(line)
       local lines = self.lines
       local request = tonumber(self.block:match("%d+$")) % 2 == 1 and self.pending
       self.block, self.lines = nil, nil
-      if request then self.pending = nil end
-      if request and request.callback then request.callback(ending ~= nil, lines) end
+      if request then
+        request.replies[#request.replies + 1] = { ok = ending ~= nil, lines = lines }
+        if #request.replies == request.count then
+          self.pending = nil
+          if request.callback then request.callback(request.replies) end
+        end
+      end
       self:flush()
     else
       self.lines[#self.lines + 1] = line

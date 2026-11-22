@@ -5902,9 +5902,13 @@ local function test_tmux_floating_terminal()
   write(root .. "/redraw.py", {
     "import os, tty",
     "tty.setraw(0)",
+    "width = os.get_terminal_size(0).columns",
     [[os.write(1, b"\033[38;2;255;80;20mBEFORE_CLEAR\033[0m plain\r\n" + b"OLD_OUTPUT\r\n" * 10)]],
     [[if os.read(0, 1) == b"\x0c":]],
     [[    os.write(1, b"\033[H\033[2J\033[38;2;255;80;20mAFTER_CLEAR\033[0m plain")]],
+    [[    os.write(1, f"\033[7;{width - 14}HCURSOR_TEST_ROW\033[H".encode())]],
+    [[if os.read(0, 1) == b"x":]],
+    [[    os.write(1, f"\033[7;{width}H".encode())]],
     "os.read(0, 1)",
   })
   local setup = {
@@ -5967,16 +5971,19 @@ assert(left.col == full.col and left.col + left.width + 2 == right.col
 assert(vim.wo[pane_window(second)].winhighlight:find("FloatBorder:DiagnosticOk", 1, true),
   "active pane lacks the focused tile border")
 
-local function screen_position(label)
+local function screen_position(label, offset)
   vim.cmd.redraw({ bang = true })
   local cfg = config(second)
-  local x = cfg.col + 2
+  local x = cfg.col + 2 + (offset or 0)
   for y = cfg.row + 3, cfg.row + cfg.height + 1 do
     local text = {}
     for col = x, x + #label - 1 do text[#text + 1] = vim.fn.screenstring(y, col) end
     if table.concat(text) == label then return y, x end
   end
 end
+tmux("select-layout", "-t", first, "even-vertical")
+assert(tonumber(tmux("display-message", "-p", "-t", second, "#{pane_width}")) > right.width,
+  "cursor test needs a tmux pane wider than its Neovim tile")
 tmux("send-keys", "-l", "-t", second, "python3 " .. vim.fn.shellescape(root .. "/redraw.py"))
 tmux("send-keys", "-t", second, "Enter")
 wait(function() return screen_position("BEFORE_CLEAR") end, "colored text on the tile")
@@ -5987,6 +5994,25 @@ wait(function() return screen_position("AFTER_CLEAR") and not screen_position("O
 local row, col = screen_position("AFTER_CLEAR")
 assert(vim.fn.screenattr(row, col) ~= vim.fn.screenattr(row, col + #"AFTER_CLEAR "),
   "the cropped tmux redraw lost terminal RGB colors")
+
+local cursor_matches, observed
+local started = vim.uv.now()
+local timer = assert(vim.uv.new_timer())
+vim.defer_fn(function() api.nvim_input("x") end, 20)
+timer:start(50, 20, vim.schedule_wrap(function()
+  if vim.uv.now() - started < 3000 and api.nvim_get_mode().mode ~= "t" then return end
+  local pos = api.nvim_win_get_cursor(0)
+  observed = { pos[1] - vim.fn.line("w0"), pos[2] }
+  cursor_matches = observed[1] == 6 and observed[2] == right.width - 1
+    and screen_position("CURSOR_TEST_ROW", right.width - #"CURSOR_TEST_ROW") ~= nil
+  if cursor_matches or vim.uv.now() - started >= 3000 then
+    timer:stop()
+    api.nvim_input("<Esc>")
+  end
+end))
+api.nvim_feedkeys("i", "xt!", false)
+timer:close()
+assert(cursor_matches, "the caret did not follow a cursor-only tmux redraw: " .. vim.inspect(observed))
 
 key("<leader>nt")
 wait(function() return active() and active() ~= first and active() ~= second end, "third native tile")

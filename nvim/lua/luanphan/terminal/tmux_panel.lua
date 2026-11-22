@@ -1,6 +1,7 @@
 local M = {}
 local api = vim.api
 local tmux = require("luanphan.terminal.tmux_client")
+local screen = require("luanphan.terminal.tmux_screen")
 local views = require("luanphan.view_container")
 local bars = require("luanphan.view_container.window_bar")
 local settings = require("luanphan.global_settings")
@@ -18,7 +19,7 @@ local pane_fields = {
 }
 local pane_format = "#{" .. table.concat(pane_fields, "}\t#{") .. "}"
 local cursor_format = "#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{cursor_flag}"
-  .. "\t#{keypad_cursor_flag}\t#{bracket_paste_flag}\t#{history_size}"
+  .. "\t#{keypad_cursor_flag}\t#{bracket_paste_flag}\t#{history_size}\t#{pane_width}\t#{pane_height}"
 
 local refresh, render, open, paint
 
@@ -161,32 +162,6 @@ local function update_live_view(pane)
   end)
 end
 
-local function fit_text(text, cells)
-  if vim.fn.strdisplaywidth(text) <= cells then return text end
-  local low, high = 0, math.min(cells, vim.fn.strchars(text, true))
-  while low < high do
-    local middle = math.floor((low + high + 1) / 2)
-    local prefix = vim.fn.strcharpart(text, 0, middle, true)
-    if vim.fn.strdisplaywidth(prefix) <= cells then low = middle else high = middle - 1 end
-  end
-  return vim.fn.strcharpart(text, 0, low, true)
-end
-
-local function clip_row(line, width)
-  local result, index = {}, 1
-  while index <= #line do
-    local start, finish = line:find("\27%[[%d;:]*m", index)
-    local text = line:sub(index, start and start - 1 or #line)
-    local fitted = fit_text(text, width)
-    result[#result + 1] = fitted
-    width = fitted == text and (width - vim.fn.strdisplaywidth(fitted)) or 0
-    if not start then break end
-    result[#result + 1] = line:sub(start, finish)
-    index = finish + 1
-  end
-  return table.concat(result)
-end
-
 local function queue_paint(pane)
   if pane.capturing then pane.dirty = true return end
   if pane.paint_pending then return end
@@ -201,48 +176,25 @@ paint = function(pane)
   if not pane.term or not pane.visible or pane.capturing or not client then return end
   local connection = client
   pane.capturing, pane.ready, pane.dirty = true, false, false
-  client:request({ "display-message", "-p", "-t", pane.id, cursor_format }, function(ok, data)
+  local capture = { "capture-pane", "-epN", "-t", pane.id }
+  if not pane.painted then vim.list_extend(capture, { "-S", "-1000" }) end
+  client:request_batch({ capture, { "display-message", "-p", "-t", pane.id, cursor_format } }, function(replies)
     if client ~= connection or panes[pane.id] ~= pane then return end
-    if not ok then pane.capturing = false return end
-    local flags = vim.split(data[1] or "", "\t", { plain = true })
-    local alt = flags[3] == "1"
-    local history_size = tonumber(flags[7]) or 0
-    local new_history = pane.snapshot and math.max(0, history_size - (pane.history_size or history_size)) or 0
-    local args = { "capture-pane", "-epN", "-t", pane.id }
-    local scrollback = not pane.painted and 1000 or math.min(new_history, 1000)
-    if not alt and scrollback > 0 then vim.list_extend(args, { "-S", tostring(-scrollback) }) end
-    client:request(args, function(captured, lines)
-      if client ~= connection or panes[pane.id] ~= pane then return end
-      pane.capturing = false
-      if not captured or not pane.visible then return end
-      local mode = pane.alternate == alt and "" or (alt and "\27[?1049h" or "\27[?1049l")
-      pane.alternate = alt
-      local screen = mode .. "\27[0m\27[H\27[2J"
-      for index, code in ipairs({ 25, 1, 2004 }) do
-        local flag = flags[index + 3]
-        if flag == "0" or flag == "1" then screen = screen .. ("\27[?%d%s"):format(code, flag == "1" and "h" or "l") end
-      end
-      local row, col = tonumber(flags[2]) or 0, tonumber(flags[1]) or 0
-      -- A tmux pane can be larger than its Neovim tile, especially on a shared session.
-      -- Clip captured cells instead of feeding cursor movements into a differently sized grid.
-      if pane.snapshot then
-        local top = math.max(0, row - pane.view_height + 1)
-        local history = math.max(0, #lines - pane.height)
-        local first = pane.painted and math.max(1, history + top + 1 - (alt and 0 or new_history)) or 1
-        lines = vim.list_slice(lines, first, math.min(#lines, history + top + pane.view_height))
-        for index, line in ipairs(lines) do lines[index] = clip_row(line, pane.view_width) end
-        row, col = row - top, math.min(col, pane.view_width - 1)
-      end
-      local cursor = ("\27[%d;%dH"):format(row + 1, col + 1)
-      local in_input = api.nvim_get_current_buf() == pane.bufnr and api.nvim_get_mode().mode == "t"
-      if pane.follow_clear or in_input or not pane.painted then
-        pane.live_cursor, pane.follow_clear = { row, col }, false
-      end
-      send_output(pane, screen .. table.concat(lines, "\r\n") .. "\27[0m" .. cursor)
-      pane.ready, pane.painted = true, true
-      pane.history_size = history_size
-      if pane.snapshot and pane.dirty then queue_paint(pane) end
-    end)
+    pane.capturing = false
+    local content, cursor = unpack(replies)
+    if not content.ok or not cursor.ok or not pane.visible then return end
+    local flags = vim.split(cursor.lines[1] or "", "\t", { plain = true })
+    local frame, output = screen.frame(pane, content.lines, flags)
+    local in_input = api.nvim_get_current_buf() == pane.bufnr and api.nvim_get_mode().mode == "t"
+    local follow = pane.follow_clear or not pane.painted or (in_input and output ~= "")
+    pane.frame, pane.ready, pane.painted, pane.follow_clear = frame, true, true, false
+    if follow then
+      pane.live_cursor = { frame.row, frame.col }
+      -- Cursor-only frames can leave the terminal buffer text untouched.
+      vim.defer_fn(function() update_live_view(pane) end, 20)
+    end
+    if output ~= "" then send_output(pane, output) end
+    if pane.dirty then queue_paint(pane) end
   end)
 end
 
@@ -494,9 +446,10 @@ open = function(target)
     output = function(id, bytes)
       local pane = panes[id]
       if not pane or not pane.visible then return end
-      if pane.snapshot or pane.follow_clear then
+      if pane.snapshot or pane.follow_clear or pane.capturing then
         queue_paint(pane)
       elseif pane.ready then
+        pane.frame = nil
         send_output(pane, bytes)
       end
     end,
