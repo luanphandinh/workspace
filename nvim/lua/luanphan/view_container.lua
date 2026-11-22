@@ -3,7 +3,33 @@ local M = {}
 local Container = {}
 Container.__index = Container
 local focused_tile_border = "FloatBorder:DiagnosticOk"
+local inactive_tile_color = "LuanphanInactiveTile"
 local closing_groups = {}
+
+local function blend_color(color, target, amount)
+	local result = 0
+	for shift = 16, 0, -8 do
+		local from = bit.band(bit.rshift(color, shift), 255)
+		local to = bit.band(bit.rshift(target, shift), 255)
+		result = result * 256 + math.floor(from + (to - from) * amount + 0.5)
+	end
+	return result
+end
+
+local function update_inactive_tile_color()
+	local normal = vim.api.nvim_get_hl(0, { name = "Normal", link = false })
+	if normal.bg then
+		if normal.fg then normal.fg = blend_color(normal.fg, normal.bg, 0.32) end
+		normal.bg = blend_color(normal.bg, 0, 0.45)
+	end
+	vim.api.nvim_set_hl(0, inactive_tile_color, normal)
+end
+
+update_inactive_tile_color()
+vim.api.nvim_create_autocmd("ColorScheme", {
+	group = vim.api.nvim_create_augroup("LuanphanTileColors", { clear = true }),
+	callback = update_inactive_tile_color,
+})
 
 function M.group_anchor(win)
 	if not vim.api.nvim_win_is_valid(win) then return win end
@@ -212,18 +238,19 @@ local function tile_geometry(geometry, count)
 	return tiles
 end
 
-local function set_tile_border_highlight(win, focused)
+local function set_tile_highlights(win, focused, inactive)
 	if not win or not vim.api.nvim_win_is_valid(win) then return end
 	local current = vim.wo[win].winhighlight
-	local highlights = current:gsub(",?" .. focused_tile_border, "")
+	local highlights = current:gsub(",?" .. focused_tile_border, ""):gsub(":" .. inactive_tile_color .. "%f[,%z]", ":Normal")
 	if focused then highlights = highlights == "" and focused_tile_border or highlights .. "," .. focused_tile_border end
+	if inactive then highlights = highlights:gsub(":Normal%f[,%z]", ":" .. inactive_tile_color) end
 	if highlights ~= current then vim.wo[win].winhighlight = highlights end
 end
 
 local function reset_tiles(self, closing)
 	local anchor, windows = self.tile_anchor, self.tile_windows
-	if anchor ~= closing then set_tile_border_highlight(anchor, false) end
-	self.tile_anchor, self.tile_windows, self.focused_tile = nil, nil, nil
+	if anchor ~= closing then set_tile_highlights(anchor, false, false) end
+	self.tile_anchor, self.tile_windows = nil, nil
 	if self.tile_autocmd then
 		pcall(vim.api.nvim_del_autocmd, self.tile_autocmd)
 		self.tile_autocmd = nil
@@ -238,16 +265,14 @@ local function clear_tiles(self)
 	end
 end
 
-local function highlight_focused_tile(self)
+function Container:refresh_tile_highlights()
 	local current = vim.api.nvim_get_current_win()
-	local focused
-	if next(self.tile_windows or {}) and vim.w[current].luanphan_view_anchor == self.tile_anchor then
-		focused = current
+	local windows = self.tile_windows or {}
+	local multiple = next(windows) ~= nil
+	set_tile_highlights(self.tile_anchor, multiple and current == self.tile_anchor, multiple and current ~= self.tile_anchor)
+	for _, win in pairs(windows) do
+		set_tile_highlights(win, win == current, win ~= current)
 	end
-	local previous = self.focused_tile
-	if previous ~= focused then set_tile_border_highlight(previous, false) end
-	set_tile_border_highlight(focused, true)
-	self.focused_tile = focused
 end
 
 local function untile(self, anchor, context)
@@ -271,7 +296,7 @@ local function tile(self, anchor, context, geometry)
 		self.tile_anchor = anchor
 		self.tile_autocmd = vim.api.nvim_create_autocmd({ "WinEnter", "WinClosed" }, {
 			callback = function(args)
-				if args.event == "WinEnter" then return highlight_focused_tile(self) end
+				if args.event == "WinEnter" then return self:refresh_tile_highlights() end
 				local win = tonumber(args.match)
 				if win == anchor or vim.tbl_contains(self.tile_windows or {}, win) then
 					reset_tiles(self, win)
@@ -305,7 +330,6 @@ local function tile(self, anchor, context, geometry)
 	for buf, win in pairs(previous) do
 		if not windows[buf] and vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
 	end
-	highlight_focused_tile(self)
 	return panes
 end
 

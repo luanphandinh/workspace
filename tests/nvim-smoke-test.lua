@@ -5546,6 +5546,8 @@ local function test_agent_view_container(repo)
         local highlights = vim.wo[tile_window(tile_buffers[i])].winhighlight
         local focused = highlights:find("FloatBorder:DiagnosticOk", 1, true) ~= nil
         assert_true(focused == (i == index), "wrong focus border for tile " .. i)
+        local muted = highlights:find("NormalFloat:LuanphanInactiveTile", 1, true) ~= nil
+        assert_true(muted == (i ~= index), "wrong background for tile " .. i)
       end
     end
     assert_focused_tile(4)
@@ -5640,6 +5642,8 @@ local function test_agent_view_container(repo)
     local remaining = tile_config(1)
     assert_true(remaining.width == single.width and (remaining.border == "none" or remaining.border == nil),
       "remaining tile did not fill the panel without a border")
+    assert_true(not vim.wo[tile_window(tile_buffers[1])].winhighlight:find("LuanphanInactiveTile", 1, true),
+      "the remaining tile stayed dimmed")
 
 
   end, debug.traceback)

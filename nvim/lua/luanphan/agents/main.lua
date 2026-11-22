@@ -291,6 +291,7 @@ local function layout_agent(win, width, col, height, geometry, style)
       local api = apis[tab.agent] or setup_agent(tab.agent)
       api.prepare_tile(pane.win, pane.opened)
     end
+    agent_container:refresh_tile_highlights()
   else
     local buf = vim.api.nvim_win_get_buf(anchor)
     local name = vim.b[buf].luanphan_agent_name
