@@ -5401,8 +5401,11 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_get_current_win() == main, "toggling the sidebar took focus from the terminal")
     invoke_map("<leader>e")
     assert_true(vim.api.nvim_get_current_win() == sidebar, "<leader>e did not focus the sidebar")
+    assert_true(vim.wo[sidebar].winhighlight:find("FloatBorder:DiagnosticOk", 1, true),
+      "focused sidebar did not get a green border")
     invoke_map("<leader>e")
     assert_true(vim.api.nvim_get_current_win() == main, "<leader>e did not return from the sidebar to the terminal")
+    assert_true(vim.wo[sidebar].winhighlight == "CursorLine:Visual", "sidebar kept its focus color after leaving")
 
     invoke_map("<leader>sg")
     local settings_buf = vim.api.nvim_get_current_buf()

@@ -345,10 +345,20 @@ function Bar:layout(anchor, frame, style)
   vim.wo[self.win].wrap = false
   vim.wo[self.win].winfixbuf = true
   if style == "vertical" then
+    local win = self.win
+    local highlights = "CursorLine:Visual"
     vim.wo[self.win].cursorline = true
     vim.wo[self.win].cursorlineopt = "line"
-    vim.wo[self.win].winhighlight = "CursorLine:Visual"
+    vim.wo[self.win].winhighlight = highlights
     vim.wo[self.win].winbar = "%#TabLineFill# " .. self.opts.title
+    api.nvim_create_autocmd({ "WinEnter", "WinLeave" }, {
+      buffer = buf,
+      callback = function(ev)
+        if valid(win) then
+          vim.wo[win].winhighlight = ev.event == "WinEnter" and highlights .. ",FloatBorder:DiagnosticOk" or highlights
+        end
+      end,
+    })
   else
     vim.wo[self.win].winhighlight = "NormalFloat:Normal,WinBar:Normal,WinBarNC:Normal"
   end
