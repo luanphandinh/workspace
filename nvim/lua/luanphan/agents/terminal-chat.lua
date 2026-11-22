@@ -301,10 +301,6 @@ local function resume_terminal_view(win, bufnr, opts)
   end, 10)
 end
 
-local function is_full_screen(total_width_percent)
-  return total_width_percent == 100
-end
-
 local function get_float_geometry()
   local lines_avail = math.max(1, vim.o.lines - vim.o.cmdheight)
   local sidebar_height = math.max(10, lines_avail - 2)
@@ -312,7 +308,7 @@ local function get_float_geometry()
   local cols = vim.o.columns
   local settings = profile.on_float_layout and require("luanphan.global_settings").read().agent_float
   local total_percent = settings and settings.total_width_percent or 80
-  local border = is_full_screen(total_percent) and "none" or config.float_border or "single"
+  local border = config.float_border or "single"
   local border_size = border == "none" and 0 or 2
   local total = math.max(3, math.floor(cols * total_percent / 100))
   local left = math.floor((cols - total) / 2)

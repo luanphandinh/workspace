@@ -51,13 +51,12 @@ local function tile_geometry(geometry, count)
 		next_tile[offset] = next_tile[offset] + last[axis]
 		tiles[index], last = next_tile, next_tile
 	end
-	local border_size = count > 1 and 2 or 0
 	for _, tile in ipairs(tiles) do
-		tile.width = tile.width - border_size
-		tile.height = tile.height - border_size
+		tile.width = tile.width - 2
+		tile.height = tile.height - 2
 		if tile.width < 1 or tile.height < 2 then return end
 		tile.relative = geometry.relative
-		tile.border = count > 1 and "single" or "none"
+		tile.border = "single"
 		tile.zindex = geometry.zindex
 	end
 	return tiles
@@ -97,12 +96,12 @@ local function clear_tiles(self)
 end
 
 function M.refresh_tile_highlights(self)
+	if not self.tile_anchor then return end
 	local current = vim.api.nvim_get_current_win()
 	local windows = self.tile_windows or {}
-	local multiple = next(windows) ~= nil
-	local border = multiple and focused_border()
-	local anchor_border = multiple and (current == self.tile_anchor and border or thin_border)
-	set_tile_highlights(self.tile_anchor, anchor_border, multiple and current ~= self.tile_anchor)
+	local border = focused_border()
+	local focused = current == self.tile_anchor
+	set_tile_highlights(self.tile_anchor, focused and border or thin_border, not focused and next(windows) ~= nil)
 	for _, win in pairs(windows) do
 		set_tile_highlights(win, win == current and border or thin_border, win ~= current)
 	end

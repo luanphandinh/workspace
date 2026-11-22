@@ -5431,11 +5431,11 @@ local function test_agent_view_container(repo)
     invoke_map("q")
     local full_main = vim.api.nvim_win_get_config(main)
     local full_sidebar = vim.api.nvim_win_get_config(sidebar)
-    assert_true(full_main.border == "none" or full_main.border == nil, "fullscreen terminal still has a border")
-    assert_true(vim.deep_equal(full_sidebar.border, sidebar_config.border), "fullscreen removed the sidebar border")
+    assert_true(type(full_main.border) == "table", "fullscreen terminal is missing its border")
+    assert_true(vim.deep_equal(full_sidebar.border, sidebar_config.border), "fullscreen changed the sidebar border")
     assert_true(full_sidebar.col == 0 and full_sidebar.col + full_sidebar.width + 2 == full_main.col
-      and full_main.col + full_main.width == vim.o.columns, "fullscreen panes did not fill the editor width")
-    assert_true(full_sidebar.row == full_main.row and full_sidebar.height + 2 == full_main.height,
+      and full_main.col + full_main.width + 2 == vim.o.columns, "fullscreen panes did not fill the editor width")
+    assert_true(full_sidebar.row == full_main.row and full_sidebar.height == full_main.height,
       "fullscreen terminal did not fill the sidebar's outer height")
     assert_terminal_grid_matches(other_buf, main, "fullscreen agent")
 
@@ -5524,7 +5524,7 @@ local function test_agent_view_container(repo)
       return vim.api.nvim_win_get_config(tile_window(tile_buffers[index]))
     end
     local single = tile_config(1)
-    assert_true(single.border == "none" or single.border == nil, "single tile has a border")
+    assert_true(vim.deep_equal(single.border[1], { "┏", "DiagnosticOk" }), "single fullscreen tile lacks the view mode border")
     for _, provider in ipairs({ "cursor", "codex", "claude" }) do
       tile_buffers[#tile_buffers + 1] = agents.new(provider, { view_mode = true })
     end
@@ -5681,8 +5681,8 @@ local function test_agent_view_container(repo)
       return not vim.api.nvim_buf_is_valid(tile_buffers[3]) and visible_agent_window_count() == 1
     end, 3000)
     local remaining = tile_config(1)
-    assert_true(remaining.width == single.width and (remaining.border == "none" or remaining.border == nil),
-      "remaining tile did not fill the panel without a border")
+    assert_true(remaining.width == single.width and vim.deep_equal(remaining.border, single.border),
+      "remaining tile did not fill the panel with its focus border")
     assert_true(not vim.wo[tile_window(tile_buffers[1])].winhighlight:find("LuanphanInactiveTile", 1, true),
       "the remaining tile stayed dimmed")
 
@@ -5822,8 +5822,9 @@ assert(labels:find('Window 1', 1, true), 'initial window is missing')
 local sidebar = api.nvim_win_get_config(bar)
 local full = config(left)
 assert(sidebar.col == 0 and sidebar.col + sidebar.width + 2 == full.col
-  and full.col + full.width == vim.o.columns and full.height == vim.o.lines - vim.o.cmdheight,
+  and full.col + full.width + 2 == vim.o.columns and full.height + 2 == vim.o.lines - vim.o.cmdheight,
   'vertical bar and floating terminal did not fill the screen side by side')
+assert(vim.deep_equal(full.border[1], { '┏', 'DiagnosticOk' }), 'single shell tile lacks the view mode border')
 key('<leader>nt')
 local upper = api.nvim_get_current_buf()
 assert(upper ~= left and #floats() == 3 and not window_bar():find('Window 2', 1, true),
@@ -5952,11 +5953,19 @@ panel.toggle()
 wait(function() return active() and vim.bo.buftype == "terminal" end, "create and attach")
 local first = active()
 local full = config(first)
-assert(full.border == nil or full.border == "none", "a single pane gained a border")
+assert(vim.deep_equal(full.border[1], { "┏", "DiagnosticOk" }), "single pane lacks the view mode border")
+assert(tmux("display-message", "-p", "-t", first, "#{pane_width}x#{pane_height}") ==
+  ("%dx%d"):format(full.width, full.height - 1), "tmux size did not account for the single tile border")
 local shell_pid = tmux("display-message", "-p", "-t", first, "#{pane_pid}")
 local first_buf = api.nvim_get_current_buf()
-vim.defer_fn(function() api.nvim_input("printf 'RESULT_%s\\n' PROBE_TEXT<CR><Esc>") end, 20)
+local single_input_border
+vim.defer_fn(function()
+  if api.nvim_get_mode().mode == "t" then single_input_border = config(first).border[1] end
+  api.nvim_input("printf 'RESULT_%s\\n' PROBE_TEXT<CR><Esc>")
+end, 20)
 api.nvim_feedkeys("i", "xt!", false)
+assert(vim.deep_equal(single_input_border, { "┏", "LuanphanTileInputBorder" }), "single pane lacks the input mode border")
+assert(vim.deep_equal(config(first), full), "single pane did not return to the view mode border")
 wait(function()
   return table.concat(api.nvim_buf_get_lines(first_buf, 0, -1, false), "\n"):find("RESULT_PROBE_TEXT", 1, true)
 end, "terminal input and output")
@@ -5967,7 +5976,7 @@ assert(#vim.split(tmux("list-panes", "-t", first), "\n") == 2, "split did not re
 local left, right = config(first), config(second)
 assert(type(left.border) == "table" and type(right.border) == "table", "split panes lack their Neovim borders")
 assert(left.col == full.col and left.col + left.width + 2 == right.col
-  and right.col + right.width + 2 == full.col + full.width and left.height + 2 == full.height,
+  and right.col + right.width == full.col + full.width and left.height == full.height,
   "split panes did not fill the Neovim tile area")
 assert(vim.deep_equal(right.border[1], { "┏", "DiagnosticOk" }) and left.border[1] == "┌",
   "view mode should show a heavy green border only on the focused tile")

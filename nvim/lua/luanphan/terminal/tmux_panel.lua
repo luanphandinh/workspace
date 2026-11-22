@@ -31,11 +31,14 @@ end
 
 local function geometry()
   local options = settings.read().floating_terminal
+  local border_size = options.display_style == "tile" and 2 or 0
+  local columns = vim.o.columns
   local frame = {
-    relative = "editor", row = 0, col = 0, width = vim.o.columns,
-    height = math.max(4, vim.o.lines - vim.o.cmdheight), border = "none", zindex = 40,
+    relative = "editor", row = 0, col = 0, width = columns - border_size,
+    height = math.max(4, vim.o.lines - vim.o.cmdheight) - border_size,
+    border = border_size == 0 and "none" or "single", zindex = 40,
   }
-  local body, header = bars.divide(frame, options.window_bar_style, math.min(42, math.floor(frame.width * 0.3)))
+  local body, header = bars.divide(frame, options.window_bar_style, math.min(42, math.floor(columns * 0.3)))
   return body, header, options
 end
 
