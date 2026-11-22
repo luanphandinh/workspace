@@ -6181,11 +6181,9 @@ assert(api.nvim_get_current_buf() == window_bar_buf and api.nvim_win_get_cursor(
   "rename moved focus away from the window row")
 key("o")
 wait(function() return active() == third end, "window bar selected the second tmux window")
-local sidebar = tmux("split-window", "-dh", "-l", "12", "-b", "-P", "-F", "#{pane_id}", "-t", third)
-tmux("set-option", "-pt", sidebar, "@pin_sidebar", "1")
 panel.hide()
 assert(tmux("display-message", "-p", "-t", first, "#{pane_pid}") == shell_pid, "detach stopped the shell")
-vim.fn.writefile({ first, shell_pid, third, sidebar }, root .. "/panes")
+vim.fn.writefile({ first, shell_pid, third }, root .. "/panes")
 ]=])
     run_child([=[
 local api = vim.api
@@ -6193,9 +6191,6 @@ local saved = vim.fn.readfile(root .. "/panes")
 local panel = require("luanphan.terminal.floating")
 panel.toggle()
 assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane == saved[3] end), "reopen lost selected pane")
-for _, buf in ipairs(api.nvim_list_bufs()) do
-  assert(vim.b[buf].luanphan_tmux_pane ~= saved[4], "old tmux sidebar became a tile")
-end
 vim.fn.maparg("<leader>e", "n", false, true).callback()
 vim.api.nvim_win_set_cursor(0, { 1, 0 })
 vim.fn.maparg("o", "n", false, true).callback()

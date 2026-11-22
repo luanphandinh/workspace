@@ -11,11 +11,11 @@ TAB="$(printf '\t')"
 [ -f "$PIN_FILE" ] || { tmux display-message "no pinned sessions"; exit 0; }
 [ -s "$PIN_FILE" ] || { tmux display-message "no pinned sessions"; exit 0; }
 
-"$HOME/bin/tmux-session-sidebar/sync-pins" >/dev/null 2>&1 || :
+"$HOME/bin/tmux-pins/sync-pins" >/dev/null 2>&1 || :
 
 current_id="$(tmux display-message -p '#{session_id}')"
 current_name="$(tmux display-message -p '#S')"
-profile="$("$HOME/bin/tmux-session-sidebar/current-profile" "$current_id")"
+profile="$("$HOME/bin/tmux-pins/current-profile" "$current_id")"
 
 # Already pinned in this profile means there is nothing to replace.
 if awk -F "$TAB" -v profile="$profile" -v id="$current_id" -v name="$current_name" '
@@ -76,4 +76,3 @@ awk -F "$TAB" -v OFS="$TAB" \
 mv "$tmp" "$PIN_FILE"
 
 tmux display-message "$profile: ${last_name:-$last_id} -> $current_name"
-"$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :

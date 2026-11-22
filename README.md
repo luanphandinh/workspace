@@ -70,7 +70,7 @@ mkws --name example-b --branch example-branch-b --add repo-b front-end/repo-c@ex
 
 - Groups editors, agents, tests, and logs, keeping processes running across terminal disconnects.
 - Run `nvim` and `mcodex` in separate panes, or use Neovide alongside them. New panes inherit the current directory.
-- `Ctrl-b a` pins a session; `Ctrl-b A` toggles the sidebar.
+- `Ctrl-b a` pins a session. `Ctrl-b w` opens the tmux session picker.
 
 ## Remote development
 

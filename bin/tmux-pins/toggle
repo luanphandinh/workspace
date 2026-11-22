@@ -17,7 +17,7 @@ ensure_profile() {
 	fi
 }
 
-"$HOME/bin/tmux-session-sidebar/sync-pins" >/dev/null 2>&1 || :
+"$HOME/bin/tmux-pins/sync-pins" >/dev/null 2>&1 || :
 
 case "$action" in
 	pin)
@@ -44,9 +44,9 @@ case "$action" in
 		;;
 esac
 
-id="$("$HOME/bin/tmux-session-sidebar/resolve-session" "$target")"
+id="$("$HOME/bin/tmux-pins/resolve-session" "$target")"
 name="$(tmux display-message -p -t "$id" '#S')"
-[ "$action" = "toggle" ] && profile="$("$HOME/bin/tmux-session-sidebar/current-profile" "$id")"
+[ "$action" = "toggle" ] && profile="$("$HOME/bin/tmux-pins/current-profile" "$id")"
 existing_profile="$(awk -F "$TAB" -v id="$id" -v name="$name" '
 	NF >= 3 && ($3 == id || $2 == name) { print $1; exit }
 ' "$PIN_FILE" 2>/dev/null || :)"
@@ -66,7 +66,6 @@ else
 
 	if [ "$action" = "unpin" ] || { [ "$action" = "toggle" ] && [ "$existing_profile" = "$profile" ]; }; then
 		tmux display-message "unpinned from $existing_profile: $name"
-		"$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :
 		exit 0
 	fi
 
@@ -78,5 +77,3 @@ else
 		tmux display-message "pinned to $profile: $name"
 	fi
 fi
-
-"$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :

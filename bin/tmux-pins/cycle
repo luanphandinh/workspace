@@ -11,8 +11,8 @@ if [ ! -s "$PIN_FILE" ]; then
 	exit 0
 fi
 
-"$HOME/bin/tmux-session-sidebar/sync-pins" >/dev/null 2>&1 || :
-profile="$("$HOME/bin/tmux-session-sidebar/current-profile")"
+"$HOME/bin/tmux-pins/sync-pins" >/dev/null 2>&1 || :
+profile="$("$HOME/bin/tmux-pins/current-profile")"
 
 # Build an ordered list of pinned session ids.
 ordered="$(awk -F "$TAB" -v profile="$profile" '

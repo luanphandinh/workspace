@@ -1,3 +1,0 @@
-#!/bin/sh
-# Drop dead pins and normalize legacy entries.
-exec "$HOME/bin/tmux-session-sidebar/sync-pins"

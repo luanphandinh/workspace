@@ -14,7 +14,7 @@ local client_size, focus_on_render, selection
 
 local pane_fields = {
   "window_id", "window_index", "window_active", "pane_id", "pane_active",
-  "pane_index", "pane_width", "pane_height", "@pin_sidebar",
+  "pane_index", "pane_width", "pane_height",
   "pane_current_command", "window_name", "pane_current_path",
 }
 local pane_format = "#{" .. table.concat(pane_fields, "}\t#{") .. "}"
@@ -362,10 +362,10 @@ local function apply_snapshot(lines, completed_selection)
   for _, line in ipairs(lines) do
     local field = vim.split(line, "\t", { plain = true })
     local window_id, pane_id = field[1], field[4]
-    if pane_id and pane_id:match("^%%%d+$") and field[9] ~= "1" then
+    if pane_id and pane_id:match("^%%%d+$") then
       local group = by_window[window_id]
       if not group then
-        group = { id = window_id, title = field[11] or window_id, index = tonumber(field[2]), items = {} }
+        group = { id = window_id, title = field[10] or window_id, index = tonumber(field[2]), items = {} }
         by_window[window_id] = group
         next_windows[#next_windows + 1] = group
       end
@@ -376,8 +376,8 @@ local function apply_snapshot(lines, completed_selection)
       end
       local width, height = tonumber(field[7]), tonumber(field[8])
       pane.changed_size = pane.width ~= width or pane.height ~= height
-      pane.group, pane.label = group, field[10] ~= "" and field[10] or "shell"
-      local cwd = field[12]
+      pane.group, pane.label = group, field[9] ~= "" and field[9] or "shell"
+      local cwd = field[11]
       if cwd and cwd ~= "" and cwd ~= pane.cwd then
         pane.cwd = cwd
         require("luanphan.terminal_references").attach(pane.bufnr, cwd)

@@ -23,7 +23,7 @@ ensure_profile() {
 
 select_profile() {
 	profile="$1"
-	current="$("$HOME/bin/tmux-session-sidebar/resolve-session" "${2:-}")"
+	current="$("$HOME/bin/tmux-pins/resolve-session" "${2:-}")"
 	if ! valid_profile "$profile"; then
 		tmux display-message "profile names may use letters, numbers, dot, underscore, and dash; unpin is reserved"
 		return 1
@@ -31,7 +31,7 @@ select_profile() {
 	mkdir -p "$(dirname "$PIN_FILE")"
 	[ -f "$PIN_FILE" ] || : > "$PIN_FILE"
 	ensure_profile "$profile"
-	"$HOME/bin/tmux-session-sidebar/sync-pins" >/dev/null 2>&1 || :
+	"$HOME/bin/tmux-pins/sync-pins" >/dev/null 2>&1 || :
 	target="$(awk -F "$TAB" -v profile="$profile" -v current="$current" '
 		$1 == profile && NF >= 3 && $3 != "" {
 			if ($3 == current) {
@@ -47,7 +47,6 @@ select_profile() {
 	' "$PIN_FILE")"
 	if [ -z "$target" ]; then
 		tmux display-message "profile $profile has no pinned sessions; use prefix+a to assign one"
-		"$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :
 		return 0
 	fi
 	[ "$target" = "$current" ] || tmux switch-client -t "$target"
@@ -80,7 +79,6 @@ delete_profile() {
 	' "$PIN_FILE" > "$tmp"
 	mv "$tmp" "$PIN_FILE"
 	tmux display-message "deleted pinned profile: $profile ($count sessions unpinned)"
-	"$HOME/bin/tmux-session-sidebar/broadcast-redraw" >/dev/null 2>&1 || :
 }
 
 profile_list() {
@@ -109,11 +107,11 @@ case "$action" in
 		delete_profile "${2:-}"
 		;;
 	pick)
-		target="$("$HOME/bin/tmux-session-sidebar/resolve-session" "${2:-}")"
-		current="$("$HOME/bin/tmux-session-sidebar/current-profile" "$target")"
+		target="$("$HOME/bin/tmux-pins/resolve-session" "${2:-}")"
+		current="$("$HOME/bin/tmux-pins/current-profile" "$target")"
 		if ! command -v fzf >/dev/null 2>&1; then
 			tmux command-prompt -p "Pinned profile:" \
-				"run-shell '$HOME/bin/tmux-session-sidebar/profile select %% $target'"
+				"run-shell '$HOME/bin/tmux-pins/profile select %% $target'"
 			exit 0
 		fi
 		result="$(picker_list "$current" | fzf \
@@ -141,8 +139,8 @@ case "$action" in
 		esac
 		;;
 	next|prev)
-		target="$("$HOME/bin/tmux-session-sidebar/resolve-session" "${2:-}")"
-		current="$("$HOME/bin/tmux-session-sidebar/current-profile" "$target")"
+		target="$("$HOME/bin/tmux-pins/resolve-session" "${2:-}")"
+		current="$("$HOME/bin/tmux-pins/current-profile" "$target")"
 		selected="$(profile_list "$current" | awk -v current="$current" -v direction="$action" '
 			{ profiles[++count] = $0; if ($0 == current) active = count }
 			END {

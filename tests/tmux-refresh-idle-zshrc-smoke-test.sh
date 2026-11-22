@@ -19,7 +19,7 @@ set -eu
 
 case "$1" in
 list-panes)
-	printf '%%1\t123\tzsh\t0\t0\t0\n'
+	printf '%%1\t123\tzsh\t0\t0\n'
 	;;
 send-keys)
 	shift

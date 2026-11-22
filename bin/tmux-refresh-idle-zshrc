@@ -6,7 +6,7 @@ if [ "$tmux_cmd" = "tmux" ] && ! command -v tmux >/dev/null 2>&1; then
 	exit 0
 fi
 
-panes="$("$tmux_cmd" list-panes -aF '#{pane_id}	#{pane_pid}	#{pane_current_command}	#{pane_dead}	#{pane_in_mode}	#{@pin_sidebar}' 2>/dev/null || :)"
+panes="$("$tmux_cmd" list-panes -aF '#{pane_id}	#{pane_pid}	#{pane_current_command}	#{pane_dead}	#{pane_in_mode}' 2>/dev/null || :)"
 [ -n "$panes" ] || exit 0
 
 has_child_process() {
@@ -25,9 +25,9 @@ tab="$(printf '\t')"
 refreshed=0
 skipped=0
 
-while IFS="$tab" read -r pane pid command dead in_mode pin_sidebar; do
+while IFS="$tab" read -r pane pid command dead in_mode; do
 	[ -n "$pane" ] || continue
-	if [ "$dead" = "1" ] || [ "$in_mode" = "1" ] || [ "$pin_sidebar" = "1" ]; then
+	if [ "$dead" = "1" ] || [ "$in_mode" = "1" ]; then
 		skipped=$((skipped + 1))
 		continue
 	fi
