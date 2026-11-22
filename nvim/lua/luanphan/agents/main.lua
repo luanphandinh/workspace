@@ -3,6 +3,7 @@ local jumplist = require("luanphan.agents.jumplist")
 local terminal_agent = require("luanphan.agents.terminal-chat")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
+local view_container = require("luanphan.view_container")
 
 local agent_order = { "codex", "cursor", "claude", "terminal" }
 local agent_key = "<leader>a"
@@ -157,7 +158,7 @@ function M.pick_default_agent()
       choice.display = choice.label .. " (current)"
     end
   end
-  require("luanphan.view_container").select("Default Agent", choices, function(choice)
+  view_container.select("Default Agent", choices, function(choice)
     M.set_default_agent(choice.id)
   end, {
     layout_strategy = "center",
@@ -232,10 +233,34 @@ function M.map_create_shortcuts(bufnr)
   end
 end
 
+local function move_tile(direction)
+  local win = vim.api.nvim_get_current_win()
+  local neighbor = view_container.tile_neighbor(win, direction)
+  if not neighbor then return end
+
+  local bufnr = vim.api.nvim_win_get_buf(win)
+  local neighbor_buf = vim.api.nvim_win_get_buf(neighbor)
+  local tabs = open_tabs(vim.b[bufnr].luanphan_agent_cwd)
+  local source, target
+  for index, tab in ipairs(tabs) do
+    if tab.bufnr == bufnr then source = index end
+    if tab.bufnr == neighbor_buf then target = index end
+  end
+  if not source or not target then return end
+
+  table.insert(tabs, target, table.remove(tabs, source))
+  sessions.set_order(tabs)
+  M.refresh_tabs(win)
+end
+
 local function bind_agent_pane(bufnr)
   require("luanphan.agents.sidebar").attach(bufnr)
   M.map_jump_keys(bufnr)
   M.map_create_shortcuts(bufnr)
+  for direction, label in pairs({ h = "left", j = "down", k = "up", l = "right" }) do
+    vim.keymap.set("n", "<C-S-" .. direction .. ">", function() move_tile(direction) end,
+      { buffer = bufnr, silent = true, desc = "Move agent tile " .. label })
+  end
 end
 
 local function resume_options(session)
@@ -543,7 +568,7 @@ function M.send_selection(name)
   return true
 end
 
-agent_container = require("luanphan.view_container").create({
+agent_container = view_container.create({
   context = vim.fn.getcwd,
   tabs = open_tabs,
   choices = agent_choices,

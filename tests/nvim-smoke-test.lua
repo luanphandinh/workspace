@@ -5550,6 +5550,25 @@ local function test_agent_view_container(repo)
         assert_true(muted == (i ~= index), "wrong background for tile " .. i)
       end
     end
+    assert_true(agents.focus("codex", tile_buffers[3], { view_mode = true }), "could not focus the tile to move")
+    for _, move in ipairs({
+      { "<C-S-h>", { 3, 1, 2, 4 } },
+      { "<C-S-h>", { 3, 1, 2, 4 } },
+      { "<C-S-l>", { 1, 3, 2, 4 } },
+      { "<C-S-j>", { 1, 2, 3, 4 } },
+      { "<C-S-k>", { 1, 3, 2, 4 } },
+      { "<C-S-j>", { 1, 2, 3, 4 } },
+    }) do
+      invoke_map(move[1])
+      assert_true(vim.api.nvim_get_current_buf() == tile_buffers[3], move[1] .. " changed the focused session")
+      for slot, index in ipairs(move[2]) do
+        local cfg = tile_config(index)
+        assert_true(vim.deep_equal({ cfg.col, cfg.row, cfg.width + 2, cfg.height + 2 }, bounds[slot]),
+          move[1] .. " put the wrong tile in slot " .. slot)
+      end
+      assert_focused_tile(3)
+    end
+    assert_true(agents.focus("claude", tile_buffers[4], { view_mode = true }), "could not focus the last tile")
     assert_focused_tile(4)
     assert_true(agents.focus("codex", tile_buffers[1], { view_mode = true }), "could not focus the left tile")
     for _, move in ipairs({ { "l", 2 }, { "j", 3 }, { "l", 4 }, { "k", 2 }, { "h", 1 } }) do
