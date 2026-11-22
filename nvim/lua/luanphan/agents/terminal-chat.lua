@@ -68,7 +68,7 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
 ---@field on_close? fun(bufnr: integer, cwd: string)
 ---@field on_quit? fun(bufnr: integer, cwd: string): function?
 ---@field on_navigate? fun(win: integer, direction: string)
----@field on_float_layout? fun(win: integer, sidebar_width: integer, sidebar_col: integer, sidebar_height: integer, geometry?: table, style?: string)
+---@field on_float_layout? fun(win: integer, geometry?: table, style?: string, bar_frame?: table, bar_style?: string)
 function M.create(profile)
   profile = vim.tbl_extend("force", {
     g_bufnr = "terminal_agent_bufnr",
@@ -317,7 +317,7 @@ local function get_float_geometry()
   local total = math.max(3, math.floor(cols * total_percent / 100))
   local left = math.floor((cols - total) / 2)
   local terminal, sidebar = total, 0
-  if settings and total >= 6 then
+  if settings and settings.window_bar_style == "vertical" and total >= 6 then
     local terminal_percent = settings.terminal_width_percent
     local sidebar_percent = settings.sidebar_width_percent
     terminal = math.min(total - 3, math.max(3, math.floor(total * terminal_percent / 100)))
@@ -328,7 +328,7 @@ local function get_float_geometry()
       sidebar = math.min(available, math.max(3, math.floor(total * sidebar_percent / 100)))
     end
   end
-  return {
+  local geometry = {
     relative = "editor",
     row = 0,
     col = left + total - terminal,
@@ -336,16 +336,24 @@ local function get_float_geometry()
     height = sidebar_height + 2 - border_size,
     border = border,
     zindex = config.float_zindex,
-  }, math.max(0, sidebar - 2), left, sidebar_height, settings and settings.display_style
+  }
+  if not settings then return geometry end
+  local bar
+  if settings.window_bar_style == "horizontal" then
+    geometry, bar = require("luanphan.view_container.window_bar").divide(geometry, "horizontal")
+  elseif sidebar > 2 then
+    bar = vim.tbl_extend("force", geometry, { col = left, width = sidebar - 2, height = sidebar_height, border = "single" })
+  end
+  return geometry, settings.display_style, bar, settings.window_bar_style
 end
 
 local function open_agent_float(bufnr)
-  local geometry, sidebar_width, sidebar_col, sidebar_height = get_float_geometry()
+  local geometry, _, bar, bar_style = get_float_geometry()
   local win = vim.api.nvim_open_win(bufnr, true, vim.tbl_extend("force", geometry, {
     style = "minimal",
   }))
   if profile.on_float_layout then
-    profile.on_float_layout(win, sidebar_width, sidebar_col, sidebar_height)
+    profile.on_float_layout(win, nil, nil, bar, bar_style)
   end
   return win
 end
@@ -449,10 +457,10 @@ end
 
 local function layout_float(win)
   if pending_tile_close[vim.w[win].luanphan_view_anchor] then return end
-  local cfg, sidebar_width, sidebar_col, sidebar_height, style = get_float_geometry()
+  local cfg, style, bar, bar_style = get_float_geometry()
   state.float_geometry = cfg
   if profile.on_float_layout then
-    profile.on_float_layout(win, sidebar_width, sidebar_col, sidebar_height, cfg, style)
+    profile.on_float_layout(win, cfg, style, bar, bar_style)
   else
     vim.api.nvim_win_set_config(win, cfg)
     sync_terminal_grid(win, vim.api.nvim_win_get_buf(win))

@@ -2103,7 +2103,7 @@ local function setup()
           end
           local instance = selection.value
           vim.schedule(function()
-            require("luanphan.agents.sidebar").select_session(instance)
+            require("luanphan.agents.window_bar").select_session(instance)
           end)
         end)
         return true

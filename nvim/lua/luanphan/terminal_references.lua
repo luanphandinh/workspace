@@ -423,6 +423,7 @@ function M.open(path, line, column)
   local close_agent_float = source_config.relative ~= ""
     and vim.bo[source_buf].buftype == "terminal"
     and vim.b[source_buf].luanphan_persist_term
+    and not vim.b[source_buf].luanphan_toggleterm
   local editor_window = require("luanphan.editor_window")
   local target = editor_window.find(source)
 

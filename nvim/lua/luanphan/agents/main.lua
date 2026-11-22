@@ -1,5 +1,6 @@
 local M = {}
-local jumplist = require("luanphan.agents.jumplist")
+local jumplist = require("luanphan.view_container.jumplist").create()
+M.history = jumplist
 local terminal_agent = require("luanphan.agents.terminal-chat")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
@@ -58,27 +59,12 @@ end
 local function jump_session(direction, count)
   return jumplist.jump(direction, count or vim.v.count1, jump_available, function(bufnr)
     local buf = vim.b[bufnr]
-    return require("luanphan.agents.sidebar").select_session({
+    return require("luanphan.agents.window_bar").select_session({
       agent = buf.luanphan_agent_name,
       bufnr = bufnr,
       path = buf.luanphan_agent_cwd,
     }, { view_mode = true })
   end)
-end
-
-function M.map_jump_keys(bufnr, keep_focus)
-  for _, binding in ipairs({
-    { "<C-o>", -1, "Older agent session" },
-    { "<C-i>", 1, "Newer agent session" },
-  }) do
-    local key, direction, description = unpack(binding)
-    vim.keymap.set("n", key, function()
-      local win = keep_focus and vim.api.nvim_get_current_win()
-      if jump_session(direction) and win and vim.api.nvim_win_is_valid(win) then
-        vim.api.nvim_set_current_win(win)
-      end
-    end, { buffer = bufnr, silent = true, desc = description })
-  end
 end
 
 local function agent_buffers(name, cwd, closing_bufnr)
@@ -234,8 +220,7 @@ function M.map_create_shortcuts(bufnr)
 end
 
 local function bind_agent_pane(bufnr)
-  require("luanphan.agents.sidebar").attach(bufnr)
-  M.map_jump_keys(bufnr)
+  require("luanphan.agents.window_bar").attach(bufnr)
   M.map_create_shortcuts(bufnr)
   agent_container:bind_tile_moves(bufnr, vim.b[bufnr].luanphan_agent_cwd)
 end
@@ -274,11 +259,11 @@ local function restore_panel_sessions(cwd)
   end
 end
 
-local function layout_agent(win, width, col, height, geometry, style)
-  local sidebar = require("luanphan.agents.sidebar")
+local function layout_agent(win, geometry, style, bar_frame, bar_style)
+  local window_bar = require("luanphan.agents.window_bar")
   local anchor = vim.w[win].luanphan_view_anchor or win
   if not geometry then
-    sidebar.layout(anchor, width, col, height)
+    window_bar.layout(anchor, bar_frame, bar_style)
     return
   end
   local cwd = vim.b[vim.api.nvim_win_get_buf(win)].luanphan_agent_cwd
@@ -301,8 +286,8 @@ local function layout_agent(win, width, col, height, geometry, style)
     bind_agent_pane(buf)
     apis[name].prepare_tile(anchor, false)
   end
-  sidebar.layout(anchor, width, col, height)
-  sidebar.refresh()
+  window_bar.layout(anchor, bar_frame, bar_style)
+  window_bar.refresh()
 end
 
 local function get_agent(name)
@@ -311,7 +296,7 @@ local function get_agent(name)
   end
 
   local def = agent_defs[name]
-  local sidebar = require("luanphan.agents.sidebar")
+  local window_bar = require("luanphan.agents.window_bar")
   apis[name] = terminal_agent.create({
     status_name = name,
     native_status = def.native_status,
@@ -322,7 +307,7 @@ local function get_agent(name)
     hint_open = agent_key,
     defaults = def.defaults,
     on_float_layout = layout_agent,
-    on_navigate = sidebar.navigate,
+    on_navigate = window_bar.navigate,
     on_prepare = function(win)
       agent_container:reserve(win)
     end,
@@ -350,7 +335,7 @@ local function get_agent(name)
           sessions.forget_buffer(bufnr, name, id)
         end
         if reflow and vim.api.nvim_win_is_valid(reflow) then M.refresh_tabs(reflow) end
-        sidebar.refresh()
+        window_bar.refresh()
       end)
     end,
     on_quit = function(bufnr, cwd)
@@ -497,9 +482,9 @@ local function receive_terminal_event(args)
     status.update(bufnr, event.status)
     local changed_id = sessions.update(bufnr, event)
     if changed_id then
-      require("luanphan.agents.sidebar").refresh(true)
+      require("luanphan.agents.window_bar").refresh(true)
     elseif event.refresh_title then
-      require("luanphan.agents.sidebar").update_title(bufnr)
+      require("luanphan.agents.window_bar").update_title(bufnr)
     end
   end
   if def and def.decode_event then
@@ -514,7 +499,7 @@ function M.hide()
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_is_valid(win) then
       local bufnr = vim.api.nvim_win_get_buf(win)
-      if vim.bo[bufnr].filetype == "agent-sidebar"
+      if vim.bo[bufnr].filetype == "agent-window-bar"
         or (vim.bo[bufnr].buftype == "terminal"
         and vim.b[bufnr].luanphan_persist_term
         and not vim.b[bufnr].luanphan_floating_terminal
@@ -551,6 +536,14 @@ end
 agent_container = view_container.create({
   context = vim.fn.getcwd,
   tabs = open_tabs,
+  title = function(buf, title)
+    local buffer = vim.b[buf]
+    title = M.display_title(buffer.luanphan_agent_name, title)
+    if type(title) ~= "string" or title == "" or title == vim.api.nvim_buf_get_name(buf) then
+      return buffer.luanphan_agent_saved_label
+    end
+    return title
+  end,
   reorder = function(tabs, _, win)
     sessions.set_order(tabs)
     M.refresh_tabs(win)
@@ -569,7 +562,8 @@ agent_container = view_container.create({
     layout_config = { width = 0.3, height = 0.25 },
   },
   empty_message = "no terminal agents registered",
-  cycle_desc = "Next terminal agent",
+  cycle_window = function(step) return require("luanphan.agents.window_bar").cycle(step) end,
+  cycle_desc = "Next agent workspace or session",
 })
 
 function M.refresh_tabs(win)
