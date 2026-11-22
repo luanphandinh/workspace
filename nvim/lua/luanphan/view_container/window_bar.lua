@@ -130,6 +130,17 @@ function Bar:focused_row()
   return self.rows[api.nvim_win_get_cursor(self.win)[1]]
 end
 
+function Bar:rename_window()
+  local row = self:focused_row()
+  if not row or row.item then return end
+  local group, win = row.group, self.win
+  vim.ui.input({ prompt = "Window name: ", default = group.title }, function(value)
+    local name = vim.trim(value or "")
+    if name == "" or name == group.title or name:find("%c") then return end
+    if self.win == win and self:visible() then self.opts.rename_window(group, name) end
+  end)
+end
+
 function Bar:refresh_at(group, item)
   self:refresh(true)
   for index, row in ipairs(self.rows) do
@@ -265,6 +276,10 @@ function Bar:layout(anchor, frame, style)
   if self.opts.bind then self.opts.bind(buf) end
 
   local opts = { buffer = buf, silent = true, nowait = true }
+  if self.opts.rename_window then
+    vim.keymap.set("n", "e", function() self:rename_window() end,
+      vim.tbl_extend("force", opts, { desc = "Rename window" }))
+  end
   if self.opts.dismiss then
     vim.keymap.set("n", "d", function()
       local row = self:focused_row()

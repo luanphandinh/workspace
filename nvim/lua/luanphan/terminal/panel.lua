@@ -297,6 +297,10 @@ function M.create(opts)
     end,
     active_window = active_window,
     activate = activate,
+    rename_window = function(group, name)
+      group.source.title = name
+      bar:refresh(true)
+    end,
     reorder = function(group, items) inner.opts.reorder(items, group.source) end,
     bind = function(buf)
       vim.keymap.set("n", "<leader>nw", panel.new_window, { buffer = buf, desc = "New terminal window" })

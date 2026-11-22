@@ -271,6 +271,10 @@ bar = bars.create({
   groups = function() return windows end,
   active_window = active_window,
   activate = activate,
+  rename_window = function(group, name)
+    -- tmux expands formats in window names.
+    run({ "rename-window", "-t", group.id, "--", (name:gsub("#", "##")) }, refresh)
+  end,
   reorder = reorder_panes,
   reorder_groups = function(group, other)
     local prefix = session.id .. ":"
@@ -326,7 +330,7 @@ local function render_panel()
     api.nvim_set_current_win(active_window())
   end
   if not selection then bar.history.record(selected.bufnr) end
-  bar:refresh()
+  bar:refresh(api.nvim_get_current_win() == bar.win)
   tiles:refresh_tile_highlights()
 end
 

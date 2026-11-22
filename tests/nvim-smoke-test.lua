@@ -6067,7 +6067,26 @@ wait(function() return active() == second end, "Tab wrapped within the tmux wind
 key("<S-Tab>")
 wait(function() return active() == first end, "Shift-Tab selected the previous tmux pane")
 key("<leader>e")
+local prompt, rename
+local input = vim.ui.input
+vim.ui.input = function(opts, callback) prompt, rename = opts, callback end
+api.nvim_win_set_cursor(0, { 2, 0 })
+key("e")
+assert(not prompt, "pane row opened the window rename prompt")
 api.nvim_win_set_cursor(0, { 4, 0 })
+key("e")
+vim.ui.input = input
+assert(prompt and prompt.default == tmux("display-message", "-p", "-t", third, "#{window_name}"),
+  "rename prompt did not use the selected tmux window name")
+local new_name = "-Example 100% #{window_id}"
+local window_bar_buf = api.nvim_get_current_buf()
+rename(new_name)
+wait(function()
+  return vim.tbl_contains(api.nvim_buf_get_lines(window_bar_buf, 0, -1, false), " " .. new_name)
+end, "renamed window in the tmux bar")
+assert(tmux("display-message", "-p", "-t", third, "#{window_name}") == new_name, "tmux did not store the literal name")
+assert(api.nvim_get_current_buf() == window_bar_buf and api.nvim_win_get_cursor(0)[1] == 4,
+  "rename moved focus away from the window row")
 key("o")
 wait(function() return active() == third end, "window bar selected the second tmux window")
 local sidebar = tmux("split-window", "-dh", "-l", "12", "-b", "-P", "-F", "#{pane_id}", "-t", third)
@@ -6248,6 +6267,17 @@ local function test_terminal_view_container(repo)
     local fourth_buf = vim.api.nvim_get_current_buf()
     assert_true(fourth_buf ~= third_buf and not rendered_winbar(window_bar()):find("Window 3", 1, true),
       "new tab created another integrated window")
+    local input, prompt, rename = vim.ui.input
+    invoke_map("<leader>e")
+    invoke_map("h")
+    vim.ui.input = function(opts, callback) prompt, rename = opts, callback end
+    invoke_map("e")
+    vim.ui.input = input
+    assert_true(prompt and prompt.default == "Window 1", "rename prompt did not use the selected horizontal window")
+    rename("Example window")
+    assert_true(rendered_winbar(window_bar()):find("Example window", 1, true), "integrated window did not show its new name")
+    invoke_map("<leader>e")
+    assert_true(vim.api.nvim_get_current_buf() == fourth_buf, "rename switched the active terminal window")
     invoke_map("<S-Tab>")
     assert_true(vim.api.nvim_get_current_buf() == first_buf, "outer window lost its selected terminal tab")
     invoke_map("<C-l>")
