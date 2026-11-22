@@ -5286,6 +5286,11 @@ local function test_agent_view_container(repo)
     local editor = vim.api.nvim_get_current_win()
     local other_buf = agents.new("codex")
     local main = vim.api.nvim_get_current_win()
+    for _, key in ipairs({ "<Tab>", "<S-Tab>" }) do
+      invoke_map(key)
+      assert_true(vim.api.nvim_get_current_buf() == other_buf and realpath(vim.fn.getcwd()) == realpath(other_path),
+        key .. " left the current agent workspace")
+    end
     invoke_map("<C-h>")
     local sidebar = vim.api.nvim_get_current_win()
     local sidebar_buf = vim.api.nvim_get_current_buf()
@@ -5460,16 +5465,6 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_win_get_buf(sidebar) == sidebar_buf, "workspace switch replaced the sidebar")
     assert_true(vim.fn.jobwait({ vim.b[other_buf].terminal_job_id }, 0)[1] == -1, "workspace switch stopped the previous terminal")
     assert_true(rendered_winbar(main):find(title, 1, true), "workspace switch lost the top tabs")
-    for _, target in ipairs({
-      { "<Tab>", other_buf, other_path },
-      { "<S-Tab>", first_cursor_buf, repo },
-    }) do
-      invoke_map(target[1])
-      assert_true(vim.api.nvim_get_current_buf() == target[2] and realpath(vim.fn.getcwd()) == realpath(target[3]),
-        target[1] .. " did not switch to the workspace's last active agent")
-      assert_true(vim.api.nvim_get_current_win() == main and vim.api.nvim_win_get_buf(sidebar) == sidebar_buf,
-        target[1] .. " rebuilt the agent panel during a workspace switch")
-    end
     local function has_jump_number(number, label)
       local lines = vim.api.nvim_buf_get_lines(sidebar_buf, 0, -1, false)
       return vim.tbl_contains(lines, string.format(" %2d %s", number, label))
@@ -5854,10 +5849,18 @@ key('<leader>nw')
 local other_window = api.nvim_get_current_buf()
 assert(#floats() == 2 and window_bar():find('Window 2', 1, true), 'new window did not show its own shell')
 key('<S-Tab>')
+assert(api.nvim_get_current_buf() == other_window, 'Shift-Tab left a one-pane window')
+key('<C-o>')
 assert(#floats() == 4 and api.nvim_get_current_buf() == lower and window_bar():find('Window 1', 1, true),
   'window switch did not restore its panes and focus')
 key('<Tab>')
-assert(#floats() == 2 and api.nvim_get_current_buf() == other_window, 'Tab stayed inside the group')
+assert(#floats() == 4 and api.nvim_get_current_buf() == left, 'Tab did not wrap within the current window')
+key('<S-Tab>')
+assert(api.nvim_get_current_buf() == lower, 'Shift-Tab missed the previous pane')
+key('<leader>e')
+api.nvim_win_set_cursor(0, { 5, 0 })
+key('o')
+assert(#floats() == 2 and api.nvim_get_current_buf() == other_window, 'window bar did not select the second window')
 key('<leader>nt')
 local new_pane = api.nvim_get_current_buf()
 assert(new_pane ~= other_window and #floats() == 3 and window_bar():find('Window 2', 1, true)
@@ -6027,10 +6030,20 @@ for _, jump in ipairs({ { "<C-o>", first }, { "<C-o>", second }, { "<C-i>", firs
   vim.fn.maparg(jump[1], "n", false, true).callback()
   wait(function() return active() == jump[2] end, "tmux pane jump history")
 end
-key("<S-Tab>")
-wait(function() return active() == first end, "previous window")
+for _, key_name in ipairs({ "<Tab>", "<S-Tab>" }) do
+  key(key_name)
+  assert(active() == third, "cycling left a one-pane tmux window")
+end
+vim.fn.maparg("<C-o>", "n", false, true).callback()
+wait(function() return active() == first end, "previous window from history")
 key("<Tab>")
-wait(function() return active() == third end, "next window")
+wait(function() return active() == second end, "Tab wrapped within the tmux window")
+key("<S-Tab>")
+wait(function() return active() == first end, "Shift-Tab selected the previous tmux pane")
+key("<leader>e")
+api.nvim_win_set_cursor(0, { 4, 0 })
+key("o")
+wait(function() return active() == third end, "window bar selected the second tmux window")
 local sidebar = tmux("split-window", "-dh", "-l", "12", "-b", "-P", "-F", "#{pane_id}", "-t", third)
 tmux("set-option", "-pt", sidebar, "@pin_sidebar", "1")
 panel.hide()
@@ -6046,7 +6059,9 @@ assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane == saved[3] end
 for _, buf in ipairs(api.nvim_list_bufs()) do
   assert(vim.b[buf].luanphan_tmux_pane ~= saved[4], "old tmux sidebar became a tile")
 end
-api.nvim_feedkeys(vim.keycode("<S-Tab>"), "xt", false)
+vim.fn.maparg("<leader>e", "n", false, true).callback()
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+vim.fn.maparg("o", "n", false, true).callback()
 assert(vim.wait(4000, function()
   return vim.b.luanphan_tmux_pane == saved[1]
     and table.concat(api.nvim_buf_get_lines(0, 0, -1, false), "\n"):find("RESULT_PROBE_TEXT", 1, true)

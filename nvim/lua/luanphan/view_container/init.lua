@@ -162,7 +162,6 @@ function Container:bind(bufnr, context)
 		local key, step = unpack(binding)
 		local desc = step == 1 and (self.opts.cycle_desc or "Next view") or "Previous view"
 		vim.keymap.set("n", key, function()
-			if self.opts.cycle_window and self.opts.cycle_window(step) then return end
 			self:cycle(context, step)
 		end, vim.tbl_extend("force", opts, { desc = desc }))
 	end

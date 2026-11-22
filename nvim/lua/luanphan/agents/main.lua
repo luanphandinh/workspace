@@ -562,8 +562,7 @@ agent_container = view_container.create({
     layout_config = { width = 0.3, height = 0.25 },
   },
   empty_message = "no terminal agents registered",
-  cycle_window = function(step) return require("luanphan.agents.window_bar").cycle(step) end,
-  cycle_desc = "Next agent workspace or session",
+  cycle_desc = "Next agent session",
 })
 
 function M.refresh_tabs(win)

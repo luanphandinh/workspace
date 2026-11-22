@@ -284,11 +284,7 @@ local function prepare_buffer(pane)
   vim.keymap.set("t", "<C-h>", "<C-h>", opts)
   vim.keymap.set("t", "<C-]>", function() enter_input(pane, "\27") end,
     vim.tbl_extend("force", opts, { desc = "Send Escape to tmux pane" }))
-  for _, binding in ipairs({ { "<Tab>", 1 }, { "<S-Tab>", -1 } }) do
-    vim.keymap.set("n", binding[1], function()
-      if not bar:cycle(binding[2]) and current then tiles:cycle(current, binding[2]) end
-    end, opts)
-  end
+  tiles:bind(buf)
   for _, direction in ipairs({ "h", "j", "k", "l" }) do
     vim.keymap.set("n", "<C-" .. direction .. ">", function() select_neighbor(direction) end, opts)
   end
@@ -314,6 +310,8 @@ tiles = views.create({
   reorder = function(items, group) reorder_panes(group, items) end,
   activate = activate,
   new = new_tab,
+  create_key = false,
+  cycle_desc = "Next tmux pane",
 })
 
 bar = bars.create({

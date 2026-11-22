@@ -193,10 +193,14 @@ function M.create(opts)
         if key == "<leader>nw" then panel.new_window() else panel.new_tab() end
       end, vim.tbl_extend("force", keys, { desc = key == "<leader>nw" and "New terminal window" or "New terminal tab" }))
     end
-    for _, binding in ipairs({ { "<Tab>", 1 }, { "<S-Tab>", -1 } }) do
-      vim.keymap.set("n", binding[1], function()
-        if #group.scope.windows > 1 then bar:cycle(binding[2]) else inner:cycle(group, binding[2]) end
-      end, keys)
+    if opts.docked then
+      for _, binding in ipairs({ { "<Tab>", 1 }, { "<S-Tab>", -1 } }) do
+        vim.keymap.set("n", binding[1], function()
+          if #group.scope.windows > 1 then bar:cycle(binding[2]) else inner:cycle(group, binding[2]) end
+        end, keys)
+      end
+    else
+      inner:bind(buf, group)
     end
     local left = opts.docked and function() move_from_dock("h") end or "<C-h>"
     vim.keymap.set("t", "<C-h>", left, keys)
@@ -272,6 +276,8 @@ function M.create(opts)
     end,
     activate = activate,
     new = panel.new_tab,
+    create_key = false,
+    cycle_desc = "Next terminal pane",
   })
 
   bar = bars.create({

@@ -124,10 +124,6 @@ function M.refresh(keep_cursor)
   bar:refresh(keep_cursor)
 end
 
-function M.cycle(step)
-  return bar:cycle(step)
-end
-
 function M.update_title(buf)
   bar:update_title(buf, views.tab_label(buf))
 end
