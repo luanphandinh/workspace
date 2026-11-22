@@ -5765,6 +5765,100 @@ end
   assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
 end
 
+local function test_floating_terminal_windows()
+  local root = temp_root .. "/floating-terminal"
+  local script = root .. "/check.lua"
+  write(script, vim.split([=[
+local api = vim.api
+local root = vim.fn.getcwd()
+vim.g.luanphan_recent_paths_file = root .. '/recent.json'
+vim.o.shell = '/bin/sh'
+vim.env.ENV = nil
+vim.o.columns, vim.o.lines = 160, 48
+require('lazy').load({ plugins = { 'luanphan-floating-terminal' } })
+local function key(lhs) vim.fn.maparg(lhs, 'n', false, true).callback() end
+local function floats()
+  return vim.tbl_filter(function(win) return api.nvim_win_get_config(win).relative ~= '' end, api.nvim_list_wins())
+end
+local function window_bar()
+  for _, win in ipairs(floats()) do
+    if vim.w[win].luanphan_view_companion_anchor then
+      return api.nvim_eval_statusline(vim.wo[win].winbar, { winid = win, use_winbar = true }).str
+    end
+  end
+  error('window bar missing')
+end
+local function config(buf) return api.nvim_win_get_config(vim.fn.bufwinid(buf)) end
+
+key('<leader>j')
+local left = api.nvim_get_current_buf()
+assert(vim.b[left].luanphan_floating_terminal and #floats() == 2, 'floating shell did not open')
+assert(window_bar():find('[Window 1]', 1, true), 'initial window is missing')
+local full = config(left)
+assert(full.col == 0 and full.width == vim.o.columns and full.row + full.height == vim.o.lines - vim.o.cmdheight,
+  'floating terminal did not fill the screen')
+key('<leader>nt')
+local upper = api.nvim_get_current_buf()
+assert(upper ~= left and #floats() == 3 and vim.trim(window_bar()) == '[Window 1]',
+  'new terminal tab did not stay in the current window')
+key('<leader>fn')
+local lower = api.nvim_get_current_buf()
+assert(#floats() == 4 and config(left).width == config(upper).width and config(left).row == config(upper).row
+  and config(upper).col == config(lower).col and config(upper).row < config(lower).row, 'three panes did not use the fixed split')
+for _, move in ipairs({ { '<C-k>', upper }, { '<C-h>', left }, { '<C-h>', left }, { '<C-l>', upper }, { '<C-j>', lower } }) do
+  key(move[1])
+  assert(api.nvim_get_current_buf() == move[2], move[1] .. ' focused the wrong pane')
+end
+local moved_win = api.nvim_get_current_win()
+key('<C-S-h>')
+assert(api.nvim_get_current_win() == moved_win and config(lower).col == 0 and config(left).row < config(upper).row,
+  'moving left did not push the other panes after the focused pane')
+key('<C-S-l>')
+key('<C-S-j>')
+assert(api.nvim_get_current_win() == moved_win and config(left).col == 0 and config(upper).row < config(lower).row,
+  'moving right and down did not restore the original order')
+
+key('<leader>nw')
+local other_window = api.nvim_get_current_buf()
+assert(#floats() == 2 and window_bar():find('[Window 2]', 1, true), 'new window did not show its own shell')
+key('<S-Tab>')
+assert(#floats() == 4 and api.nvim_get_current_buf() == lower and window_bar():find('[Window 1]', 1, true),
+  'window switch did not restore its panes and focus')
+key('<Tab>')
+assert(#floats() == 2 and api.nvim_get_current_buf() == other_window, 'Tab stayed inside the group')
+key('<leader>nt')
+local new_pane = api.nvim_get_current_buf()
+assert(new_pane ~= other_window and #floats() == 3 and window_bar():find('[Window 2]', 1, true)
+  and not window_bar():find('Window 3', 1, true), 'new terminal tab opened a window')
+vim.fn.chansend(vim.b[new_pane].terminal_job_id, 'exit\n')
+assert(vim.wait(3000, function() return api.nvim_get_current_buf() == other_window end), 'new terminal tab did not return to its neighbor')
+key('<leader>j')
+assert(#floats() == 0, 'toggle left part of the panel open')
+for _, buf in ipairs({ left, upper, lower, other_window }) do
+  assert(vim.fn.jobwait({ vim.b[buf].terminal_job_id }, 0)[1] == -1, 'toggle stopped a shell')
+end
+key('<leader>j')
+assert(#floats() == 2 and api.nvim_get_current_buf() == other_window, 'toggle lost the active window')
+local other_cwd = root .. '/other'
+vim.fn.mkdir(other_cwd, 'p')
+vim.cmd.cd(other_cwd)
+assert(#floats() == 0, 'workspace switch left part of the panel open')
+key('<leader>j')
+assert(api.nvim_get_current_buf() == other_window and vim.b[other_window].luanphan_terminal_reference_cwd == root,
+  'floating windows lost their original shell across workspaces')
+
+vim.fn.chansend(vim.b[other_window].terminal_job_id, 'exit\n')
+assert(vim.wait(3000, function() return not api.nvim_buf_is_valid(other_window) and #floats() == 4 end),
+  'last pane exit did not remove its window')
+assert(api.nvim_get_current_buf() == lower and not window_bar():find('Window 2', 1, true), 'window exit lost the previous pane')
+vim.fn.chansend(vim.b[left].terminal_job_id, 'exit\n')
+assert(vim.wait(3000, function() return not api.nvim_buf_is_valid(left) and #floats() == 3 end),
+  'pane exit did not reflow its window')
+]=], "\n", { plain = true }))
+  local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
+  assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+end
+
 local function test_terminal_view_container(repo)
   local old_cwd = vim.fn.getcwd()
   close_toggleterm_terminals()
@@ -7845,6 +7939,7 @@ local agent_tests = {
   terminal_shortcuts = test_terminal_normal_mode_shows_shortcuts,
   tiled_workspace_picker = test_tiled_agent_workspace_picker,
   view_container = test_agent_view_container,
+  floating_terminal = test_floating_terminal_windows,
 }
 
 local lsp_lifecycle_tests = {
@@ -8105,6 +8200,7 @@ local setup_ok, setup_err = xpcall(function()
   test("plain shells tile with agents and reopen after a restart", function()
     agent_tests.panel_shells(repo)
   end)
+  test("floating terminal nests tabs inside global windows", agent_tests.floating_terminal)
   test("active agent picker keeps the tiled panel together", function()
     agent_tests.tiled_workspace_picker(repo, worktree)
   end)

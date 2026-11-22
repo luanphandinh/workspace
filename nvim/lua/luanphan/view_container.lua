@@ -203,8 +203,11 @@ function Container:render(win, context, single_tab)
 	local parts = {}
 	for _, tab in ipairs(tabs) do
 		local selected = active and tab.id == active.id and tab.bufnr == active.bufnr
-		vim.b[tab.bufnr].luanphan_view_label = tab.label
-		local label = string.format("%%{v:lua.require'luanphan.view_container'.tab_label(%d)}", tab.bufnr)
+		local label = tab.title and tab.title:gsub("%%", "%%%%")
+		if not label then
+			vim.b[tab.bufnr].luanphan_view_label = tab.label
+			label = string.format("%%{v:lua.require'luanphan.view_container'.tab_label(%d)}", tab.bufnr)
+		end
 		label = selected and ("[" .. label .. "]") or label
 		parts[#parts + 1] = selected and "%#TabLineSel#" or "%#TabLine#"
 		parts[#parts + 1] = " " .. label .. " "
@@ -236,6 +239,10 @@ local function tile_geometry(geometry, count)
 		tile.zindex = geometry.zindex
 	end
 	return tiles
+end
+
+function M.can_tile(geometry, count)
+	return tile_geometry(geometry, count) ~= nil
 end
 
 local function set_tile_highlights(win, focused, inactive)
@@ -339,6 +346,34 @@ function Container:display(anchor, context, geometry, style)
 	if panes then return panes end
 	untile(self, anchor, context)
 	vim.api.nvim_win_set_config(anchor, geometry)
+end
+
+function Container:move_tile(direction, context)
+	local win = vim.api.nvim_get_current_win()
+	if not self.tile_anchor or M.group_anchor(win) ~= self.tile_anchor then return end
+	local neighbor = M.tile_neighbor(win, direction)
+	if not neighbor then return end
+
+	context = context or self:context()
+	local tabs = vim.list_slice(self:tabs(context))
+	local current_buf = vim.api.nvim_win_get_buf(win)
+	local neighbor_buf = vim.api.nvim_win_get_buf(neighbor)
+	local source, target
+	for index, tab in ipairs(tabs) do
+		if tab.bufnr == current_buf then source = index end
+		if tab.bufnr == neighbor_buf then target = index end
+	end
+	if not source or not target then return end
+
+	table.insert(tabs, target, table.remove(tabs, source))
+	self.opts.reorder(tabs, context, win)
+end
+
+function Container:bind_tile_moves(bufnr, context)
+	for direction, label in pairs({ h = "left", j = "down", k = "up", l = "right" }) do
+		vim.keymap.set("n", "<C-S-" .. direction .. ">", function() self:move_tile(direction, context) end,
+			{ buffer = bufnr, silent = true, desc = "Move tile " .. label })
+	end
 end
 
 function Container:cycle(context, step)

@@ -233,34 +233,11 @@ function M.map_create_shortcuts(bufnr)
   end
 end
 
-local function move_tile(direction)
-  local win = vim.api.nvim_get_current_win()
-  local neighbor = view_container.tile_neighbor(win, direction)
-  if not neighbor then return end
-
-  local bufnr = vim.api.nvim_win_get_buf(win)
-  local neighbor_buf = vim.api.nvim_win_get_buf(neighbor)
-  local tabs = open_tabs(vim.b[bufnr].luanphan_agent_cwd)
-  local source, target
-  for index, tab in ipairs(tabs) do
-    if tab.bufnr == bufnr then source = index end
-    if tab.bufnr == neighbor_buf then target = index end
-  end
-  if not source or not target then return end
-
-  table.insert(tabs, target, table.remove(tabs, source))
-  sessions.set_order(tabs)
-  M.refresh_tabs(win)
-end
-
 local function bind_agent_pane(bufnr)
   require("luanphan.agents.sidebar").attach(bufnr)
   M.map_jump_keys(bufnr)
   M.map_create_shortcuts(bufnr)
-  for direction, label in pairs({ h = "left", j = "down", k = "up", l = "right" }) do
-    vim.keymap.set("n", "<C-S-" .. direction .. ">", function() move_tile(direction) end,
-      { buffer = bufnr, silent = true, desc = "Move agent tile " .. label })
-  end
+  agent_container:bind_tile_moves(bufnr, vim.b[bufnr].luanphan_agent_cwd)
 end
 
 local function resume_options(session)
@@ -350,6 +327,8 @@ local function get_agent(name)
       agent_container:reserve(win)
     end,
     on_show = function(bufnr, win, cwd)
+      local floating = package.loaded["luanphan.terminal.floating"]
+      if floating then floating.hide() end
       jumplist.record(bufnr)
       if sessions.supported(name) then
         local seconds, microseconds = vim.uv.gettimeofday()
@@ -538,6 +517,7 @@ function M.hide()
       if vim.bo[bufnr].filetype == "agent-sidebar"
         or (vim.bo[bufnr].buftype == "terminal"
         and vim.b[bufnr].luanphan_persist_term
+        and not vim.b[bufnr].luanphan_floating_terminal
         and not vim.b[bufnr].luanphan_toggleterm)
       then
         local ok, closed = pcall(terminal_agent.close_window, win)
@@ -571,6 +551,10 @@ end
 agent_container = view_container.create({
   context = vim.fn.getcwd,
   tabs = open_tabs,
+  reorder = function(tabs, _, win)
+    sessions.set_order(tabs)
+    M.refresh_tabs(win)
+  end,
   choices = agent_choices,
   activate = function(tab, opts)
     M.open(tab.agent, tab.bufnr, opts)

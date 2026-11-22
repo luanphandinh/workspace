@@ -266,7 +266,8 @@ local function setup()
       local cfg = vim.api.nvim_win_get_config(win)
       if cfg.relative and cfg.relative ~= "" then
         local buf = vim.api.nvim_win_get_buf(win)
-        if vim.b[buf].luanphan_persist_term and not vim.b[buf].luanphan_toggleterm then
+        if vim.b[buf].luanphan_persist_term and not vim.b[buf].luanphan_toggleterm
+          and not vim.b[buf].luanphan_floating_terminal then
           return win
         end
       end
@@ -285,6 +286,7 @@ local function setup()
           and vim.bo[buf].buftype == "terminal"
           and vim.b[buf].luanphan_persist_term
           and not vim.b[buf].luanphan_toggleterm
+          and not vim.b[buf].luanphan_floating_terminal
         then
           pcall(terminal_agent.close_window, win)
         end

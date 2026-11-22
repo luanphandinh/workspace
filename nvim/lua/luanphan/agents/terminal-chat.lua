@@ -9,6 +9,7 @@
 
 local M = {}
 local view_container = require("luanphan.view_container")
+local sync_terminal_grid = require("luanphan.terminal.window").sync_grid
 local preserve_windows = false
 local pending_tile_close = {}
 
@@ -247,33 +248,6 @@ end
 
 local function valid_job_id(job)
   return type(job) == "number" and job > 0
-end
-
-local function sync_terminal_grid(win, bufnr)
-  if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= bufnr then
-    return
-  end
-  local job = vim.b[bufnr].terminal_job_id
-  if not valid_job_id(job) then
-    return
-  end
-
-  local width = vim.api.nvim_win_get_width(win)
-  local height = vim.api.nvim_win_get_height(win)
-  if vim.api.nvim_get_option_value("winbar", { win = win }) ~= "" then
-    height = height - 1
-  end
-  width = math.max(1, width)
-  height = math.max(1, height)
-
-  local previous = vim.b[bufnr].luanphan_terminal_grid
-  if type(previous) == "table" and previous.width == width and previous.height == height then
-    return
-  end
-
-  if pcall(vim.fn.jobresize, job, width, height) then
-    vim.b[bufnr].luanphan_terminal_grid = { width = width, height = height }
-  end
 end
 
 local function save_terminal_view(win)

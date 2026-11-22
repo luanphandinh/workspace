@@ -1,5 +1,6 @@
 local M = {}
 local close_agent_window = require("luanphan.agents.terminal-chat").close_window
+local window = require("luanphan.terminal.window")
 local terms = {}
 local active_terms = {}
 local terminal_container
@@ -30,30 +31,16 @@ local function cwd_terms(cwd)
 end
 
 local function save_terminal_view(term)
-  if not term or not term.window or not vim.api.nvim_win_is_valid(term.window) then
-    return
-  end
-  local ok, view = pcall(vim.api.nvim_win_call, term.window, vim.fn.winsaveview)
-  if ok then
-    vim.b[term.bufnr].luanphan_terminal_view = {
-      follow = view.lnum >= vim.api.nvim_buf_line_count(term.bufnr),
-      view = view,
-    }
-  end
+  if term then window.save_view(term.window, term.bufnr) end
 end
 
 local function restore_terminal_view(term)
-  local saved = vim.b[term.bufnr].luanphan_terminal_view
   vim.schedule(function()
     if term.window and vim.api.nvim_win_is_valid(term.window) and vim.api.nvim_win_get_buf(term.window) == term.bufnr then
       if vim.api.nvim_get_current_win() == term.window then
         vim.cmd("stopinsert")
       end
-      if type(saved) == "table" and saved.follow == false and type(saved.view) == "table" then
-        pcall(vim.api.nvim_win_call, term.window, function()
-          vim.fn.winrestview(saved.view)
-        end)
-      end
+      window.restore_view(term.window, term.bufnr)
     end
   end)
 end
@@ -185,6 +172,13 @@ function M.run_command(command, cwd, label)
 end
 
 M.spec = {
+  {
+    "luanphan-floating-terminal",
+    virtual = true,
+    keys = {
+      { "<leader>j", function() require("luanphan.terminal.floating").toggle() end, desc = "Floating terminal" },
+    },
+  },
   -- Toggleable terminal, scoped per worktree (cwd). Switching worktrees hides the
   -- current terminal; toggling again in a new cwd spawns a fresh one; switching
   -- back re-shows the previous one.
