@@ -6122,6 +6122,14 @@ wait(function()
   return win and table.concat(api.nvim_buf_get_lines(api.nvim_win_get_buf(win), 0, -1, false), "\n")
     :find("LIVE_CLIPPED_TILE", 1, true)
 end, "mismatched tmux grid still updates the Neovim tile")
+local lower_win = pane_window(bottom)
+for _, move in ipairs({ { "<C-S-k>", upper.row }, { "<C-S-j>", lower.row } }) do
+  key(move[1])
+  wait(function() return config(bottom).row == move[2] end, "move the tmux pane vertically")
+  assert(active() == bottom and api.nvim_get_current_win() == lower_win
+    and tmux("display-message", "-p", "-t", bottom, "#{pane_active}") == "1",
+    "moving vertically left focus in the original tile slot")
+end
 tmux("kill-pane", "-t", bottom)
 tmux("select-pane", "-t", second)
 wait(function() return active() == second and not pane_window(bottom) end, "remove third tile")
@@ -6133,12 +6141,20 @@ assert(not vim.iter(api.nvim_list_wins()):any(function(win)
 end), "closing a tile left other panes visible")
 panel.toggle()
 wait(function() return active() == second end, "reattach after closing a tile")
+local moved_win = api.nvim_get_current_win()
 local right_edge = api.nvim_win_get_config(0).col
 key("<C-S-h>")
 wait(function()
   return active() == second and api.nvim_win_get_config(0).col < right_edge
     and tmux("display-message", "-p", "-t", second, "#{pane_index}") == "0"
 end, "tmux pane move")
+key("<C-S-l>")
+wait(function() return config(second).col == right_edge end, "move the tmux pane right")
+assert(active() == second and api.nvim_get_current_win() == moved_win
+  and tmux("display-message", "-p", "-t", second, "#{pane_active}") == "1",
+  "moving right left focus in the original tile slot")
+key("<C-S-h>")
+wait(function() return active() == second and config(second).col < right_edge end, "move the tmux pane left again")
 key("<C-l>")
 wait(function() return active() == first end, "tile navigation")
 key("<leader>nw")

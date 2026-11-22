@@ -255,23 +255,30 @@ local function prepare_buffer(pane)
   tiles:bind_tile_moves(buf)
 end
 
-local function reorder_panes(group, items)
+local function reorder_panes(group, items, focused_id)
   local previous = vim.list_slice(group.items)
   table.sort(previous, function(a, b) return a.index < b.index end)
+  local swapped = false
   for index, item in ipairs(items) do
     local other = previous[index]
     if item.id ~= other.id then
-      run({ "swap-pane", "-d", "-s", item.id, "-t", other.id }, refresh)
+      run({ "swap-pane", "-d", "-s", item.id, "-t", other.id })
       local source = vim.iter(previous):enumerate():find(function(_, candidate) return candidate.id == item.id end)
       previous[source], previous[index] = other, item
+      swapped = true
     end
+  end
+  if swapped then
+    run({ "select-pane", "-t", focused_id or group.active.id }, refresh, refresh)
   end
 end
 
 tiles = views.create({
   context = function() return current end,
   tabs = function(group) return group.items end,
-  reorder = function(items, group) reorder_panes(group, items) end,
+  reorder = function(items, group, win)
+    reorder_panes(group, items, vim.b[api.nvim_win_get_buf(win)].luanphan_tmux_pane)
+  end,
   activate = activate,
   new = new_tab,
   create_key = false,
