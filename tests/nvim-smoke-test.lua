@@ -4839,7 +4839,11 @@ end
 
 local function test_panel_shell_sessions(repo)
   local root = temp_root .. "/panel-shell"
-  write_executable(root .. "/bin/mcodex", { "#!/bin/sh", "exec cat" })
+  write_executable(root .. "/bin/mcodex", {
+    "#!/bin/sh",
+    [[printf 'pty=%s/%s/%s/%s/%s/%s\n' "$TERM" "$COLORTERM" "${NO_COLOR-unset}" "${TMUX-unset}" "${TMUX_PANE-unset}" "${TERM_PROGRAM-unset}"]],
+    "exec cat",
+  })
   write(root .. "/settings.toml", { "[agent_float]", 'display_style = "tile"' })
   local script = root .. "/session.lua"
   local setup = {
@@ -4851,6 +4855,13 @@ local function test_panel_shell_sessions(repo)
     "vim.g.luanphan_terminal_sessions_dir = root .. '/terminal-state'",
     "vim.env.PATH = root .. '/bin:' .. vim.env.PATH",
     "vim.env.ENV = nil",
+    "vim.env.COLORTERM = nil",
+    "vim.env.NO_COLOR = '1'",
+    "vim.env.TMUX = '/example/socket,1,0'",
+    "vim.env.TMUX_PANE = '%0'",
+    "vim.env.TERM_PROGRAM = 'tmux'",
+    "vim.env.TERM_PROGRAM_VERSION = '3.8'",
+    "vim.o.termguicolors = true",
     "vim.o.shell = '/bin/sh'",
     "vim.o.columns = 160",
     "vim.o.lines = 48",
@@ -4867,6 +4878,11 @@ local function test_panel_shell_sessions(repo)
   end
   run([=[
 local agent = assert(agents.new('codex', { thread_id = agent_id, view_mode = true }))
+assert(vim.wait(3000, function()
+  return vim.tbl_contains(vim.api.nvim_buf_get_lines(agent, 0, -1, false),
+    'pty=xterm-256color/truecolor/unset/unset/unset/unset')
+end), 'the native agent inherited the GUI launcher terminal environment')
+assert(vim.env.NO_COLOR == '1' and vim.env.TMUX == '/example/socket,1,0', 'starting an agent changed the editor environment')
 press('<leader>nt')
 local first = vim.api.nvim_get_current_buf()
 assert(vim.b[first].luanphan_agent_name == 'terminal', 'new terminal did not create a shell')
@@ -5783,6 +5799,7 @@ local api = vim.api
 local root = vim.fn.getcwd()
 vim.g.luanphan_recent_paths_file = root .. '/recent.json'
 vim.g.luanphan_global_settings_path = root .. '/settings.toml'
+vim.fn.writefile({ '[floating_terminal]', 'backend = "shell"' }, vim.g.luanphan_global_settings_path)
 vim.o.shell = '/bin/sh'
 vim.env.ENV = nil
 vim.o.columns, vim.o.lines = 160, 48
@@ -5872,6 +5889,176 @@ assert(vim.wait(3000, function() return not api.nvim_buf_is_valid(left) and #flo
 ]=], "\n", { plain = true }))
   local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
   assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+end
+
+local function test_tmux_floating_terminal()
+  if vim.fn.executable("tmux") == 0 then return end
+  local root = uv.fs_mkdtemp("/tmp/nvim-tmux-XXXXXX")
+  local script, socket = root .. "/test.lua", root .. "/socket"
+  write(root .. "/tmux.conf", { "set -g default-shell /bin/sh", "set -g default-command 'exec /bin/sh'" })
+  write(root .. "/redraw.py", {
+    "import os, tty",
+    "tty.setraw(0)",
+    [[os.write(1, b"\033[38;2;255;80;20mBEFORE_CLEAR\033[0m plain\r\n" + b"OLD_OUTPUT\r\n" * 10)]],
+    [[if os.read(0, 1) == b"\x0c":]],
+    [[    os.write(1, b"\033[H\033[2J\033[38;2;255;80;20mAFTER_CLEAR\033[0m plain")]],
+    "os.read(0, 1)",
+  })
+  local setup = {
+    "local root = " .. string.format("%q", root),
+    "vim.g.luanphan_floating_tmux_socket = root .. '/socket'",
+    "vim.g.luanphan_floating_tmux_config = root .. '/tmux.conf'",
+    "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
+    "vim.g.luanphan_recent_paths_file = root .. '/recent.json'",
+    "vim.o.columns, vim.o.lines = 160, 48",
+  }
+  local function run_child(body)
+    write(script, vim.list_extend(vim.list_slice(setup), vim.split(body, "\n", { plain = true })))
+    local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
+    assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+  end
+  local ok, err = xpcall(function()
+    run_child([=[
+local api = vim.api
+local panel = require("luanphan.terminal.floating")
+local function tmux(...)
+  local argv = vim.list_extend({ "tmux", "-S", vim.g.luanphan_floating_tmux_socket }, { ... })
+  local result = vim.system(argv, { text = true }):wait(2000)
+  assert(result.code == 0, result.stderr)
+  return vim.trim(result.stdout)
+end
+local function active() return vim.b.luanphan_tmux_pane end
+local function pane_window(id)
+  return vim.iter(api.nvim_list_wins()):find(function(win)
+    return vim.b[api.nvim_win_get_buf(win)].luanphan_tmux_pane == id
+  end)
+end
+local function config(id) return api.nvim_win_get_config(assert(pane_window(id))) end
+local function wait(predicate, label)
+  assert(vim.wait(4000, predicate), "timeout " .. label)
+end
+local function key(keys)
+  api.nvim_feedkeys(vim.keycode(keys:gsub("<leader>", vim.g.mapleader)), "xt", false)
+end
+panel.toggle()
+wait(function() return active() and vim.bo.buftype == "terminal" end, "create and attach")
+local first = active()
+local full = config(first)
+assert(full.border == nil or full.border == "none", "a single pane gained a border")
+local shell_pid = tmux("display-message", "-p", "-t", first, "#{pane_pid}")
+local first_buf = api.nvim_get_current_buf()
+vim.defer_fn(function() api.nvim_input("printf 'RESULT_%s\\n' PROBE_TEXT<CR><Esc>") end, 20)
+api.nvim_feedkeys("i", "xt!", false)
+wait(function()
+  return table.concat(api.nvim_buf_get_lines(first_buf, 0, -1, false), "\n"):find("RESULT_PROBE_TEXT", 1, true)
+end, "terminal input and output")
+key("<leader>nt")
+wait(function() return active() and active() ~= first end, "native split")
+local second = active()
+assert(#vim.split(tmux("list-panes", "-t", first), "\n") == 2, "split did not reach tmux")
+local left, right = config(first), config(second)
+assert(type(left.border) == "table" and type(right.border) == "table", "split panes lack their Neovim borders")
+assert(left.col == full.col and left.col + left.width + 2 == right.col
+  and right.col + right.width + 2 == full.col + full.width and left.height + 2 == full.height,
+  "split panes did not fill the Neovim tile area")
+assert(vim.wo[pane_window(second)].winhighlight:find("FloatBorder:DiagnosticOk", 1, true),
+  "active pane lacks the focused tile border")
+
+local function screen_position(label)
+  vim.cmd.redraw({ bang = true })
+  local cfg = config(second)
+  local x = cfg.col + 2
+  for y = cfg.row + 3, cfg.row + cfg.height + 1 do
+    local text = {}
+    for col = x, x + #label - 1 do text[#text + 1] = vim.fn.screenstring(y, col) end
+    if table.concat(text) == label then return y, x end
+  end
+end
+tmux("send-keys", "-l", "-t", second, "python3 " .. vim.fn.shellescape(root .. "/redraw.py"))
+tmux("send-keys", "-t", second, "Enter")
+wait(function() return screen_position("BEFORE_CLEAR") end, "colored text on the tile")
+vim.defer_fn(function() api.nvim_input("<C-l><Esc>") end, 20)
+api.nvim_feedkeys("i", "xt!", false)
+wait(function() return screen_position("AFTER_CLEAR") and not screen_position("OLD_OUTPUT") end,
+  "Ctrl+l should show the cleared screen without a second input")
+local row, col = screen_position("AFTER_CLEAR")
+assert(vim.fn.screenattr(row, col) ~= vim.fn.screenattr(row, col + #"AFTER_CLEAR "),
+  "the cropped tmux redraw lost terminal RGB colors")
+
+key("<leader>nt")
+wait(function() return active() and active() ~= first and active() ~= second end, "third native tile")
+local bottom = active()
+tmux("select-layout", "-t", first, "even-vertical")
+wait(function() return tmux("display-message", "-p", "-t", second, "#{pane_top}") ~= "0" end, "external rearrangement")
+local main, upper, lower = config(first), config(second), config(bottom)
+assert(main.row == upper.row and main.col < upper.col and upper.col == lower.col
+  and upper.row + upper.height + 2 == lower.row and lower.row + lower.height + 2 == main.row + main.height + 2,
+  "Neovim lost its left/top-right/bottom-right tile layout after an external tmux layout change")
+tmux("send-keys", "-l", "-t", first, "printf 'LIVE_%s\\n' CLIPPED_TILE")
+tmux("send-keys", "-t", first, "Enter")
+wait(function()
+  local win = pane_window(first)
+  return win and table.concat(api.nvim_buf_get_lines(api.nvim_win_get_buf(win), 0, -1, false), "\n")
+    :find("LIVE_CLIPPED_TILE", 1, true)
+end, "mismatched tmux grid still updates the Neovim tile")
+tmux("kill-pane", "-t", bottom)
+tmux("select-pane", "-t", second)
+wait(function() return active() == second and not pane_window(bottom) end, "remove third tile")
+local tile = api.nvim_get_current_win()
+assert(vim.w[tile].luanphan_view_anchor ~= tile, "the split did not open a separate tile")
+api.nvim_win_close(tile, true)
+assert(not vim.iter(api.nvim_list_wins()):any(function(win)
+  return vim.b[api.nvim_win_get_buf(win)].luanphan_tmux_pane
+end), "closing a tile left other panes visible")
+panel.toggle()
+wait(function() return active() == second end, "reattach after closing a tile")
+local right_edge = api.nvim_win_get_config(0).col
+key("<C-S-h>")
+wait(function()
+  return active() == second and api.nvim_win_get_config(0).col < right_edge
+    and tmux("display-message", "-p", "-t", second, "#{pane_index}") == "0"
+end, "tmux pane move")
+key("<C-l>")
+wait(function() return active() == first end, "tile navigation")
+key("<leader>nw")
+wait(function() return active() and active() ~= first and active() ~= second end, "native window")
+local third = active()
+for _, jump in ipairs({ { "<C-o>", first }, { "<C-o>", second }, { "<C-i>", first }, { "<C-i>", third } }) do
+  vim.fn.maparg(jump[1], "n", false, true).callback()
+  wait(function() return active() == jump[2] end, "tmux pane jump history")
+end
+key("<S-Tab>")
+wait(function() return active() == first end, "previous window")
+key("<Tab>")
+wait(function() return active() == third end, "next window")
+local sidebar = tmux("split-window", "-dh", "-l", "12", "-b", "-P", "-F", "#{pane_id}", "-t", third)
+tmux("set-option", "-pt", sidebar, "@pin_sidebar", "1")
+panel.hide()
+assert(tmux("display-message", "-p", "-t", first, "#{pane_pid}") == shell_pid, "detach stopped the shell")
+vim.fn.writefile({ first, shell_pid, third, sidebar }, root .. "/panes")
+]=])
+    run_child([=[
+local api = vim.api
+local saved = vim.fn.readfile(root .. "/panes")
+local panel = require("luanphan.terminal.floating")
+panel.toggle()
+assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane == saved[3] end), "reopen lost selected pane")
+for _, buf in ipairs(api.nvim_list_bufs()) do
+  assert(vim.b[buf].luanphan_tmux_pane ~= saved[4], "old tmux sidebar became a tile")
+end
+api.nvim_feedkeys(vim.keycode("<S-Tab>"), "xt", false)
+assert(vim.wait(4000, function()
+  return vim.b.luanphan_tmux_pane == saved[1]
+    and table.concat(api.nvim_buf_get_lines(0, 0, -1, false), "\n"):find("RESULT_PROBE_TEXT", 1, true)
+end), "reattach lost pane output")
+local result = vim.system({ "tmux", "-S", vim.g.luanphan_floating_tmux_socket,
+  "display-message", "-p", "-t", saved[1], "#{pane_pid}" }, { text = true }):wait()
+assert(result.code == 0 and vim.trim(result.stdout) == saved[2], "reattach replaced the shell")
+]=])
+  end, debug.traceback)
+  vim.system({ "tmux", "-S", socket, "kill-server" }):wait()
+  vim.fn.delete(root, "rf")
+  assert_true(ok, tostring(err))
 end
 
 local function test_terminal_view_container(repo)
@@ -7224,7 +7411,7 @@ local function test_git_diff_previews(worktree)
   local shell
   local ok, err = xpcall(function()
     for _, style in ipairs({ "vertical", "horizontal" }) do
-      write(settings, { "[floating_terminal]", 'window_bar_style = "' .. style .. '"' })
+      write(settings, { "[floating_terminal]", 'backend = "shell"', 'window_bar_style = "' .. style .. '"' })
       floating.toggle()
       local pane = vim.api.nvim_get_current_win()
       shell = vim.api.nvim_get_current_buf()
@@ -8035,6 +8222,7 @@ local agent_tests = {
   tiled_workspace_picker = test_tiled_agent_workspace_picker,
   view_container = test_agent_view_container,
   floating_terminal = test_floating_terminal_windows,
+  tmux_terminal = test_tmux_floating_terminal,
 }
 
 local lsp_lifecycle_tests = {
@@ -8296,6 +8484,7 @@ local setup_ok, setup_err = xpcall(function()
     agent_tests.panel_shells(repo)
   end)
   test("floating terminal nests tabs inside global windows", agent_tests.floating_terminal)
+  test("tmux terminal restores native panes across Neovim restarts", agent_tests.tmux_terminal)
   test("active agent picker keeps the tiled panel together", function()
     agent_tests.tiled_workspace_picker(repo, worktree)
   end)

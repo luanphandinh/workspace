@@ -159,6 +159,10 @@ function Bar:move(delta)
   local target = index + delta
   if row.item then target = (target - 1) % #items + 1 end
   if target == index or not items[target] then return end
+  if not row.item and self.opts.reorder_groups then
+    self.opts.reorder_groups(row.group, items[target])
+    return
+  end
   table.insert(items, target, table.remove(items, index))
   if row.item then
     self.opts.reorder(row.group, items)

@@ -677,7 +677,16 @@ local function restore_agent_bufnr()
 end
 
 local function start_terminal(buf, cwd, opts)
-  vim.fn.termopen(argv_for_termopen(opts), { cwd = cwd })
+  local command = { "env", "-u", "TMUX", "-u", "TMUX_PANE" }
+  if vim.env.TERM_PROGRAM == "tmux" then
+    vim.list_extend(command, { "-u", "TERM_PROGRAM", "-u", "TERM_PROGRAM_VERSION" })
+  end
+  local env
+  if vim.o.termguicolors then
+    vim.list_extend(command, { "-u", "NO_COLOR" })
+    env = { COLORTERM = "truecolor" }
+  end
+  vim.fn.termopen(vim.list_extend(command, argv_for_termopen(opts)), { cwd = cwd, env = env })
   configure_terminal_buffer(buf)
   apply_agent_scrollback(buf)
   set_agent_bufnr(buf, cwd)

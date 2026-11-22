@@ -11,7 +11,7 @@ local DEFAULT_AGENT_FLOAT = {
   terminal_width_percent = 69,
 }
 local TERMINAL_DEFAULTS = {
-  floating_terminal = { display_style = "tile", window_bar_style = "vertical" },
+  floating_terminal = { display_style = "tile", window_bar_style = "vertical", backend = "tmux" },
   terminal_split = { display_style = "tabs", window_bar_style = "horizontal" },
 }
 local DISPLAY_STYLE_SETTING = 'display_style = "' .. DEFAULT_AGENT_FLOAT.display_style .. '"'
@@ -69,6 +69,7 @@ function M.ensure_config(path)
       "[" .. name .. "]",
       'display_style = "' .. defaults.display_style .. '"',
       'window_bar_style = "' .. defaults.window_bar_style .. '"',
+      defaults.backend and ('backend = "' .. defaults.backend .. '"') or nil,
     }
   end
   for _, section in ipairs(sections) do
@@ -121,6 +122,7 @@ function M.read(path)
       local name, style = value:match('^([%w_]+)%s*=%s*"([%a]+)"$')
       if not name then name, style = value:match("^([%w_]+)%s*=%s*'([%a]+)'$") end
       if name == "display_style" and (style == "tile" or style == "tabs") then settings[name] = style end
+      if name == "backend" and settings.backend and (style == "tmux" or style == "shell") then settings.backend = style end
       if name == "window_bar_style" and (style == "vertical" or style == "horizontal") then settings[name] = style end
     elseif section == DIFF_REPO_IGNORE_SECTION then
       local array = reading_ignored_repositories and value
