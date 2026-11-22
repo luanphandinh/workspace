@@ -5807,7 +5807,8 @@ local api = vim.api
 local root = vim.fn.getcwd()
 vim.g.luanphan_recent_paths_file = root .. '/recent.json'
 vim.g.luanphan_global_settings_path = root .. '/settings.toml'
-vim.fn.writefile({ '[floating_terminal]', 'backend = "shell"' }, vim.g.luanphan_global_settings_path)
+vim.fn.writefile({ '[floating_terminal]', 'backend = "shell"', 'total_width_percent = 80',
+  'sidebar_width_percent = 20' }, vim.g.luanphan_global_settings_path)
 vim.o.shell = '/bin/sh'
 vim.env.ENV = nil
 vim.o.columns, vim.o.lines = 160, 48
@@ -5833,9 +5834,12 @@ local labels, bar = window_bar()
 assert(labels:find('Window 1', 1, true), 'initial window is missing')
 local sidebar = api.nvim_win_get_config(bar)
 local full = config(left)
-assert(sidebar.col == 0 and sidebar.col + sidebar.width + 2 == full.col
-  and full.col + full.width + 2 == vim.o.columns and full.height + 2 == vim.o.lines - vim.o.cmdheight,
-  'vertical bar and floating terminal did not fill the screen side by side')
+assert(sidebar.col == 16 and sidebar.width + 2 == 25 and full.col == 48 and full.width + 2 == 96
+  and full.height + 2 == vim.o.lines - vim.o.cmdheight,
+  'floating shell did not center the configured widths and gap')
+local layout = require('luanphan.global_settings').read().floating_terminal
+assert(layout.backend == 'shell' and layout.total_width_percent == 80 and layout.sidebar_width_percent == 20
+  and layout.terminal_width_percent == 75, 'adding missing width settings changed existing settings')
 assert(vim.deep_equal(full.border[1], { '┏', 'DiagnosticOk' }), 'single shell tile lacks the view mode border')
 key('<leader>nt')
 local upper = api.nvim_get_current_buf()
@@ -5974,10 +5978,27 @@ end
 panel.toggle()
 wait(function() return active() and vim.bo.buftype == "terminal" end, "create and attach")
 local first = active()
+require("luanphan.global_settings").open_editor()
+local settings_buf = api.nvim_get_current_buf()
+local settings_lines = api.nvim_buf_get_lines(settings_buf, 0, -1, false)
+local floating_section = vim.fn.index(settings_lines, "[floating_terminal]") + 1
+for index = floating_section + 1, #settings_lines do
+  if settings_lines[index]:match("^%[") then break end
+  settings_lines[index] = settings_lines[index]:gsub("^total_width_percent = 100$", "total_width_percent = 80")
+end
+api.nvim_buf_set_lines(settings_buf, 0, -1, false, settings_lines)
+key("q")
+wait(function()
+  local cfg = config(first)
+  return cfg.col == 48 and cfg.width + 2 == 96
+    and tmux("display-message", "-p", "-t", first, "#{pane_width}x#{pane_height}") ==
+      ("%dx%d"):format(cfg.width, cfg.height - 1)
+end, "saving floating terminal width resized the tmux grid")
 local full = config(first)
 assert(vim.deep_equal(full.border[1], { "┏", "DiagnosticOk" }), "single pane lacks the view mode border")
-assert(tmux("display-message", "-p", "-t", first, "#{pane_width}x#{pane_height}") ==
-  ("%dx%d"):format(full.width, full.height - 1), "tmux size did not account for the single tile border")
+local bar_win = vim.w[pane_window(first)].luanphan_window_bar
+local sidebar = api.nvim_win_get_config(bar_win)
+assert(sidebar.col == 16 and sidebar.width + 2 == 32, "tmux sidebar did not resize and center with the terminal")
 local shell_pid = tmux("display-message", "-p", "-t", first, "#{pane_pid}")
 local first_buf = api.nvim_get_current_buf()
 local single_input_border

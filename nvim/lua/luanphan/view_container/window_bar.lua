@@ -31,6 +31,31 @@ function M.divide(frame, style, vertical_width)
   return body, bar
 end
 
+function M.float_geometry(frame, layout)
+  local border = frame.border == "none" and 0 or 2
+  local available = frame.width + border
+  local total = math.max(3, math.floor(available * layout.total_width_percent / 100))
+  local centered = vim.tbl_extend("force", {}, frame, {
+    col = frame.col + math.floor((available - total) / 2),
+    width = total - border,
+  })
+  if layout.window_bar_style == "horizontal" then return M.divide(centered, "horizontal") end
+  if layout.window_bar_style ~= "vertical" or total < 6 then return centered end
+
+  local terminal = math.min(total - 3, math.max(3, math.floor(total * layout.terminal_width_percent / 100)))
+  local remaining = total - terminal
+  local sidebar = remaining
+  if layout.terminal_width_percent + layout.sidebar_width_percent < 100 - 1e-9 then
+    sidebar = math.min(remaining, math.max(3, math.floor(total * layout.sidebar_width_percent / 100)))
+  end
+  local body, bar = M.divide(centered, "vertical", sidebar)
+  if bar then
+    body.col = centered.col + total - terminal
+    body.width = terminal - border
+  end
+  return body, bar
+end
+
 function Bar:visible()
   return valid(self.win) and not api.nvim_win_get_config(self.win).hide
 end

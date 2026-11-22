@@ -305,41 +305,22 @@ local function get_float_geometry()
   local lines_avail = math.max(1, vim.o.lines - vim.o.cmdheight)
   local sidebar_height = math.max(10, lines_avail - 2)
 
-  local cols = vim.o.columns
   local settings = profile.on_float_layout and require("luanphan.global_settings").read().agent_float
-  local total_percent = settings and settings.total_width_percent or 80
   local border = config.float_border or "single"
   local border_size = border == "none" and 0 or 2
-  local total = math.max(3, math.floor(cols * total_percent / 100))
-  local left = math.floor((cols - total) / 2)
-  local terminal, sidebar = total, 0
-  if settings and settings.window_bar_style == "vertical" and total >= 6 then
-    local terminal_percent = settings.terminal_width_percent
-    local sidebar_percent = settings.sidebar_width_percent
-    terminal = math.min(total - 3, math.max(3, math.floor(total * terminal_percent / 100)))
-    local available = total - terminal
-    if terminal_percent + sidebar_percent >= 100 - 1e-9 then
-      sidebar = available
-    else
-      sidebar = math.min(available, math.max(3, math.floor(total * sidebar_percent / 100)))
-    end
-  end
-  local geometry = {
+  local frame = {
     relative = "editor",
     row = 0,
-    col = left + total - terminal,
-    width = terminal - border_size,
+    col = 0,
+    width = vim.o.columns - border_size,
     height = sidebar_height + 2 - border_size,
     border = border,
     zindex = config.float_zindex,
   }
+  local geometry, bar = require("luanphan.view_container.window_bar").float_geometry(
+    frame, settings or { total_width_percent = 80 }
+  )
   if not settings then return geometry end
-  local bar
-  if settings.window_bar_style == "horizontal" then
-    geometry, bar = require("luanphan.view_container.window_bar").divide(geometry, "horizontal")
-  elseif sidebar > 2 then
-    bar = vim.tbl_extend("force", geometry, { col = left, width = sidebar - 2, height = sidebar_height, border = "single" })
-  end
   return geometry, settings.display_style, bar, settings.window_bar_style
 end
 

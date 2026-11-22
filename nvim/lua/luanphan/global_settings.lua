@@ -11,10 +11,25 @@ local DEFAULT_AGENT_FLOAT = {
   terminal_width_percent = 69,
 }
 local TERMINAL_DEFAULTS = {
-  floating_terminal = { display_style = "tile", window_bar_style = "vertical", backend = "tmux" },
+  floating_terminal = {
+    display_style = "tile",
+    window_bar_style = "vertical",
+    backend = "tmux",
+    total_width_percent = 100,
+    sidebar_width_percent = 25,
+    terminal_width_percent = 75,
+  },
   terminal_split = { display_style = "tabs", window_bar_style = "horizontal" },
 }
 local DISPLAY_STYLE_SETTING = 'display_style = "' .. DEFAULT_AGENT_FLOAT.display_style .. '"'
+
+local function floating_width_lines(configured)
+  local lines = {}
+  for _, key in ipairs({ "total_width_percent", "sidebar_width_percent", "terminal_width_percent" }) do
+    if not configured[key] then lines[#lines + 1] = key .. " = " .. TERMINAL_DEFAULTS.floating_terminal[key] end
+  end
+  return lines
+end
 
 function M.config_path()
   return vim.g.luanphan_global_settings_path
@@ -27,27 +42,39 @@ function M.ensure_config(path)
   local lines = exists and vim.fn.readfile(path) or {
     "[recent_folder]", "max_cache_entry = " .. DEFAULT_MAX_CACHE_ENTRY,
   }
-  local headings = {}
-  local in_agent_float, agent_float_line, has_display_style, has_bar_style
+  local headings, floating_widths = {}, {}
+  local section, agent_float_line, has_display_style, has_bar_style, floating_end
   for index, line in ipairs(lines) do
     local value = vim.trim(line:gsub("#.*$", ""))
     headings[value] = true
     if value:match("^%[") then
-      in_agent_float = value == "[" .. AGENT_FLOAT_SECTION .. "]"
-      if in_agent_float then agent_float_line = index end
-    elseif in_agent_float then
+      section = value
+      if section == "[" .. AGENT_FLOAT_SECTION .. "]" then agent_float_line = index end
+      if section == "[floating_terminal]" then floating_end = index end
+    elseif section == "[" .. AGENT_FLOAT_SECTION .. "]" then
       has_display_style = has_display_style or value:match("^display_style%s*=")
       has_bar_style = has_bar_style or value:match("^window_bar_style%s*=")
+    elseif section == "[floating_terminal]" and value ~= "" then
+      floating_end = index
+      local key = value:match("^([%w_]+)%s*=")
+      if key then floating_widths[key] = true end
     end
   end
   local changed = not exists
-  if agent_float_line and not has_bar_style then
-    table.insert(lines, agent_float_line + 1, 'window_bar_style = "vertical"')
-    changed = true
+  local additions = {}
+  if agent_float_line then
+    local fields = {}
+    if not has_display_style then fields[#fields + 1] = DISPLAY_STYLE_SETTING end
+    if not has_bar_style then fields[#fields + 1] = 'window_bar_style = "vertical"' end
+    additions[agent_float_line] = fields
   end
-  if agent_float_line and not has_display_style then
-    table.insert(lines, agent_float_line + 1, DISPLAY_STYLE_SETTING)
-    changed = true
+  if floating_end then additions[floating_end] = floating_width_lines(floating_widths) end
+  for index = #lines, 1, -1 do
+    local fields = additions[index] or {}
+    for field = #fields, 1, -1 do
+      table.insert(lines, index + 1, fields[field])
+      changed = true
+    end
   end
   local sections = {
     { "[" .. DIFF_REPO_IGNORE_SECTION .. "]", "repositories = []" },
@@ -65,12 +92,14 @@ function M.ensure_config(path)
   }
   for _, name in ipairs({ "floating_terminal", "terminal_split" }) do
     local defaults = TERMINAL_DEFAULTS[name]
-    sections[#sections + 1] = {
+    local block = {
       "[" .. name .. "]",
       'display_style = "' .. defaults.display_style .. '"',
       'window_bar_style = "' .. defaults.window_bar_style .. '"',
       defaults.backend and ('backend = "' .. defaults.backend .. '"') or nil,
     }
+    if name == "floating_terminal" then vim.list_extend(block, floating_width_lines({})) end
+    sections[#sections + 1] = block
   end
   for _, section in ipairs(sections) do
     if not headings[section[1]] then

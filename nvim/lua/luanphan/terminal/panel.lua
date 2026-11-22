@@ -61,6 +61,7 @@ function M.create(opts)
       relative = "editor", row = 0, col = 0, width = vim.o.columns,
       height = math.max(4, vim.o.lines - vim.o.cmdheight), border = "none", zindex = 40,
     }
+    if not opts.docked then return bars.float_geometry(frame, layout) end
     if dock and api.nvim_win_is_valid(dock) then
       local pos = api.nvim_win_get_position(dock)
       frame.row, frame.col = unpack(pos)

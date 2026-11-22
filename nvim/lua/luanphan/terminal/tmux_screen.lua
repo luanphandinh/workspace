@@ -85,7 +85,7 @@ function M.frame(pane, lines, flags)
     local scrolled = 0
     if not pane.painted then
       scrolled = screen_start
-    elseif not reset and frame.generation == previous.generation then
+    elseif not reset and (frame.generation == previous.generation or previous.history + previous.top == 0) then
       scrolled = frame.history - previous.history + top - previous.top
     end
     if scrolled > 0 and screen_start > 0 then
