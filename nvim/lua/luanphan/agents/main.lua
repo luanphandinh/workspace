@@ -414,13 +414,28 @@ function M.new(name, opts)
   if not agent_defs[name] then
     return false
   end
+  local order_new_tile
   local visible = visible_agent()
   if visible then
+    local win, cwd = visible.win, vim.fn.getcwd()
+    if win == vim.api.nvim_get_current_win() and vim.w[win].luanphan_view_anchor
+      and (not opts or not opts.thread_id) then
+      local tabs = open_tabs(cwd)
+      for index, tab in ipairs(tabs) do
+        if tab.bufnr == visible.bufnr then
+          order_new_tile = function(bufnr)
+            table.insert(tabs, index + 1, { bufnr = bufnr })
+            sessions.set_order(tabs)
+          end
+          break
+        end
+      end
+    end
     setup_agent(visible.name).save_view(visible.win)
     close_visible_agents(visible.bufnr)
     opts = vim.tbl_extend("force", opts or {}, { reuse_win = vim.w[visible.win].luanphan_view_anchor or visible.win })
   end
-  return setup_agent(name).new(opts)
+  return setup_agent(name).new(opts, order_new_tile)
 end
 
 function M.resume(session, opts)

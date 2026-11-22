@@ -5519,6 +5519,28 @@ local function test_agent_view_container(repo)
       assert_terminal_grid_matches(tile_buffers[index], win, "tile " .. index)
     end
 
+    assert_true(agents.focus("cursor", tile_buffers[2], { view_mode = true }), "could not focus the second tile")
+    local inserted = assert(agents.new("codex", { view_mode = true }))
+    local inserted_config = vim.api.nvim_win_get_config(tile_window(inserted))
+    assert_true(vim.deep_equal({ inserted_config.col, inserted_config.row }, { 96, cut }),
+      "the new tile did not take the third slot")
+    local lower_cut = math.floor((bottom - cut) / 2)
+    assert_true(tile_config(3).col == 128 and tile_config(3).row == cut and tile_config(3).height + 2 == lower_cut
+      and tile_config(4).col == 128 and tile_config(4).row == cut + lower_cut,
+      "the later tiles did not shift and split")
+    invoke_map("<S-Tab>")
+    assert_true(vim.api.nvim_get_current_buf() == tile_buffers[2], "new tile did not follow the focused tile")
+    for _, buf in ipairs({ inserted, tile_buffers[3], tile_buffers[4], tile_buffers[1] }) do
+      invoke_map("<Tab>")
+      assert_true(vim.api.nvim_get_current_buf() == buf, "Tab did not follow the inserted tile order")
+    end
+    vim.fn.jobstop(vim.b[inserted].terminal_job_id)
+    wait_until("inserted tile closed", function()
+      return not vim.api.nvim_buf_is_valid(inserted) and visible_agent_window_count() == 4
+    end, 3000)
+    agents.hide()
+    assert_true(agents.open("claude", tile_buffers[4], { view_mode = true }), "could not reopen the original four tiles")
+
     local function assert_focused_tile(index)
       for i = 1, #tile_buffers do
         local highlights = vim.wo[tile_window(tile_buffers[i])].winhighlight

@@ -711,7 +711,7 @@ local function start_terminal(buf, cwd, opts)
   attach_status_tracking(buf, cwd, "idle")
 end
 
-local function open_terminal(opts)
+local function open_terminal(opts, on_start)
   local buf = vim.api.nvim_create_buf(false, true)
   local reuse_win = opts and opts.reuse_win
   local win
@@ -728,6 +728,7 @@ local function open_terminal(opts)
   save_float_geometry(win)
   local cwd = cwd_key()
   start_terminal(buf, cwd, opts)
+  if on_start then on_start(buf) end
   resume_terminal_view(win, buf, opts)
   return buf
 end
@@ -775,8 +776,8 @@ function API.toggle()
   open_terminal()
 end
 
-function API.new(opts)
-  return open_terminal(opts)
+function API.new(opts, on_start)
+  return open_terminal(opts, on_start)
 end
 
 function API.start_hidden(cwd, opts)
