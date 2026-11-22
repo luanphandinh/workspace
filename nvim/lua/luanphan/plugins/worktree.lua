@@ -40,6 +40,7 @@ local function setup()
     AGENT_ORDER[agent] = index
   end
   local recent_paths = require("luanphan.recent_paths")
+  local compact_picker_opts = require("luanphan.view_container").compact_picker_opts
 
   -- Transient map of "apply this cursor when the file is first BufReadPost'd
   -- in the current nvim session". Populated by `restore_buffers`, consumed
@@ -161,7 +162,7 @@ local function setup()
     local prev_positions = type(prev) == "table" and prev.positions or nil
 
     -- Prefer the currently-focused file. If the user happened to be on a
-    -- [No Name] / tree / picker buffer when pressing <leader>ww, fall back
+    -- [No Name] / tree / picker buffer when switching worktrees, fall back
     -- to whatever was active last time (if it's still in the files list).
     local active = find_active_file(cwd)
     if not active and prev_active and seen[prev_active] then
@@ -1513,7 +1514,7 @@ local function setup()
       rel = cur:sub(#cur_root + 2)
     end
 
-    pickers.new({}, {
+    pickers.new(compact_picker_opts(), {
       prompt_title = "Git Worktrees",
       finder = finders.new_table({
         results = trees,
@@ -1606,7 +1607,7 @@ local function setup()
     local base_sorter = conf.generic_sorter({})
     local sorter = make_folder_sorter(base_sorter, require("telescope.sorters"))
 
-    pickers.new({}, {
+    pickers.new(compact_picker_opts(), {
       prompt_title = "Workspace Folder",
       finder = finder(),
       sorter = sorter,
@@ -1687,7 +1688,7 @@ local function setup()
     if not pickers then return end
     local entries = group_project_entries(repos, current_root)
     local sorter = make_project_sorter(conf.generic_sorter({}), require("telescope.sorters"))
-    pickers.new({}, {
+    pickers.new(compact_picker_opts(), {
       prompt_title = "Git Projects",
       default_selection_index = #entries > 1 and 2 or 1,
       finder = finders.new_table({
@@ -1870,7 +1871,7 @@ local function setup()
     for _, repo in ipairs(repositories) do
       name_width = math.max(name_width, #repo.name)
     end
-    pickers.new({}, {
+    pickers.new(compact_picker_opts(), {
       prompt_title = "Add Repository",
       finder = finders.new_table({
         results = repositories,
@@ -1919,7 +1920,7 @@ local function setup()
     for _, repo in ipairs(repositories) do
       name_width = math.max(name_width, #repo.name)
     end
-    pickers.new({}, {
+    pickers.new(compact_picker_opts(), {
       prompt_title = "Remove Repository",
       finder = finders.new_table({
         results = repositories,
@@ -1993,7 +1994,7 @@ local function setup()
       return a.name < b.name
     end)
 
-    pickers.new({}, {
+    pickers.new(compact_picker_opts(), {
       prompt_title = "Workspaces",
       finder = finders.new_table({
         results = workspaces,
@@ -2080,7 +2081,7 @@ local function setup()
 
     local pickers, finders, conf, actions, action_state = telescope_modules()
     if not pickers then return end
-    pickers.new({}, {
+    pickers.new(compact_picker_opts(), {
       prompt_title = "Active Agents",
       finder = finders.new_table({
         results = instances,
@@ -2212,7 +2213,6 @@ local spec = {
     "AgentSwitch",
   },
   keys = {
-    { "<leader>ww", picker("pick_worktree"), desc = "Switch workspace" },
     { "<leader>wf", picker("pick_folder"), desc = "Pick workspace folder" },
     { "<leader>wA", picker("pick_add_repository"), desc = "Add repository" },
     { "<leader>wd", picker("pick_remove_repository"), desc = "Remove repository" },

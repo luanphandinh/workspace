@@ -53,7 +53,7 @@ mkws --name example-b --branch example-branch-b --add repo-b front-end/repo-c@ex
 - `repo@branch` overrides the workspace's default branch for that repository.
 - `workspace.yml` records each repository's root-relative path and branches; existing direct repository names remain valid. `tech_doc/` holds shared notes.
 - `mkws resume` restores missing worktrees when the source repositories exist.
-- **Neovim navigation:** Space is `<leader>`. Use `<leader>wp` for workspaces, `<leader>wr` for repositories, and `<leader>ww` for worktrees.
+- **Neovim navigation:** Space is `<leader>`. Use `<leader>wp` for workspaces, `<leader>wr` for repositories, and `<leader>ww` for windows in the active agent or terminal view. Use `:WorktreeSwitch` for Git worktrees.
 
 ## Editor and agent
 

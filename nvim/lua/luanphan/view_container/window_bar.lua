@@ -7,6 +7,7 @@ local windows = require("luanphan.view_container.window")
 local sidebar = require("luanphan.view_container.sidebar")
 local tabs = require("luanphan.view_container.tab_render")
 local jump_lists = require("luanphan.view_container.jumplist")
+local bars = setmetatable({}, { __mode = "k" })
 
 local function valid(win)
   return win and api.nvim_win_is_valid(win)
@@ -200,6 +201,61 @@ function Bar:cycle(step)
   return self:select({ item = items[(index - 1 + step) % #items + 1] }, true)
 end
 
+function Bar:pick_window()
+  local groups, active, live = self:groups(), self:active(), {}
+  for _, group in ipairs(groups) do
+    for _, item in ipairs(group.items) do
+      if item.bufnr then live[item.bufnr] = true end
+    end
+  end
+  local recency = self.history.offsets(live)
+  local choices, current = {}, nil
+  for index, group in ipairs(groups) do
+    local rank, focused = -math.huge, false
+    for _, item in ipairs(group.items) do
+      if item.bufnr then
+        rank = math.max(rank, recency[item.bufnr] or -math.huge)
+        if item.bufnr == active then focused = true end
+      end
+    end
+    if #group.items > 0 then
+      local choice = { id = group.id, display = (focused and "* " or "  ") .. group.title,
+        ordinal = group.title, rank = rank, index = index }
+      if focused then current = choice else choices[#choices + 1] = choice end
+    end
+  end
+  table.sort(choices, function(a, b)
+    if a.rank ~= b.rank then return a.rank > b.rank end
+    return a.index < b.index
+  end)
+  if current then table.insert(choices, math.min(2, #choices + 1), current) end
+  if #choices == 0 then
+    vim.notify("No windows available", vim.log.levels.INFO)
+    return
+  end
+
+  local anchor = self.anchor
+  local view = require("luanphan.view_container")
+  view.select("Switch Window", choices, function(choice)
+    if not choice or self.anchor ~= anchor or not valid(anchor) then return end
+    local group = vim.iter(self:groups()):find(function(candidate) return candidate.id == choice.id end)
+    if group then self:select({ group = group }, true) end
+  end, view.compact_picker_opts())
+end
+
+function M.pick_window()
+  local current = windows.group_anchor(api.nvim_get_current_win())
+  local available = {}
+  for bar in pairs(bars) do
+    if bar.anchor == current then return bar:pick_window() end
+    if valid(bar.anchor) and api.nvim_win_get_tabpage(bar.anchor) == api.nvim_get_current_tabpage() then
+      available[#available + 1] = bar
+    end
+  end
+  if #available == 1 then return available[1]:pick_window() end
+  vim.notify("Focus an agent or terminal view to switch windows", vim.log.levels.INFO)
+end
+
 function Bar:click()
   local mouse = vim.fn.getmousepos()
   if not valid(self.win) or mouse.winid ~= self.win then return "<LeftMouse>" end
@@ -308,10 +364,12 @@ function Bar:layout(anchor, frame, style)
 end
 
 function M.create(opts)
-  return setmetatable({
+  local bar = setmetatable({
     opts = opts, rows = {}, folded = {}, frame = 1, selected = 1,
     history = opts.history or jump_lists.create(),
   }, Bar)
+  bars[bar] = true
+  return bar
 end
 
 return M

@@ -1744,7 +1744,6 @@ local function worktree_test_api()
   end
   assert_true(_G._luanphan_wt_test and _G._luanphan_wt_test.switch_to, "worktree test hook is missing")
   for _, mapping in ipairs({
-    { "<leader>ww", "n" },
     { "<leader>wf", "n" },
     { "<leader>wA", "n" },
     { "<leader>wd", "n" },
@@ -1777,10 +1776,10 @@ local function test_worktree_plugin_starts_lazy()
     vim.fn.maparg("<leader>wr", "t") == "",
     "<leader>wr intercepts terminal typing before lazy load"
   )
-  local workspace_map = vim.fn.maparg("<leader>ww", "n", false, true)
+  local window_map = vim.fn.maparg("<leader>ww", "n", false, true)
   assert_true(
-    type(workspace_map) == "table" and type(workspace_map.callback) == "function",
-    "<leader>ww is not a lazy callback mapping"
+    type(window_map) == "table" and type(window_map.callback) == "function" and window_map.desc == "Switch window",
+    "<leader>ww did not register the window picker"
   )
   local folder_map = vim.fn.maparg("<leader>wf", "n", false, true)
   assert_true(
@@ -1816,7 +1815,6 @@ end
 local function test_worktree_keymaps_dispatch_to_pickers()
   local worktree = worktree_test_api()
   for _, mapping in ipairs({
-    { "<leader>ww", "n", "pick_worktree" },
     { "<leader>wf", "n", "pick_folder" },
     { "<leader>wA", "n", "pick_add_repository" },
     { "<leader>wd", "n", "pick_remove_repository" },
@@ -5719,6 +5717,8 @@ local function test_tiled_agent_workspace_picker(repo, worktree)
     "vim.env.PATH = " .. string.format("%q", fixture .. "/bin:") .. " .. vim.env.PATH",
     "vim.g.luanphan_global_settings_path = " .. string.format("%q", fixture .. "/settings.toml"),
     "vim.g.luanphan_recent_paths_file = " .. string.format("%q", fixture .. "/recent.json"),
+    "vim.g.luanphan_codex_sessions_dir = " .. string.format("%q", fixture .. "/codex-sessions"),
+    "vim.g.luanphan_cursor_sessions_dir = " .. string.format("%q", fixture .. "/cursor-sessions"),
     "local destination = " .. string.format("%q", worktree),
   }
   vim.list_extend(script_lines, vim.split([[
@@ -5744,6 +5744,8 @@ local function choose_agent(buf)
   vim.fn.maparg('<leader>wa', 'n', false, true).callback()
   local prompt = vim.api.nvim_get_current_buf()
   local picker = assert(action_state.get_current_picker(prompt), 'active agent picker did not open')
+  assert(picker.layout_strategy == 'center' and vim.api.nvim_win_get_width(0) <= 96,
+    'active agent picker did not use the compact centered layout')
   assert(vim.wait(3000, function()
     return picker.manager and picker.manager:num_results() == 4
   end, 20), 'active agent picker did not list both tiled workspaces')
@@ -5767,6 +5769,16 @@ assert(vim.fn.bufwinid(away) == -1 and vim.fn.bufwinid(away_peer) == -1,
 choose_agent(away_peer)
 assert(vim.fn.bufwinid(home) == -1 and vim.fn.bufwinid(home_peer) == -1,
   'active agent picker left tiles on the return switch')
+vim.fn.maparg('<leader>ww', 'n', false, true).callback()
+local prompt = vim.api.nvim_get_current_buf()
+local picker = assert(action_state.get_current_picker(prompt), 'agent window picker did not open')
+assert(vim.wait(3000, function() return picker.manager and picker.manager:num_results() == 2 end, 20),
+  'agent window picker did not show one entry per workspace')
+actions.select_default(prompt)
+assert(vim.wait(3000, function() return vim.api.nvim_get_current_buf() == home end, 20),
+  'agent window picker did not return to the last session of the previous workspace')
+assert(#view.group_windows(anchor) == 3 and vim.w[anchor].luanphan_window_bar == sidebar,
+  'agent window picker replaced the panel')
 
 local windows = view.group_windows(anchor)
 vim.api.nvim_create_autocmd('User', {
@@ -5860,9 +5872,19 @@ assert(#floats() == 4 and api.nvim_get_current_buf() == left, 'Tab did not wrap 
 key('<S-Tab>')
 assert(api.nvim_get_current_buf() == lower, 'Shift-Tab missed the previous pane')
 key('<leader>e')
-api.nvim_win_set_cursor(0, { 5, 0 })
-key('o')
-assert(#floats() == 2 and api.nvim_get_current_buf() == other_window, 'window bar did not select the second window')
+api.nvim_feedkeys(vim.keycode(vim.g.mapleader .. 'ww'), 'xt', false)
+local prompt = api.nvim_get_current_buf()
+local picker = assert(require('telescope.actions.state').get_current_picker(prompt), 'terminal window picker did not open')
+assert(vim.wait(3000, function() return picker.manager and picker.manager:num_results() == 2 end, 20),
+  'window picker did not show one entry per terminal window')
+assert(picker:get_selection().ordinal == 'Window 2', 'window picker did not prioritize the most recent alternative')
+local prompt_frame = api.nvim_win_get_config(0)
+assert(picker.layout_strategy == 'center' and prompt_frame.width <= 96
+  and math.abs(prompt_frame.col * 2 + prompt_frame.width - vim.o.columns) <= 4
+  and api.nvim_win_get_height(picker.results_win) <= 16, 'window picker is not compact and centered')
+require('telescope.actions').select_default(prompt)
+assert(vim.wait(3000, function() return #floats() == 2 and api.nvim_get_current_buf() == other_window end, 20),
+  'window picker did not select the second window')
 key('<leader>nt')
 local new_pane = api.nvim_get_current_buf()
 assert(new_pane ~= other_window and #floats() == 3 and window_bar():find('Window 2', 1, true)
@@ -7474,13 +7496,13 @@ local function test_deleted_workspace_falls_back_to_master_worktree_from_lazy_ke
   vim.cmd("cd " .. vim.fn.fnameescape(workspace))
 
   run({ "git", "worktree", "remove", "--force", workspace }, source)
-  feed_normal((vim.g.mapleader or "\\") .. "ww")
+  feed_normal((vim.g.mapleader or "\\") .. "wf")
 
   local expected = realpath(source)
   wait_until("master worktree fallback", function()
     return realpath(vim.fn.getcwd()) == expected
   end, 10000)
-  assert_true(worktree_plugin_loaded(), "worktree plugin did not lazy-load from <leader>ww")
+  assert_true(worktree_plugin_loaded(), "worktree plugin did not lazy-load from <leader>wf")
 end
 
 local function test_deleted_workspace_started_at_workspace_falls_back_to_master_worktree()
@@ -7500,7 +7522,7 @@ local function test_deleted_workspace_started_at_workspace_falls_back_to_master_
     "assert_true(not (plugin._ and plugin._.loaded), 'worktree plugin loaded before key')",
     "local out = vim.fn.systemlist({ 'git', '-C', source, 'worktree', 'remove', '--force', workspace })",
     "assert_true(vim.v.shell_error == 0, table.concat(out, '\\n'))",
-    "vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes((vim.g.mapleader or '\\\\') .. 'ww', true, false, true), 'xt', false)",
+    "vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes((vim.g.mapleader or '\\\\') .. 'wf', true, false, true), 'xt', false)",
     "local ok = vim.wait(10000, function() return realpath(cwd()) == expected end, 50, false)",
     "assert_true(ok, 'cwd did not fall back to master: ' .. cwd())",
     "assert_true(plugin._ and plugin._.loaded, 'worktree plugin did not load after key')",

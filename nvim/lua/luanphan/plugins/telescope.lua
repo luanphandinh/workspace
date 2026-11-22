@@ -65,6 +65,7 @@ return {
       { "<leader>sg", open_global_settings, desc = "Global settings" },
       { "<leader>ss", open_search_settings, desc = "Search settings" },
       { "<leader>fl", "<cmd>Telescope buffers<cr>", desc = "List open files" },
+      { "<leader>ww", function() require("luanphan.view_container.window_bar").pick_window() end, desc = "Switch window" },
       { "gs", document_symbols, desc = "Telescope: document symbols" },
       { "<leader>ft", filetypes, desc = "Set filetype" },
     },

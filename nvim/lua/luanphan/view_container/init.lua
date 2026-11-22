@@ -60,6 +60,19 @@ function M.select(title, items, on_select, picker_opts)
 	select_item(title, items, on_select, picker_opts)
 end
 
+function M.compact_picker_opts()
+	return {
+		layout_strategy = "center",
+		layout_config = {
+			width = function(_, columns) return math.min(96, math.floor(columns * 0.55)) end,
+			height = function(_, _, lines) return math.min(16, math.floor(lines * 0.35)) end,
+			prompt_position = "top",
+		},
+		previewer = false,
+		sorting_strategy = "ascending",
+	}
+end
+
 function Container:context()
 	return self.opts.context()
 end
