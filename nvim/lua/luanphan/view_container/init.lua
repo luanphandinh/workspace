@@ -68,6 +68,7 @@ function M.compact_picker_opts()
 			height = function(_, _, lines) return math.min(16, math.floor(lines * 0.35)) end,
 			prompt_position = "top",
 		},
+		results_title = false,
 		previewer = false,
 		sorting_strategy = "ascending",
 	}
