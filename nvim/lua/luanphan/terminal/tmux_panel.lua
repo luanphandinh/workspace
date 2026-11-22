@@ -18,8 +18,10 @@ local pane_fields = {
   "pane_current_command", "window_name", "pane_current_path",
 }
 local pane_format = "#{" .. table.concat(pane_fields, "}\t#{") .. "}"
+local history_position = "#{?#{!=:#{history_added},},#{history_added},#{history_size}}"
 local cursor_format = "#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{cursor_flag}"
-  .. "\t#{keypad_cursor_flag}\t#{bracket_paste_flag}\t#{history_size}\t#{pane_width}\t#{pane_height}"
+  .. "\t#{keypad_cursor_flag}\t#{bracket_paste_flag}\t" .. history_position
+  .. "\t#{pane_width}\t#{pane_height}\t#{history_generation}"
 
 local refresh, render, open, paint
 
@@ -172,12 +174,20 @@ local function queue_paint(pane)
   end, 20)
 end
 
+local function capture_start(pane)
+  if not pane.painted then return "-1000" end
+  local frame = pane.frame
+  if not frame or frame.alternate then return "0" end
+  -- Include the rows that passed the tile's top since the last snapshot.
+  local offset = ("#{e|-:%d,%s}"):format(frame.history + frame.top, history_position)
+  return ("#{?#{m:-*,%s},%s,0}"):format(offset, offset)
+end
+
 paint = function(pane)
   if not pane.term or not pane.visible or pane.capturing or not client then return end
   local connection = client
   pane.capturing, pane.ready, pane.dirty = true, false, false
-  local capture = { "capture-pane", "-epN", "-t", pane.id }
-  if not pane.painted then vim.list_extend(capture, { "-S", "-1000" }) end
+  local capture = { "capture-pane", "-epN", "-t", pane.id, "-S", capture_start(pane) }
   client:request_batch({ capture, { "display-message", "-p", "-t", pane.id, cursor_format } }, function(replies)
     if client ~= connection or panes[pane.id] ~= pane then return end
     pane.capturing = false

@@ -6017,6 +6017,33 @@ assert(cursor_matches, "the caret did not follow a cursor-only tmux redraw: " ..
 key("<leader>nt")
 wait(function() return active() and active() ~= first and active() ~= second end, "third native tile")
 local bottom = active()
+tmux("select-layout", "-t", first, "even-horizontal")
+assert(tonumber(tmux("display-message", "-p", "-t", bottom, "#{pane_height}")) > config(bottom).height,
+  "scrollback test needs a tmux pane taller than its Neovim tile")
+local bottom_buf = api.nvim_get_current_buf()
+local function bottom_lines()
+  return api.nvim_buf_get_lines(bottom_buf, 0, -1, false)
+end
+for first_row = 1, 81, 80 do
+  local last_row = first_row + 79
+  local command = ("i=%d; while [ $i -le %d ]; do printf 'SCROLL_%%03d\\n' $i; i=$((i+1)); done")
+    :format(first_row, last_row)
+  tmux("send-keys", "-l", "-t", bottom, command)
+  tmux("send-keys", "-t", bottom, "Enter")
+  local marker = ("SCROLL_%03d"):format(last_row)
+  wait(function()
+    return vim.iter(bottom_lines()):any(function(line) return vim.trim(line) == marker end)
+  end, "scrollback burst reached the small tile")
+end
+local next_row = 1
+for _, line in ipairs(bottom_lines()) do
+  local row = tonumber(line:match("^SCROLL_(%d+)%s*$"))
+  if row then
+    assert(row == next_row, ("small tile scrollback skipped row %d and resumed at row %d"):format(next_row, row))
+    next_row = next_row + 1
+  end
+end
+assert(next_row == 161, "small tile scrollback lost output")
 tmux("select-layout", "-t", first, "even-vertical")
 wait(function() return tmux("display-message", "-p", "-t", second, "#{pane_top}") ~= "0" end, "external rearrangement")
 local main, upper, lower = config(first), config(second), config(bottom)

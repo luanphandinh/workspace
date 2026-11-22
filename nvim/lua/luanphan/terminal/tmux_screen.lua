@@ -40,6 +40,20 @@ local function position(row, col)
   return ("\27[%d;%dH"):format(row + 1, col + 1)
 end
 
+local function paint_row(row, line)
+  return position(row, 0) .. "\27[0m\27[2K" .. line .. "\27[0m"
+end
+
+local function append_history(output, frame, lines, first, last)
+  for start = first, last, frame.height do
+    local count = math.min(frame.height, last - start + 1)
+    for row = 0, count - 1 do
+      output[#output + 1] = paint_row(row, clip_row(lines[start + row], frame.left, frame.width))
+    end
+    output[#output + 1] = position(frame.height - 1, 0) .. string.rep("\r\n", count)
+  end
+end
+
 local function viewport_start(cursor, size, previous)
   return math.max(0, math.min(cursor, previous or 0), cursor - size + 1)
 end
@@ -55,7 +69,7 @@ function M.frame(pane, lines, flags)
   local frame = {
     rows = {}, top = top, left = left, width = width, height = height, alternate = flags[3] == "1",
     row = math.min(row - top, height - 1), col = math.min(col - left, width - 1),
-    history = tonumber(flags[7]) or 0,
+    history = tonumber(flags[7]) or 0, generation = flags[10],
     modes = { flags[4], flags[5], flags[6] },
   }
   local output = {}
@@ -66,25 +80,24 @@ function M.frame(pane, lines, flags)
   end
   if reset then
     output[#output + 1] = "\27[r\27[0m"
-  elseif not frame.alternate and frame.left == previous.left then
-    local scrolled = math.min(height, frame.history - previous.history + top - previous.top)
-    if scrolled > 0 then
-      output[#output + 1] = position(height - 1, 0) .. string.rep("\r\n", scrolled)
+  end
+  if not frame.alternate then
+    local scrolled = 0
+    if not pane.painted then
+      scrolled = screen_start
+    elseif not reset and frame.generation == previous.generation then
+      scrolled = frame.history - previous.history + top - previous.top
+    end
+    if scrolled > 0 and screen_start > 0 then
+      append_history(output, frame, lines, math.max(1, screen_start - scrolled + 1), screen_start)
       reset = true
     end
-  end
-  if not pane.painted and not frame.alternate and screen_start > 0 then
-    output[#output + 1] = "\27[H"
-    for index = 1, screen_start do
-      output[#output + 1] = "\27[0m" .. clip_row(lines[index] or "", left, width) .. "\r\n"
-    end
-    output[#output + 1] = string.rep("\r\n", height - 1)
   end
   for index = 1, height do
     local line = clip_row(lines[screen_start + index] or "", left, width)
     frame.rows[index] = line
     if reset or line ~= previous.rows[index] then
-      output[#output + 1] = position(index - 1, 0) .. "\27[0m\27[2K" .. line .. "\27[0m"
+      output[#output + 1] = paint_row(index - 1, line)
     end
   end
   for index, code in ipairs({ 25, 1, 2004 }) do
