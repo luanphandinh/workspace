@@ -61,8 +61,8 @@ return {
           map("n", "<leader>hq", gitsigns.setqflist, { desc = "Gitsigns: quickfix buffer hunks" })
 
           -- Toggles
-          map("n", "<leader>tb", gitsigns.toggle_current_line_blame, { desc = "Line blame" })
-          map("n", "<leader>tD", gitsigns.toggle_word_diff, { desc = "Word diff" })
+          map("n", "<leader>-b", gitsigns.toggle_current_line_blame, { desc = "Line blame" })
+          map("n", "<leader>-D", gitsigns.toggle_word_diff, { desc = "Word diff" })
 
           -- Text object
           map({ "o", "x" }, "ih", gitsigns.select_hunk, { desc = "Gitsigns: inner hunk" })

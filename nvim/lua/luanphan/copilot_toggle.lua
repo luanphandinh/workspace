@@ -1,5 +1,5 @@
--- Lazy-load github/copilot.vim (opt) on first <leader>tc, then start it in the background.
--- Further <leader>tc toggles suggestions on/off without cold-restarting the GitHub Copilot LSP.
+-- Lazy-load github/copilot.vim (opt) on first <leader>-c, then start it in the background.
+-- Further <leader>-c toggles suggestions on/off without cold-restarting the GitHub Copilot LSP.
 --
 -- If the plugin loads after |VimEnter|, the plugin's own VimEnter autocmd never runs, so
 -- |copilot#Init()| must be invoked manually or the language server never starts.

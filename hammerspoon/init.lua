@@ -16,34 +16,22 @@ hs.hotkey.bind({ "cmd", "shift" }, "j", function()
     end
 end)
 
-local previousEditorApp
 hs.hotkey.bind({ "cmd", "shift" }, "e", function()
     local app = hs.application.frontmostApplication()
     -- Command-line launches of the editor have no bundle ID.
     if app and (app:bundleID() == "com.neovide.neovide" or app:name():lower() == "neovide") then
         app:hide()
-        if previousEditorApp and previousEditorApp:isRunning() then
-            previousEditorApp:activate()
-        end
-        previousEditorApp = nil
     else
-        previousEditorApp = app
         hs.application.launchOrFocus(os.getenv("HOME") .. "/.nix-profile/Applications/Neovide.app")
     end
 end)
 
 local browserBundleID = "com.ardia.browser"
-local previousBrowserApp
-hs.hotkey.bind({ "cmd", "shift" }, "b", function()
+hs.hotkey.bind({ "cmd", "shift" }, "x", function()
     local app = hs.application.frontmostApplication()
     if app and app:bundleID() == browserBundleID then
         app:hide()
-        if previousBrowserApp and previousBrowserApp:isRunning() then
-            previousBrowserApp:activate()
-        end
-        previousBrowserApp = nil
     else
-        previousBrowserApp = app
         hs.application.launchOrFocusByBundleID(browserBundleID)
     end
 end)

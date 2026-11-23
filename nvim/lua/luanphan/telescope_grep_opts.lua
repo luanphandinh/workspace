@@ -1,5 +1,5 @@
 -- Flags for Telescope |live_grep| (|g/|). Persisted in |g:| so the next picker uses them.
--- Default: ignore-case on (-i), fixed-string on (-F). <leader>t1 = strict case, t2 = regex.
+-- Default: ignore-case on (-i), fixed-string on (-F). <leader>-1 = strict case, <leader>-2 = regex.
 
 local M = {}
 local live_grep_cache

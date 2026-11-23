@@ -1055,7 +1055,7 @@ local function test_go_test_runs_from_nested_module()
     "assert_true(commands[1]:find('test -timeout 30s example.com/example-module -count=1 -v', 1, true), 'Go file test command is wrong')",
     "assert_true(commands[2]:find('test -timeout 60s example.com/example-module/... -count=1 -v', 1, true), 'Go package test command is wrong')",
     "require('lazy').load({ plugins = { 'toggleterm.nvim' } })",
-    "vim.fn.maparg('<leader>tt', 'n', false, true).callback()",
+    "vim.fn.maparg('<leader>-t', 'n', false, true).callback()",
     "local shell_buf = vim.api.nvim_get_current_buf()",
     "vim.api.nvim_set_current_win(vim.fn.bufwinid(editor_buf))",
     "go.run_go_test_at_cursor()",
@@ -1074,9 +1074,9 @@ local function test_go_test_runs_from_nested_module()
     "vim.fn.maparg('<Tab>', 'n', false, true).callback()",
     "assert_true(vim.api.nvim_get_current_buf() == test_buf, 'completed Go test tab is inaccessible')",
     "vim.api.nvim_set_current_win(vim.fn.bufwinid(editor_buf))",
-    "vim.keymap.set('n', '<leader>tt', function() error('stale terminal mapping') end)",
+    "vim.keymap.set('n', '<leader>-t', function() error('stale terminal mapping') end)",
     "vim.fn.maparg('<leader>src', 'n', false, true).callback()",
-    "local toggle = vim.fn.maparg('<leader>tt', 'n', false, true).callback",
+    "local toggle = vim.fn.maparg('<leader>-t', 'n', false, true).callback",
     "go.run_go_test_at_cursor()",
     "local second_test = vim.api.nvim_get_current_buf()",
     "assert_true(second_test ~= test_buf and vim.b[second_test].luanphan_toggleterm, 'second Go test did not open its own tab')",
@@ -1573,20 +1573,20 @@ local function test_word_wrap_keymaps_respect_window_scope()
     vim.cmd("vsplit")
 
     set_all_windows_wrap(false)
-    invoke_map("<leader>tW")
+    invoke_map("<leader>-W")
     assert_all_windows_wrap(true)
 
     vim.cmd("split")
     assert_true(vim.wo.wrap == true, "new split should inherit enabled wrap")
 
-    invoke_map("<leader>tW")
+    invoke_map("<leader>-W")
     assert_all_windows_wrap(false)
 
     reset_window_layout()
     vim.cmd("edit " .. vim.fn.fnameescape(temp_root .. "/example-repo/main.go"))
     require("lazy").load({ plugins = { "gitsigns.nvim" } })
     wait_until("Gitsigns word diff mapping", function()
-      local map = vim.fn.maparg("<leader>tD", "n", false, true)
+      local map = vim.fn.maparg("<leader>-D", "n", false, true)
       return type(map) == "table" and type(map.callback) == "function"
     end, 3000)
 
@@ -1596,11 +1596,11 @@ local function test_word_wrap_keymaps_respect_window_scope()
     vim.wo[sibling].wrap = false
     vim.wo[focused].wrap = false
 
-    invoke_map("<leader>tw")
+    invoke_map("<leader>-w")
     assert_true(vim.wo[focused].wrap, "focused window wrap should be enabled")
     assert_true(not vim.wo[sibling].wrap, "sibling window wrap should remain disabled")
 
-    invoke_map("<leader>tw")
+    invoke_map("<leader>-w")
     assert_true(not vim.wo[focused].wrap, "focused window wrap should be disabled")
     assert_true(not vim.wo[sibling].wrap, "sibling window wrap should remain disabled")
   end, debug.traceback)
@@ -2168,7 +2168,7 @@ local function test_gitignore_toggle_updates_telescope()
     "    reload = function() tree_reloads = tree_reloads + 1 end,",
     "  },",
     "}",
-    "local map = vim.fn.maparg('<leader>tg', 'n', false, true)",
+    "local map = vim.fn.maparg('<leader>-g', 'n', false, true)",
     "assert_true(type(map) == 'table' and type(map.callback) == 'function', 'gitignore toggle mapping is missing')",
     "map.callback()",
     "local config = require('telescope.config')",
@@ -2223,7 +2223,7 @@ local function test_nvim_tree_keeps_width_with_terminal(repo)
     vim.wo.winfixheight = true
 
     require("lazy").load({ plugins = { "toggleterm.nvim" } })
-    invoke_map("<leader>tt")
+    invoke_map("<leader>-t")
     wait_until("tree width beside narrow terminal", function()
       return visible_toggleterm_window_count() == 1
         and vim.api.nvim_win_is_valid(tree_win)
@@ -5940,7 +5940,7 @@ local function window_bar()
 end
 local function config(buf) return api.nvim_win_get_config(vim.fn.bufwinid(buf)) end
 
-key('<leader>j')
+key('<leader>t')
 local left = api.nvim_get_current_buf()
 assert(vim.b[left].luanphan_floating_terminal and #floats() == 2, 'floating shell did not open')
 local labels, bar = window_bar()
@@ -6008,18 +6008,18 @@ assert(new_pane ~= other_window and #floats() == 3 and window_bar():find('Window
   and not window_bar():find('Window 3', 1, true), 'new terminal tab opened a window')
 vim.fn.chansend(vim.b[new_pane].terminal_job_id, 'exit\n')
 assert(vim.wait(3000, function() return api.nvim_get_current_buf() == other_window end), 'new terminal tab did not return to its neighbor')
-key('<leader>j')
+key('<leader>t')
 assert(#floats() == 0, 'toggle left part of the panel open')
 for _, buf in ipairs({ left, upper, lower, other_window }) do
   assert(vim.fn.jobwait({ vim.b[buf].terminal_job_id }, 0)[1] == -1, 'toggle stopped a shell')
 end
-key('<leader>j')
+key('<leader>t')
 assert(#floats() == 2 and api.nvim_get_current_buf() == other_window, 'toggle lost the active window')
 local other_cwd = root .. '/other'
 vim.fn.mkdir(other_cwd, 'p')
 vim.cmd.cd(other_cwd)
 assert(#floats() == 0, 'workspace switch left part of the panel open')
-key('<leader>j')
+key('<leader>t')
 assert(api.nvim_get_current_buf() == other_window and vim.b[other_window].luanphan_terminal_reference_cwd == root,
   'floating windows lost their original shell across workspaces')
 
@@ -6109,7 +6109,7 @@ end
 local function key(keys)
   api.nvim_feedkeys(vim.keycode(keys:gsub("<leader>", vim.g.mapleader)), "xt", false)
 end
-panel.toggle()
+key("<leader>t")
 wait(function() return active() and vim.bo.buftype == "terminal" end, "create and attach")
 local first = active()
 require("luanphan.global_settings").open_editor()
@@ -6491,7 +6491,7 @@ local function test_terminal_view_container(repo)
 
   local ok, err = xpcall(function()
     vim.cmd("cd " .. vim.fn.fnameescape(repo))
-    invoke_map("<leader>tt")
+    invoke_map("<leader>-t")
     wait_until("first terminal tab", function()
       return visible_toggleterm_window_count() == 1
         and vim.b[vim.api.nvim_get_current_buf()].luanphan_toggleterm
@@ -6591,12 +6591,12 @@ local function test_terminal_view_container(repo)
     end)
     local second_view = vim.api.nvim_win_call(second_win, vim.fn.winsaveview)
 
-    invoke_map("<leader>tt")
+    invoke_map("<leader>-t")
     assert_true(visible_toggleterm_window_count() == 0, "terminal toggle did not hide the container")
     assert_true(vim.fn.jobwait({ first_job, second_job }, 0)[1] == -1, "hiding the terminal container stopped the first shell")
     assert_true(vim.fn.jobwait({ first_job, second_job }, 0)[2] == -1, "hiding the terminal container stopped the second shell")
 
-    invoke_map("<leader>tt")
+    invoke_map("<leader>-t")
     wait_until("last terminal tab restored", function()
       if vim.api.nvim_get_current_buf() ~= second_buf then
         return false
@@ -6657,9 +6657,9 @@ local function test_terminal_view_container(repo)
     assert_true(vim.api.nvim_get_current_buf() == second_buf, "inner tab navigation switched windows")
     invoke_map("<Tab>")
     assert_true(vim.api.nvim_get_current_buf() == fourth_buf, "outer window switch lost the active tab")
-    invoke_map("<leader>tt")
+    invoke_map("<leader>-t")
     write(panel_settings, { "[terminal_split]", 'window_bar_style = "vertical"', 'display_style = "tabs"' })
-    invoke_map("<leader>tt")
+    invoke_map("<leader>-t")
     local bar = window_bar()
     assert_true(vim.api.nvim_win_get_config(bar).border ~= nil, "vertical window bar lacks its border")
     invoke_map("<leader>e")
@@ -6676,7 +6676,7 @@ local function test_terminal_view_container(repo)
     assert_true(not vim.tbl_contains(vim.api.nvim_buf_get_lines(0, 0, -1, false), "▸ Window 2"), "window bar did not unfold")
     invoke_map("<leader>e")
     assert_true(vim.api.nvim_get_current_buf() == fourth_buf, "window bar did not return focus to its active tab")
-    invoke_map("<leader>tt")
+    invoke_map("<leader>-t")
     assert_true(not vim.api.nvim_win_is_valid(bar) and visible_toggleterm_window_count() == 0,
       "closing integrated terminal left part of its panel behind")
   end, debug.traceback)
@@ -7546,7 +7546,7 @@ local function test_worktree_switch_hides_toggleterm(repo, worktree)
   test_terminal_view_container(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
 
-  invoke_map("<leader>tt")
+  invoke_map("<leader>-t")
   wait_until("toggleterm open", function()
     return visible_toggleterm_window_count() > 0
   end, 3000)
@@ -7630,11 +7630,11 @@ local function test_agent_terminal_lifecycle(repo)
   submit_map.callback()
   assert_true(agent_status.read("example-agent", repo) == "running", "agent submit did not record running state")
 
-  invoke_map("<leader>tt")
+  invoke_map("<leader>-t")
   wait_until("toggleterm open after agent terminal", function()
     return visible_toggleterm_window_count() > 0
   end, 3000)
-  assert_true(visible_agent_window_count() == 0, "agent terminal remained visible after <leader>tt")
+  assert_true(visible_agent_window_count() == 0, "agent terminal remained visible after <leader>-t")
 
   agent.toggle()
   wait_until("agent terminal open before ctrl-d", function()

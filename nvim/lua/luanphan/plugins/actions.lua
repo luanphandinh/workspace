@@ -4,7 +4,7 @@ return {
     virtual = true,
     keys = {
       {
-        "<leader>tg",
+        "<leader>-g",
         function()
           require("luanphan.actions").toggle_gitignore()
         end,

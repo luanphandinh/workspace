@@ -26,21 +26,21 @@ return {
         { "<leader>s", group = "Settings", icon = { icon = " ", color = "yellow" } },
         { "<leader>sa", group = "Agent" },
         { "<leader>sr", group = "Restart", icon = { icon = " ", color = "cyan" } },
-        { "<leader>t", group = "Toggle" },
+        { "<leader>-", group = "Toggle" },
         { "<leader>w", group = "Workspace", icon = { icon = "󰍹 ", color = "cyan" } },
-        { "<leader>t1", desc = "Live grep case sensitivity", icon = toggle_icons.live_grep_case_sensitive },
-        { "<leader>t2", desc = "Live grep regex", icon = toggle_icons.live_grep_regex },
-        { "<leader>tb", desc = "Line blame", icon = toggle_icons.line_blame, cond = function()
-          return toggle_icons.mapping_exists("<leader>tb")
+        { "<leader>-1", desc = "Live grep case sensitivity", icon = toggle_icons.live_grep_case_sensitive },
+        { "<leader>-2", desc = "Live grep regex", icon = toggle_icons.live_grep_regex },
+        { "<leader>-b", desc = "Line blame", icon = toggle_icons.line_blame, cond = function()
+          return toggle_icons.mapping_exists("<leader>-b")
         end },
-        { "<leader>tc", desc = "Copilot", icon = toggle_icons.copilot },
-        { "<leader>td", desc = "File diff", icon = toggle_icons.file_diff },
-        { "<leader>tD", desc = "Word diff", icon = toggle_icons.word_diff, cond = function()
-          return toggle_icons.mapping_exists("<leader>tD")
+        { "<leader>-c", desc = "Copilot", icon = toggle_icons.copilot },
+        { "<leader>-d", desc = "File diff", icon = toggle_icons.file_diff },
+        { "<leader>-D", desc = "Word diff", icon = toggle_icons.word_diff, cond = function()
+          return toggle_icons.mapping_exists("<leader>-D")
         end },
-        { "<leader>tt", desc = "Terminal", icon = toggle_icons.terminal },
-        { "<leader>tw", desc = "Word wrap (current window)", icon = toggle_icons.word_wrap },
-        { "<leader>tW", desc = "Word wrap (all windows)", icon = toggle_icons.word_wrap },
+        { "<leader>-t", desc = "Terminal", icon = toggle_icons.terminal },
+        { "<leader>-w", desc = "Word wrap (current window)", icon = toggle_icons.word_wrap },
+        { "<leader>-W", desc = "Word wrap (all windows)", icon = toggle_icons.word_wrap },
         { "<leader>sl", desc = "Terminal reference links", icon = toggle_icons.terminal_reference_links },
       })
 

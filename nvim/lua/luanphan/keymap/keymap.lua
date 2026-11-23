@@ -13,7 +13,7 @@ vim.o.undofile = true
 vim.o.cursorline = true
 vim.o.scrolloff = 8
 vim.o.signcolumn = "yes" -- always show the signcolumn on the left side
-vim.o.wrap = false       -- no soft-wrap by default; toggle with <leader>tw or <leader>tW
+vim.o.wrap = false       -- no soft-wrap by default; toggle with <leader>-w or <leader>-W
 vim.o.linebreak = true   -- when wrap is on, break at word boundaries, not mid-word
 vim.o.cmdheight = 1
 
@@ -116,7 +116,7 @@ vim.keymap.set("v", "<leader>d", "\"_d")
 vim.keymap.set("x", "<leader>p", "\"_dP")
 
 -- Window / terminal navigation
-vim.keymap.set("n", "<leader>tt", function() require("luanphan.terminal").toggle() end, { desc = "Terminal" })
+vim.keymap.set("n", "<leader>-t", function() require("luanphan.terminal").toggle() end, { desc = "Terminal" })
 vim.keymap.set("n", "<C-h>", "<C-w>h", { silent = true })
 vim.keymap.set("n", "<C-j>", "<C-w>j", { silent = true })
 vim.keymap.set("n", "<C-k>", "<C-w>k", { silent = true })
@@ -140,10 +140,10 @@ vim.keymap.set("t", "<C-]>", function()
 end, { desc = "Send Esc to terminal process" })
 
 -- Search
-vim.keymap.set("n", "<leader>t1", function()
+vim.keymap.set("n", "<leader>-1", function()
   require("luanphan.telescope_grep_opts").toggle_case_sensitive()
 end, { desc = "Live grep case sensitivity" })
-vim.keymap.set("n", "<leader>t2", function()
+vim.keymap.set("n", "<leader>-2", function()
   require("luanphan.telescope_grep_opts").toggle_regex()
 end, { desc = "Live grep regex" })
 vim.keymap.set("n", "<leader>sl", function()
@@ -196,7 +196,7 @@ end, { desc = "Config" })
 vim.keymap.set("n", "<leader>srl", "<cmd>lsp restart<cr>", { desc = "LSP" })
 
 -- AI
-vim.keymap.set("n", "<leader>tc", function()
+vim.keymap.set("n", "<leader>-c", function()
   require("luanphan.copilot_toggle").toggle()
 end, { desc = "Copilot" })
 
@@ -245,7 +245,7 @@ local function toggle_file_diff()
   vim.cmd("windo diffthis")
 end
 
-vim.keymap.set("n", "<leader>td", toggle_file_diff, { desc = "File diff" })
+vim.keymap.set("n", "<leader>-d", toggle_file_diff, { desc = "File diff" })
 
 local function open_csvlens_preview(file)
   if vim.fn.executable("csvlens") ~= 1 then
@@ -389,13 +389,13 @@ vim.keymap.set("n", "<leader>fS", "<cmd>wa<cr>", { desc = "Save all files" })
 vim.keymap.set("n", "<leader>fL", "<cmd>edit!<cr>", { desc = "Reload from disk" })
 
 -- UI
-vim.keymap.set("n", "<leader>tw", function()
+vim.keymap.set("n", "<leader>-w", function()
   local enabled = not vim.wo.wrap
   vim.wo.wrap = enabled
   vim.notify("wrap: " .. (enabled and "on" or "off") .. " (current window)", vim.log.levels.INFO)
 end, { desc = "Word wrap (current window)" })
 
-vim.keymap.set("n", "<leader>tW", function()
+vim.keymap.set("n", "<leader>-W", function()
   local enabled = not vim.wo.wrap
   vim.o.wrap = enabled
 
