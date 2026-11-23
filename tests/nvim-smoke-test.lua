@@ -6058,6 +6058,21 @@ local function test_tmux_floating_terminal()
     [[os.write(1, b"HISTORY_PROMPT\r\n> \r\n" * 90 + b"\033[H\033[2JLIVE_PROMPT\r\n> ")]],
     "os.read(0, 1)",
   })
+  write(root .. "/focus.py", {
+    "import os, tty",
+    "tty.setraw(0)",
+    [[os.write(1, b"HISTORY_FOCUS\r\n" * 90 + b"\033[H\033[2JFOCUS_PROMPT\r\n> ")]],
+    [[if os.read(0, 1) == b"e":]],
+    [[    os.write(1, b"\033[?1004hFOCUS_ENABLED")]],
+    [[while True:]],
+    [[    key = os.read(0, 1)]],
+    [[    if key == b"\033" and os.read(0, 1) == b"[":]],
+    [[        report = os.read(0, 1)]],
+    [[        if report in (b"I", b"O"):]],
+    [[            os.write(1, b"\033[999;1H\r\nUNEXPECTED_FOCUS")]],
+    [[    elif key == b"x":]],
+    [[        os.write(1, b"USER_INPUT")]],
+  })
   local setup = {
     "local root = " .. string.format("%q", root),
     "vim.g.luanphan_floating_tmux_socket = root .. '/socket'",
@@ -6378,6 +6393,67 @@ assert(vim.wait(4000, function()
   local restored = vim.fn.winsaveview()
   return restored.topline == scrolled.topline and restored.lnum == scrolled.lnum
 end), "returning to a pane lost the user's scrollback view")
+
+local prompt_command = "python3 " .. vim.fn.shellescape(root .. "/prompt.py")
+local left = tmux("new-window", "-d", "-P", "-F", "#{pane_id}", prompt_command)
+local right = tmux("split-window", "-h", "-P", "-F", "#{pane_id}", "-t", left, prompt_command)
+local function pane_view(id)
+  for _, win in ipairs(api.nvim_list_wins()) do
+    local buf = api.nvim_win_get_buf(win)
+    if vim.b[buf].luanphan_tmux_pane == id then
+      local view = api.nvim_win_call(win, vim.fn.winsaveview)
+      return { view.topline, view.lnum, view.col, lines = api.nvim_buf_get_lines(buf, 0, -1, false) }
+    end
+  end
+end
+for _, id in ipairs({ left, right }) do
+  assert(vim.wait(4000, function() return tmux("capture-pane", "-p", "-t", id):find("LIVE_PROMPT", 1, true) end))
+end
+tmux("select-window", "-t", right)
+assert(vim.wait(4000, function()
+  for _, id in ipairs({ left, right }) do
+    local pane = pane_view(id)
+    if not pane or pane[1] <= 1 or vim.trim(pane.lines[pane[1]]) ~= "LIVE_PROMPT" then return false end
+  end
+  return vim.b.luanphan_tmux_pane == right
+end), "split panes did not show their live screen")
+local before = { pane_view(left), pane_view(right) }
+for _ = 1, 3 do
+  select_window(2, saved[3])
+  select_window(4, right)
+  vim.cmd.redraw()
+  assert(vim.deep_equal(before, { pane_view(left), pane_view(right) }),
+    "switching back exposed the wrong first frame")
+  vim.wait(80, function() return false end)
+  assert(vim.deep_equal(before, { pane_view(left), pane_view(right) }),
+    "switching back shifted a pane's screen or scrollback")
+end
+
+local focus_pane = tmux("new-window", "-d", "-P", "-F", "#{pane_id}",
+  "python3 " .. vim.fn.shellescape(root .. "/focus.py"))
+assert(vim.wait(4000, function()
+  return tmux("capture-pane", "-p", "-t", focus_pane):find("FOCUS_PROMPT", 1, true)
+end))
+tmux("select-window", "-t", focus_pane)
+local function visible_output(marker)
+  return vim.b.luanphan_tmux_pane == focus_pane
+    and table.concat(api.nvim_buf_get_lines(0, 0, -1, false), "\n"):find(marker, 1, true)
+end
+assert(vim.wait(4000, function()
+  return visible_output("FOCUS_PROMPT") and vim.fn.winsaveview().topline > 1
+end), "focus reporting fixture did not show its live prompt")
+tmux("send-keys", "-t", focus_pane, "e")
+assert(vim.wait(4000, function() return visible_output("FOCUS_ENABLED") end), "focus reporting was not enabled")
+local top = vim.fn.winsaveview().topline
+local input_top
+vim.defer_fn(function()
+  input_top = vim.fn.winsaveview().topline
+  api.nvim_input("x<Esc>")
+end, 150)
+api.nvim_feedkeys("i", "xt!", false)
+assert(vim.wait(4000, function() return visible_output("USER_INPUT") end), "terminal mode lost typed input")
+assert(input_top == top and not visible_output("UNEXPECTED_FOCUS"),
+  "entering or leaving terminal mode sent a focus report to tmux")
 ]=])
   end, debug.traceback)
   vim.system({ "tmux", "-S", socket, "kill-server" }):wait()

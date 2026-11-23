@@ -147,27 +147,50 @@ local function tile(self, anchor, context, geometry)
 		})
 	end
 	local windows, panes = {}, {}
-	local anchor_buf = vim.api.nvim_win_get_buf(anchor)
+	local previous = self.tile_windows or {}
+	local old_anchor_buf = vim.api.nvim_win_get_buf(anchor)
+	local anchor_buf = old_anchor_buf
 	if not vim.iter(tabs):any(function(tab) return tab.bufnr == anchor_buf end) then
 		anchor_buf = self:active(context).bufnr
-		vim.api.nvim_win_set_buf(anchor, anchor_buf)
-		if (self.tile_windows or {})[anchor_buf] == vim.api.nvim_get_current_win() then vim.api.nvim_set_current_win(anchor) end
 	end
-	local previous = self.tile_windows or {}
+	-- Detach an outgoing terminal before resizing its anchor.
+	local scratch
 	for index, tab in ipairs(tabs) do
 		local is_anchor = tab.bufnr == anchor_buf
 		local win = is_anchor and anchor or previous[tab.bufnr]
 		local opened = not win or not vim.api.nvim_win_is_valid(win)
+		local frame = layout[index]
+		local reserve_bar
+		if (opened or (is_anchor and anchor_buf ~= old_anchor_buf)) and vim.bo[tab.bufnr].buftype == "terminal" then
+			-- Reserve the bar before Neovim measures the terminal's new viewport.
+			reserve_bar = vim.api.nvim_create_autocmd("BufWinEnter", {
+				buffer = tab.bufnr, once = true,
+				callback = function() self:reserve(vim.api.nvim_get_current_win()) end,
+			})
+		end
 		if opened then
-			win = vim.api.nvim_open_win(tab.bufnr, false, vim.tbl_extend("force", layout[index], { style = "minimal" }))
+			win = vim.api.nvim_open_win(tab.bufnr, false, vim.tbl_extend("force", frame, { style = "minimal" }))
 		else
-			vim.api.nvim_win_set_config(win, layout[index])
+			if is_anchor and anchor_buf ~= old_anchor_buf and vim.bo[old_anchor_buf].buftype == "terminal"
+				and (vim.api.nvim_win_get_width(win) ~= frame.width or vim.api.nvim_win_get_height(win) ~= frame.height) then
+				scratch = vim.api.nvim_create_buf(false, true)
+				vim.api.nvim_win_set_buf(win, scratch)
+			end
+			vim.api.nvim_win_set_config(win, frame)
 		end
 		vim.w[win].luanphan_view_anchor = anchor
 		if not is_anchor then windows[tab.bufnr] = win end
+		if vim.api.nvim_win_get_buf(win) ~= tab.bufnr then
+			vim.api.nvim_win_set_buf(win, tab.bufnr)
+		end
+		if reserve_bar then pcall(vim.api.nvim_del_autocmd, reserve_bar) end
 		self:render(win, context, tab)
 		panes[#panes + 1] = { win = win, tab = tab, opened = opened }
 	end
+	if anchor_buf ~= old_anchor_buf and previous[anchor_buf] == vim.api.nvim_get_current_win() then
+		vim.api.nvim_set_current_win(anchor)
+	end
+	if scratch then vim.api.nvim_buf_delete(scratch, { force = true }) end
 	self.tile_windows = windows
 	close_unused_tiles(anchor, windows)
 	return panes

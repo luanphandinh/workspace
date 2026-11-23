@@ -139,8 +139,8 @@ local function pick_session()
 end
 
 local function enter_input(pane, data)
-  -- The tmux server handles terminal replies. Forward only input from the user.
-  if pane.receiving or not client then return end
+  -- tmux reports pane focus independently of Neovim's terminal input mode.
+  if pane.receiving or not client or data == "\27[I" or data == "\27[O" then return end
   if data:find("\12", 1, true) then pane.follow_clear = true end
   pane.input = (pane.input or "") .. data
   if pane.input_pending then return end
@@ -171,6 +171,16 @@ local function live_topline(pane)
   return math.max(1, api.nvim_buf_line_count(pane.bufnr) - pane.view_height + 1)
 end
 
+local function apply_view(pane, win, view)
+  api.nvim_win_call(win, function()
+    if view.topline then return vim.fn.winrestview(view) end
+    local top = live_topline(pane)
+    local line = math.min(api.nvim_buf_line_count(pane.bufnr), top + view.row)
+    local col = math.max(0, vim.fn.virtcol2col(win, line, view.col + 1) - 1)
+    vim.fn.winrestview({ topline = top, lnum = line, col = col, leftcol = 0 })
+  end)
+end
+
 local function restore_view(pane)
   if not pane.pending_view or pane.view_pending then return end
   pane.view_pending = true
@@ -180,13 +190,7 @@ local function restore_view(pane)
     if panes[pane.id] ~= pane or not pane.visible or not view then return end
     local win = vim.fn.bufwinid(pane.bufnr)
     if win == -1 then return end
-    api.nvim_win_call(win, function()
-      if view.topline then return vim.fn.winrestview(view) end
-      local top = live_topline(pane)
-      local line = math.min(api.nvim_buf_line_count(pane.bufnr), top + view.row)
-      local col = math.max(0, vim.fn.virtcol2col(win, line, view.col + 1) - 1)
-      vim.fn.winrestview({ topline = top, lnum = line, col = col, leftcol = 0 })
-    end)
+    apply_view(pane, win, view)
   end)
 end
 
@@ -223,9 +227,10 @@ paint = function(pane)
     local flags = vim.split(cursor.lines[1] or "", "\t", { plain = true })
     local frame, output = screen.frame(pane, content.lines, flags)
     local in_input = api.nvim_get_current_buf() == pane.bufnr and api.nvim_get_mode().mode == "t"
-    local saved_view = pane.returning and pane.scrollback_view
+    local restore_return = pane.returning and (output ~= "" or not pane.last_view)
+    local saved_view = restore_return and pane.scrollback_view
     local follow = pane.follow_clear or not pane.painted or (in_input and output ~= "")
-      or (pane.returning and not saved_view)
+      or (restore_return and not saved_view)
     pane.frame, pane.ready, pane.painted = frame, true, true
     pane.follow_clear, pane.returning = false, false
     if follow or saved_view then
@@ -349,6 +354,7 @@ local function render_panel()
       local pane = panes[vim.b[api.nvim_win_get_buf(win)].luanphan_tmux_pane]
       if pane and pane.visible and not pane.pending_view then
         local view = api.nvim_win_call(win, vim.fn.winsaveview)
+        pane.last_view = view
         pane.scrollback_view = view.topline < live_topline(pane) and view or nil
       end
     end
@@ -373,7 +379,10 @@ local function render_panel()
     local width = api.nvim_win_get_width(win)
     local height = math.max(1, api.nvim_win_get_height(win) - (vim.wo[win].winbar == "" and 0 or 1))
     local repaint = not pane.visible or pane.view_width ~= width or pane.view_height ~= height or pane.changed_size
-    if not pane.visible and pane.painted then pane.returning = true end
+    if not pane.visible and pane.painted then
+      pane.returning = true
+      if pane.last_view then apply_view(pane, win, pane.last_view) end
+    end
     pane.visible, pane.view_width, pane.view_height, pane.changed_size = true, width, height, nil
     pane.snapshot = pane.width ~= width or pane.height ~= height
     if not pane.term then
