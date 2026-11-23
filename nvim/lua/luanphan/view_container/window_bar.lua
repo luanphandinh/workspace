@@ -18,8 +18,8 @@ function M.divide(frame, style, vertical_width)
   local body = vim.tbl_extend("force", {}, frame)
   local bar = vim.tbl_extend("force", {}, frame, { border = "none" })
   if style == "horizontal" then
-    if frame.height < 4 then return body end
-    bar.width, bar.height = body.width + border, 2
+    if frame.height < 3 then return body end
+    bar.width, bar.height = body.width + border, 1
     body.row, body.height = body.row + bar.height, body.height - bar.height
   else
     if frame.width < 4 or frame.height < 4 then return body end
@@ -360,7 +360,7 @@ function Bar:layout(anchor, frame, style)
       end,
     })
   else
-    vim.wo[self.win].winhighlight = "NormalFloat:Normal,WinBar:Normal,WinBarNC:Normal"
+    vim.wo[self.win].winhighlight = "NormalFloat:TabLineFill"
   end
   self:attach(buf)
   self:map_jumps(buf, true)

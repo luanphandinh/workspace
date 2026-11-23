@@ -4498,7 +4498,7 @@ local function test_agent_terminal_reference_restores_view(repo)
 
   local terminal_buf = vim.api.nvim_get_current_buf()
   local terminal_win = vim.api.nvim_get_current_win()
-  assert_true(vim.api.nvim_win_get_config(terminal_win).zindex == 40, "agent terminal has the wrong float layer")
+  assert_true(vim.api.nvim_win_get_config(terminal_win).zindex == 45, "agent terminal has the wrong float layer")
   assert_resize_restores_float(terminal_win, "new agent terminal")
   assert_true(not vim.wo[terminal_win].wrap, "agent terminal enabled editor line wrapping")
   assert_true(vim.b[terminal_buf].matchparen_timeout == 0, "agent terminal enabled matchparen scans")
@@ -4526,7 +4526,7 @@ local function test_agent_terminal_reference_restores_view(repo)
   end, 1000)
   vim.wait(30)
   local reopened_win = vim.api.nvim_get_current_win()
-  assert_true(vim.api.nvim_win_get_config(reopened_win).zindex == 40, "reopened agent terminal has the wrong float layer")
+  assert_true(vim.api.nvim_win_get_config(reopened_win).zindex == 45, "reopened agent terminal has the wrong float layer")
   assert_resize_restores_float(reopened_win, "reopened agent terminal")
   local restored_view = vim.api.nvim_win_call(reopened_win, vim.fn.winsaveview)
   assert_true(restored_view.lnum == saved_view.lnum, "agent terminal cursor returned to the end")
@@ -5783,6 +5783,32 @@ assert(vim.wait(3000, function() return vim.api.nvim_get_current_buf() == home e
 assert(#view.group_windows(anchor) == 3 and vim.w[anchor].luanphan_window_bar == sidebar,
   'agent window picker replaced the panel')
 
+local home_path = vim.fn.getcwd()
+vim.fn.jobstop(vim.b[away_peer].terminal_job_id)
+assert(vim.wait(3000, function() return not vim.api.nvim_buf_is_valid(away_peer) end, 20),
+  'could not reduce the destination to one tile')
+
+-- Reproduce a leftover float for the same buffer in the current window group.
+local peer_win = vim.fn.bufwinid(home_peer)
+local extra = vim.api.nvim_open_win(home_peer, false, vim.api.nvim_win_get_config(peer_win))
+vim.w[extra].luanphan_view_anchor = anchor
+local window_bar = require('luanphan.agents.window_bar')
+assert(window_bar.select_session({ agent = 'codex', bufnr = away, path = destination }, { view_mode = true }),
+  'sidebar could not switch to the single-tile workspace')
+assert(vim.api.nvim_get_current_win() == anchor and vim.api.nvim_win_get_buf(anchor) == away,
+  'single tile did not reuse the panel anchor')
+assert(#view.group_windows(anchor) == 2 and vim.w[anchor].luanphan_window_bar == sidebar,
+  'single-tile workspace left a tile from the previous workspace on screen')
+local single_width = vim.api.nvim_win_get_width(anchor)
+assert(window_bar.select_session({ agent = 'codex', bufnr = home, path = home_path }, { view_mode = true }),
+  'sidebar could not return to the multi-tile workspace')
+assert(#view.group_windows(anchor) == 3 and vim.w[anchor].luanphan_window_bar == sidebar,
+  'returning to the multi-tile workspace did not restore its panes in place')
+local first = vim.api.nvim_win_get_config(vim.fn.bufwinid(home))
+local second = vim.api.nvim_win_get_config(vim.fn.bufwinid(home_peer))
+assert(first.col + first.width + 2 == second.col and first.width + second.width + 2 == single_width,
+  'returning from the single tile left overlapping panes')
+
 local windows = view.group_windows(anchor)
 vim.api.nvim_create_autocmd('User', {
   pattern = 'SmokeHideAgentPanel',
@@ -5793,7 +5819,7 @@ vim.api.nvim_exec_autocmds('User', { pattern = 'SmokeHideAgentPanel' })
 for _, win in ipairs(windows) do
   assert(not vim.api.nvim_win_is_valid(win), 'closing the panel inside an autocmd left a window behind')
 end
-for _, buf in ipairs({ home, home_peer, away, away_peer }) do
+for _, buf in ipairs({ home, home_peer, away }) do
   assert(terminal.running(buf), 'hiding the panel stopped an agent job')
 end
 ]], "\n", { plain = true }))
@@ -6232,11 +6258,25 @@ local function test_terminal_view_container(repo)
   local original_shell = terminal_config.shell
   local original_env = vim.env.ENV
   local original_settings = vim.g.luanphan_global_settings_path
+  local original_sessions = vim.g.luanphan_terminal_sessions_dir
   local panel_settings = temp_root .. "/terminal-panel-settings.toml"
   vim.g.luanphan_global_settings_path = panel_settings
+  vim.g.luanphan_terminal_sessions_dir = temp_root .. "/terminal-panel-agent-sessions"
   write(panel_settings, { "[terminal_split]", 'window_bar_style = "horizontal"', 'display_style = "tabs"' })
   terminal_config.shell = "/bin/sh"
   vim.env.ENV = nil
+  local agent_buf
+
+  local function window_bar()
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.bo[vim.api.nvim_win_get_buf(win)].filetype == "window-bar" then return win end
+    end
+    error("integrated window bar is missing")
+  end
+
+  local function window_labels()
+    return vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(window_bar()), 0, 1, false)[1]
+  end
 
   local ok, err = xpcall(function()
     vim.cmd("cd " .. vim.fn.fnameescape(repo))
@@ -6256,6 +6296,32 @@ local function test_terminal_view_container(repo)
       return vim.api.nvim_get_current_buf() == first_buf
     end, 3000)
     local first_job = vim.b[first_buf].terminal_job_id
+    local first_win = vim.api.nvim_get_current_win()
+    local body_frame = vim.api.nvim_win_get_config(first_win)
+    local bar_frame = vim.api.nvim_win_get_config(window_bar())
+    assert_true(window_labels():find("[Window 1]", 1, true), "first integrated window is missing")
+    assert_true(bar_frame.height == 1 and body_frame.row == bar_frame.row + 1,
+      "integrated window bar leaves an empty row above its tabs")
+
+    local agents = require("luanphan.agents.main")
+    assert_true(agents.new("terminal", { view_mode = true }), "could not open a shell in the agent panel")
+    agent_buf = vim.api.nvim_get_current_buf()
+    assert_true(agents.hide(), "could not hide the agent panel before testing its toggle")
+    vim.api.nvim_set_current_win(first_win)
+    invoke_map("<leader>a")
+    local agent_win = vim.api.nvim_get_current_win()
+    local agent_bar = vim.w[agent_win].luanphan_window_bar
+    local terminal_layer = math.max(body_frame.zindex, bar_frame.zindex)
+    assert_true(vim.api.nvim_get_current_buf() == agent_buf, "agent toggle did not restore its shell")
+    assert_true(vim.api.nvim_win_get_config(agent_win).zindex > terminal_layer
+        and agent_bar and vim.api.nvim_win_get_config(agent_bar).zindex > terminal_layer,
+      "integrated terminal can draw over the agent panel")
+    assert_true(agents.hide(), "could not close the agent overlay")
+    vim.api.nvim_buf_delete(agent_buf, { force = true })
+    assert_true(vim.api.nvim_win_is_valid(first_win) and vim.fn.jobwait({ first_job }, 0)[1] == -1,
+      "toggling agents stopped the integrated terminal")
+    vim.api.nvim_set_current_win(first_win)
+
     invoke_map("<S-Tab>")
     assert_true(vim.api.nvim_get_current_buf() == first_buf, "backward cycling changed a single terminal tab")
     assert_true(
@@ -6267,7 +6333,6 @@ local function test_terminal_view_container(repo)
       return vim.api.nvim_buf_line_count(first_buf) >= 80
     end, 3000)
     vim.cmd("stopinsert")
-    local first_win = vim.api.nvim_get_current_win()
     vim.api.nvim_win_set_cursor(first_win, { 10, 0 })
     vim.api.nvim_win_call(first_win, function()
       vim.cmd("normal! zt")
@@ -6359,16 +6424,10 @@ local function test_terminal_view_container(repo)
     end
     invoke_map("<leader>nw")
     local third_buf = vim.api.nvim_get_current_buf()
-    local function window_bar()
-      for _, win in ipairs(vim.api.nvim_list_wins()) do
-        if vim.bo[vim.api.nvim_win_get_buf(win)].filetype == "window-bar" then return win end
-      end
-      error("integrated window bar is missing")
-    end
-    assert_true(rendered_winbar(window_bar()):find("[Window 2]", 1, true), "second integrated window is missing")
+    assert_true(window_labels():find("[Window 2]", 1, true), "second integrated window is missing")
     invoke_map("<leader>nt")
     local fourth_buf = vim.api.nvim_get_current_buf()
-    assert_true(fourth_buf ~= third_buf and not rendered_winbar(window_bar()):find("Window 3", 1, true),
+    assert_true(fourth_buf ~= third_buf and not window_labels():find("Window 3", 1, true),
       "new tab created another integrated window")
     local input, prompt, rename = vim.ui.input
     invoke_map("<leader>e")
@@ -6378,7 +6437,7 @@ local function test_terminal_view_container(repo)
     vim.ui.input = input
     assert_true(prompt and prompt.default == "Window 1", "rename prompt did not use the selected horizontal window")
     rename("Example window")
-    assert_true(rendered_winbar(window_bar()):find("Example window", 1, true), "integrated window did not show its new name")
+    assert_true(window_labels():find("Example window", 1, true), "integrated window did not show its new name")
     invoke_map("<leader>e")
     assert_true(vim.api.nvim_get_current_buf() == fourth_buf, "rename switched the active terminal window")
     invoke_map("<S-Tab>")
@@ -6411,8 +6470,12 @@ local function test_terminal_view_container(repo)
       "closing integrated terminal left part of its panel behind")
   end, debug.traceback)
 
+  if agent_buf and vim.api.nvim_buf_is_valid(agent_buf) then
+    vim.api.nvim_buf_delete(agent_buf, { force = true })
+  end
   close_toggleterm_terminals()
   vim.g.luanphan_global_settings_path = original_settings
+  vim.g.luanphan_terminal_sessions_dir = original_sessions
   terminal_config.shell = original_shell
   vim.env.ENV = original_env
   if vim.fn.isdirectory(old_cwd) == 1 then

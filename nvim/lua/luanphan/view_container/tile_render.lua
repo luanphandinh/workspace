@@ -78,7 +78,7 @@ local function set_tile_highlights(win, border, inactive)
 end
 
 local function reset_tiles(self, closing)
-	local anchor, windows = self.tile_anchor, self.tile_windows
+	local anchor = self.tile_anchor
 	if anchor ~= closing then set_tile_highlights(anchor, nil, false) end
 	self.tile_anchor, self.tile_windows = nil, nil
 	if self.tile_autocmd then
@@ -86,13 +86,22 @@ local function reset_tiles(self, closing)
 		self.tile_autocmd = nil
 	end
 	if anchor and vim.api.nvim_win_is_valid(anchor) then vim.w[anchor].luanphan_view_anchor = nil end
-	return windows or {}
+end
+
+local function close_unused_tiles(anchor, retained)
+	if not anchor then return end
+	for _, win in ipairs(window.group_windows(anchor)) do
+		if win ~= anchor and vim.api.nvim_win_is_valid(win) and vim.w[win].luanphan_view_anchor == anchor then
+			local buf = vim.api.nvim_win_get_buf(win)
+			if not retained or retained[buf] ~= win then vim.api.nvim_win_close(win, true) end
+		end
+	end
 end
 
 local function clear_tiles(self)
-	for _, win in pairs(reset_tiles(self)) do
-		if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
-	end
+	local anchor = self.tile_anchor
+	reset_tiles(self)
+	close_unused_tiles(anchor)
 end
 
 function M.refresh_tile_highlights(self)
@@ -137,13 +146,14 @@ local function tile(self, anchor, context, geometry)
 			end,
 		})
 	end
-	local previous, windows, panes = self.tile_windows or {}, {}, {}
+	local windows, panes = {}, {}
 	local anchor_buf = vim.api.nvim_win_get_buf(anchor)
 	if not vim.iter(tabs):any(function(tab) return tab.bufnr == anchor_buf end) then
 		anchor_buf = self:active(context).bufnr
 		vim.api.nvim_win_set_buf(anchor, anchor_buf)
-		if previous[anchor_buf] == vim.api.nvim_get_current_win() then vim.api.nvim_set_current_win(anchor) end
+		if (self.tile_windows or {})[anchor_buf] == vim.api.nvim_get_current_win() then vim.api.nvim_set_current_win(anchor) end
 	end
+	local previous = self.tile_windows or {}
 	for index, tab in ipairs(tabs) do
 		local is_anchor = tab.bufnr == anchor_buf
 		local win = is_anchor and anchor or previous[tab.bufnr]
@@ -159,9 +169,7 @@ local function tile(self, anchor, context, geometry)
 		panes[#panes + 1] = { win = win, tab = tab, opened = opened }
 	end
 	self.tile_windows = windows
-	for buf, win in pairs(previous) do
-		if not windows[buf] and vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
-	end
+	close_unused_tiles(anchor, windows)
 	return panes
 end
 
