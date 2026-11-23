@@ -136,7 +136,7 @@ workstations:
     root: <relative-path-to-workstation-root>
     manifest: <relative-path-to-workstation-root>/workstation.yml
 ```
-The metadata repository also stores each listed `workstation.yml`, existing `local_workspaces/<workspace-name>/workspace.yml` files for jump metadata, and optional home-scoped metadata at `.skills-hub/execute_plugins`, `.cmds-hub/cmd_history`, `.local/share/tmux/resurrect/last`, and `.config/tmux/pinned-sessions`. Local workstation folders do not need a local `workstation.yml` when using the `meta-hub` flow.
+The metadata repository also stores each listed `workstation.yml`, existing `local_workspaces/<workspace-name>/workspace.yml` files for jump metadata, and optional home-scoped history at `.skills-hub/execute_plugins` and `.cmds-hub/cmd_history`. Local workstation folders do not need a local `workstation.yml` when using the `meta-hub` flow.
 
 # Playbook
 
@@ -173,7 +173,7 @@ User intent: "push metadata", "send metadata repo changes to remote".
 meta-hub push
 meta-hub push pick
 ```
-`push` can run from any folder. If `~/.meta-hub/info.yml` is missing but an older local `~/.meta-hub/registry.yml` or `~/.meta-sync/registry.yml` exists, `meta-hub` migrates it into `~/.meta-hub/info.yml` on first use. Pulling and conflict resolution are part of `meta-hub index` and `meta-hub pull`; supported YAML metadata conflicts are resolved by unioning manifest entries, and conflicts in `.skills-hub/execute_plugins`, `.cmds-hub/cmd_history`, and `.config/tmux/pinned-sessions` are resolved by unioning lines. Unsupported conflicts are left for manual resolution. `push` sends the current metadata commit to `main` or `master` explicitly, so first pushes to empty metadata repositories do not depend on local git upstream configuration.
+`push` can run from any folder. If `~/.meta-hub/info.yml` is missing but an older local `~/.meta-hub/registry.yml` or `~/.meta-sync/registry.yml` exists, `meta-hub` migrates it into `~/.meta-hub/info.yml` on first use. Pulling and conflict resolution are part of `meta-hub index` and `meta-hub pull`; supported YAML metadata conflicts are resolved by unioning manifest entries, and conflicts in `.skills-hub/execute_plugins` and `.cmds-hub/cmd_history` are resolved by unioning lines. Unsupported conflicts are left for manual resolution. `push` sends the current metadata commit to `main` or `master` explicitly, so first pushes to empty metadata repositories do not depend on local git upstream configuration.
 
 ## Create a new workspace
 User intent: "make a workspace called X with repos A, B on branch feature/Y".

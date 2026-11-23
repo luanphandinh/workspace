@@ -10,17 +10,6 @@ padding = { x = 8 }
 [keyboard]
 bindings = [
   { key = "W", mods = "Command", action = "None" },
-  # Cycle pinned tmux sessions. Two unique CSI sequences (F13 / F14
-  # codes, which nothing on macOS emits naturally) are sent so tmux
-  # matches them via user-keys without colliding with anything real.
-  # Opt+Cmd+ArrowUp or Ctrl+Shift+ArrowUp     → previous pinned session
-  # Opt+Cmd+ArrowDown or Ctrl+Shift+ArrowDown → next pinned session
-  { key = "ArrowUp",    mods = "Option|Command", chars = "\u001b[25~" },
-  { key = "ArrowDown",  mods = "Option|Command", chars = "\u001b[26~" },
-  { key = "ArrowUp",    mods = "Control|Shift", chars = "\u001b[25~" },
-  { key = "ArrowDown",  mods = "Control|Shift", chars = "\u001b[26~" },
-  { key = "K",          mods = "Control|Shift", chars = "\u001b[25~" },
-  { key = "J",          mods = "Control|Shift", chars = "\u001b[26~" },
   # Previous / next tmux WINDOW in the current session (User2 / User3).
   # F15 / F16 codes — nothing on macOS emits these naturally.
   { key = "ArrowLeft",  mods = "Option|Command", chars = "\u001b[28~" },

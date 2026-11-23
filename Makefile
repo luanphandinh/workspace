@@ -267,7 +267,7 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	@sh ./bin/workspace-shell-sync
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: mkws-test skills-hub-test skills-sync-test install-agent-clis-test cmds-hub-test codex-config-test agent-status-hooks-test workspace-shell-test agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test tunnel-test neovide-remote-test wsync-test go-remote-test go-wrapper-test nix-test nix-install-test tmux-pins-test ## Run smoke tests
+test: mkws-test skills-hub-test skills-sync-test install-agent-clis-test cmds-hub-test codex-config-test agent-status-hooks-test workspace-shell-test agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test tunnel-test neovide-remote-test wsync-test go-remote-test go-wrapper-test nix-test nix-install-test ## Run smoke tests
 
 .PHONY: nix-install-test
 nix-install-test: ## Verify Nix installation modes and privilege handling
@@ -327,9 +327,6 @@ workspace-shell-test: ## Run workspace shell and npm global-install smoke tests
 
 nix-test: ## Run Nix smoke tests
 	sh ./tests/nix-smoke-test.sh
-
-tmux-pins-test: ## Run tmux pinned-session smoke tests
-	sh ./tests/tmux-pins-smoke-test.sh
 
 cleanup: ## Clean up ./tmp folder
 	rm -rf ./tmp

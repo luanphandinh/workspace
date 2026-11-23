@@ -739,12 +739,11 @@ test_meta_hub() {
 	mkdir -p "$root/station-a/local_workspaces/feature-a/tech_doc/.drafts"
 	printf 'draft\n' > "$root/station-a/local_workspaces/feature-a/tech_doc/.drafts/note.md"
 	git init -q "$root/station-a/local_workspaces/feature-a/tech_doc"
-	mkdir -p "$HOME/.skills-hub" "$HOME/.cmds-hub" "$HOME/.local/share/tmux/resurrect" "$HOME/.config/tmux"
+	mkdir -p "$HOME/.skills-hub" "$HOME/.cmds-hub" "$HOME/.local/share/tmux/resurrect"
 	printf 'plugin-base\n' > "$HOME/.skills-hub/execute_plugins"
 	printf 'cmd-base\n' > "$HOME/.cmds-hub/cmd_history"
 	printf 'pane\tbase-session\n' > "$HOME/.local/share/tmux/resurrect/tmux_resurrect_example.txt"
 	ln -sf tmux_resurrect_example.txt "$HOME/.local/share/tmux/resurrect/last"
-	printf 'session-base\n' > "$HOME/.config/tmux/pinned-sessions"
 
 	meta_seed="$TMP/meta-hub-seed"
 	meta_remote="$TMP/metadata.git"
@@ -808,7 +807,6 @@ test_meta_hub() {
 	assert_exists "$clone/.skills-hub/execute_plugins"
 	assert_exists "$clone/.cmds-hub/cmd_history"
 	assert_not_exists "$clone/.local/share/tmux/resurrect/last"
-	assert_not_exists "$clone/.config/tmux/pinned-sessions"
 	assert_not_exists "$clone/station-a/local_workspaces/feature-a/repo-a/README.md"
 	assert_contains "$clone/station-a/workstation.yml" "name: \"repo-a\""
 	assert_contains "$clone/station-a/workstation.yml" "path: \"_external/example-context\""
@@ -821,7 +819,6 @@ test_meta_hub() {
 	assert_contains "$clone/.skills-hub/execute_plugins" "plugin-base"
 	assert_contains "$clone/.cmds-hub/cmd_history" "cmd-base"
 	assert_contains "$HOME/.local/share/tmux/resurrect/last" "base-session"
-	assert_contains "$HOME/.config/tmux/pinned-sessions" "session-base"
 
 	cat > "$clone/workstations.yml" <<EOF
 version: v1
