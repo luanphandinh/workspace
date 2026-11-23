@@ -6030,6 +6030,12 @@ local function test_tmux_floating_terminal()
     [[    os.write(1, f"\033[7;{width}H".encode())]],
     "os.read(0, 1)",
   })
+  write(root .. "/prompt.py", {
+    "import os, tty",
+    "tty.setraw(0)",
+    [[os.write(1, b"HISTORY_PROMPT\r\n> \r\n" * 90 + b"\033[H\033[2JLIVE_PROMPT\r\n> ")]],
+    "os.read(0, 1)",
+  })
   local setup = {
     "local root = " .. string.format("%q", root),
     "vim.g.luanphan_floating_tmux_socket = root .. '/socket'",
@@ -6305,6 +6311,45 @@ end), "reattach lost pane output")
 local result = vim.system({ "tmux", "-S", vim.g.luanphan_floating_tmux_socket,
   "display-message", "-p", "-t", saved[1], "#{pane_pid}" }, { text = true }):wait()
 assert(result.code == 0 and vim.trim(result.stdout) == saved[2], "reattach replaced the shell")
+
+local function tmux(...)
+  local args = vim.list_extend({ "tmux", "-S", vim.g.luanphan_floating_tmux_socket }, { ... })
+  local reply = vim.system(args, { text = true }):wait()
+  assert(reply.code == 0, reply.stderr)
+  return vim.trim(reply.stdout)
+end
+local prompt_pane = tmux("new-window", "-d", "-P", "-F", "#{pane_id}", "python3 " .. vim.fn.shellescape(root .. "/prompt.py"))
+assert(vim.wait(4000, function()
+  return tmux("capture-pane", "-p", "-t", prompt_pane):find("LIVE_PROMPT", 1, true)
+end), "prompt fixture did not produce scrollback")
+local bars = require("luanphan.view_container.window_bar")
+local function select_window(index, id)
+  assert(bars.focus_window(index), "could not switch tmux window")
+  assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane == id and vim.bo.buftype == "terminal" end),
+    "switch did not focus the requested tmux pane")
+end
+local function live_view()
+  local view = vim.fn.winsaveview()
+  local line = api.nvim_buf_get_lines(0, view.topline - 1, view.topline, false)[1] or ""
+  return vim.trim(line) == "LIVE_PROMPT"
+end
+select_window(3, prompt_pane)
+assert(vim.wait(4000, live_view), "initial prompt did not show the live screen")
+vim.defer_fn(function() api.nvim_input("<Esc>") end, 20)
+api.nvim_feedkeys("i", "xt!", false)
+select_window(2, saved[3])
+select_window(3, prompt_pane)
+assert(vim.wait(4000, live_view), "returning to the prompt exposed its scrollback as the live screen")
+
+api.nvim_win_set_cursor(0, { 5, 0 })
+vim.cmd("normal! zt")
+local scrolled = vim.fn.winsaveview()
+select_window(2, saved[3])
+select_window(3, prompt_pane)
+assert(vim.wait(4000, function()
+  local restored = vim.fn.winsaveview()
+  return restored.topline == scrolled.topline and restored.lnum == scrolled.lnum
+end), "returning to a pane lost the user's scrollback view")
 ]=])
   end, debug.traceback)
   vim.system({ "tmux", "-S", socket, "kill-server" }):wait()

@@ -147,20 +147,24 @@ local function send_output(pane, bytes)
   pane.receiving = false
 end
 
-local function update_live_view(pane)
-  if not pane.live_cursor or pane.view_pending then return end
+local function live_topline(pane)
+  return math.max(1, api.nvim_buf_line_count(pane.bufnr) - pane.view_height + 1)
+end
+
+local function restore_view(pane)
+  if not pane.pending_view or pane.view_pending then return end
   pane.view_pending = true
   vim.schedule(function()
-    local cursor = pane.live_cursor
-    pane.live_cursor, pane.view_pending = nil, false
-    if panes[pane.id] ~= pane or not pane.visible or not cursor then return end
+    local view = pane.pending_view
+    pane.pending_view, pane.view_pending = nil, false
+    if panes[pane.id] ~= pane or not pane.visible or not view then return end
     local win = vim.fn.bufwinid(pane.bufnr)
     if win == -1 then return end
-    local count = api.nvim_buf_line_count(pane.bufnr)
-    local top = math.max(1, count - pane.view_height + 1)
-    local line = math.min(count, top + cursor[1])
     api.nvim_win_call(win, function()
-      local col = math.max(0, vim.fn.virtcol2col(win, line, cursor[2] + 1) - 1)
+      if view.topline then return vim.fn.winrestview(view) end
+      local top = live_topline(pane)
+      local line = math.min(api.nvim_buf_line_count(pane.bufnr), top + view.row)
+      local col = math.max(0, vim.fn.virtcol2col(win, line, view.col + 1) - 1)
       vim.fn.winrestview({ topline = top, lnum = line, col = col, leftcol = 0 })
     end)
   end)
@@ -198,12 +202,15 @@ paint = function(pane)
     local flags = vim.split(cursor.lines[1] or "", "\t", { plain = true })
     local frame, output = screen.frame(pane, content.lines, flags)
     local in_input = api.nvim_get_current_buf() == pane.bufnr and api.nvim_get_mode().mode == "t"
+    local saved_view = pane.returning and pane.scrollback_view
     local follow = pane.follow_clear or not pane.painted or (in_input and output ~= "")
-    pane.frame, pane.ready, pane.painted, pane.follow_clear = frame, true, true, false
-    if follow then
-      pane.live_cursor = { frame.row, frame.col }
+      or (pane.returning and not saved_view)
+    pane.frame, pane.ready, pane.painted = frame, true, true
+    pane.follow_clear, pane.returning = false, false
+    if follow or saved_view then
+      pane.pending_view = follow and { row = frame.row, col = frame.col } or saved_view
       -- Cursor-only frames can leave the terminal buffer text untouched.
-      vim.defer_fn(function() update_live_view(pane) end, 20)
+      vim.defer_fn(function() restore_view(pane) end, 20)
     end
     if output ~= "" then send_output(pane, output) end
     if pane.dirty then queue_paint(pane) end
@@ -309,6 +316,15 @@ local function render_panel()
   local focus = focus_on_render or not valid(anchor) or vim.api.nvim_get_current_win() == anchor
     or vim.w[api.nvim_get_current_win()].luanphan_view_anchor == anchor
   local selected = current.active
+  if valid(anchor) then
+    for _, win in ipairs(views.group_windows(anchor)) do
+      local pane = panes[vim.b[api.nvim_win_get_buf(win)].luanphan_tmux_pane]
+      if pane and pane.visible and not pane.pending_view then
+        local view = api.nvim_win_call(win, vim.fn.winsaveview)
+        pane.scrollback_view = view.topline < live_topline(pane) and view or nil
+      end
+    end
+  end
   if not valid(anchor) then
     anchor = api.nvim_open_win(selected.bufnr, false, vim.tbl_extend("force", body, { style = "minimal" }))
   end
@@ -330,6 +346,7 @@ local function render_panel()
     local width = api.nvim_win_get_width(win)
     local height = math.max(1, api.nvim_win_get_height(win) - (vim.wo[win].winbar == "" and 0 or 1))
     local repaint = not pane.visible or pane.view_width ~= width or pane.view_height ~= height or pane.changed_size
+    if not pane.visible and pane.painted then pane.returning = true end
     pane.visible, pane.view_width, pane.view_height, pane.changed_size = true, width, height, nil
     pane.snapshot = pane.width ~= width or pane.height ~= height
     if not pane.term then
@@ -337,7 +354,7 @@ local function render_panel()
         force_crlf = false,
         on_input = function(_, _, _, data) enter_input(pane, data) end,
       })
-      api.nvim_buf_attach(pane.bufnr, false, { on_lines = function() update_live_view(pane) end })
+      api.nvim_buf_attach(pane.bufnr, false, { on_lines = function() restore_view(pane) end })
     end
     if repaint then paint(pane) end
   end
