@@ -51,7 +51,8 @@ end)
 local sessionPath = os.getenv("HOME") .. "/Library/Application Support/" .. browserBundleID .. "/session.json"
 local types = hs.eventtap.event.types
 local buttonProperty = hs.eventtap.event.properties.mouseEventButtonNumber
-local directions = { [3] = -1, [4] = 1 }
+-- The profile pager reads positive horizontal scroll as Back.
+local directions = { [3] = 1, [4] = -1 }
 local swallowed = {}
 
 local function overSidebar(event)
