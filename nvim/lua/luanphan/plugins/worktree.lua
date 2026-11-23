@@ -1289,7 +1289,8 @@ local function setup()
     local roots = {}
     for _, instance in ipairs(instances) do
       local cwd = instance.path
-      local root = roots[cwd] or git_root(cwd) or cwd
+      local root = roots[cwd]
+      if not root then root = vim.fs.root(vim.uv.fs_realpath(cwd) or cwd, ".git") or cwd end
       roots[cwd] = root
       if instance.bufnr then instance.destination = root end
       instance.workspace = workspace_root_for_path(cwd) or root

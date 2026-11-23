@@ -5835,7 +5835,29 @@ assert(#view.group_windows(anchor) == 3 and vim.w[anchor].luanphan_window_bar ==
 
 vim.g.neovide = true
 vim.api.nvim_exec_autocmds('UIEnter', {})
+local bar = vim.iter(pairs(vim.luanphan_window_bars)):find(function(candidate) return candidate.win == sidebar end)
+assert(bar, 'agent window bar is missing')
+local systemlist = vim.fn.systemlist
+local git_calls = 0
+vim.fn.systemlist = function(args, ...)
+  if type(args) == 'table' and args[1] == 'git' then git_calls = git_calls + 1 end
+  return systemlist(args, ...)
+end
+bar:refresh()
+vim.fn.systemlist = systemlist
+assert(git_calls == 0, 'rendering the agent groups spawned Git')
+local worktree_api = require('luanphan.plugins.worktree')
+local groups, activate, rebuilds = bar.opts.groups, worktree_api.activate_agent, 0
+bar.opts.groups = function()
+  rebuilds = rebuilds + 1
+  return groups()
+end
+worktree_api.activate_agent = function(...)
+  assert(rebuilds == 0, 'numbered selection rebuilt the rendered groups')
+  return activate(...)
+end
 vim.api.nvim_feedkeys(vim.keycode('<D-2>'), 'xt', false)
+bar.opts.groups, worktree_api.activate_agent = groups, activate
 assert(vim.api.nvim_get_current_buf() == away_peer and #view.group_windows(anchor) == 3,
   'Cmd+2 did not switch to the second workspace in place')
 vim.api.nvim_set_current_win(sidebar)

@@ -289,7 +289,8 @@ end
 
 function M.focus_window(index)
   local bar = current_bar()
-  local group = bar and bar:groups()[index]
+  local first_row = bar and bar.rows[1]
+  local group = first_row and first_row.groups[index]
   if not group then return end
   vim.cmd.stopinsert()
   return bar:select({ group = group }, true)
