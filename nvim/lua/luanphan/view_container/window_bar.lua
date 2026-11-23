@@ -7,7 +7,8 @@ local windows = require("luanphan.view_container.window")
 local sidebar = require("luanphan.view_container.sidebar")
 local tabs = require("luanphan.view_container.tab_render")
 local jump_lists = require("luanphan.view_container.jumplist")
-local bars = setmetatable({}, { __mode = "k" })
+local bars = vim.luanphan_window_bars or setmetatable({}, { __mode = "k" })
+vim.luanphan_window_bars = bars
 
 local function valid(win)
   return win and api.nvim_win_is_valid(win)
@@ -139,11 +140,17 @@ function Bar:refresh(keep_cursor)
 end
 
 function Bar:animate()
-  if not self.opts.status or not self:visible() or self.timer then return end
+  if not self.opts.status or self.timer then return end
   self.timer = vim.fn.timer_start(130, function()
-    if not self:visible() then self:stop_timer() return end
+    local visible = self:visible()
+    local animate_tiles = self.opts.animate_tiles and valid(self.anchor)
+      and vim.w[self.anchor].luanphan_view_anchor == self.anchor
+    if not visible and not animate_tiles then self:stop_timer() return end
     self.frame = self.frame + 1
-    if self.style == "horizontal" then tabs.render_windows(self) else sidebar.statuses(self) end
+    if animate_tiles then self.opts.animate_tiles(self.frame) end
+    if visible then
+      if self.style == "horizontal" then tabs.render_windows(self) else sidebar.statuses(self) end
+    end
   end, { ["repeat"] = -1 })
 end
 
@@ -299,7 +306,7 @@ function Bar:set_hidden(hidden)
   if not valid(self.win) then return end
   if hidden and api.nvim_get_current_win() == self.win then self:focus_content() end
   api.nvim_win_set_config(self.win, { hide = hidden, focusable = not hidden, mouse = not hidden })
-  if hidden then self:stop_timer() else self:refresh() end
+  if not hidden then self:refresh() end
 end
 
 function Bar:focus()

@@ -9,17 +9,28 @@ function M.create(opts)
   local panel = {}
   local scopes = {}
   local anchor, dock, current, layout
-  local bar, inner
+  local bar, inner, create_bar
   local rendering = false
-
-  local function scope()
-    local key = opts.docked and vim.fn.getcwd() or ""
-    if not scopes[key] then scopes[key] = { windows = {}, next_id = 0 } end
-    return scopes[key]
-  end
 
   local function is_open()
     return anchor and api.nvim_win_is_valid(anchor)
+  end
+
+  local function scope_key()
+    if not opts.docked then return "" end
+    local cwd = vim.fn.getcwd()
+    return vim.uv.fs_realpath(cwd) or cwd
+  end
+
+  local function scope()
+    if is_open() and views.group_anchor(api.nvim_get_current_win()) == anchor then return current.scope end
+    local key = scope_key()
+    if not scopes[key] then
+      local owner = { windows = {}, next_id = 0, cwd = opts.docked and key or nil }
+      owner.bar = create_bar(owner)
+      scopes[key] = owner
+    end
+    return scopes[key]
   end
 
   local function active_window()
@@ -51,6 +62,7 @@ function M.create(opts)
 
   function panel.hide()
     if not is_open() then return false end
+    current.scope.open = false
     save_views()
     return views.close_group(anchor)
   end
@@ -118,7 +130,9 @@ function M.create(opts)
 
   local function render(group, enter)
     if rendering then return end
+    if is_open() and current.scope ~= group.scope then panel.hide() end
     rendering = true
+    bar = group.scope.bar
     save_views()
     local ok, err = pcall(render_body, group, enter)
     rendering = false
@@ -126,6 +140,7 @@ function M.create(opts)
       panel.hide()
       error(err)
     end
+    group.scope.open = true
   end
 
   local function activate(pane)
@@ -153,7 +168,7 @@ function M.create(opts)
       if current == group and is_open() then
         if owner.active then render(owner.active, replace_focus) else panel.hide() end
       end
-      bar:refresh(true)
+      owner.bar:refresh(true)
     end
     if defer then vim.schedule(reflow) else reflow() end
   end
@@ -187,6 +202,7 @@ function M.create(opts)
     end
 
     inner:bind_tile_moves(buf, group)
+    local bar = group.scope.bar
     bar:map_jumps(buf, false)
     local keys = { buffer = buf, silent = true, nowait = true }
     for _, key in ipairs({ "<leader>nt", "<leader>fn", "<leader>nw" }) do
@@ -237,7 +253,8 @@ function M.create(opts)
     local owner = scope()
     owner.next_id = owner.next_id + 1
     local number = owner.next_id
-    local group = { id = "window:" .. number, title = "Window " .. number, cwd = vim.fn.getcwd(), panes = {}, scope = owner }
+    local group = { id = "window:" .. number, title = "Window " .. number,
+      cwd = owner.cwd or vim.fn.getcwd(), panes = {}, scope = owner }
     owner.windows[#owner.windows + 1] = group
     local result = open_pane(group, command)
     if not result then table.remove(owner.windows) end
@@ -281,33 +298,35 @@ function M.create(opts)
     cycle_desc = "Next terminal pane",
   })
 
-  bar = bars.create({
-    title = "Windows",
-    groups = function()
-      local groups = {}
-      for _, group in ipairs(scope().windows) do
-        local items = inner:tabs(group)
-        local active
-        for _, pane in ipairs(items) do
-          pane.label = views.tab_label(pane.bufnr, pane.label)
-          if pane.bufnr == group.bufnr then active = pane end
+  function create_bar(owner)
+    return bars.create({
+      title = "Windows",
+      groups = function()
+        local groups = {}
+        for _, group in ipairs(owner.windows) do
+          local items = inner:tabs(group)
+          local active
+          for _, pane in ipairs(items) do
+            pane.label = views.tab_label(pane.bufnr, pane.label)
+            if pane.bufnr == group.bufnr then active = pane end
+          end
+          groups[#groups + 1] = { id = group.id, title = group.title, items = items, active = active, source = group }
         end
-        groups[#groups + 1] = { id = group.id, title = group.title, items = items, active = active, source = group }
-      end
-      return groups
-    end,
-    active_window = active_window,
-    activate = activate,
-    rename_window = function(group, name)
-      group.source.title = name
-      bar:refresh(true)
-    end,
-    reorder = function(group, items) inner.opts.reorder(items, group.source) end,
-    bind = function(buf)
-      vim.keymap.set("n", "<leader>nw", panel.new_window, { buffer = buf, desc = "New terminal window" })
-      vim.keymap.set("n", "<leader>nt", panel.new_tab, { buffer = buf, desc = "New terminal tab" })
-    end,
-  })
+        return groups
+      end,
+      active_window = active_window,
+      activate = activate,
+      rename_window = function(group, name)
+        group.source.title = name
+        owner.bar:refresh(true)
+      end,
+      reorder = function(group, items) inner.opts.reorder(items, group.source) end,
+      bind = function(buf)
+        vim.keymap.set("n", "<leader>nw", panel.new_window, { buffer = buf, desc = "New terminal window" })
+        vim.keymap.set("n", "<leader>nt", panel.new_tab, { buffer = buf, desc = "New terminal tab" })
+      end,
+    })
+  end
 
   local events = api.nvim_create_augroup(opts.augroup, { clear = true })
   api.nvim_create_autocmd("WinLeave", {
@@ -344,10 +363,11 @@ function M.create(opts)
     group = events,
     callback = function(args)
       local win = tonumber(args.match)
-      if win ~= anchor and win ~= bar.win and win ~= dock then return end
+      if win ~= anchor and win ~= (bar and bar.win) and win ~= dock then return end
       local closing = anchor
+      if current then current.scope.open = false end
       anchor, dock = nil, nil
-      bar.win, bar.anchor = nil, nil
+      if bar then bar.win, bar.anchor = nil, nil end
       if closing then views.close_group(closing, win) end
     end,
   })
@@ -362,18 +382,39 @@ function M.create(opts)
   api.nvim_create_autocmd("TermRequest", {
     group = events,
     callback = function(ev)
-      if not bar:visible() or bar.style ~= "vertical" or not ev.data then return end
+      if not bar or not bar:visible() or bar.style ~= "vertical" or not ev.data then return end
       if ev.data.sequence and ev.data.sequence:match("^\27%][02];") then
+        local visible_bar = bar
         vim.schedule(function()
-          if api.nvim_buf_is_valid(ev.buf) then bar:update_title(ev.buf, views.tab_label(ev.buf)) end
+          if visible_bar:visible() and api.nvim_buf_is_valid(ev.buf) then
+            visible_bar:update_title(ev.buf, views.tab_label(ev.buf))
+          end
         end)
       end
     end,
   })
-  api.nvim_create_autocmd("DirChangedPre", { group = events, callback = function() panel.hide() end })
+  local function hide_on_change()
+    local owner = current and current.scope
+    if panel.hide() and opts.docked then owner.open = true end
+  end
+  api.nvim_create_autocmd("DirChangedPre", { group = events, callback = hide_on_change })
   api.nvim_create_autocmd("User", {
-    group = events, pattern = "LuanphanWorktreeSwitchPre", callback = function() panel.hide() end,
+    group = events, pattern = "LuanphanWorktreeSwitchPre", callback = hide_on_change,
   })
+  if opts.docked then
+    api.nvim_create_autocmd("DirChanged", {
+      group = events,
+      callback = function()
+        local owner = scopes[scope_key()]
+        if not owner or not owner.open then return end
+        vim.schedule(function()
+          if not is_open() and owner.open and owner.active and scope_key() == owner.cwd then
+            render(owner.active, false)
+          end
+        end)
+      end,
+    })
+  end
   api.nvim_create_autocmd("BufWritePost", {
     group = events,
     callback = function(ev)

@@ -6,7 +6,7 @@ local M = vim.tbl_extend("force", window, {
 	can_tile = tiles.can_tile,
 })
 local Container = { reserve = tabs.reserve, render = tabs.render, display = tiles.display,
-	refresh_tile_highlights = tiles.refresh_tile_highlights }
+	refresh_tile_highlights = tiles.refresh_tile_highlights, animate_tile_borders = tiles.animate_tile_borders }
 Container.__index = Container
 
 local function select_item(title, items, on_select, picker_opts)

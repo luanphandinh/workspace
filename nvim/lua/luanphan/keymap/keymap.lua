@@ -116,6 +116,7 @@ vim.keymap.set("v", "<leader>d", "\"_d")
 vim.keymap.set("x", "<leader>p", "\"_dP")
 
 -- Window / terminal navigation
+vim.keymap.set("n", "<leader>tt", function() require("luanphan.terminal").toggle() end, { desc = "Terminal" })
 vim.keymap.set("n", "<C-h>", "<C-w>h", { silent = true })
 vim.keymap.set("n", "<C-j>", "<C-w>j", { silent = true })
 vim.keymap.set("n", "<C-k>", "<C-w>k", { silent = true })

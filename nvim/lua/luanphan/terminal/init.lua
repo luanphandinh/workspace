@@ -1,9 +1,8 @@
 local M = {}
-local panel
 
 local function integrated()
-  if panel then return panel end
-  panel = require("luanphan.terminal.panel").create({
+  if vim.luanphan_integrated_terminal then return vim.luanphan_integrated_terminal end
+  vim.luanphan_integrated_terminal = require("luanphan.terminal.panel").create({
     settings = "terminal_split",
     augroup = "LuanphanIntegratedTerminal",
     docked = true,
@@ -18,6 +17,7 @@ local function integrated()
       local term = Terminal:new({ dir = opts.dir or cwd, cmd = opts.cmd, display_name = opts.label,
         direction = "vertical", close_on_exit = false })
       term:spawn()
+      vim.bo[term.bufnr].bufhidden = "hide"
       vim.b[term.bufnr].luanphan_persist_term = true
       vim.b[term.bufnr].luanphan_toggleterm = true
       vim.b[term.bufnr].luanphan_toggleterm_cwd = cwd
@@ -25,7 +25,7 @@ local function integrated()
       return { bufnr = term.bufnr, label = opts.label or "terminal", term = term }
     end,
   })
-  return panel
+  return vim.luanphan_integrated_terminal
 end
 
 local function setup_terminal_autocmds()
@@ -52,6 +52,11 @@ function M.run_command(command, cwd, label)
   return result and result.term
 end
 
+function M.toggle()
+  require("lazy").load({ plugins = { "toggleterm.nvim" } })
+  integrated().toggle()
+end
+
 M.spec = {
   {
     "luanphan-floating-terminal",
@@ -62,9 +67,7 @@ M.spec = {
   },
   {
     "akinsho/toggleterm.nvim",
-    keys = {
-      { "<leader>tt", function() integrated().toggle() end, desc = "Terminal" },
-    },
+    lazy = true,
     init = setup_terminal_autocmds,
     config = function()
       require("toggleterm").setup({

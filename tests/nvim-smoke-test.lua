@@ -1073,13 +1073,41 @@ local function test_go_test_runs_from_nested_module()
     "assert_true(vim.api.nvim_get_current_buf() == shell_buf, 'Go test replaced the shell tab')",
     "vim.fn.maparg('<Tab>', 'n', false, true).callback()",
     "assert_true(vim.api.nvim_get_current_buf() == test_buf, 'completed Go test tab is inaccessible')",
+    "vim.api.nvim_set_current_win(vim.fn.bufwinid(editor_buf))",
+    "vim.keymap.set('n', '<leader>tt', function() error('stale terminal mapping') end)",
+    "vim.fn.maparg('<leader>src', 'n', false, true).callback()",
+    "local toggle = vim.fn.maparg('<leader>tt', 'n', false, true).callback",
+    "go.run_go_test_at_cursor()",
+    "local second_test = vim.api.nvim_get_current_buf()",
+    "assert_true(second_test ~= test_buf and vim.b[second_test].luanphan_toggleterm, 'second Go test did not open its own tab')",
+    "local second_job = vim.b[second_test].terminal_job_id",
+    "assert_true(vim.wait(5000, function() return vim.fn.jobwait({ second_job }, 0)[1] ~= -1 end, 50), 'second Go test did not finish')",
+    "vim.fn.maparg('<S-Tab>', 'n', false, true).callback()",
+    "assert_true(vim.api.nvim_get_current_buf() == test_buf, 'config reload split the Go tests into separate panels')",
+    "vim.fn.maparg('<Tab>', 'n', false, true).callback()",
+    "toggle()",
+    "assert_true(vim.fn.bufwinid(second_test) == -1 and vim.fn.bufwinid(test_buf) == -1, 'terminal toggle left a second dock visible')",
+    "toggle()",
+    "assert_true(vim.api.nvim_get_current_buf() == second_test, 'terminal toggle lost the most recent command tab')",
     "require('lazy').load({ plugins = { 'luanphan-worktree' } })",
     "_G._luanphan_wt_test.switch_to(" .. string.format("%q", other_workspace) .. ")",
-    "assert_true(vim.api.nvim_buf_is_valid(test_buf), 'workspace switch deleted Go test output')",
+    "assert_true(vim.fn.bufwinid(second_test) == -1 and vim.api.nvim_buf_is_valid(test_buf), 'workspace switch leaked the panel or deleted Go test output')",
+    "toggle()",
+    "local other_shell = vim.api.nvim_get_current_buf()",
+    "assert_true(vim.b[other_shell].luanphan_toggleterm and other_shell ~= shell_buf and other_shell ~= second_test, 'second workspace used the first workspace terminal')",
     "_G._luanphan_wt_test.switch_to(" .. string.format("%q", workspace) .. ")",
-    "vim.fn.maparg('<leader>tt', 'n', false, true).callback()",
-    "assert_true(vim.api.nvim_get_current_buf() == test_buf, 'Go test tab did not reopen after returning')",
-    "assert_true(table.concat(vim.api.nvim_buf_get_lines(test_buf, 0, -1, false), '\\n'):find('Go test output', 1, true), 'Go test output was lost')",
+    "assert_true(vim.wait(5000, function() return vim.fn.bufwinid(second_test) ~= -1 end, 50), 'last Go test tab did not reopen after returning')",
+    "assert_true(vim.fn.bufwinid(other_shell) == -1, 'second workspace terminal leaked into the first')",
+    "for _, buf in ipairs({ test_buf, second_test }) do",
+    "  assert_true(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), '\\n'):find('Go test output', 1, true), 'Go test output was lost')",
+    "end",
+    "toggle()",
+    "_G._luanphan_wt_test.switch_to(" .. string.format("%q", other_workspace) .. ")",
+    "assert_true(vim.wait(5000, function() return vim.fn.bufwinid(other_shell) ~= -1 end, 50), 'second workspace lost its shell')",
+    "_G._luanphan_wt_test.switch_to(" .. string.format("%q", workspace) .. ")",
+    "assert_true(vim.fn.bufwinid(second_test) == -1, 'workspace reopened a manually hidden panel')",
+    "toggle()",
+    "assert_true(vim.api.nvim_get_current_buf() == second_test, 'manually hidden terminal lost its selected tab')",
   })
 
   local cmd = child_nvim_luafile_command(workspace, script)
@@ -5541,6 +5569,44 @@ local function test_agent_view_container(repo)
       assert_terminal_grid_matches(tile_buffers[index], win, "tile " .. index)
     end
 
+    local first_tile = tile_window(tile_buffers[1])
+    local active_tile = tile_window(tile_buffers[4])
+    local function spinner(index)
+      local title = tile_config(index).title
+      return title and title[1]
+    end
+    for _, index in ipairs({ 1, 4 }) do
+      vim.fn.chansend(vim.b[tile_buffers[index]].terminal_job_id, "\27]7501;state=working\27\\")
+    end
+    wait_until("running tiles show spinners in their focus colors", function()
+      local first, active = spinner(1), spinner(4)
+      return first and first[2] == "FloatBorder" and active and active[2] == "DiagnosticOk"
+    end, 3000)
+    assert_true(not spinner(2) and not spinner(3), "idle tile showed a spinner")
+    local initial_sweep = spinner(4)[1]
+    assert_true(vim.fn.strdisplaywidth(initial_sweep) == tile_config(4).width, "sweep did not span the top border")
+    invoke_map("<leader>b")
+    wait_until("tile spinner animates while the sidebar is hidden", function()
+      local frame = spinner(4)
+      return frame and frame[1] ~= initial_sweep
+    end, 3000)
+    local input_spinner
+    vim.defer_fn(function()
+      input_spinner = spinner(4)
+      vim.api.nvim_input("<Esc>")
+    end, 300)
+    vim.api.nvim_feedkeys("i", "xt!", false)
+    assert_true(input_spinner and input_spinner[2] == "LuanphanTileInputBorder", "focused spinner did not use the input color")
+    assert_terminal_grid_matches(tile_buffers[1], first_tile, "animating background tile")
+    assert_terminal_grid_matches(tile_buffers[4], active_tile, "animating focused tile")
+    for _, index in ipairs({ 1, 4 }) do
+      vim.fn.chansend(vim.b[tile_buffers[index]].terminal_job_id, "\27]7501;state=done\27\\")
+    end
+    wait_until("finished tiles clear their border spinners", function()
+      return not spinner(1) and not spinner(4)
+    end, 3000)
+    invoke_map("<leader>b")
+
     assert_true(agents.focus("cursor", tile_buffers[2], { view_mode = true }), "could not focus the second tile")
     local inserted = assert(agents.new("codex", { view_mode = true }))
     local inserted_config = vim.api.nvim_win_get_config(tile_window(inserted))
@@ -6280,7 +6346,7 @@ local function test_terminal_view_container(repo)
 
   local ok, err = xpcall(function()
     vim.cmd("cd " .. vim.fn.fnameescape(repo))
-    invoke_lazy_map("<leader>tt", "toggleterm.nvim")
+    invoke_map("<leader>tt")
     wait_until("first terminal tab", function()
       return visible_toggleterm_window_count() == 1
         and vim.b[vim.api.nvim_get_current_buf()].luanphan_toggleterm
@@ -7346,6 +7412,7 @@ local function test_worktree_switch_hides_toggleterm(repo, worktree)
     return realpath(vim.fn.getcwd()) == expected
   end, 10000)
   assert_true(visible_toggleterm_window_count() == 0, "toggleterm window remained visible after worktree switch")
+  close_toggleterm_terminals()
 end
 
 local function test_agent_terminal_lifecycle(repo)
@@ -7418,7 +7485,7 @@ local function test_agent_terminal_lifecycle(repo)
   submit_map.callback()
   assert_true(agent_status.read("example-agent", repo) == "running", "agent submit did not record running state")
 
-  invoke_lazy_map("<leader>tt", "toggleterm.nvim")
+  invoke_map("<leader>tt")
   wait_until("toggleterm open after agent terminal", function()
     return visible_toggleterm_window_count() > 0
   end, 3000)
@@ -7435,6 +7502,7 @@ local function test_agent_terminal_lifecycle(repo)
   end, 3000)
 
   close_agent_terminals()
+  close_toggleterm_terminals()
   vim.g.luanphan_agent_status_dir = original_status_dir
   vim.fn.delete(status_dir, "rf")
 end
