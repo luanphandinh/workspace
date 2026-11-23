@@ -4347,7 +4347,7 @@ local function test_terminal_reference_links()
   vim.api.nvim_win_set_width(narrow_win, 70)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
     "apply (https://example.invalid/access?payload=%7B%22auth_typ",
-    "    e%22%3A%22person%22%2C%22role%22%3A%22tester%22%7D).",
+    "    e%22%3A%22person%22%2C%22role%22%3A%22tester%22%7D). See details.",
   })
   assert_true(
     vim.fn.strdisplaywidth(vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]) < vim.api.nvim_win_get_width(narrow_win),
@@ -4378,6 +4378,28 @@ local function test_terminal_reference_links()
     "hard-wrapped command-click opened the wrong URL: " .. tostring(clicked_url)
   )
   assert_true(not clicked_url:find("%s"), "hard-wrapped command-click URL contains whitespace")
+
+  local wrapped_paths = {
+    { lines = { "See tracker (example-repo/    ", "    other.go). See details." },
+      columns = { 14, 5 }, line = 1, column = 1 },
+    { lines = { "Trace (example-", "  repo/    ", "  other.go:L7:2)." },
+      columns = { 8, 3, 3 }, line = 7, column = 2 },
+  }
+  for _, example in ipairs(wrapped_paths) do
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, example.lines)
+    for row, col in ipairs(example.columns) do
+      clicked_target = nil
+      vim.api.nvim_win_set_buf(reference_win, previous_buf)
+      vim.api.nvim_set_current_win(reference_win)
+      vim.fn.getmousepos = function() return { winid = narrow_win, line = row, column = col } end
+      local mapping = vim.fn.maparg("<D-LeftMouse>", "n", false, true)
+      assert_true(mapping.callback and mapping.callback() == "<Ignore>", "wrapped path in an unfocused pane was not consumed")
+      vim.wait(50, function() return clicked_target ~= nil end)
+      assert_true(clicked_target and clicked_target.path == second_path and clicked_target.line == example.line
+        and clicked_target.column == example.column, "wrapped path opened the wrong file or position")
+    end
+  end
+  vim.api.nvim_win_set_buf(reference_win, buf)
   vim.g.neovide = false
   click_remote.enabled = original_click_remote_enabled
   vim.ui.open = original_click_ui_open

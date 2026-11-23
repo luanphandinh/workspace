@@ -1,11 +1,15 @@
 local M = {}
 
 local namespace = vim.api.nvim_create_namespace("LuanphanTerminalReferences")
-local attached = {}
-local tracked = {}
-local enabled = vim.g.luanphan_terminal_reference_links_enabled ~= false
-  and vim.g.luanphan_terminal_reference_links_enabled ~= 0
-vim.g.luanphan_terminal_reference_links_enabled = enabled
+local max_wrapped_lines = 32
+local path_pattern = "[@~%w%._%-%+/]+"
+local position_pattern = "^(:[Ll]?(%d+):?(%d*))"
+local mapped = false
+
+local function enabled()
+  return vim.g.luanphan_terminal_reference_links_enabled ~= false
+    and vim.g.luanphan_terminal_reference_links_enabled ~= 0
+end
 
 local function resolve_path(cwd, value)
   value = value:gsub("^@", "")
@@ -107,7 +111,6 @@ local function leading_url_fragment(text)
 end
 
 local function wrapped_url_at(line_at, row, column, text_width)
-  local max_wrapped_lines = 32
   for start_row = row, math.max(0, row - max_wrapped_lines + 1), -1 do
     local start_text = line_at(start_row) or ""
     local meaningful_end = #(start_text:gsub("%s+$", ""))
@@ -133,12 +136,16 @@ local function wrapped_url_at(line_at, row, column, text_width)
           if not fragment then
             break
           end
-          if vim.fn.strdisplaywidth(previous_text) < text_width and fragment.first_col == 0 then
+          local fills_row = vim.fn.strdisplaywidth(previous_text) >= text_width
+          if not fills_row and fragment.first_col == 0 then
             break
           end
 
           local next_meaningful_end = #(next_text:gsub("%s+$", ""))
-          if fragment.raw_last_col < next_meaningful_end then
+          local has_trailing_text = fragment.raw_last_col < next_meaningful_end
+          local joined = table.concat(parts) .. fragment.value
+          local ends_url = trim_url(joined) ~= joined
+          if has_trailing_text and not fills_row and not ends_url then
             break
           end
 
@@ -149,8 +156,7 @@ local function wrapped_url_at(line_at, row, column, text_width)
           }
           parts[#parts + 1] = fragment.value
 
-          local joined = table.concat(parts)
-          if trim_url(joined) ~= joined then
+          if ends_url or has_trailing_text then
             break
           end
           previous_text = next_text
@@ -180,13 +186,13 @@ local function references_in_line(cwd, text)
   local result = {}
   local offset = 1
   while offset <= #text do
-    local first, last = text:find("[@~%w%._%-%+/]+", offset)
+    local first, last = text:find(path_pattern, offset)
     if not first then
       break
     end
 
     local raw_path = text:sub(first, last)
-    local suffix, line, column = text:sub(last + 1):match("^(:[Ll]?(%d+):?(%d*))")
+    local suffix, line, column = text:sub(last + 1):match(position_pattern)
     local path = resolve_path(cwd, raw_path)
     local line_number = tonumber(line) or 1
     local column_number = tonumber(column) or 1
@@ -207,51 +213,45 @@ local function references_in_line(cwd, text)
   return result
 end
 
-local function wrapped_reference(cwd, first_text, second_text)
-  local first_col, first_end, first_path = first_text:find("([@~%w%._%-%+/]+)$")
-  if not first_path or not first_path:find("/", 1, true) then
-    return nil
-  end
+local function wrapped_path_at(cwd, line_at, row, column, text_width)
+  for start_row = row, math.max(0, row - max_wrapped_lines + 1), -1 do
+    local first_text = line_at(start_row)
+    local first_col, _, value = first_text:find("(" .. path_pattern .. ")%s*$")
+    if value then
+      local clicked = start_row == row and column >= first_col - 1 and column < first_col + #value - 1
+      local parenthesized = first_col > 1 and first_text:sub(first_col - 1, first_col - 1) == "("
+      local previous_text = first_text
+      for next_row = start_row + 1, start_row + max_wrapped_lines - 1 do
+        local text = line_at(next_row)
+        if not text then break end
+        local _, last, first, fragment = text:find("^%s*()(" .. path_pattern .. ")")
+        if not fragment then break end
+        if first == 1 and not parenthesized and value:sub(-1) ~= "/"
+            and vim.fn.strdisplaywidth(previous_text) < text_width then
+          break
+        end
 
-  local _, second_end, second_path, line, column = second_text:find(
-    "^%s*([@~%w%._%-%+/]+):[Ll]?(%d+):?(%d*)"
-  )
-  if not second_path then
-    return nil
+        local suffix, line, col = text:sub(last + 1):match(position_pattern)
+        if suffix then last = last + #suffix end
+        clicked = clicked or (row == next_row and column >= first - 1 and column < last)
+        value = value .. fragment
+        if clicked then
+          local path = resolve_path(cwd, value)
+          if path then return { path = path, line = tonumber(line) or 1, column = tonumber(col) or 1 } end
+        end
+        if suffix or text:sub(last + 1):find("%S") then break end
+        previous_text = text
+      end
+    end
   end
-
-  local path = resolve_path(cwd, first_path .. second_path)
-  local line_number = tonumber(line)
-  local column_number = tonumber(column) or 1
-  if not path or not line_number then
-    return nil
-  end
-
-  local second_col = second_text:find(second_path, 1, true)
-  return {
-    first = {
-      first_col = first_col - 1,
-      last_col = first_end,
-      path = path,
-      line = line_number,
-      column = column_number,
-    },
-    second = {
-      first_col = second_col - 1,
-      last_col = second_end,
-      path = path,
-      line = line_number,
-      column = column_number,
-    },
-  }
 end
 
 local function target_at(bufnr, row, column, text_width)
-  if not enabled or not attached[bufnr] or row < 0 or column < 0 then
+  if not enabled() or row < 0 or column < 0 then
     return nil
   end
 
-  local cwd = tracked[bufnr]
+  local cwd = vim.b[bufnr].luanphan_terminal_reference_cwd
   local line_count = vim.api.nvim_buf_line_count(bufnr)
   if not cwd or row >= line_count then
     return nil
@@ -294,32 +294,16 @@ local function target_at(bufnr, row, column, text_width)
     end
   end
 
-  local next_line = line_at(row + 1)
-  if next_line then
-    local wrapped = wrapped_reference(cwd, current, next_line)
-    if wrapped and contains(wrapped.first) then
-      return target(wrapped.first)
-    end
-  end
-
-  local previous = line_at(row - 1)
-  if previous then
-    local wrapped = wrapped_reference(cwd, previous, current)
-    if wrapped and contains(wrapped.second) then
-      return target(wrapped.second)
-    end
-  end
-  return nil
+  return wrapped_path_at(cwd, line_at, row, column, text_width)
 end
 
-local function handle_mouse_click(bufnr, key)
+local function handle_mouse_click(key)
   local mouse = vim.fn.getmousepos()
   if not mouse or not mouse.winid or not vim.api.nvim_win_is_valid(mouse.winid) then
     return key
   end
-  if vim.api.nvim_win_get_buf(mouse.winid) ~= bufnr then
-    return key
-  end
+  local bufnr = vim.api.nvim_win_get_buf(mouse.winid)
+  if not vim.b[bufnr].luanphan_terminal_reference_cwd then return key end
 
   local window_info = vim.fn.getwininfo(mouse.winid)[1]
   local text_width = vim.api.nvim_win_get_width(mouse.winid) - (window_info and window_info.textoff or 0)
@@ -329,7 +313,7 @@ local function handle_mouse_click(bufnr, key)
   end
 
   vim.schedule(function()
-    if vim.api.nvim_win_is_valid(mouse.winid) then
+    if vim.api.nvim_win_is_valid(mouse.winid) and vim.api.nvim_win_get_buf(mouse.winid) == bufnr then
       vim.api.nvim_set_current_win(mouse.winid)
       if target.url then
         M.open_url(target.url)
@@ -341,9 +325,8 @@ local function handle_mouse_click(bufnr, key)
   return "<Ignore>"
 end
 
-local function set_click_keymaps(bufnr)
+local function set_click_keymaps()
   local opts = {
-    buffer = bufnr,
     expr = true,
     silent = true,
     desc = "Open terminal reference",
@@ -351,7 +334,7 @@ local function set_click_keymaps(bufnr)
   for _, mode in ipairs({ "n", "t" }) do
     for _, key in ipairs({ "<M-LeftMouse>", "<D-LeftMouse>" }) do
       vim.keymap.set(mode, key, function()
-        return handle_mouse_click(bufnr, key)
+        return handle_mouse_click(key)
       end, opts)
     end
   end
@@ -361,26 +344,16 @@ function M.attach(bufnr, cwd)
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
     return nil
   end
-  cwd = vim.fs.normalize(cwd)
-  tracked[bufnr] = cwd
-  vim.b[bufnr].luanphan_terminal_reference_cwd = cwd
-  set_click_keymaps(bufnr)
-
-  if attached[bufnr] then
-    return namespace
+  vim.b[bufnr].luanphan_terminal_reference_cwd = vim.fs.normalize(cwd)
+  if not mapped then
+    set_click_keymaps()
+    mapped = true
   end
-  attached[bufnr] = true
-  vim.api.nvim_buf_attach(bufnr, false, {
-    on_detach = function(_, detached_bufnr)
-      attached[detached_bufnr] = nil
-      tracked[detached_bufnr] = nil
-    end,
-  })
   return namespace
 end
 
 function M.set_enabled(value, silent)
-  enabled = value == true
+  local enabled = value == true
   vim.g.luanphan_terminal_reference_links_enabled = enabled
 
   if not silent then
@@ -390,7 +363,7 @@ function M.set_enabled(value, silent)
 end
 
 function M.toggle()
-  return M.set_enabled(not enabled)
+  return M.set_enabled(not enabled())
 end
 
 function M.open_url(url)
