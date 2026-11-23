@@ -9,6 +9,7 @@ local tmux = require("luanphan.view_container.tmux.client").new(function()
   return { socket = socket, config = vim.g.luanphan_floating_tmux_config }
 end)
 local pty = require("luanphan.view_container.tmux.pane")
+local model = require("luanphan.view_container.tmux.windows")
 local views = require("luanphan.view_container")
 local bars = require("luanphan.view_container.window_bar")
 local settings = require("luanphan.global_settings")
@@ -17,15 +18,9 @@ local client, session, previous_session
 local windows, panes = {}, {}
 local current, anchor, bar, tiles
 local rendering, refresh_queued, refresh_pending, refresh_again
-local client_size, focus_on_render, selection
+local creating, focus_on_render, selection
 local layout_path, layout_stat, layout_options
 
-local pane_fields = {
-  "window_id", "window_index", "window_active", "pane_id", "pane_active",
-  "pane_index", "pane_width", "pane_height",
-  "pane_current_command", "window_name", "pane_current_path",
-}
-local pane_format = "#{" .. table.concat(pane_fields, "}\t#{") .. "}"
 local refresh, render, open, paint
 
 local function valid(win)
@@ -52,37 +47,36 @@ local function geometry()
   return body, header, options
 end
 
-local function resize(body, done)
-  if not client or session.attached > 0 then
-    if done then done() end
-    return
-  end
-  local size = ("%dx%d"):format(body.width, body.height - 1)
-  if size == client_size then
-    if done then done() end
-    return
-  end
-  local connection = client
-  client_size = size
-  client:request({ "list-clients", "-t", session.id, "-F", "#{client_control_mode}" }, function(ok, lines)
-    if client ~= connection then return end
-    if ok and #lines <= 1 and client_size == size then
-      client:request({ "refresh-client", "-C", size }, done)
-    elseif done then
-      done()
-    end
-  end)
-end
-
 local function run(args, after, failed)
   if not client then return end
-  client:request(args, function(ok, lines)
+  local connection = client
+  connection:request(args, function(ok, lines)
+    if client ~= connection then return end
     if ok then
       if after then after(lines) end
     else
       if failed then failed() end
       vim.notify("tmux " .. args[1] .. ": " .. table.concat(lines, " "), vim.log.levels.ERROR)
     end
+  end)
+end
+
+local function batch(commands, callback)
+  if #commands == 0 then
+    if callback then callback(true) end
+    return
+  end
+  local connection = client
+  connection:request_batch(commands, function(replies)
+    if client ~= connection then return end
+    local ok = true
+    for index, reply in ipairs(replies) do
+      if not reply.ok then
+        ok = false
+        vim.notify("tmux " .. commands[index][1] .. ": " .. table.concat(reply.lines, " "), vim.log.levels.ERROR)
+      end
+    end
+    if callback then callback(ok) end
   end)
 end
 
@@ -96,22 +90,17 @@ local function activate(pane, view_mode)
   if not client or not pane then return false end
   local target = { id = pane.id, enter = not view_mode }
   selection = target
-  local function complete()
-    target.done = true
-    refresh()
+  local commands = {}
+  if pane.group.active ~= pane then
+    commands[#commands + 1] = model.write(pane.group.active, { active = false })
+    commands[#commands + 1] = model.write(pane, { active = true })
   end
-  local function failed()
-    if selection == target then selection = nil end
-    refresh()
-  end
-  run({ "select-pane", "-t", pane.id }, function()
+  commands[#commands + 1] = { "select-window", "-t", session.id .. ":" .. pane.window }
+  batch(commands, function(ok)
     if selection ~= target then return end
-    if current and current.id == pane.group.id then
-      complete()
-    else
-      run({ "select-window", "-t", session.id .. ":" .. pane.group.id }, complete, failed)
-    end
-  end, failed)
+    if ok then target.done = true else selection = nil end
+    refresh()
+  end)
   return true
 end
 
@@ -125,10 +114,27 @@ local function new_window()
 end
 
 local function new_tab()
-  if not current or not current.active then return end
-  local pane = current.active
-  local axis = #current.items % 2 == 1 and "-h" or "-v"
-  run({ "split-window", axis, "-t", pane.id, "-c", "#{pane_current_path}" }, focus_new_pane)
+  if not current or not current.active or creating then return end
+  local group = current
+  local active = group.active
+  local function done()
+    creating = false
+    focus_new_pane()
+  end
+  creating = true
+  run({ "new-window", "-P", "-F", "#{pane_id}", "-t", session.id .. ":", "-c", "#{pane_current_path}",
+    "-n", group.title }, function(lines)
+    local pane = { id = lines[1], data = active.data }
+    local items = vim.list_slice(group.items)
+    for index, item in ipairs(items) do
+      if item == active then table.insert(items, index + 1, pane) break end
+    end
+    local commands = {}
+    for index, item in ipairs(items) do
+      commands[#commands + 1] = model.write(item, { pane_order = index, active = item == pane })
+    end
+    batch(commands, done)
+  end, done)
 end
 
 local function pick_session()
@@ -153,40 +159,25 @@ local function restore_view(pane)
   end)
 end
 
-local function queue_paint(pane)
-  if pane.capturing then pane.dirty = true return end
-  if pane.paint_pending then return end
-  pane.paint_pending = true
-  local in_input = api.nvim_get_current_buf() == pane.bufnr and api.nvim_get_mode().mode == "t"
-  vim.defer_fn(function()
-    pane.paint_pending = false
-    if panes[pane.id] == pane then paint(pane) end
-  end, (in_input or pane.follow_clear) and 20 or 33)
-end
-
 paint = function(pane)
   if not pane.term or not pane.visible or pane.capturing or not client then return end
   local connection = client
   pane.capturing, pane.ready, pane.dirty = true, false, false
-  pty.capture(pane, function(lines, flags)
+  pty.capture(pane, function(lines, flags, primary)
     if client ~= connection or panes[pane.id] ~= pane then return end
     pane.capturing = false
-    if not lines or not pane.visible then return end
-    local frame, output = pty.frame(pane, lines, flags)
+    if not lines or not pane.visible or pane.resizing then return end
+    local frame, output = pty.frame(pane, lines, flags, primary)
     local in_input = api.nvim_get_current_buf() == pane.bufnr and api.nvim_get_mode().mode == "t"
-    local restore_return = pane.returning and (output ~= "" or not pane.last_view)
-    local saved_view = restore_return and pane.scrollback_view
-    local follow = pane.follow_clear or not pane.painted or (in_input and output ~= "")
-      or (restore_return and not saved_view)
+    local follow = not pane.painted or (in_input and output ~= "")
     pane.frame, pane.ready, pane.painted = frame, true, true
-    pane.follow_clear, pane.returning = false, false
-    if follow or saved_view then
-      pane.pending_view = follow and { row = frame.row, col = frame.col } or saved_view
+    if follow then
+      pane.pending_view = { row = frame.row, col = frame.col }
       -- Cursor-only frames can leave the terminal buffer text untouched.
       vim.defer_fn(function() restore_view(pane) end, 20)
     end
     if output ~= "" then pty.output(pane, output) end
-    if pane.dirty then queue_paint(pane) end
+    if pane.dirty then paint(pane) end
   end)
 end
 
@@ -195,7 +186,7 @@ local function bind_shortcuts(buf)
   vim.keymap.set("n", "<leader>nw", new_window, vim.tbl_extend("force", opts, { desc = "New tmux window" }))
   for _, key in ipairs({ "<leader>nt", "<leader>fn" }) do
     vim.keymap.set("n", key, function() new_tab() end,
-      vim.tbl_extend("force", opts, { desc = "Split tmux pane" }))
+      vim.tbl_extend("force", opts, { desc = "New terminal pane" }))
   end
   vim.keymap.set("n", "<leader>ns", pick_session, vim.tbl_extend("force", opts, { desc = "Select tmux session" }))
 end
@@ -236,30 +227,20 @@ local function prepare_buffer(pane)
   tiles:bind_tile_moves(buf)
 end
 
-local function reorder_panes(group, items, focused_id)
-  local previous = vim.list_slice(group.items)
-  table.sort(previous, function(a, b) return a.index < b.index end)
-  local swapped = false
+local function reorder_panes(items)
+  local commands = {}
   for index, item in ipairs(items) do
-    local other = previous[index]
-    if item.id ~= other.id then
-      run({ "swap-pane", "-d", "-s", item.id, "-t", other.id })
-      local source = vim.iter(previous):enumerate():find(function(_, candidate) return candidate.id == item.id end)
-      previous[source], previous[index] = other, item
-      swapped = true
+    if item.data.pane_order ~= index then
+      commands[#commands + 1] = model.write(item, { pane_order = index })
     end
   end
-  if swapped then
-    run({ "select-pane", "-t", focused_id or group.active.id }, refresh, refresh)
-  end
+  batch(commands, refresh)
 end
 
 tiles = views.create({
   context = function() return current end,
   tabs = function(group) return group.items end,
-  reorder = function(items, group, win)
-    reorder_panes(group, items, vim.b[api.nvim_win_get_buf(win)].luanphan_tmux_pane)
-  end,
+  reorder = reorder_panes,
   activate = activate,
   new = new_tab,
   create_key = false,
@@ -272,13 +253,23 @@ bar = bars.create({
   active_window = active_window,
   activate = activate,
   rename_window = function(group, name)
-    -- tmux expands formats in window names.
-    run({ "rename-window", "-t", group.id, "--", (name:gsub("#", "##")) }, refresh)
+    local commands = {}
+    for _, pane in ipairs(group.items) do
+      commands[#commands + 1] = model.write(pane, { title = name })
+      commands[#commands + 1] = model.rename(pane.window, name)
+    end
+    batch(commands, refresh)
   end,
-  reorder = reorder_panes,
+  reorder = function(_, items) reorder_panes(items) end,
   reorder_groups = function(group, other)
-    local prefix = session.id .. ":"
-    run({ "swap-window", "-d", "-s", prefix .. group.id, "-t", prefix .. other.id }, refresh)
+    local commands = {}
+    for _, pane in ipairs(group.items) do
+      commands[#commands + 1] = model.write(pane, { window_order = other.index })
+    end
+    for _, pane in ipairs(other.items) do
+      commands[#commands + 1] = model.write(pane, { window_order = group.index })
+    end
+    batch(commands, refresh)
   end,
   bind = bind_shortcuts,
 })
@@ -286,7 +277,6 @@ bar = bars.create({
 local function render_panel()
   if not current or not current.active then return end
   local body, header, options = geometry()
-  resize(body)
   local focus = focus_on_render or not valid(anchor) or vim.api.nvim_get_current_win() == anchor
     or vim.w[api.nvim_get_current_win()].luanphan_view_anchor == anchor
   local selected = current.active
@@ -300,9 +290,8 @@ local function render_panel()
     for _, win in ipairs(views.group_windows(anchor)) do
       local pane = panes[vim.b[api.nvim_win_get_buf(win)].luanphan_tmux_pane]
       if pane and pane.visible and not pane.pending_view then
-        local view = api.nvim_win_call(win, vim.fn.winsaveview)
-        pane.last_view = view
-        pane.scrollback_view = view.topline < pty.live_topline(pane) and view or nil
+        pane.last_view = api.nvim_win_call(win, vim.fn.winsaveview)
+        pane.follow_live = pane.last_view.topline >= pty.live_topline(pane)
       end
     end
   end
@@ -325,24 +314,43 @@ local function render_panel()
     vim.wo[win].scrolloff = 0
     local width = api.nvim_win_get_width(win)
     local height = math.max(1, api.nvim_win_get_height(win) - (vim.wo[win].winbar == "" and 0 or 1))
-    local repaint = not pane.visible or pane.view_width ~= width or pane.view_height ~= height or pane.changed_size
-    if not pane.visible and pane.painted then
-      pane.returning = true
+    local resize = pane.width ~= width or pane.height ~= height
+    local follow = not pane.visible and pane.hidden_output and pane.follow_live
+    if not pane.visible and pane.painted and not follow then
       if pane.last_view then pty.apply_view(pane, win, pane.last_view) end
     end
-    pane.visible, pane.view_width, pane.view_height, pane.changed_size = true, width, height, nil
-    pane.snapshot = pane.width ~= width or pane.height ~= height
+    pane.visible, pane.view_width, pane.view_height = true, width, height
+    pane.hidden_output = nil
     if not pane.term then
       pane.client = client
-      pty.open(pane, function(data)
-        if data:find("\12", 1, true) then pane.follow_clear = true end
-      end)
+      pane.restore_primary = true
+      pty.open(pane)
       api.nvim_buf_attach(pane.bufnr, false, { on_lines = function() restore_view(pane) end })
     end
-    if repaint then paint(pane) end
+    if resize then
+      local size = width .. "x" .. height
+      if pane.resizing ~= size then
+        pane.resizing = size
+        pty.resize(pane, width, height, function(ok)
+          if panes[pane.id] ~= pane or pane.resizing ~= size then return end
+          pane.resizing = nil
+          if ok then pane.width, pane.height = width, height end
+          if not pane.ready then paint(pane) end
+        end)
+      end
+    elseif not pane.ready and not pane.resizing then
+      paint(pane)
+    end
+    if follow and pane.ready then
+      pty.cursor(pane, function(view)
+        if panes[pane.id] ~= pane or not pane.visible then return end
+        pane.pending_view = view
+        restore_view(pane)
+      end)
+    end
   end
   for id, pane in pairs(panes) do
-    if not visible[id] then pane.visible, pane.ready = false, false end
+    if not visible[id] then pane.visible = false end
   end
   if focus and valid(active_window()) then
     focus_on_render = false
@@ -364,36 +372,35 @@ render = function()
   end
 end
 
-local function apply_snapshot(lines, completed_selection)
+local function apply_snapshot(records, completed_selection)
   local by_window, listed, next_windows, selected = {}, {}, {}, nil
-  for _, line in ipairs(lines) do
-    local field = vim.split(line, "\t", { plain = true })
-    local window_id, pane_id = field[1], field[4]
-    if pane_id and pane_id:match("^%%%d+$") then
-      local group = by_window[window_id]
-      if not group then
-        group = { id = window_id, title = field[10] or window_id, index = tonumber(field[2]), items = {} }
-        by_window[window_id] = group
-        next_windows[#next_windows + 1] = group
-      end
-      local pane = panes[pane_id] or { id = pane_id }
-      local width, height = tonumber(field[7]), tonumber(field[8])
-      pane.changed_size = pane.width ~= width or pane.height ~= height
-      pane.group, pane.label = group, field[9] ~= "" and field[9] or "shell"
-      local cwd = field[11]
-      if cwd and cwd ~= "" and cwd ~= pane.cwd then
-        pane.cwd = cwd
-        if pane.bufnr then require("luanphan.terminal_references").attach(pane.bufnr, cwd) end
-      end
-      pane.index, pane.width, pane.height = tonumber(field[6]), width, height
-      group.items[#group.items + 1], listed[pane_id] = pane, pane
-      if field[5] == "1" then group.active = pane end
-      if field[3] == "1" then selected = group end
+  local selected_pane
+  for _, record in ipairs(records) do
+    local data = record.data
+    local group = by_window[data.group]
+    if not group then
+      group = { id = data.group, title = data.title, index = data.window_order, items = {} }
+      by_window[group.id] = group
+      next_windows[#next_windows + 1] = group
     end
+    local pane = panes[record.id] or { id = record.id }
+    local old_cwd = pane.cwd
+    for key, value in pairs(record) do pane[key] = value end
+    pane.group = group
+    if pane.bufnr and pane.cwd ~= old_cwd and pane.cwd ~= "" then
+      require("luanphan.terminal_references").attach(pane.bufnr, pane.cwd)
+    end
+    group.items[#group.items + 1], listed[pane.id] = pane, pane
+    if data.active then group.active = pane end
+    if record.selected then selected, selected_pane = group, pane end
   end
-  table.sort(next_windows, function(a, b) return a.index < b.index end)
+  if selected then selected.active = selected_pane end
+  table.sort(next_windows, function(a, b)
+    if a.index ~= b.index then return a.index < b.index end
+    return tonumber(a.id:sub(2)) < tonumber(b.id:sub(2))
+  end)
   for _, group in ipairs(next_windows) do
-    table.sort(group.items, function(a, b) return a.index < b.index end)
+    table.sort(group.items, function(a, b) return a.data.pane_order < b.data.pane_order end)
     group.active = group.active or group.items[1]
   end
   local old = panes
@@ -420,18 +427,32 @@ local function apply_snapshot(lines, completed_selection)
 end
 
 refresh = function()
-  if not client or refresh_queued then return end
+  if not client or refresh_queued or creating then return end
   if refresh_pending then refresh_again = true return end
   local connection = client
   refresh_queued = true
   vim.schedule(function()
     if client ~= connection then return end
+    if creating then refresh_queued = false return end
     refresh_queued, refresh_pending = false, true
     local completed_selection = selection and selection.done and selection
-    client:request({ "list-panes", "-s", "-t", session.id, "-F", pane_format }, function(ok, lines)
+    client:request({ "list-panes", "-s", "-t", session.id, "-F", model.format }, function(ok, lines)
       if client ~= connection then return end
       refresh_pending = false
-      if ok then apply_snapshot(lines, completed_selection) end
+      if ok and not creating then
+        local records = model.read(lines)
+        local commands = model.migrate(records)
+        if #commands > 0 then
+          refresh_pending = true
+          batch(commands, function(migrated)
+            if client ~= connection then return end
+            refresh_pending, refresh_again = false, false
+            if migrated then refresh() else M.hide() end
+          end)
+          return
+        end
+        apply_snapshot(records, completed_selection)
+      end
       if refresh_again then
         refresh_again = false
         refresh()
@@ -446,7 +467,7 @@ function M.hide(closing)
   client, session, anchor, current = nil, nil, nil, nil
   windows, panes = {}, {}
   refresh_queued, refresh_pending, refresh_again = nil, nil, nil
-  client_size, focus_on_render, selection = nil, nil, nil
+  creating, focus_on_render, selection = nil, nil, nil
   bar.win, bar.anchor = nil, nil
   if connection then connection:detach() end
   if win then views.close_group(win, closing) end
@@ -466,29 +487,26 @@ local topology_events = {
 open = function(target)
   require("luanphan.agents.main").hide()
   session = target
-  local initializing = true
   client = tmux:attach(target, {
+    flags = "ignore-size,pause-after=5",
     ready = function()
       previous_session = target.id
-      local body = geometry()
-      resize(body, function()
-        initializing = false
-        refresh()
-      end)
+      refresh()
     end,
     output = function(id, bytes)
       local pane = panes[id]
-      if not pane or not pane.visible then return end
-      if pane.snapshot or pane.follow_clear or pane.capturing then
-        queue_paint(pane)
-      elseif pane.ready then
+      if not pane then return end
+      if pane.ready then
+        if not pane.visible then pane.hidden_output = true end
         pane.frame = nil
         pty.output(pane, bytes)
+      elseif pane.capturing then
+        pane.dirty = true
       end
     end,
     event = function(event, payload)
       if topology_events[event] then
-        if not initializing then refresh() end
+        refresh()
       elseif event == "pause" then
         local pane = panes[payload]
         if pane then pane.ready = false end

@@ -46,6 +46,22 @@ function M.output(pane, bytes)
   pane.receiving = false
 end
 
+function M.resize(pane, width, height, callback)
+  pane.client:request({ "resize-window", "-t", pane.window, "-x", tostring(width), "-y", tostring(height) }, callback)
+end
+
+function M.cursor(pane, callback)
+  pane.client:request({ "display-message", "-p", "-t", pane.id, "#{cursor_y}\t#{cursor_x}" }, function(ok, lines)
+    if not ok then return end
+    local row, col = (lines[1] or ""):match("^(%d+)\t(%d+)$")
+    if row then callback({ row = tonumber(row), col = tonumber(col) }) end
+  end)
+end
+
+function M.live_topline(pane)
+  return math.max(1, api.nvim_buf_line_count(pane.bufnr) - pane.view_height + 1)
+end
+
 local function capture_start(pane)
   if not pane.painted then return tostring(-(pane.history_limit or 1000)) end
   local frame = pane.frame
@@ -69,15 +85,12 @@ function M.capture(pane, callback)
   end)
 end
 
-function M.live_topline(pane)
-  return math.max(1, api.nvim_buf_line_count(pane.bufnr) - pane.view_height + 1)
-end
-
 function M.apply_view(pane, win, view)
   api.nvim_win_call(win, function()
     if view.topline then return vim.fn.winrestview(view) end
+    local line_count = api.nvim_buf_line_count(pane.bufnr)
     local top = M.live_topline(pane)
-    local line = math.min(api.nvim_buf_line_count(pane.bufnr), top + view.row)
+    local line = math.min(line_count, top + view.row)
     local col = math.max(0, vim.fn.virtcol2col(win, line, view.col + 1) - 1)
     vim.fn.winrestview({ topline = top, lnum = line, col = col, leftcol = 0 })
   end)

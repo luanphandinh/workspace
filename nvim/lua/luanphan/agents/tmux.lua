@@ -329,7 +329,7 @@ function M.resize(buf, width, height)
   local pane = state.buffers[buf]
   if not pane or not pane.client or (pane.view_width == width and pane.view_height == height) then return end
   pane.view_width, pane.view_height = width, height
-  pane.client:request({ "resize-window", "-t", pane.window, "-x", tostring(width), "-y", tostring(height) })
+  pty.resize(pane, width, height)
 end
 
 function M.update(buf, changes)

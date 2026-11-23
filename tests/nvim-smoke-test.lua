@@ -6110,7 +6110,10 @@ local function test_tmux_floating_terminal()
   if vim.fn.executable("tmux") == 0 then return end
   local root = uv.fs_mkdtemp("/tmp/nvim-tmux-XXXXXX")
   local script, socket = root .. "/test.lua", root .. "/socket"
-  write(root .. "/tmux.conf", { "set -g default-shell /bin/sh", "set -g default-command 'exec /bin/sh'" })
+  write(root .. "/tmux.conf", {
+    "set -g default-shell /bin/sh", "set -g default-command 'exec /bin/sh'",
+    "set -g focus-events on", "set -g window-size latest", "set -g renumber-windows on",
+  })
   write(root .. "/redraw.py", {
     "import os, tty",
     "tty.setraw(0)",
@@ -6174,6 +6177,11 @@ local function pane_window(id)
   end)
 end
 local function config(id) return api.nvim_win_get_config(assert(pane_window(id))) end
+local function same_grid(id)
+  local cfg = config(id)
+  return tmux("display-message", "-p", "-t", id, "#{pane_width}x#{pane_height}")
+    == ("%dx%d"):format(cfg.width, cfg.height - 1)
+end
 local function wait(predicate, label)
   assert(vim.wait(4000, predicate), "timeout " .. label)
 end
@@ -6217,10 +6225,19 @@ assert(vim.deep_equal(config(first), full), "single pane did not return to the v
 wait(function()
   return table.concat(api.nvim_buf_get_lines(first_buf, 0, -1, false), "\n"):find("RESULT_PROBE_TEXT", 1, true)
 end, "terminal input and output")
+tmux("send-keys", "-l", "-t", first, "cd /tmp")
+tmux("send-keys", "-t", first, "Enter")
+wait(function()
+  return tmux("display-message", "-p", "-t", first, "#{pane_current_path}") == vim.uv.fs_realpath("/tmp")
+end, "update the first shell working directory")
 key("<leader>nt")
-wait(function() return active() and active() ~= first end, "native split")
+wait(function() return active() and active() ~= first end, "new terminal tile")
 local second = active()
-assert(#vim.split(tmux("list-panes", "-t", first), "\n") == 2, "split did not reach tmux")
+assert(tmux("display-message", "-p", "-t", second, "#{pane_current_path}") == vim.uv.fs_realpath("/tmp"),
+  "new tile did not inherit the source shell's working directory")
+assert(tmux("display-message", "-p", "-t", first, "#{window_id}")
+  ~= tmux("display-message", "-p", "-t", second, "#{window_id}"), "tiles share a tmux window")
+wait(function() return same_grid(first) and same_grid(second) end, "exact PTY sizes for two tiles")
 local left, right = config(first), config(second)
 assert(type(left.border) == "table" and type(right.border) == "table", "split panes lack their Neovim borders")
 assert(left.col == full.col and left.col + left.width + 2 == right.col
@@ -6248,9 +6265,6 @@ local function screen_position(label, offset)
     if table.concat(text) == label then return y, x end
   end
 end
-tmux("select-layout", "-t", first, "even-vertical")
-assert(tonumber(tmux("display-message", "-p", "-t", second, "#{pane_width}")) > right.width,
-  "cursor test needs a tmux pane wider than its Neovim tile")
 tmux("send-keys", "-l", "-t", second, "python3 " .. vim.fn.shellescape(root .. "/redraw.py"))
 tmux("send-keys", "-t", second, "Enter")
 wait(function() return screen_position("BEFORE_CLEAR") end, "colored text on the tile")
@@ -6260,7 +6274,7 @@ wait(function() return screen_position("AFTER_CLEAR") and not screen_position("O
   "Ctrl+l should show the cleared screen without a second input")
 local row, col = screen_position("AFTER_CLEAR")
 assert(vim.fn.screenattr(row, col) ~= vim.fn.screenattr(row, col + #"AFTER_CLEAR "),
-  "the cropped tmux redraw lost terminal RGB colors")
+  "the streamed tmux redraw lost terminal RGB colors")
 
 local cursor_matches, observed
 local started = vim.uv.now()
@@ -6282,11 +6296,9 @@ timer:close()
 assert(cursor_matches, "the caret did not follow a cursor-only tmux redraw: " .. vim.inspect(observed))
 
 key("<leader>nt")
-wait(function() return active() and active() ~= first and active() ~= second end, "third native tile")
+wait(function() return active() and active() ~= first and active() ~= second end, "third terminal tile")
 local bottom = active()
-tmux("select-layout", "-t", first, "even-horizontal")
-assert(tonumber(tmux("display-message", "-p", "-t", bottom, "#{pane_height}")) > config(bottom).height,
-  "scrollback test needs a tmux pane taller than its Neovim tile")
+wait(function() return same_grid(bottom) end, "exact PTY size for the small tile")
 local bottom_buf = api.nvim_get_current_buf()
 local function bottom_lines()
   return api.nvim_buf_get_lines(bottom_buf, 0, -1, false)
@@ -6311,19 +6323,19 @@ for _, line in ipairs(bottom_lines()) do
   end
 end
 assert(next_row == 161, "small tile scrollback lost output")
-tmux("select-layout", "-t", first, "even-vertical")
-wait(function() return tmux("display-message", "-p", "-t", second, "#{pane_top}") ~= "0" end, "external rearrangement")
+tmux("resize-window", "-t", second, "-x", "100", "-y", "30")
+wait(function() return same_grid(second) end, "restore the tile grid after a native resize")
 local main, upper, lower = config(first), config(second), config(bottom)
 assert(main.row == upper.row and main.col < upper.col and upper.col == lower.col
   and upper.row + upper.height + 2 == lower.row and lower.row + lower.height + 2 == main.row + main.height + 2,
   "Neovim lost its left/top-right/bottom-right tile layout after an external tmux layout change")
-tmux("send-keys", "-l", "-t", first, "printf 'LIVE_%s\\n' CLIPPED_TILE")
+tmux("send-keys", "-l", "-t", first, "printf 'LIVE_%s\\n' MATCHING_TILE")
 tmux("send-keys", "-t", first, "Enter")
 wait(function()
   local win = pane_window(first)
   return win and table.concat(api.nvim_buf_get_lines(api.nvim_win_get_buf(win), 0, -1, false), "\n")
-    :find("LIVE_CLIPPED_TILE", 1, true)
-end, "mismatched tmux grid still updates the Neovim tile")
+    :find("LIVE_MATCHING_TILE", 1, true)
+end, "the matching tmux grid still streams into the Neovim tile")
 local lower_win = pane_window(bottom)
 for _, move in ipairs({ { "<C-S-k>", upper.row }, { "<C-S-j>", lower.row } }) do
   key(move[1])
@@ -6333,7 +6345,7 @@ for _, move in ipairs({ { "<C-S-k>", upper.row }, { "<C-S-j>", lower.row } }) do
     "moving vertically left focus in the original tile slot")
 end
 tmux("kill-pane", "-t", bottom)
-tmux("select-pane", "-t", second)
+tmux("select-window", "-t", second)
 wait(function() return active() == second and not pane_window(bottom) end, "remove third tile")
 local tile = api.nvim_get_current_win()
 assert(vim.w[tile].luanphan_view_anchor ~= tile, "the split did not open a separate tile")
@@ -6348,7 +6360,7 @@ local right_edge = api.nvim_win_get_config(0).col
 key("<C-S-h>")
 wait(function()
   return active() == second and api.nvim_win_get_config(0).col < right_edge
-    and tmux("display-message", "-p", "-t", second, "#{pane_index}") == "0"
+    and vim.json.decode(tmux("display-message", "-p", "-t", second, "#{@luanphan-view-window}")).pane_order == 1
 end, "tmux pane move")
 key("<C-S-l>")
 wait(function() return config(second).col == right_edge end, "move the tmux pane right")
@@ -6438,7 +6450,7 @@ assert(vim.wait(4000, function()
 end), "prompt fixture did not produce scrollback")
 local bars = require("luanphan.view_container.window_bar")
 local function select_window(index, id)
-  assert(bars.focus_window(index), "could not switch tmux window")
+  assert(vim.wait(4000, function() return bars.focus_window(index) end), "could not switch tmux window")
   assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane == id and vim.bo.buftype == "terminal" end),
     "switch did not focus the requested tmux pane")
 end
@@ -6447,6 +6459,18 @@ local function live_view()
   local line = api.nvim_buf_get_lines(0, view.topline - 1, view.topline, false)[1] or ""
   return vim.trim(line) == "LIVE_PROMPT"
 end
+select_window(2, saved[3])
+tmux("send-keys", "-l", "-t", saved[1], "seq 1 70; printf 'HIDDEN_%s\\n' OUTPUT")
+tmux("send-keys", "-t", saved[1], "Enter")
+assert(vim.wait(4000, function()
+  return tmux("capture-pane", "-p", "-t", saved[1]):find("HIDDEN_OUTPUT", 1, true)
+end), "hidden shell did not produce output")
+select_window(1, saved[1])
+assert(vim.wait(4000, function()
+  local view = vim.fn.winsaveview()
+  local visible = api.nvim_buf_get_lines(0, view.topline - 1, vim.fn.line("w$"), false)
+  return vim.tbl_contains(visible, "HIDDEN_OUTPUT")
+end), "returning to a live shell did not follow hidden output")
 select_window(3, prompt_pane)
 assert(vim.wait(4000, live_view), "initial prompt did not show the live screen")
 vim.defer_fn(function() api.nvim_input("<Esc>") end, 20)
@@ -6468,6 +6492,8 @@ end), "returning to a pane lost the user's scrollback view")
 local prompt_command = "python3 " .. vim.fn.shellescape(root .. "/prompt.py")
 local left = tmux("new-window", "-d", "-P", "-F", "#{pane_id}", prompt_command)
 local right = tmux("split-window", "-h", "-P", "-F", "#{pane_id}", "-t", left, prompt_command)
+local pid_left = tmux("display-message", "-p", "-t", left, "#{pane_pid}")
+local pid_right = tmux("display-message", "-p", "-t", right, "#{pane_pid}")
 local function pane_view(id)
   for _, win in ipairs(api.nvim_list_wins()) do
     local buf = api.nvim_win_get_buf(win)
@@ -6488,7 +6514,15 @@ assert(vim.wait(4000, function()
   end
   return vim.b.luanphan_tmux_pane == right
 end), "split panes did not show their live screen")
+assert(tmux("display-message", "-p", "-t", left, "#{window_id}")
+  ~= tmux("display-message", "-p", "-t", right, "#{window_id}"), "native split was not migrated")
+assert(tmux("display-message", "-p", "-t", left, "#{pane_pid}") == pid_left
+  and tmux("display-message", "-p", "-t", right, "#{pane_pid}") == pid_right, "migration replaced a native process")
 local before = { pane_view(left), pane_view(right) }
+for _, view in ipairs(before) do
+  assert(vim.iter(view.lines):any(function(line) return vim.trim(line) == "HISTORY_PROMPT" end),
+    "migration lost native pane scrollback")
+end
 for _ = 1, 3 do
   select_window(2, saved[3])
   select_window(4, right)
