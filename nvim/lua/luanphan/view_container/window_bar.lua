@@ -390,8 +390,10 @@ function Bar:layout(anchor, frame, style)
       end
     end, opts)
   end
-  vim.keymap.set("n", "J", function() self:move(1) end, opts)
-  vim.keymap.set("n", "K", function() self:move(-1) end, opts)
+  vim.keymap.set("n", "<C-S-j>", function() self:move(1) end,
+    vim.tbl_extend("force", opts, { desc = "Move sidebar item down" }))
+  vim.keymap.set("n", "<C-S-k>", function() self:move(-1) end,
+    vim.tbl_extend("force", opts, { desc = "Move sidebar item up" }))
   for _, key in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
     local to_content = key == (style == "horizontal" and "<C-j>" or "<C-l>")
     vim.keymap.set("n", key, to_content and function() self:focus_content() end or "<Nop>", opts)
