@@ -5569,44 +5569,6 @@ local function test_agent_view_container(repo)
       assert_terminal_grid_matches(tile_buffers[index], win, "tile " .. index)
     end
 
-    local first_tile = tile_window(tile_buffers[1])
-    local active_tile = tile_window(tile_buffers[4])
-    local function spinner(index)
-      local title = tile_config(index).title
-      return title and title[1]
-    end
-    for _, index in ipairs({ 1, 4 }) do
-      vim.fn.chansend(vim.b[tile_buffers[index]].terminal_job_id, "\27]7501;state=working\27\\")
-    end
-    wait_until("running tiles show spinners in their focus colors", function()
-      local first, active = spinner(1), spinner(4)
-      return first and first[2] == "FloatBorder" and active and active[2] == "DiagnosticOk"
-    end, 3000)
-    assert_true(not spinner(2) and not spinner(3), "idle tile showed a spinner")
-    local initial_sweep = spinner(4)[1]
-    assert_true(vim.fn.strdisplaywidth(initial_sweep) == tile_config(4).width, "sweep did not span the top border")
-    invoke_map("<leader>b")
-    wait_until("tile spinner animates while the sidebar is hidden", function()
-      local frame = spinner(4)
-      return frame and frame[1] ~= initial_sweep
-    end, 3000)
-    local input_spinner
-    vim.defer_fn(function()
-      input_spinner = spinner(4)
-      vim.api.nvim_input("<Esc>")
-    end, 300)
-    vim.api.nvim_feedkeys("i", "xt!", false)
-    assert_true(input_spinner and input_spinner[2] == "LuanphanTileInputBorder", "focused spinner did not use the input color")
-    assert_terminal_grid_matches(tile_buffers[1], first_tile, "animating background tile")
-    assert_terminal_grid_matches(tile_buffers[4], active_tile, "animating focused tile")
-    for _, index in ipairs({ 1, 4 }) do
-      vim.fn.chansend(vim.b[tile_buffers[index]].terminal_job_id, "\27]7501;state=done\27\\")
-    end
-    wait_until("finished tiles clear their border spinners", function()
-      return not spinner(1) and not spinner(4)
-    end, 3000)
-    invoke_map("<leader>b")
-
     assert_true(agents.focus("cursor", tile_buffers[2], { view_mode = true }), "could not focus the second tile")
     local inserted = assert(agents.new("codex", { view_mode = true }))
     local inserted_config = vim.api.nvim_win_get_config(tile_window(inserted))
@@ -5848,6 +5810,18 @@ assert(vim.wait(3000, function() return vim.api.nvim_get_current_buf() == home e
   'agent window picker did not return to the last session of the previous workspace')
 assert(#view.group_windows(anchor) == 3 and vim.w[anchor].luanphan_window_bar == sidebar,
   'agent window picker replaced the panel')
+
+vim.g.neovide = true
+vim.api.nvim_exec_autocmds('UIEnter', {})
+vim.api.nvim_feedkeys(vim.keycode('<D-2>'), 'xt', false)
+assert(vim.api.nvim_get_current_buf() == away_peer and #view.group_windows(anchor) == 3,
+  'Cmd+2 did not switch to the second workspace in place')
+vim.api.nvim_set_current_win(sidebar)
+vim.api.nvim_feedkeys(vim.keycode('<D-1>'), 'xt', false)
+assert(vim.api.nvim_get_current_buf() == home and vim.w[anchor].luanphan_window_bar == sidebar,
+  'Cmd+1 did not restore the first workspace from the sidebar')
+vim.api.nvim_feedkeys(vim.keycode('<D-9>'), 'xt', false)
+assert(vim.api.nvim_get_current_buf() == home, 'out-of-range window shortcut changed focus')
 
 local home_path = vim.fn.getcwd()
 vim.fn.jobstop(vim.b[away_peer].terminal_job_id)

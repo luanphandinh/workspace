@@ -140,17 +140,11 @@ function Bar:refresh(keep_cursor)
 end
 
 function Bar:animate()
-  if not self.opts.status or self.timer then return end
+  if not self.opts.status or not self:visible() or self.timer then return end
   self.timer = vim.fn.timer_start(130, function()
-    local visible = self:visible()
-    local animate_tiles = self.opts.animate_tiles and valid(self.anchor)
-      and vim.w[self.anchor].luanphan_view_anchor == self.anchor
-    if not visible and not animate_tiles then self:stop_timer() return end
+    if not self:visible() then self:stop_timer() return end
     self.frame = self.frame + 1
-    if animate_tiles then self.opts.animate_tiles(self.frame) end
-    if visible then
-      if self.style == "horizontal" then tabs.render_windows(self) else sidebar.statuses(self) end
-    end
+    if self.style == "horizontal" then tabs.render_windows(self) else sidebar.statuses(self) end
   end, { ["repeat"] = -1 })
 end
 
@@ -275,17 +269,30 @@ function Bar:pick_window()
   end, view.compact_picker_opts())
 end
 
-function M.pick_window()
+local function current_bar()
   local current = windows.group_anchor(api.nvim_get_current_win())
   local available = {}
   for bar in pairs(bars) do
-    if bar.anchor == current then return bar:pick_window() end
+    if bar.anchor == current then return bar end
     if valid(bar.anchor) and api.nvim_win_get_tabpage(bar.anchor) == api.nvim_get_current_tabpage() then
       available[#available + 1] = bar
     end
   end
-  if #available == 1 then return available[1]:pick_window() end
+  if #available == 1 then return available[1] end
+end
+
+function M.pick_window()
+  local bar = current_bar()
+  if bar then return bar:pick_window() end
   vim.notify("Focus an agent or terminal view to switch windows", vim.log.levels.INFO)
+end
+
+function M.focus_window(index)
+  local bar = current_bar()
+  local group = bar and bar:groups()[index]
+  if not group then return end
+  vim.cmd.stopinsert()
+  return bar:select({ group = group }, true)
 end
 
 function Bar:click()
@@ -306,7 +313,7 @@ function Bar:set_hidden(hidden)
   if not valid(self.win) then return end
   if hidden and api.nvim_get_current_win() == self.win then self:focus_content() end
   api.nvim_win_set_config(self.win, { hide = hidden, focusable = not hidden, mouse = not hidden })
-  if not hidden then self:refresh() end
+  if hidden then self:stop_timer() else self:refresh() end
 end
 
 function Bar:focus()

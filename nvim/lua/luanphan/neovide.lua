@@ -82,6 +82,12 @@ local function configure()
     vim.g.neovide_scale_factor = 1.0
   end, { desc = "Reset zoom" })
 
+  for index = 1, 9 do
+    vim.keymap.set({ "n", "t" }, "<D-" .. index .. ">", function()
+      require("luanphan.view_container.window_bar").focus_window(index)
+    end, { silent = true, desc = "Focus window " .. index })
+  end
+
   local function paste_clipboard()
     local ok, text = pcall(vim.fn.getreg, "+")
     vim.api.nvim_paste(ok and text or "", true, -1)

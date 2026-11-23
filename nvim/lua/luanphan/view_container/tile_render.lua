@@ -5,7 +5,6 @@ local input_border_color = "LuanphanTileInputBorder"
 local thin_border = { "┌", "─", "┐", "│", "┘", "─", "└", "│" }
 local heavy_border = { "┏", "━", "┓", "┃", "┛", "━", "┗", "┃" }
 local ascii_border = { "+", "=", "+", "|", "+", "=", "+", "|" }
-local sweep_frames = 16
 
 local function focused_border()
 	local chars = vim.o.ambiwidth == "double" and ascii_border or heavy_border
@@ -80,12 +79,7 @@ end
 
 local function reset_tiles(self, closing)
 	local anchor = self.tile_anchor
-	if anchor ~= closing then
-		set_tile_highlights(anchor, nil, false)
-		if anchor and vim.api.nvim_win_is_valid(anchor) and vim.api.nvim_win_get_config(anchor).title then
-			vim.api.nvim_win_set_config(anchor, { title = "" })
-		end
-	end
+	if anchor ~= closing then set_tile_highlights(anchor, nil, false) end
 	self.tile_anchor, self.tile_windows = nil, nil
 	if self.tile_autocmd then
 		pcall(vim.api.nvim_del_autocmd, self.tile_autocmd)
@@ -120,34 +114,6 @@ function M.refresh_tile_highlights(self)
 	for _, win in pairs(windows) do
 		set_tile_highlights(win, win == current and border or thin_border, win ~= current)
 	end
-end
-
-function M.animate_tile_borders(self, tick, is_running)
-	if not self.tile_anchor then return end
-	local phase = (tick - 1) % (2 * sweep_frames)
-	local returning = phase >= sweep_frames
-	local progress = returning and (2 * sweep_frames - phase) or phase
-	local glyph = returning and "⣀" or "⠉"
-	local function update(win, buf)
-		if not vim.api.nvim_win_is_valid(win) then return end
-		local frame = vim.api.nvim_win_get_config(win)
-		if frame.hide then return end
-		local shown = frame.title and frame.title[1]
-		if is_running(buf or vim.api.nvim_win_get_buf(win)) then
-			local top = frame.border[2]
-			local line, highlight = top, "FloatBorder"
-			if type(top) == "table" then line, highlight = unpack(top) end
-			local left = math.floor((frame.width - 1) * progress / sweep_frames)
-			local title = line:rep(left) .. glyph .. line:rep(frame.width - left - 1)
-			if not shown or shown[1] ~= title or shown[2] ~= highlight then
-				vim.api.nvim_win_set_config(win, { title = { { title, highlight } }, title_pos = "left" })
-			end
-		elseif shown then
-			vim.api.nvim_win_set_config(win, { title = "" })
-		end
-	end
-	update(self.tile_anchor)
-	for buf, win in pairs(self.tile_windows or {}) do update(win, buf) end
 end
 
 local function untile(self, anchor, context)

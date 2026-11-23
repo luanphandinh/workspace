@@ -565,10 +565,6 @@ agent_container = view_container.create({
   cycle_desc = "Next agent session",
 })
 
-function M.animate_tile_borders(frame, is_running)
-  agent_container:animate_tile_borders(frame, is_running)
-end
-
 function M.refresh_tabs(win)
   local bufnr = vim.api.nvim_win_get_buf(win)
   if vim.w[win].luanphan_view_anchor then

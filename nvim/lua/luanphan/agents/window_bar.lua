@@ -9,7 +9,6 @@ local views = require("luanphan.view_container")
 local main, focused_terminal
 local switching_workspace = false
 local bar
-local status_paths = {}
 
 local spinner = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 local status_icons = {
@@ -18,10 +17,6 @@ local status_icons = {
   blocked = { "!", "DiagnosticWarn" },
   error = { "!", "DiagnosticError" },
 }
-
-local function is_running(current)
-  return current == "working" or current == "running"
-end
 
 local function valid(win)
   return win and api.nvim_win_is_valid(win)
@@ -42,7 +37,6 @@ local function groups()
   local workspaces = vim.tbl_keys(by_workspace)
   table.sort(workspaces)
   local result = {}
-  status_paths = {}
   for _, workspace in ipairs(workspaces) do
     local group = { id = workspace, title = vim.fn.fnamemodify(workspace, ":t"), items = {} }
     local entries = by_workspace[workspace]
@@ -63,7 +57,6 @@ local function groups()
         icon = agents.agent_icon(thread.agent), thread = thread,
         status_path = counts[path] == 1 and path or nil,
       }
-      if thread.bufnr then status_paths[thread.bufnr] = item.status_path end
       group.items[#group.items + 1] = item
       if thread == recent then group.active = item end
     end
@@ -102,14 +95,9 @@ bar = require("luanphan.view_container.window_bar").create({
   end,
   status = function(item, frame)
     local current = status.current(item.bufnr, item.status_path)
-    if is_running(current) then return spinner[(frame - 1) % #spinner + 1], "DiagnosticInfo" end
+    if current == "working" or current == "running" then return spinner[(frame - 1) % #spinner + 1], "DiagnosticInfo" end
     local icon = status_icons[current]
     if icon then return unpack(icon) end
-  end,
-  animate_tiles = function(frame)
-    agents.animate_tile_borders(frame, function(buf)
-      return is_running(status.current(buf, status_paths[buf]))
-    end)
   end,
   dismiss = function(item)
     local session = item and item.thread
