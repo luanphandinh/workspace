@@ -9,8 +9,9 @@ local settings = require("luanphan.global_settings")
 local client, session, previous_session
 local windows, panes = {}, {}
 local current, anchor, bar, tiles
-local rendering, refresh_pending, refresh_again
+local rendering, refresh_queued, refresh_pending, refresh_again
 local client_size, focus_on_render, selection
+local layout_path, layout_stat, layout_options
 
 local pane_fields = {
   "window_id", "window_index", "window_active", "pane_id", "pane_active",
@@ -30,7 +31,15 @@ local function valid(win)
 end
 
 local function geometry()
-  local options = settings.read().floating_terminal
+  local path = settings.config_path()
+  local stat = vim.uv.fs_stat(path)
+  if not layout_options or layout_path ~= path or not stat or not layout_stat
+    or stat.ino ~= layout_stat.ino or stat.size ~= layout_stat.size
+    or stat.mtime.sec ~= layout_stat.mtime.sec or stat.mtime.nsec ~= layout_stat.mtime.nsec then
+    layout_options = settings.read(path).floating_terminal
+    layout_path, layout_stat = path, vim.uv.fs_stat(path)
+  end
+  local options = layout_options
   local border_size = options.display_style == "tile" and 2 or 0
   local frame = {
     relative = "editor", row = 0, col = 0, width = vim.o.columns - border_size,
@@ -41,14 +50,24 @@ local function geometry()
   return body, header, options
 end
 
-local function resize(body)
-  if not client or session.attached > 0 then return end
+local function resize(body, done)
+  if not client or session.attached > 0 then
+    if done then done() end
+    return
+  end
   local size = ("%dx%d"):format(body.width, body.height - 1)
-  if size == client_size then return end
+  if size == client_size then
+    if done then done() end
+    return
+  end
+  local connection = client
   client_size = size
   client:request({ "list-clients", "-t", session.id, "-F", "#{client_control_mode}" }, function(ok, lines)
+    if client ~= connection then return end
     if ok and #lines <= 1 and client_size == size then
-      client:request({ "refresh-client", "-C", size })
+      client:request({ "refresh-client", "-C", size }, done)
+    elseif done then
+      done()
     end
   end)
 end
@@ -66,7 +85,8 @@ local function run(args, after, failed)
 end
 
 local function active_window()
-  local win = current and current.active and vim.fn.bufwinid(current.active.bufnr)
+  local buf = current and current.active and current.active.bufnr
+  local win = buf and vim.fn.bufwinid(buf)
   return win and win ~= -1 and win or anchor
 end
 
@@ -174,10 +194,11 @@ local function queue_paint(pane)
   if pane.capturing then pane.dirty = true return end
   if pane.paint_pending then return end
   pane.paint_pending = true
+  local in_input = api.nvim_get_current_buf() == pane.bufnr and api.nvim_get_mode().mode == "t"
   vim.defer_fn(function()
     pane.paint_pending = false
     if panes[pane.id] == pane then paint(pane) end
-  end, 20)
+  end, (in_input or pane.follow_clear) and 20 or 33)
 end
 
 local function capture_start(pane)
@@ -248,6 +269,7 @@ local function prepare_buffer(pane)
   vim.b[buf].luanphan_floating_terminal = true
   vim.b[buf].luanphan_tmux_pane = pane.id
   pane.bufnr = buf
+  if pane.cwd then require("luanphan.terminal_references").attach(buf, pane.cwd) end
   bar:attach(buf)
   bar:map_jumps(buf, false)
   bind_shortcuts(buf)
@@ -316,6 +338,12 @@ local function render_panel()
   local focus = focus_on_render or not valid(anchor) or vim.api.nvim_get_current_win() == anchor
     or vim.w[api.nvim_get_current_win()].luanphan_view_anchor == anchor
   local selected = current.active
+  for _, pane in ipairs(current.items) do
+    if not pane.bufnr or not api.nvim_buf_is_valid(pane.bufnr) then
+      pane.term, pane.frame, pane.painted = nil, nil, nil
+      prepare_buffer(pane)
+    end
+  end
   if valid(anchor) then
     for _, win in ipairs(views.group_windows(anchor)) do
       local pane = panes[vim.b[api.nvim_win_get_buf(win)].luanphan_tmux_pane]
@@ -339,7 +367,6 @@ local function render_panel()
   local visible = {}
   for _, item in ipairs(displayed) do
     local pane, win = item.tab, item.win
-    bar:attach(pane.bufnr)
     visible[pane.id] = true
     vim.wo[win].winhighlight = "NormalFloat:Normal,WinBar:Normal,WinBarNC:Comment,TabLineFill:Normal"
     vim.wo[win].scrolloff = 0
@@ -393,18 +420,14 @@ local function apply_snapshot(lines, completed_selection)
         by_window[window_id] = group
         next_windows[#next_windows + 1] = group
       end
-      local pane = panes[pane_id]
-      if not pane or not api.nvim_buf_is_valid(pane.bufnr) then
-        pane = { id = pane_id }
-        prepare_buffer(pane)
-      end
+      local pane = panes[pane_id] or { id = pane_id }
       local width, height = tonumber(field[7]), tonumber(field[8])
       pane.changed_size = pane.width ~= width or pane.height ~= height
       pane.group, pane.label = group, field[9] ~= "" and field[9] or "shell"
       local cwd = field[11]
       if cwd and cwd ~= "" and cwd ~= pane.cwd then
         pane.cwd = cwd
-        require("luanphan.terminal_references").attach(pane.bufnr, cwd)
+        if pane.bufnr then require("luanphan.terminal_references").attach(pane.bufnr, cwd) end
       end
       pane.index, pane.width, pane.height = tonumber(field[6]), width, height
       group.items[#group.items + 1], listed[pane_id] = pane, pane
@@ -433,22 +456,30 @@ local function apply_snapshot(lines, completed_selection)
     M.hide()
   end
   for id, pane in pairs(old) do
-    if not listed[id] and api.nvim_buf_is_valid(pane.bufnr) then api.nvim_buf_delete(pane.bufnr, { force = true }) end
+    if not listed[id] and pane.bufnr and api.nvim_buf_is_valid(pane.bufnr) then
+      api.nvim_buf_delete(pane.bufnr, { force = true })
+    end
   end
 end
 
 refresh = function()
-  if not client then return end
+  if not client or refresh_queued then return end
   if refresh_pending then refresh_again = true return end
-  refresh_pending = true
-  local completed_selection = selection and selection.done and selection
-  client:request({ "list-panes", "-s", "-t", session.id, "-F", pane_format }, function(ok, lines)
-    refresh_pending = false
-    if ok then apply_snapshot(lines, completed_selection) end
-    if refresh_again then
-      refresh_again = false
-      refresh()
-    end
+  local connection = client
+  refresh_queued = true
+  vim.schedule(function()
+    if client ~= connection then return end
+    refresh_queued, refresh_pending = false, true
+    local completed_selection = selection and selection.done and selection
+    client:request({ "list-panes", "-s", "-t", session.id, "-F", pane_format }, function(ok, lines)
+      if client ~= connection then return end
+      refresh_pending = false
+      if ok then apply_snapshot(lines, completed_selection) end
+      if refresh_again then
+        refresh_again = false
+        refresh()
+      end
+    end)
   end)
 end
 
@@ -457,13 +488,14 @@ function M.hide(closing)
   local connection, win, old = client, anchor, panes
   client, session, anchor, current = nil, nil, nil, nil
   windows, panes = {}, {}
-  refresh_pending, refresh_again, client_size, focus_on_render, selection = nil, nil, nil, nil, nil
+  refresh_queued, refresh_pending, refresh_again = nil, nil, nil
+  client_size, focus_on_render, selection = nil, nil, nil
   bar.win, bar.anchor = nil, nil
   if connection then connection:detach() end
   if win then views.close_group(win, closing) end
   vim.schedule(function()
     for _, pane in pairs(old) do
-      if api.nvim_buf_is_valid(pane.bufnr) then api.nvim_buf_delete(pane.bufnr, { force = true }) end
+      if pane.bufnr and api.nvim_buf_is_valid(pane.bufnr) then api.nvim_buf_delete(pane.bufnr, { force = true }) end
     end
   end)
   return true
@@ -477,11 +509,15 @@ local topology_events = {
 open = function(target)
   require("luanphan.agents.main").hide()
   session = target
+  local initializing = true
   client = tmux.attach(target, {
     ready = function()
       previous_session = target.id
-      resize(geometry())
-      refresh()
+      local body = geometry()
+      resize(body, function()
+        initializing = false
+        refresh()
+      end)
     end,
     output = function(id, bytes)
       local pane = panes[id]
@@ -495,7 +531,7 @@ open = function(target)
     end,
     event = function(event, payload)
       if topology_events[event] then
-        refresh()
+        if not initializing then refresh() end
       elseif event == "pause" then
         local pane = panes[payload]
         if pane then pane.ready = false end

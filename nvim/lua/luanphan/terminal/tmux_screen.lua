@@ -67,7 +67,7 @@ function M.frame(pane, lines, flags)
   local left = math.min(viewport_start(col, width, previous and previous.left), math.max(0, source_width - width))
   local screen_start = math.max(0, #lines - source_height) + top
   local frame = {
-    rows = {}, top = top, left = left, width = width, height = height, alternate = flags[3] == "1",
+    rows = {}, source_rows = {}, top = top, left = left, width = width, height = height, alternate = flags[3] == "1",
     row = math.min(row - top, height - 1), col = math.min(col - left, width - 1),
     history = tonumber(flags[7]) or 0, generation = flags[10],
     modes = { flags[4], flags[5], flags[6] },
@@ -93,8 +93,12 @@ function M.frame(pane, lines, flags)
       reset = true
     end
   end
+  local same_columns = previous and previous.left == left and previous.width == width
   for index = 1, height do
-    local line = clip_row(lines[screen_start + index] or "", left, width)
+    local source = lines[screen_start + index] or ""
+    local line = same_columns and source == previous.source_rows[index] and previous.rows[index]
+      or clip_row(source, left, width)
+    frame.source_rows[index] = source
     frame.rows[index] = line
     if reset or line ~= previous.rows[index] then
       output[#output + 1] = paint_row(index - 1, line)
