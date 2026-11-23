@@ -305,18 +305,11 @@ function M.paste_clipboard_item(opts)
         vim.notify("Codex terminal is no longer available", vim.log.levels.ERROR)
         return
       end
-      local job = vim.b[bufnr].terminal_job_id
       if not reference then
         vim.notify("Tunnel returned an invalid clipboard item", vim.log.levels.ERROR)
         return
       end
-      if type(job) ~= "number" or job <= 0 then
-        vim.notify("Codex terminal is no longer available", vim.log.levels.ERROR)
-        return
-      end
-
-      local sent = pcall(vim.fn.chansend, job, reference)
-      if not sent then
+      if not require("luanphan.terminal.window").send(bufnr, reference) then
         vim.notify("Could not send the clipboard path to Codex", vim.log.levels.ERROR)
         return
       end
@@ -359,10 +352,7 @@ function M.setup()
     if M.paste_clipboard_item() then
       return
     end
-    local job = vim.b.terminal_job_id
-    if type(job) == "number" and job > 0 then
-      vim.fn.chansend(job, "\022")
-    end
+    require("luanphan.terminal.window").send(vim.api.nvim_get_current_buf(), "\022")
   end, { silent = true, desc = "Paste clipboard item" })
 end
 

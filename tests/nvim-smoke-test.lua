@@ -1,6 +1,20 @@
 local uv = vim.uv or vim.loop
 
 local tests = {}
+local terminal_io = require("luanphan.terminal.window")
+local agent_socket_dir = assert(uv.fs_mkdtemp("/tmp/nvim-agent-tmux-XXXXXX"))
+vim.env.LUANPHAN_AGENT_TMUX_SOCKET = agent_socket_dir .. "/main"
+
+local function agent_socket(script)
+  return agent_socket_dir .. "/" .. vim.fn.sha256(script):sub(1, 12)
+end
+
+local function cleanup_agent_servers()
+  for name in vim.fs.dir(agent_socket_dir) do
+    vim.system({ "tmux", "-S", agent_socket_dir .. "/" .. name, "kill-server" }):wait()
+  end
+  vim.fn.delete(agent_socket_dir, "rf")
+end
 local temp_root
 local cleanup_fixture_id = 0
 local project_scope_fixture_id = 0
@@ -82,9 +96,9 @@ local function write(path, lines)
 end
 
 local function child_nvim_luafile_command(cwd, script)
-  local env = ""
+  local env = "LUANPHAN_AGENT_TMUX_SOCKET=" .. vim.fn.shellescape(agent_socket(script)) .. " "
   if vim.env.XDG_CONFIG_HOME and vim.env.XDG_CONFIG_HOME ~= "" then
-    env = "XDG_CONFIG_HOME=" .. vim.fn.shellescape(vim.env.XDG_CONFIG_HOME) .. " "
+    env = env .. "XDG_CONFIG_HOME=" .. vim.fn.shellescape(vim.env.XDG_CONFIG_HOME) .. " "
   end
 
   local lua = table.concat({
@@ -1283,16 +1297,20 @@ local function assert_agent_float(win, label)
 end
 
 local function terminal_grid_size(bufnr)
-  local job = vim.b[bufnr].terminal_job_id
-  if type(job) ~= "number" or job <= 0 then
-    return nil, nil
+  local pane = vim.b[bufnr].luanphan_agent_tmux_pane
+  local tty
+  if pane then
+    local result = vim.system({ "tmux", "-S", vim.env.LUANPHAN_AGENT_TMUX_SOCKET,
+      "display-message", "-p", "-t", pane, "#{pane_tty}" }, { text = true }):wait()
+    tty = vim.trim(result.stdout or "")
+  else
+    local job = vim.b[bufnr].terminal_job_id
+    if type(job) ~= "number" or job <= 0 then return nil, nil end
+    local pid = vim.fn.jobpid(job)
+    local result = vim.system({ "ps", "-o", "tty=", "-p", tostring(pid) }, { text = true }):wait()
+    tty = vim.trim(result.stdout or "")
   end
-  local pid = vim.fn.jobpid(job)
-  local ps = vim.system({ "ps", "-o", "tty=", "-p", tostring(pid) }, { text = true }):wait()
-  local tty = vim.trim(ps.stdout or "")
-  if ps.code ~= 0 or tty == "" or tty == "?" then
-    return nil, nil
-  end
+  if tty == "" or tty == "?" then return nil, nil end
 
   local device = vim.startswith(tty, "/") and tty or ("/dev/" .. tty)
   local flag = vim.fn.has("macunix") == 1 and "-f" or "-F"
@@ -1327,10 +1345,7 @@ local function close_agent_terminals()
 
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].buftype == "terminal" and vim.b[buf].luanphan_persist_term then
-      local job = vim.b[buf].terminal_job_id
-      if type(job) == "number" and job > 0 then
-        pcall(vim.fn.jobstop, job)
-      end
+      pcall(terminal_io.stop, buf)
       pcall(vim.api.nvim_buf_delete, buf, { force = true })
     end
   end
@@ -3305,7 +3320,7 @@ local function test_workspace_folder_browser()
     "actions.select_default(prompt_bufnr)",
     "assert_true(vim.wait(3000, function() return realpath(vim.fn.getcwd()) == realpath(target) end, 20), 'absolute folder input did not switch workspaces')",
     "assert_true(not vim.api.nvim_win_is_valid(main) and not vim.api.nvim_win_is_valid(sidebar) and not vim.api.nvim_win_is_valid(other_tile), 'folder switch left an agent pane open')",
-    "for _, buf in ipairs({ first_tile, agent_buf }) do assert_true(vim.fn.jobwait({vim.b[buf].terminal_job_id}, 0)[1] == -1, 'folder switch stopped an agent session') end",
+    "for _, buf in ipairs({ first_tile, agent_buf }) do assert_true(require('luanphan.terminal.window').running(buf), 'folder switch stopped an agent session') end",
     "vim.g.luanphan_global_settings_path = global_settings",
     "vim.api.nvim_buf_delete(first_tile, { force = true })",
     "assert_true(vim.fn.exists(':FolderSwitch') == 2, 'FolderSwitch command is missing')",
@@ -4553,8 +4568,7 @@ local function test_agent_terminal_reference_restores_view(repo)
   assert_true(not vim.wo[terminal_win].wrap, "agent terminal enabled editor line wrapping")
   assert_true(vim.b[terminal_buf].matchparen_timeout == 0, "agent terminal enabled matchparen scans")
   assert_true(vim.b[terminal_buf].matchparen_insert_timeout == 0, "agent terminal enabled insert matchparen scans")
-  local job = vim.b[terminal_buf].terminal_job_id
-  vim.fn.chansend(job, "i=1; while [ $i -le 80 ]; do echo line-$i; i=$((i + 1)); done\n")
+  terminal_io.send(terminal_buf, "i=1; while [ $i -le 80 ]; do echo line-$i; i=$((i + 1)); done\n")
   wait_until("agent terminal scrollback", function()
     return vim.api.nvim_buf_line_count(terminal_buf) > 60
   end, 1000)
@@ -4809,8 +4823,21 @@ local function test_agent_sidebar_restore(repo, agent)
     "  assert(vim.wait(3000, function() return vim.b[buf].luanphan_agent_thread_id == id end), 'missing exact thread ID')",
     "end",
     "assert(#sessions.list() == 2, 'both same-directory threads should be saved')",
+    "local socket = vim.env.LUANPHAN_AGENT_TMUX_SOCKET",
+    "assert(vim.wait(3000, function()",
+    "  local listing = vim.system({'tmux', '-S', socket, 'list-panes', '-a', '-F', '#{@luanphan-agent}'}, { text = true }):wait()",
+    "  return listing.stdout:find(first, 1, true) and listing.stdout:find(second, 1, true)",
+    "end), 'tmux did not store both agent identities')",
     "os.exit(0)",
   })
+  run({
+    "agents.toggle()",
+    "assert(vim.b.luanphan_agent_thread_id == second, 'reattach did not select the most recent running thread')",
+    "assert(#require('luanphan.agents.sessions').instances(false) == 2, 'reattach lost a running pane')",
+    "assert(#vim.fn.readfile(root .. '/invocations') == 2, 'reattach relaunched an existing thread')",
+  })
+  assert_true(vim.system({ "tmux", "-S", agent_socket(script), "kill-server" }):wait().code == 0,
+    "could not stop the isolated agent server")
   run({
     "agents.toggle()",
     "local main = vim.api.nvim_get_current_win()",
@@ -4833,12 +4860,13 @@ local function test_agent_sidebar_restore(repo, agent)
     "end), 'missing agent title')",
     "assert(require('luanphan.view_container').tab_label(vim.api.nvim_get_current_buf()) == 'Example 000000000001', 'unexpected agent tab label')",
     "if agent == 'cursor' then",
-    "  local job = vim.b.terminal_job_id",
+    "  local send = require('luanphan.terminal.window').send",
+    "  local buf = vim.api.nvim_get_current_buf()",
     "  assert(vim.wait(3000, function() return vim.b.luanphan_agent_program_status == 'idle' end), 'Cursor has no startup status')",
-    "  vim.fn.chansend(job, 'submit\\n')",
+    "  send(buf, 'submit\\n')",
     "  assert(vim.wait(3000, function() return vim.b.luanphan_agent_program_status == 'working' end), 'Cursor has no working status')",
     "  assert(vim.b[second_buf].luanphan_agent_program_status == 'idle', 'another Cursor terminal was marked working')",
-    "  vim.fn.chansend(job, 'stop\\n')",
+    "  send(buf, 'stop\\n')",
     "  assert(vim.wait(3000, function() return vim.b.luanphan_agent_program_status == 'done' end), 'Cursor kept its working status')",
     "end",
     "local cwd = vim.uv.fs_realpath(vim.fn.getcwd())",
@@ -4865,6 +4893,7 @@ local function test_agent_sidebar_restore(repo, agent)
       "nvim", "--headless", "--embed", "--listen", socket, "-c", "luafile " .. vim.fn.fnameescape(script),
     }, {
       cwd = repo,
+      env = { LUANPHAN_AGENT_TMUX_SOCKET = agent_socket(script) },
       on_stdout = function() end,
     })
     assert_true(child > 0, "could not start embedded Neovim")
@@ -4894,8 +4923,10 @@ local function test_panel_shell_sessions(repo)
   })
   write(root .. "/settings.toml", { "[agent_float]", 'display_style = "tile"' })
   local script = root .. "/session.lua"
+  local terminal_socket = agent_socket(root .. "/floating")
   local setup = {
     "local root = " .. string.format("%q", root),
+    "local terminal_socket = " .. string.format("%q", terminal_socket),
     "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
     "vim.g.luanphan_recent_paths_file = root .. '/recent.json'",
     "vim.g.luanphan_codex_sessions_dir = root .. '/codex-state'",
@@ -4947,10 +4978,16 @@ for _, buf in ipairs({ agent, first, second }) do
 end
 assert(agents.send_selection('terminal') == false, 'shell was accepted as an agent prompt destination')
 local marker = 'PANEL_SHELL_OUTPUT'
-vim.fn.chansend(vim.b[first].terminal_job_id, "printf '\\n%s\\n' " .. marker .. "\n")
+local send = require('luanphan.terminal.window').send
+send(first,
+  "printf '\\n%s\\n' " .. marker .. "; seq 1 150 | sed 's/^/history-line-/'\n")
 assert(vim.wait(3000, function()
-  return vim.tbl_contains(vim.api.nvim_buf_get_lines(first, 0, -1, false), marker)
+  return vim.tbl_contains(vim.api.nvim_buf_get_lines(first, 0, -1, false), 'history-line-150')
 end, 20), 'plain shell could not execute a command')
+send(second, [[seq 1 60 | sed 's/^/primary-line-/'; printf '\033[?1049h\033[2J\033[H%s\n' alternate-view]] .. '\n')
+assert(vim.wait(3000, function()
+  return vim.tbl_contains(vim.api.nvim_buf_get_lines(second, 0, -1, false), 'alternate-view')
+end, 20), 'shell did not switch to its alternate screen')
 local ids = { vim.b[first].luanphan_agent_thread_id, vim.b[second].luanphan_agent_thread_id }
 assert(#sessions.list('terminal') == 2 and ids[1] ~= ids[2], 'shell slots were not saved independently')
 vim.fn.writefile(ids, root .. '/ids')
@@ -4970,12 +5007,48 @@ for _, id in ipairs(ids) do
   local item = assert(shells[id], 'restored shell lost its saved ID')
   assert(item.path == vim.fn.getcwd() and terminal.running(item.bufnr), 'restored shell has the wrong working directory')
   assert(vim.fn.bufwinid(item.bufnr) ~= -1, 'restored shell was missing from the tiled panel')
-  local lines = vim.api.nvim_buf_get_lines(item.bufnr, 0, -1, false)
-  assert(not table.concat(lines, '\n'):find('PANEL_SHELL_OUTPUT', 1, true), 'old shell output survived restart')
+  if id == ids[1] then
+    assert(vim.wait(4000, function()
+      local lines = vim.tbl_map(vim.trim, vim.api.nvim_buf_get_lines(item.bufnr, 0, -1, false))
+      return vim.tbl_contains(lines, 'PANEL_SHELL_OUTPUT') and vim.tbl_contains(lines, 'history-line-150')
+    end), 'reattaching lost shell scrollback')
+  else
+    local function has_line(text)
+      local lines = vim.tbl_map(vim.trim, vim.api.nvim_buf_get_lines(item.bufnr, 0, -1, false))
+      return vim.tbl_contains(lines, text)
+    end
+    assert(vim.wait(4000, function() return has_line('alternate-view') end), 'reattaching lost the alternate screen')
+    require('luanphan.terminal.window').send(item.bufnr, [[printf '\033[?1049l']] .. '\n')
+    assert(vim.wait(4000, function() return has_line('primary-line-1') and has_line('primary-line-60') end),
+      'reattaching while in the alternate screen lost primary scrollback')
+  end
 end
-vim.fn.chansend(vim.b[shells[ids[1]].bufnr].terminal_job_id, 'exit\n')
+require('luanphan.terminal.window').send(shells[ids[1]].bufnr, 'exit\n')
 assert(vim.wait(3000, function() return #sessions.list('terminal') == 1 end, 20),
   'exiting a shell did not remove its saved slot')
+
+vim.g.luanphan_floating_tmux_socket = terminal_socket
+vim.g.luanphan_floating_tmux_config = '/dev/null'
+local floating = require('luanphan.terminal.floating')
+floating.toggle()
+assert(vim.wait(3000, function() return vim.b.luanphan_tmux_pane ~= nil end), 'floating terminal did not attach')
+local function tmux(socket, ...)
+  local result = vim.system(vim.list_extend({ 'tmux', '-S', socket }, { ... }), { text = true }):wait()
+  assert(result.code == 0, result.stderr)
+  return vim.trim(result.stdout)
+end
+local terminal_pid = tmux(terminal_socket, 'list-panes', '-a', '-F', '#{pane_pid}')
+assert(terminal_pid:match('^%d+$'), 'agent processes appeared in the floating terminal server')
+agents.toggle()
+assert(vim.b.luanphan_agent_thread_id == agent_id, 'could not reopen the agent panel')
+tmux(vim.env.LUANPHAN_AGENT_TMUX_SOCKET, 'kill-server')
+assert(vim.wait(3000, function() return #sessions.instances(false) == 0 end), 'server loss left stale agent panes')
+assert(#sessions.list('codex') == 1 and #sessions.list('terminal') == 1, 'server loss removed active session records')
+assert(tmux(terminal_socket, 'list-panes', '-a', '-F', '#{pane_pid}') == terminal_pid, 'server loss affected the floating terminal')
+agents.toggle()
+assert(vim.wait(3000, function()
+  return #sessions.instances(false) == 2 and vim.b.luanphan_agent_thread_id == agent_id
+end), 'same editor could not recover the original agent and shell slots')
 ]=])
 end
 
@@ -5155,8 +5228,8 @@ local function test_agent_view_container(repo)
       local mark = vim.api.nvim_buf_get_extmark_by_id(sidebar_buf, ns, bufnr, { details = true })
       if mark[3] then return mark[3].virt_text[1][1], mark[3].virt_text_win_col end
     end
-    vim.fn.chansend(vim.b[codex_buf].terminal_job_id, "\27]7501;state=done:app=codex\27\\")
-    vim.fn.chansend(vim.b[second_codex_buf].terminal_job_id, "\27]7501;state=working:app=codex\27\\")
+    terminal_io.send(codex_buf, "\27]7501;state=done:app=codex\27\\")
+    terminal_io.send(second_codex_buf, "\27]7501;state=working:app=codex\27\\")
     wait_until("separate terminal status for sessions in the same folder", function()
       return vim.b[codex_buf].luanphan_agent_program_status == "done"
         and vim.b[second_codex_buf].luanphan_agent_program_status == "working"
@@ -5246,14 +5319,13 @@ local function test_agent_view_container(repo)
     winbar = rendered_winbar(reopened_win)
     assert_true(winbar:find("[cursor", 1, true) ~= nil, "reopened agent container did not reserve its tab bar")
 
-    vim.fn.chansend(vim.b[codex_buf].terminal_job_id, "\27]2;Background agent thread\7")
+    terminal_io.send(codex_buf, "\27]2;Background agent thread\7")
     wait_until("background agent title", function()
       return vim.b[codex_buf].term_title == "Background agent thread"
     end, 3000)
     assert_true(rendered_winbar(reopened_win):find("Background agent thread", 1, true), "hidden agent title was not updated")
-    local cursor_job = vim.b[cursor_buf].terminal_job_id
     for _, title in ipairs({ "Agent thread title", "Renamed agent thread" }) do
-      vim.fn.chansend(cursor_job, "\27]2;" .. title .. "\7")
+      terminal_io.send(cursor_buf, "\27]2;" .. title .. "\7")
       wait_until("agent terminal title", function()
         return vim.b[cursor_buf].term_title == title
       end, 3000)
@@ -5279,7 +5351,7 @@ local function test_agent_view_container(repo)
     end, 3000)
     assert_true(not vim.api.nvim_buf_is_valid(codex_buf), "closing the first agent tab kept its TUI")
 
-    vim.fn.jobstop(vim.b[second_codex_buf].terminal_job_id)
+    terminal_io.stop(second_codex_buf)
     wait_until("agent process exit focuses right tab", function()
       return visible_agent_window_count() == 1
         and vim.api.nvim_get_current_buf() == first_cursor_buf
@@ -5364,12 +5436,11 @@ local function test_agent_view_container(repo)
     wait_until("sidebar renders an idle dot", function()
       return status_icon(main, other_buf) == "·"
     end, 3000)
-    local first_cursor_job = vim.b[first_cursor_buf].terminal_job_id
-    vim.fn.chansend(first_cursor_job, "\27]7501;state=done\27\\")
+    terminal_io.send(first_cursor_buf, "\27]7501;state=done\27\\")
     wait_until("sidebar accepts terminal status from Cursor", function()
       return status_icon(main, first_cursor_buf) == "✓"
     end, 3000)
-    vim.fn.chansend(first_cursor_job, "\27]7501;state=clear\27\\")
+    terminal_io.send(first_cursor_buf, "\27]7501;state=clear\27\\")
     wait_until("sidebar clears the terminal status icon", function()
       return status_icon(main, first_cursor_buf) == nil
     end, 3000)
@@ -5379,7 +5450,7 @@ local function test_agent_view_container(repo)
       local icon, col = status_icon(main, other_buf)
       return icon == "✓" and col == sidebar_config.width - 4
     end, 3000)
-    vim.fn.chansend(vim.b[other_buf].terminal_job_id, "\27]7501;state=working:app=codex\27\\")
+    terminal_io.send(other_buf, "\27]7501;state=working:app=codex\27\\")
     local frame
     wait_until("sidebar uses terminal status ahead of the hook status", function()
       frame = status_icon(main, other_buf)
@@ -5389,7 +5460,7 @@ local function test_agent_view_container(repo)
       local next_frame = status_icon(main, other_buf)
       return next_frame and next_frame ~= frame
     end, 3000)
-    vim.fn.chansend(vim.b[other_buf].terminal_job_id, "\27]7501;state=done:app=codex\27\\")
+    terminal_io.send(other_buf, "\27]7501;state=done:app=codex\27\\")
     wait_until("spinner turns into a checkmark", function()
       return status_icon(main, other_buf) == "✓"
     end, 3000)
@@ -5496,7 +5567,7 @@ local function test_agent_view_container(repo)
     assert_true(vim.deep_equal(vim.api.nvim_win_get_config(main), main_config), "saving defaults did not restore the terminal size")
 
     local title = "Workspace switch thread"
-    vim.fn.chansend(vim.b[first_cursor_buf].terminal_job_id, "\27]2;" .. title .. "\7")
+    terminal_io.send(first_cursor_buf, "\27]2;" .. title .. "\7")
     local thread_row
     wait_until("sidebar thread title", function()
       local lines = vim.api.nvim_buf_get_lines(sidebar_buf, 0, -1, false)
@@ -5514,7 +5585,7 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_get_current_win() == main, "workspace switch replaced the agent float")
     assert_true(vim.api.nvim_get_current_buf() == first_cursor_buf, "sidebar opened the wrong thread")
     assert_true(vim.api.nvim_win_get_buf(sidebar) == sidebar_buf, "workspace switch replaced the sidebar")
-    assert_true(vim.fn.jobwait({ vim.b[other_buf].terminal_job_id }, 0)[1] == -1, "workspace switch stopped the previous terminal")
+    assert_true(terminal_io.running(other_buf), "workspace switch stopped the previous terminal")
     assert_true(rendered_winbar(main):find(title, 1, true), "workspace switch lost the top tabs")
     local function has_jump_number(number, label)
       local lines = vim.api.nvim_buf_get_lines(sidebar_buf, 0, -1, false)
@@ -5527,7 +5598,7 @@ local function test_agent_view_container(repo)
     assert_true(vim.api.nvim_win_get_buf(main) == other_buf, "sidebar Ctrl+o did not jump to the older agent")
     assert_true(has_jump_number(1, title), "sidebar did not number the newer session after a jump")
     local renamed = "Renamed thread 界界界界 with a long title"
-    vim.fn.chansend(vim.b[first_cursor_buf].terminal_job_id, "\27]2;" .. renamed .. "\7")
+    terminal_io.send(first_cursor_buf, "\27]2;" .. renamed .. "\7")
     wait_until("renamed sidebar thread keeps its jump number and fits", function()
       local line = vim.api.nvim_buf_get_lines(sidebar_buf, thread_row - 1, thread_row, false)[1]
       return vim.startswith(line, "  1 Renamed thread 界") and vim.endswith(line, "…")
@@ -5540,7 +5611,7 @@ local function test_agent_view_container(repo)
     assert_true(not pcall(vim.cmd, "buffer " .. first_cursor_buf), "sidebar accepted a different buffer")
     invoke_map("<C-o>")
     assert_true(vim.api.nvim_win_get_buf(main) == other_buf, "agent history did not return to the workspace with one session")
-    vim.fn.jobstop(vim.b[other_buf].terminal_job_id)
+    terminal_io.stop(other_buf)
     wait_until("last session exit selects the newer history entry", function()
       return not vim.api.nvim_buf_is_valid(other_buf) and vim.api.nvim_get_current_buf() == first_cursor_buf
     end, 3000)
@@ -5550,7 +5621,7 @@ local function test_agent_view_container(repo)
     wait_until("agent float hides when editor gains focus", function()
       return not vim.api.nvim_win_is_valid(main) and not vim.api.nvim_win_is_valid(sidebar)
     end, 3000)
-    assert_true(vim.fn.jobwait({ vim.b[first_cursor_buf].terminal_job_id }, 0)[1] == -1, "hiding the float stopped the agent")
+    assert_true(terminal_io.running(first_cursor_buf), "hiding the float stopped the agent")
 
     assert_true(agents.open("cursor", first_cursor_buf, { view_mode = true }), "could not reopen the agent float")
     main = vim.api.nvim_get_current_win()
@@ -5606,7 +5677,7 @@ local function test_agent_view_container(repo)
       invoke_map("<Tab>")
       assert_true(vim.api.nvim_get_current_buf() == buf, "Tab did not follow the inserted tile order")
     end
-    vim.fn.jobstop(vim.b[inserted].terminal_job_id)
+    terminal_io.stop(inserted)
     wait_until("inserted tile closed", function()
       return not vim.api.nvim_buf_is_valid(inserted) and visible_agent_window_count() == 4
     end, 3000)
@@ -5688,7 +5759,7 @@ local function test_agent_view_container(repo)
     invoke_map("<Tab>")
     assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[2]), "Tab reverted the tile order")
 
-    vim.fn.jobstop(vim.b[tile_buffers[4]].terminal_job_id)
+    terminal_io.stop(tile_buffers[4])
     wait_until("exited tile leaves a three-pane layout", function()
       return not vim.api.nvim_buf_is_valid(tile_buffers[4]) and visible_agent_window_count() == 3
         and tile_config(2).width == 62
@@ -5714,7 +5785,7 @@ local function test_agent_view_container(repo)
       "hiding the tiled panel left a pane or sidebar visible")
     assert_true(agents.open("cursor", tile_buffers[2], { view_mode = true }), "failed to reopen the tiled panel")
     assert_true(visible_agent_window_count() == 3, "reopening the panel did not restore all live panes")
-    vim.fn.jobstop(vim.b[tile_buffers[2]].terminal_job_id)
+    terminal_io.stop(tile_buffers[2])
     wait_until("focused tile exit", function()
       return not vim.api.nvim_buf_is_valid(tile_buffers[2]) and visible_agent_window_count() == 2
     end, 3000)
@@ -5727,7 +5798,7 @@ local function test_agent_view_container(repo)
       assert_true(tile_config(3).col == bounds[2][1], key .. " did not move the selected tile back to the second slot")
     end
     invoke_map("<C-l>")
-    vim.fn.jobstop(vim.b[tile_buffers[3]].terminal_job_id)
+    terminal_io.stop(tile_buffers[3])
     wait_until("remaining tile expands", function()
       return not vim.api.nvim_buf_is_valid(tile_buffers[3]) and visible_agent_window_count() == 1
     end, 3000)
@@ -5868,7 +5939,7 @@ vim.api.nvim_feedkeys(vim.keycode('<D-9>'), 'xt', false)
 assert(vim.api.nvim_get_current_buf() == home, 'out-of-range window shortcut changed focus')
 
 local home_path = vim.fn.getcwd()
-vim.fn.jobstop(vim.b[away_peer].terminal_job_id)
+require('luanphan.terminal.window').stop(away_peer)
 assert(vim.wait(3000, function() return not vim.api.nvim_buf_is_valid(away_peer) end, 20),
   'could not reduce the destination to one tile')
 
@@ -7641,7 +7712,7 @@ local function test_agent_terminal_lifecycle(repo)
     return visible_agent_window_count() == 1
   end, 1000)
   local exit_buf = vim.api.nvim_get_current_buf()
-  vim.fn.chansend(vim.b[exit_buf].terminal_job_id, "\004")
+  terminal_io.send(exit_buf, "\004")
   wait_until("agent terminal ctrl-d exit", function()
     return not vim.api.nvim_buf_is_valid(exit_buf) and visible_agent_window_count() == 0
   end, 3000)
@@ -9095,6 +9166,7 @@ if not setup_ok then
   if temp_root and uv.fs_stat(temp_root) then
     vim.fn.delete(temp_root, "rf")
   end
+  cleanup_agent_servers()
   io.stderr:write("FAIL setup\n" .. tostring(setup_err) .. "\n")
   vim.cmd("cquit")
 end
@@ -9127,6 +9199,8 @@ end
 if temp_root and uv.fs_stat(temp_root) then
   vim.fn.delete(temp_root, "rf")
 end
+
+cleanup_agent_servers()
 
 if #failed > 0 then
   io.stderr:write(table.concat(failed, "\n\n") .. "\n")

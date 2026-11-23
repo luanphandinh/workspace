@@ -2,17 +2,22 @@ local M = {}
 local Client = {}
 Client.__index = Client
 
-local function argv(args)
+local Server = {}
+Server.__index = Server
+
+function M.new(options)
+  return setmetatable({ options = options }, Server)
+end
+
+function Server:argv(args)
   local command = { "tmux" }
-  local socket = vim.g.luanphan_floating_tmux_socket
-  if not socket and vim.env.TMUX then
-    local inherited = vim.env.TMUX:match("^(.*),%d+,%d+$")
-    if inherited and vim.uv.fs_stat(inherited) then socket = inherited end
+  local options = self.options()
+  if options.socket and options.socket ~= "" then
+    vim.list_extend(command, { "-S", options.socket })
+  elseif options.name then
+    vim.list_extend(command, { "-L", options.name })
   end
-  if type(socket) == "string" and socket ~= "" then vim.list_extend(command, { "-S", socket }) end
-  if vim.g.luanphan_floating_tmux_config then
-    vim.list_extend(command, { "-f", vim.g.luanphan_floating_tmux_config })
-  end
+  if options.config then vim.list_extend(command, { "-f", options.config }) end
   return vim.list_extend(command, args)
 end
 
@@ -22,16 +27,16 @@ local function environment()
   return env
 end
 
-local function run(args)
-  return vim.system(argv(args), { text = true, clear_env = true, env = environment() }):wait(2000)
+function Server:run(args)
+  return vim.system(self:argv(args), { text = true, clear_env = true, env = environment() }):wait(2000)
 end
 
 local function quote(value)
   return '"' .. tostring(value):gsub('[\\"$]', '\\%0'):gsub("\n", "\\n"):gsub("\r", "\\r") .. '"'
 end
 
-function M.sessions()
-  local result = run({ "list-sessions", "-F", "#{session_id}\t#{session_attached}\t#{session_activity}\t#{session_name}" })
+function Server:sessions()
+  local result = self:run({ "list-sessions", "-F", "#{session_id}\t#{session_attached}\t#{session_activity}\t#{session_name}" })
   local sessions = {}
   for line in (result.stdout or ""):gmatch("[^\n]+") do
     local id, attached, activity, name = line:match("^(%$%d+)\t(%d+)\t(%d+)\t(.*)$")
@@ -46,18 +51,18 @@ function M.sessions()
   return sessions
 end
 
-function M.ensure_session(previous, width, height)
-  local sessions = M.sessions()
+function Server:ensure_session(previous, width, height)
+  local sessions = self:sessions()
   for _, session in ipairs(sessions) do
     if session.id == previous then return session end
   end
   if sessions[1] then return sessions[1] end
-  local result = run({
+  local result = self:run({
     "new-session", "-dA", "-s", "terminal", "-c", vim.fn.getcwd(),
     "-x", tostring(width), "-y", tostring(height),
   })
   -- Another client may have created the first session after list-sessions.
-  local session = M.sessions()[1]
+  local session = self:sessions()[1]
   if session then return session end
   vim.notify(vim.trim(result.stderr or "Could not create tmux session"), vim.log.levels.ERROR)
 end
@@ -136,11 +141,11 @@ function Client:detach()
   end
 end
 
-function M.attach(session, handlers)
+function Server:attach(session, handlers)
   local client = setmetatable({ queue = {}, handlers = handlers }, Client)
-  local flags = session.attached > 0 and "ignore-size,pause-after=5" or "pause-after=5"
+  local flags = handlers.flags or (session.attached > 0 and "ignore-size,pause-after=5" or "pause-after=5")
   local fragment = ""
-  local job = vim.fn.jobstart(argv({ "-C", "attach-session", "-f", flags, "-t", session.id }), {
+  local job = vim.fn.jobstart(self:argv({ "-C", "attach-session", "-f", flags, "-t", session.id }), {
     clear_env = true,
     env = environment(),
     on_stdout = function(_, data)

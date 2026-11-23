@@ -1284,7 +1284,12 @@ local function setup()
     return a.bufnr < b.bufnr
   end
 
+  local function agent_workspace(cwd, root)
+    return workspace_root_for_path(cwd) or root or vim.fs.root(vim.uv.fs_realpath(cwd) or cwd, ".git") or cwd
+  end
+
   local function list_agent_sessions(include_saved)
+    agents.restore_running()
     local instances = agent_sessions.instances(include_saved)
     local roots = {}
     for _, instance in ipairs(instances) do
@@ -1293,7 +1298,7 @@ local function setup()
       if not root then root = vim.fs.root(vim.uv.fs_realpath(cwd) or cwd, ".git") or cwd end
       roots[cwd] = root
       if instance.bufnr then instance.destination = root end
-      instance.workspace = workspace_root_for_path(cwd) or root
+      instance.workspace = agent_workspace(cwd, root)
     end
     return instances
   end
@@ -2174,6 +2179,7 @@ local function setup()
     move_project_selection = move_project_selection,
     list_active_agents = list_active_agents,
     list_agent_sessions = list_agent_sessions,
+    agent_workspace = agent_workspace,
     agent_switch_targets = agent_switch_targets,
     add_repository = add_repository,
     remove_repository = remove_repository,
@@ -2224,6 +2230,9 @@ local spec = {
   config = ensure_setup,
   list_agent_sessions = function(include_saved)
     return ensure_setup().list_agent_sessions(include_saved)
+  end,
+  agent_workspace = function(cwd)
+    return ensure_setup().agent_workspace(cwd)
   end,
   activate_agent = function(instance, windows, opts)
     return ensure_setup().activate_agent(instance, windows, opts)

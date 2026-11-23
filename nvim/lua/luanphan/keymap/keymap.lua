@@ -133,10 +133,7 @@ vim.keymap.set("t", "<C-l>", "<C-l>", { desc = "Send clear screen to terminal" }
 -- Keep <C-j>/<C-k> available to terminal programs for newline and line editing.
 vim.keymap.set("t", "<Esc>", "<C-\\><C-n>", { desc = "Exit terminal mode" })
 vim.keymap.set("t", "<C-]>", function()
-  local job = vim.b.terminal_job_id
-  if job then
-    vim.fn.chansend(job, "\x1b")
-  end
+  require("luanphan.terminal.window").send(vim.api.nvim_get_current_buf(), "\x1b")
 end, { desc = "Send Esc to terminal process" })
 
 -- Search

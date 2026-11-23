@@ -1,7 +1,14 @@
 local M = {}
 local api = vim.api
-local tmux = require("luanphan.terminal.tmux_client")
-local screen = require("luanphan.terminal.tmux_screen")
+local tmux = require("luanphan.view_container.tmux.client").new(function()
+  local socket = vim.g.luanphan_floating_tmux_socket
+  if not socket and vim.env.TMUX then
+    local inherited = vim.env.TMUX:match("^(.*),%d+,%d+$")
+    if inherited and vim.uv.fs_stat(inherited) then socket = inherited end
+  end
+  return { socket = socket, config = vim.g.luanphan_floating_tmux_config }
+end)
+local pty = require("luanphan.view_container.tmux.pane")
 local views = require("luanphan.view_container")
 local bars = require("luanphan.view_container.window_bar")
 local settings = require("luanphan.global_settings")
@@ -19,11 +26,6 @@ local pane_fields = {
   "pane_current_command", "window_name", "pane_current_path",
 }
 local pane_format = "#{" .. table.concat(pane_fields, "}\t#{") .. "}"
-local history_position = "#{?#{!=:#{history_added},},#{history_added},#{history_size}}"
-local cursor_format = "#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{cursor_flag}"
-  .. "\t#{keypad_cursor_flag}\t#{bracket_paste_flag}\t" .. history_position
-  .. "\t#{pane_width}\t#{pane_height}\t#{history_generation}"
-
 local refresh, render, open, paint
 
 local function valid(win)
@@ -130,54 +132,11 @@ local function new_tab()
 end
 
 local function pick_session()
-  local sessions = tmux.sessions()
+  local sessions = tmux:sessions()
   views.select("Tmux Sessions", sessions, function(choice)
     if session and session.id == choice.id then return end
     M.hide()
     open(choice)
-  end)
-end
-
-local function enter_input(pane, data)
-  -- tmux reports pane focus independently of Neovim's terminal input mode.
-  if pane.receiving or not client or data == "\27[I" or data == "\27[O" then return end
-  if data:find("\12", 1, true) then pane.follow_clear = true end
-  pane.input = (pane.input or "") .. data
-  if pane.input_pending then return end
-  pane.input_pending = true
-  local connection = client
-  vim.schedule(function()
-    local bytes = pane.input
-    pane.input, pane.input_pending = nil, nil
-    if client ~= connection or panes[pane.id] ~= pane then return end
-    for start = 1, #bytes, 512 do
-      local args = { "send-keys", "-H", "-t", pane.id }
-      for index = start, math.min(start + 511, #bytes) do
-        args[#args + 1] = ("%02x"):format(bytes:byte(index))
-      end
-      client:request(args)
-    end
-  end)
-end
-
-local function send_output(pane, bytes)
-  if not pane.term or not api.nvim_buf_is_valid(pane.bufnr) then return end
-  pane.receiving = true
-  api.nvim_chan_send(pane.term, bytes)
-  pane.receiving = false
-end
-
-local function live_topline(pane)
-  return math.max(1, api.nvim_buf_line_count(pane.bufnr) - pane.view_height + 1)
-end
-
-local function apply_view(pane, win, view)
-  api.nvim_win_call(win, function()
-    if view.topline then return vim.fn.winrestview(view) end
-    local top = live_topline(pane)
-    local line = math.min(api.nvim_buf_line_count(pane.bufnr), top + view.row)
-    local col = math.max(0, vim.fn.virtcol2col(win, line, view.col + 1) - 1)
-    vim.fn.winrestview({ topline = top, lnum = line, col = col, leftcol = 0 })
   end)
 end
 
@@ -190,7 +149,7 @@ local function restore_view(pane)
     if panes[pane.id] ~= pane or not pane.visible or not view then return end
     local win = vim.fn.bufwinid(pane.bufnr)
     if win == -1 then return end
-    apply_view(pane, win, view)
+    pty.apply_view(pane, win, view)
   end)
 end
 
@@ -205,27 +164,15 @@ local function queue_paint(pane)
   end, (in_input or pane.follow_clear) and 20 or 33)
 end
 
-local function capture_start(pane)
-  if not pane.painted then return "-1000" end
-  local frame = pane.frame
-  if not frame or frame.alternate then return "0" end
-  -- Include the rows that passed the tile's top since the last snapshot.
-  local offset = ("#{e|-:%d,%s}"):format(frame.history + frame.top, history_position)
-  return ("#{?#{m:-*,%s},%s,0}"):format(offset, offset)
-end
-
 paint = function(pane)
   if not pane.term or not pane.visible or pane.capturing or not client then return end
   local connection = client
   pane.capturing, pane.ready, pane.dirty = true, false, false
-  local capture = { "capture-pane", "-epN", "-t", pane.id, "-S", capture_start(pane) }
-  client:request_batch({ capture, { "display-message", "-p", "-t", pane.id, cursor_format } }, function(replies)
+  pty.capture(pane, function(lines, flags)
     if client ~= connection or panes[pane.id] ~= pane then return end
     pane.capturing = false
-    local content, cursor = unpack(replies)
-    if not content.ok or not cursor.ok or not pane.visible then return end
-    local flags = vim.split(cursor.lines[1] or "", "\t", { plain = true })
-    local frame, output = screen.frame(pane, content.lines, flags)
+    if not lines or not pane.visible then return end
+    local frame, output = pty.frame(pane, lines, flags)
     local in_input = api.nvim_get_current_buf() == pane.bufnr and api.nvim_get_mode().mode == "t"
     local restore_return = pane.returning and (output ~= "" or not pane.last_view)
     local saved_view = restore_return and pane.scrollback_view
@@ -238,7 +185,7 @@ paint = function(pane)
       -- Cursor-only frames can leave the terminal buffer text untouched.
       vim.defer_fn(function() restore_view(pane) end, 20)
     end
-    if output ~= "" then send_output(pane, output) end
+    if output ~= "" then pty.output(pane, output) end
     if pane.dirty then queue_paint(pane) end
   end)
 end
@@ -280,7 +227,7 @@ local function prepare_buffer(pane)
   bind_shortcuts(buf)
   local opts = { buffer = buf, silent = true, nowait = true }
   vim.keymap.set("t", "<C-h>", "<C-h>", opts)
-  vim.keymap.set("t", "<C-]>", function() enter_input(pane, "\27") end,
+  vim.keymap.set("t", "<C-]>", function() pty.input(pane, "\27") end,
     vim.tbl_extend("force", opts, { desc = "Send Escape to tmux pane" }))
   tiles:bind(buf)
   for _, direction in ipairs({ "h", "j", "k", "l" }) do
@@ -355,7 +302,7 @@ local function render_panel()
       if pane and pane.visible and not pane.pending_view then
         local view = api.nvim_win_call(win, vim.fn.winsaveview)
         pane.last_view = view
-        pane.scrollback_view = view.topline < live_topline(pane) and view or nil
+        pane.scrollback_view = view.topline < pty.live_topline(pane) and view or nil
       end
     end
   end
@@ -381,15 +328,15 @@ local function render_panel()
     local repaint = not pane.visible or pane.view_width ~= width or pane.view_height ~= height or pane.changed_size
     if not pane.visible and pane.painted then
       pane.returning = true
-      if pane.last_view then apply_view(pane, win, pane.last_view) end
+      if pane.last_view then pty.apply_view(pane, win, pane.last_view) end
     end
     pane.visible, pane.view_width, pane.view_height, pane.changed_size = true, width, height, nil
     pane.snapshot = pane.width ~= width or pane.height ~= height
     if not pane.term then
-      pane.term = api.nvim_open_term(pane.bufnr, {
-        force_crlf = false,
-        on_input = function(_, _, _, data) enter_input(pane, data) end,
-      })
+      pane.client = client
+      pty.open(pane, function(data)
+        if data:find("\12", 1, true) then pane.follow_clear = true end
+      end)
       api.nvim_buf_attach(pane.bufnr, false, { on_lines = function() restore_view(pane) end })
     end
     if repaint then paint(pane) end
@@ -465,8 +412,9 @@ local function apply_snapshot(lines, completed_selection)
     M.hide()
   end
   for id, pane in pairs(old) do
-    if not listed[id] and pane.bufnr and api.nvim_buf_is_valid(pane.bufnr) then
-      api.nvim_buf_delete(pane.bufnr, { force = true })
+    if not listed[id] then
+      pane.client = nil
+      if pane.bufnr and api.nvim_buf_is_valid(pane.bufnr) then api.nvim_buf_delete(pane.bufnr, { force = true }) end
     end
   end
 end
@@ -519,7 +467,7 @@ open = function(target)
   require("luanphan.agents.main").hide()
   session = target
   local initializing = true
-  client = tmux.attach(target, {
+  client = tmux:attach(target, {
     ready = function()
       previous_session = target.id
       local body = geometry()
@@ -535,7 +483,7 @@ open = function(target)
         queue_paint(pane)
       elseif pane.ready then
         pane.frame = nil
-        send_output(pane, bytes)
+        pty.output(pane, bytes)
       end
     end,
     event = function(event, payload)
@@ -559,7 +507,7 @@ end
 function M.toggle()
   if M.hide() then return end
   local body = geometry()
-  local target = tmux.ensure_session(previous_session, body.width, body.height - 1)
+  local target = tmux:ensure_session(previous_session, body.width, body.height - 1)
   if target then open(target) end
 end
 

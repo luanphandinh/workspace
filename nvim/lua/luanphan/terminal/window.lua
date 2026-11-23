@@ -1,5 +1,38 @@
 local M = {}
 
+local function agent_backend(buf)
+  if vim.b[buf].luanphan_agent_tmux_pane then
+    return require("luanphan.agents.tmux")
+  end
+end
+
+function M.running(buf)
+  if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) or vim.bo[buf].buftype ~= "terminal" then return false end
+  local backend = agent_backend(buf)
+  if backend then return backend.running(buf) end
+  local job = vim.b[buf].terminal_job_id
+  if type(job) ~= "number" or job <= 0 then return false end
+  local ok, status = pcall(vim.fn.jobwait, { job }, 0)
+  return ok and status[1] == -1
+end
+
+function M.send(buf, bytes)
+  local backend = agent_backend(buf)
+  if backend then return backend.send(buf, bytes) end
+  local job = vim.b[buf].terminal_job_id
+  if type(job) ~= "number" or job <= 0 then return false end
+  local ok, result = pcall(vim.fn.chansend, job, bytes)
+  return ok and result > 0
+end
+
+function M.stop(buf)
+  local backend = agent_backend(buf)
+  if backend then return backend.stop(buf) end
+  local job = vim.b[buf].terminal_job_id
+  if type(job) ~= "number" or job <= 0 then return false end
+  return vim.fn.jobstop(job) == 1
+end
+
 function M.save_view(win, buf)
   if not win or not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= buf then return end
   local ok, view = pcall(vim.api.nvim_win_call, win, vim.fn.winsaveview)
@@ -18,12 +51,14 @@ end
 
 function M.sync_grid(win, buf)
   if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= buf then return end
-  local job = vim.b[buf].terminal_job_id
-  if type(job) ~= "number" or job <= 0 then return end
   local width = vim.api.nvim_win_get_width(win)
   local height = vim.api.nvim_win_get_height(win)
   if vim.wo[win].winbar ~= "" then height = height - 1 end
   width, height = math.max(1, width), math.max(1, height)
+  local backend = agent_backend(buf)
+  if backend then return backend.resize(buf, width, height) end
+  local job = vim.b[buf].terminal_job_id
+  if type(job) ~= "number" or job <= 0 then return end
   local previous = vim.b[buf].luanphan_terminal_grid
   if type(previous) == "table" and previous.width == width and previous.height == height then return end
   if pcall(vim.fn.jobresize, job, width, height) then

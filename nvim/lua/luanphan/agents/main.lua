@@ -2,6 +2,7 @@ local M = {}
 local jumplist = require("luanphan.view_container.jumplist").create()
 M.history = jumplist
 local terminal_agent = require("luanphan.agents.terminal-chat")
+local backend = require("luanphan.agents.tmux")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
 local view_container = require("luanphan.view_container")
@@ -234,6 +235,19 @@ local function resume_options(session)
   }
 end
 
+local function remember_pane(bufnr)
+  local buf = vim.b[bufnr]
+  local name = buf.luanphan_agent_name
+  backend.update(bufnr, {
+    thread_id = buf.luanphan_agent_thread_id,
+    title = buf.term_title,
+    label = view_container.tab_label(bufnr, name),
+    status = buf.luanphan_agent_program_status,
+    used = buf.luanphan_agent_last_used,
+    used_at = buf.luanphan_agent_saved_use,
+  })
+end
+
 local function restore_panel_sessions(cwd)
   if restored_cwds[cwd] then return end
   restored_cwds[cwd] = true
@@ -315,9 +329,11 @@ local function get_agent(name)
       local floating = package.loaded["luanphan.terminal.floating"]
       if floating then floating.hide() end
       jumplist.record(bufnr)
+      backend.focus(bufnr)
+      local seconds, microseconds = vim.uv.gettimeofday()
+      vim.b[bufnr].luanphan_agent_saved_use = seconds + microseconds / 1000000
+      remember_pane(bufnr)
       if sessions.supported(name) then
-        local seconds, microseconds = vim.uv.gettimeofday()
-        vim.b[bufnr].luanphan_agent_saved_use = seconds + microseconds / 1000000
         sessions.save(bufnr)
       end
       restore_panel_sessions(cwd)
@@ -327,11 +343,13 @@ local function get_agent(name)
     end,
     on_close = function(bufnr, cwd)
       local id = sessions.supported(name) and vim.b[bufnr].luanphan_agent_thread_id
+      local lost = vim.b[bufnr].luanphan_agent_backend_lost
+      if lost then restored_cwds[cwd] = nil end
       local win = vim.fn.bufwinid(bufnr)
       local reflow = win ~= -1 and win ~= vim.api.nvim_get_current_win() and vim.w[win].luanphan_view_anchor
       agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
       vim.schedule(function()
-        if id and type(vim.v.exiting) ~= "number" then
+        if id and not lost and type(vim.v.exiting) ~= "number" then
           sessions.forget_buffer(bufnr, name, id)
         end
         if reflow and vim.api.nvim_win_is_valid(reflow) then M.refresh_tabs(reflow) end
@@ -369,7 +387,38 @@ setup_agent = function(name)
   return api
 end
 
+function M.restore_running()
+  local running = {}
+  backend.restore(function(record)
+    local data = record.data
+    if agent_defs[data.agent] and vim.fn.isdirectory(data.cwd) == 1 then
+      running[#running + 1] = record
+    end
+  end)
+  if #running == 0 then return end
+  local saved = {}
+  for _, session in ipairs(sessions.list()) do
+    saved[sessions.key(session)] = session.last_used
+  end
+  for _, record in ipairs(running) do
+    local data = record.data
+    data.used_at = math.max(data.used_at or 0, data.thread_id and saved[sessions.key(data)] or 0)
+  end
+  table.sort(running, function(a, b)
+    if a.data.used_at ~= b.data.used_at then return a.data.used_at < b.data.used_at end
+    return (a.data.used or 0) < (b.data.used or 0)
+  end)
+  for _, record in ipairs(running) do
+    if record.data.used_at > 0 or (record.data.used or 0) > 0 then
+      record.data.used = (vim.g.luanphan_agent_use_sequence or 0) + 1
+      vim.g.luanphan_agent_use_sequence = record.data.used
+    end
+    setup_agent(record.data.agent).adopt(record)
+  end
+end
+
 function M.focus(name, bufnr, opts)
+  M.restore_running()
   if not agent_defs[name] then
     return false
   end
@@ -382,6 +431,7 @@ function M.focus(name, bufnr, opts)
 end
 
 function M.open(name, bufnr, opts)
+  M.restore_running()
   if not agent_defs[name] then
     return false
   end
@@ -401,6 +451,7 @@ function M.open(name, bufnr, opts)
 end
 
 function M.new(name, opts)
+  M.restore_running()
   if not agent_defs[name] then
     return false
   end
@@ -430,6 +481,12 @@ end
 
 function M.resume(session, opts)
   if not sessions.supported(session.agent) or not sessions.valid_id(session.thread_id) then return false end
+  M.restore_running()
+  for _, buf in ipairs(agent_buffers(session.agent, session.path)) do
+    if vim.b[buf].luanphan_agent_thread_id == session.thread_id then
+      return M.open(session.agent, buf, opts)
+    end
+  end
   return M.new(session.agent, vim.tbl_extend("force", opts or {}, resume_options(session)))
 end
 
@@ -449,6 +506,7 @@ end
 function M.toggle()
   require("luanphan.recent_paths").touch(vim.fn.getcwd())
   if M.hide() then return end
+  M.restore_running()
   local active = most_recent_tab(vim.fn.getcwd())
   local default = M.default_agent()
   if not active then
@@ -462,7 +520,10 @@ local function restore_on_first_ui()
   if vim.g.luanphan_agent_startup_restored or vim.v.vim_did_enter == 0 or #vim.api.nvim_list_uis() == 0 then return end
   vim.g.luanphan_agent_startup_restored = true
   local cwd = vim.fn.getcwd()
-  if visible_agent() or most_recent_tab(cwd) then return end
+  M.restore_running()
+  if visible_agent() then return end
+  local active = most_recent_tab(cwd)
+  if active then return M.open(active.agent, active.bufnr, { view_mode = true }) end
   local saved = sessions.latest(cwd)
   if saved then M.resume(saved, { view_mode = true }) end
 end
@@ -474,13 +535,19 @@ local function receive_terminal_event(args)
   local sequence = args.data and args.data.sequence
   if not name or not sequence then return end
   local osc_status = status.from_osc(sequence)
-  if osc_status then status.update(bufnr, osc_status) end
+  if osc_status then
+    status.update(bufnr, osc_status)
+    vim.schedule(function()
+      if vim.api.nvim_buf_is_valid(bufnr) then remember_pane(bufnr) end
+    end)
+  end
   local title = sequence:match("^\27%][02];(.*)$")
   -- Decoders defer persistence and redraws until the terminal callback has returned.
   local function emit(event)
     if not vim.api.nvim_buf_is_valid(bufnr) or vim.b[bufnr].luanphan_agent_name ~= name then return end
     status.update(bufnr, event.status)
     local changed_id = sessions.update(bufnr, event)
+    remember_pane(bufnr)
     if changed_id then
       require("luanphan.agents.window_bar").refresh(true)
     elseif event.refresh_title then

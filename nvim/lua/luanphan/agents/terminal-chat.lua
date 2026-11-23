@@ -9,7 +9,9 @@
 
 local M = {}
 local view_container = require("luanphan.view_container")
-local sync_terminal_grid = require("luanphan.terminal.window").sync_grid
+local terminal_window = require("luanphan.terminal.window")
+local backend = require("luanphan.agents.tmux")
+local sync_terminal_grid = terminal_window.sync_grid
 local preserve_windows = false
 local pending_tile_close = {}
 
@@ -26,17 +28,7 @@ function M.with_preserved_windows(callback)
   return result
 end
 
-function M.running(bufnr)
-  if type(bufnr) ~= "number" or not vim.api.nvim_buf_is_valid(bufnr) or vim.bo[bufnr].buftype ~= "terminal" then
-    return false
-  end
-  local job = vim.b[bufnr].terminal_job_id
-  if type(job) ~= "number" or job <= 0 then
-    return false
-  end
-  local ok, status = pcall(vim.fn.jobwait, { job }, 0)
-  return ok and status[1] == -1
-end
+M.running = terminal_window.running
 
 local BASE_DEFAULTS = {
   cmd = "agent",
@@ -198,7 +190,7 @@ local function merge(dst, src)
   return dst
 end
 
-local function argv_for_termopen(opts)
+local function command_for_agent(opts)
   local cmd = config.cmd
   if type(cmd) == "function" then cmd = cmd() end
   local args = (opts and opts.args) or config.args or {}
@@ -422,14 +414,7 @@ local function prepare_terminal_window(win)
 end
 
 local function term_buffer_alive(bufnr)
-  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
-    return false
-  end
-  if vim.bo[bufnr].buftype ~= "terminal" then
-    return false
-  end
-  local ok, job = pcall(vim.fn.getbufvar, bufnr, "terminal_job_id")
-  return ok and valid_job_id(job)
+  return M.running(bufnr)
 end
 
 local function layout_float(win)
@@ -528,45 +513,59 @@ local function quit_action(buf)
   end
 end
 
+local function terminal_closed(buf)
+  if vim.b[buf].luanphan_agent_quitting then return end
+  local win = win_for_buf(buf)
+  local tile = win and vim.w[win].luanphan_view_anchor
+  local action = win and (not tile or win == vim.api.nvim_get_current_win()) and quit_action(buf)
+  -- Let the closing tile select its neighbor before any pending resize reflows the panel.
+  if action and tile then pending_tile_close[tile] = true end
+  clear_bufnr_for_buf(buf)
+  vim.schedule(function()
+    if action and tile then pending_tile_close[tile] = nil end
+    if action and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
+      pcall(action)
+    end
+    if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
+      if tile and win ~= tile then
+        pcall(vim.api.nvim_win_close, win, true)
+      else
+        pcall(M.close_window, win)
+      end
+    end
+    if vim.api.nvim_buf_is_valid(buf) then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end)
+end
+
 local function attach_term_close(buf)
+  if backend.on_exit(buf, function() terminal_closed(buf) end) then return end
   local ag = vim.api.nvim_create_augroup(profile.augroup_prefix .. "TermClose_" .. buf, { clear = true })
   vim.api.nvim_create_autocmd("TermClose", {
     group = ag,
     buffer = buf,
     once = true,
-    callback = function()
-      if vim.b[buf].luanphan_agent_quitting then return end
-      local win = win_for_buf(buf)
-      local tile = win and vim.w[win].luanphan_view_anchor
-      local action = win and (not tile or win == vim.api.nvim_get_current_win()) and quit_action(buf)
-      -- Let the closing tile select its neighbor before any pending resize reflows the panel.
-      if action and tile then pending_tile_close[tile] = true end
-      clear_bufnr_for_buf(buf)
-      vim.schedule(function()
-        if action and tile then pending_tile_close[tile] = nil end
-        if action and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
-          pcall(action)
-        end
-        if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
-          if tile and win ~= tile then
-            pcall(vim.api.nvim_win_close, win, true)
-          else
-            pcall(M.close_window, win)
-          end
-        end
-        if vim.api.nvim_buf_is_valid(buf) then
-          pcall(vim.api.nvim_buf_delete, buf, { force = true })
-        end
-      end)
-    end,
+    callback = function() terminal_closed(buf) end,
   })
 end
 
 local function attach_quit_detach(buf)
-  if not config.detach_on_quit then
-    return
-  end
+  local managed = vim.b[buf].luanphan_agent_tmux_pane
+  if not managed and not config.detach_on_quit then return end
   local ag = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Quit_" .. buf, { clear = true })
+  if managed then
+    vim.api.nvim_create_autocmd("BufWipeout", {
+      group = ag,
+      buffer = buf,
+      once = true,
+      callback = function()
+        if type(vim.v.exiting) == "number" or not backend.running(buf) then return end
+        clear_bufnr_for_buf(buf)
+        vim.schedule(function() backend.stop(buf) end)
+      end,
+    })
+  end
   if profile.on_quit then
     vim.api.nvim_create_autocmd("CmdlineLeave", {
       group = ag,
@@ -575,12 +574,11 @@ local function attach_quit_detach(buf)
         if vim.fn.getcmdtype() ~= ":" or vim.v.event.abort then return end
         local command = vim.trim(vim.fn.getcmdline()):gsub("!$", "")
         if command == "" or not vim.startswith("quit", command) then return end
-        local job = vim.b[buf].terminal_job_id
-        if not valid_job_id(job) then return end
+        if not M.running(buf) then return end
         -- Let TermClose choose a replacement before the window is closed.
         vim.cmd("let v:event.abort = v:true")
         vim.schedule(function()
-          pcall(vim.fn.jobstop, job)
+          terminal_window.stop(buf)
         end)
       end,
     })
@@ -590,6 +588,15 @@ local function attach_quit_detach(buf)
     buffer = buf,
     once = true,
     callback = function()
+      if managed then
+        local action = quit_action(buf)
+        vim.schedule(function()
+          if type(vim.v.exiting) == "number" or not M.running(buf) then return end
+          terminal_window.stop(buf)
+          if action then pcall(action) end
+        end)
+        return
+      end
       vim.b[buf].luanphan_agent_quitting = true
       local action = quit_action(buf)
       local ok, job = pcall(vim.fn.getbufvar, buf, "terminal_job_id")
@@ -653,30 +660,41 @@ local function restore_agent_bufnr()
   end
 end
 
-local function start_terminal(buf, cwd, opts)
-  local command = { "env", "-u", "TMUX", "-u", "TMUX_PANE" }
-  if vim.env.TERM_PROGRAM == "tmux" then
-    vim.list_extend(command, { "-u", "TERM_PROGRAM", "-u", "TERM_PROGRAM_VERSION" })
-  end
-  local env
-  if vim.o.termguicolors then
-    vim.list_extend(command, { "-u", "NO_COLOR" })
-    env = { COLORTERM = "truecolor" }
-  end
-  vim.fn.termopen(vim.list_extend(command, argv_for_termopen(opts)), { cwd = cwd, env = env })
+local function register_terminal(buf, cwd, initial_status)
   configure_terminal_buffer(buf)
   apply_agent_scrollback(buf)
   set_agent_bufnr(buf, cwd)
-  local thread_id = opts and opts.thread_id
-  if not thread_id and profile.new_session_id then thread_id = profile.new_session_id() end
-  if thread_id then
-    vim.b[buf].luanphan_agent_thread_id = thread_id
-    vim.b[buf].luanphan_agent_saved_label = opts and opts.agent_label
-  end
   attach_term_close(buf)
   attach_quit_detach(buf)
   set_float_navigation_keymaps(buf)
-  attach_status_tracking(buf, cwd, "idle")
+  attach_status_tracking(buf, cwd, initial_status)
+end
+
+local function start_terminal(buf, cwd, opts)
+  local thread_id = opts and opts.thread_id
+  if not thread_id and profile.new_session_id then thread_id = profile.new_session_id() end
+  local label = opts and opts.agent_label
+  vim.b[buf].luanphan_agent_thread_id = thread_id
+  vim.b[buf].luanphan_agent_saved_label = label
+  local geometry = get_float_geometry()
+  local win = win_for_buf(buf)
+  local width = win and vim.api.nvim_win_get_width(win) or geometry.width
+  local height = win and vim.api.nvim_win_get_height(win) or geometry.height
+  local data = {
+    cwd = cwd,
+    workspace = require("luanphan.plugins.worktree").agent_workspace(cwd),
+    agent = profile.status_name or profile.notify_prefix,
+    thread_id = thread_id,
+    label = label or profile.status_name or profile.notify_prefix,
+  }
+  local ok, err = backend.launch(buf, command_for_agent(opts), data, width, math.max(1, height - 1))
+  if not ok then
+    nx("could not launch tmux pane: " .. (err or "attach failed"), vim.log.levels.ERROR)
+    vim.api.nvim_buf_delete(buf, { force = true })
+    return false
+  end
+  register_terminal(buf, cwd, "idle")
+  return true
 end
 
 local function open_terminal(opts, on_start)
@@ -695,7 +713,7 @@ local function open_terminal(opts, on_start)
   configure_terminal_window(win)
   save_float_geometry(win)
   local cwd = cwd_key()
-  start_terminal(buf, cwd, opts)
+  if not start_terminal(buf, cwd, opts) then return end
   if on_start then on_start(buf) end
   resume_terminal_view(win, buf, opts)
   return buf
@@ -750,7 +768,23 @@ end
 
 function API.start_hidden(cwd, opts)
   local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_call(buf, function() start_terminal(buf, cwd, opts) end)
+  return start_terminal(buf, cwd, opts) and buf
+end
+
+function API.adopt(record)
+  local data = record.data
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.b[buf].luanphan_agent_thread_id = data.thread_id
+  vim.b[buf].luanphan_agent_saved_label = data.label
+  vim.b[buf].luanphan_agent_program_status = data.status
+  vim.b[buf].luanphan_agent_last_used = data.used
+  vim.b[buf].luanphan_agent_saved_use = data.used_at
+  if not backend.adopt(buf, record) then
+    vim.api.nvim_buf_delete(buf, { force = true })
+    return
+  end
+  register_terminal(buf, data.cwd)
+  return buf
 end
 
 --- Focus an agent terminal, showing its buffer when hidden.
@@ -789,14 +823,6 @@ function API.prepare_tile(win, opened)
     end
   end
   sync_terminal_grid(win, buf)
-end
-
-local function get_job_id(bufnr)
-  local ok, job = pcall(vim.fn.getbufvar, bufnr, "terminal_job_id")
-  if not ok or not valid_job_id(job) then
-    return nil
-  end
-  return job
 end
 
 local function format_selection_payload(bufnr, lines, line_start, line_end)
@@ -898,22 +924,8 @@ function API.send_selection(target_bufnr, opts)
       show_terminal(cur, opts)
     end
 
-    local job = get_job_id(cur)
-    if not job and attempt < 3 then
-      vim.defer_fn(function()
-        deliver(attempt + 1)
-      end, config.defer_send_ms)
-      return
-    end
-    if not job then
-      nx("no terminal job", vim.log.levels.ERROR)
-      return
-    end
-
-    local ok, err = pcall(vim.fn.chansend, job, "\27[200~" .. payload .. "\27[201~")
-    if not ok then
-      nx("send failed: " .. tostring(err), vim.log.levels.ERROR)
-      clear_bufnr_for_buf(cur)
+    if not terminal_window.send(cur, "\27[200~" .. payload .. "\27[201~") then
+      nx("could not send to the terminal", vim.log.levels.ERROR)
       return
     end
 
