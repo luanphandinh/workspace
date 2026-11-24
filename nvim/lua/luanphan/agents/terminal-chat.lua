@@ -478,6 +478,7 @@ end
 local function set_float_navigation_keymaps(bufnr)
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
   local opts = { buffer = bufnr, silent = true, nowait = true }
+  vim.keymap.set("t", "<C-l>", "<Nop>", opts)
   local function navigate(direction)
     local win = vim.api.nvim_get_current_win()
     if vim.api.nvim_win_get_buf(win) ~= bufnr then return end

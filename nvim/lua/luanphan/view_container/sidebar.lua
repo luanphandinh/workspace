@@ -2,6 +2,19 @@ local M = {}
 local api = vim.api
 local ns = api.nvim_create_namespace("LuanphanWindowBar")
 local status_ns = api.nvim_create_namespace("LuanphanWindowBarStatus")
+local window_title = "LuanphanWindowBarTitle"
+
+local function set_title_highlight()
+  local directory = api.nvim_get_hl(0, { name = "Directory", link = false })
+  directory.bold = true
+  api.nvim_set_hl(0, window_title, directory)
+end
+
+set_title_highlight()
+api.nvim_create_autocmd("ColorScheme", {
+  group = api.nvim_create_augroup("LuanphanWindowBarTitle", { clear = true }),
+  callback = set_title_highlight,
+})
 
 local function fit(text, width)
   if width < 1 then return "" end
@@ -44,8 +57,8 @@ function M.render(bar, groups, active, offsets)
   local number = " %" .. number_width .. "s "
   for index, group in ipairs(groups) do
     local folded = bar.folded[group.id]
-    local prefix = folded and "▸ " or " "
-    lines[#lines + 1] = prefix .. fit(group.title, width - vim.fn.strdisplaywidth(prefix))
+    local prefix = (folded and "▸ " or " ") .. ("[%d] "):format(index)
+    lines[#lines + 1] = fit(prefix .. group.title, width)
     rows[#rows + 1] = { group = group, groups = groups, index = index }
     for item_index, item in ipairs(group.items) do
       if folded and item.bufnr and item.bufnr == active then selection = #rows end
@@ -74,7 +87,12 @@ function M.render(bar, groups, active, offsets)
   api.nvim_buf_clear_namespace(buf, status_ns, 0, -1)
   for index, row in ipairs(rows) do
     if not row.item then
-      api.nvim_buf_set_extmark(buf, ns, index - 1, 0, { line_hl_group = "Directory" })
+      local heading = { line_hl_group = window_title }
+      if row.index > 1 then
+        heading.virt_lines = { { { " " } } }
+        heading.virt_lines_above = true
+      end
+      api.nvim_buf_set_extmark(buf, ns, index - 1, 0, heading)
     else
       api.nvim_buf_set_extmark(buf, ns, index - 1, 0, { end_col = row.prefix_width, hl_group = "Comment" })
       if row.item.icon and row.icon_col >= row.prefix_width then

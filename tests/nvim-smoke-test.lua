@@ -4987,6 +4987,11 @@ assert(vim.wait(3000, function()
     'pty=xterm-256color/truecolor/unset/unset/unset/unset')
 end), 'the native agent inherited the GUI launcher terminal environment')
 assert(vim.env.NO_COLOR == '1' and vim.env.TMUX == '/example/socket,1,0', 'starting an agent changed the editor environment')
+vim.defer_fn(function() api.nvim_input('CTRL_L_PROBE<C-l>_KEPT<CR><Esc>') end, 20)
+api.nvim_feedkeys('i', 'xt!', false)
+assert(vim.wait(3000, function()
+  return vim.tbl_contains(api.nvim_buf_get_lines(agent, 0, -1, false), 'CTRL_L_PROBE_KEPT')
+end), 'Ctrl+L reached the agent in terminal input mode')
 press('<leader>ne')
 local editor = api.nvim_get_current_win()
 assert(editor ~= main_win and api.nvim_get_current_buf() == main_buf, 'editor tile did not share the main buffer')
@@ -5599,8 +5604,13 @@ local function test_agent_view_container(repo)
     local function focus_sidebar_row(line)
       vim.api.nvim_win_set_cursor(sidebar, { line, 0 })
     end
+    local function group_row(lines, title)
+      for index, line in ipairs(lines) do
+        if line:match("^ %[%d+%] (.*)$") == title then return index end
+      end
+    end
     local original_rows = read_sidebar()
-    local example_row = vim.fn.index(original_rows, " example-agent") + 1
+    local example_row = assert(group_row(original_rows, "example-agent"), "sidebar fixture missing its workspace")
     local example_session = original_rows[example_row + 1]
     assert_true(example_row > 0 and example_session and example_session:match("codex$"), "sidebar fixture missing its session")
     focus_sidebar_row(example_row + 1)
@@ -5610,13 +5620,13 @@ local function test_agent_view_container(repo)
     invoke_map("h")
     local folded_rows = vim.deepcopy(original_rows)
     table.remove(folded_rows, example_row + 1)
-    folded_rows[example_row] = "▸ example-agent"
+    folded_rows[example_row] = "▸" .. original_rows[example_row]
     assert_true(vim.deep_equal(read_sidebar(), folded_rows), "fold did not hide just the selected workspace's sessions")
     assert_true(vim.api.nvim_win_get_cursor(sidebar)[1] == example_row, "fold did not focus the workspace header")
     invoke_map("l")
     assert_true(vim.deep_equal(read_sidebar(), original_rows), "unfold did not restore the workspace's sessions")
 
-    local repo_row = vim.fn.index(original_rows, " " .. vim.fn.fnamemodify(repo, ":t")) + 1
+    local repo_row = assert(group_row(original_rows, vim.fn.fnamemodify(repo, ":t")))
     assert_true(repo_row > 0, "sidebar fixture missing repository workspace")
     focus_sidebar_row(repo_row + 1)
     invoke_map("<C-S-j>")
@@ -5631,10 +5641,13 @@ local function test_agent_view_container(repo)
     local second_workspace = math.max(example_row, repo_row)
     local swapped_groups = vim.list_extend(vim.list_slice(original_rows, second_workspace),
       vim.list_slice(original_rows, 1, second_workspace - 1))
+    local moved_row = #original_rows - second_workspace + 2
+    swapped_groups[1] = swapped_groups[1]:gsub("^ %[%d+%]", " [1]")
+    swapped_groups[moved_row] = swapped_groups[moved_row]:gsub("^ %[%d+%]", " [2]")
     focus_sidebar_row(1)
     invoke_map("<C-S-j>")
     assert_true(vim.deep_equal(read_sidebar(), swapped_groups), "workspace move did not carry all its sessions")
-    assert_true(vim.api.nvim_win_get_cursor(sidebar)[1] == #original_rows - second_workspace + 2,
+    assert_true(vim.api.nvim_win_get_cursor(sidebar)[1] == moved_row,
       "cursor did not follow the moved workspace")
     invoke_map("<C-S-k>")
     assert_true(vim.deep_equal(read_sidebar(), original_rows), "moving the workspace back did not restore its order")
@@ -5701,7 +5714,7 @@ local function test_agent_view_container(repo)
       for index, line in ipairs(lines) do
         if line:find(title, 1, true) then thread_row = index end
       end
-      return thread_row and vim.tbl_contains(lines, " example-agent")
+      return thread_row and group_row(lines, "example-agent")
     end, 3000)
 
     invoke_map("<leader>e")
@@ -6516,6 +6529,12 @@ wait(function() return active() == second end, "Tab wrapped within the tmux wind
 key("<S-Tab>")
 wait(function() return active() == first end, "Shift-Tab selected the previous tmux pane")
 key("<leader>e")
+vim.cmd.redraw({ bang = true })
+local sidebar_win = api.nvim_get_current_win()
+local last_pane_row = vim.fn.screenpos(sidebar_win, 3, 2).row
+local next_window_row = vim.fn.screenpos(sidebar_win, 4, 2).row
+assert(last_pane_row > 0 and next_window_row == last_pane_row + 2,
+  "vertical window bar did not leave one blank screen line between windows")
 local prompt, rename
 local input = vim.ui.input
 vim.ui.input = function(opts, callback) prompt, rename = opts, callback end
@@ -6530,8 +6549,11 @@ assert(prompt and prompt.default == tmux("display-message", "-p", "-t", third, "
 local new_name = "-Example 100% #{window_id}"
 local window_bar_buf = api.nvim_get_current_buf()
 rename(new_name)
+local displayed_name = " [2] " .. new_name
+local display_width = api.nvim_win_get_width(sidebar_win) - 1
+if #displayed_name > display_width then displayed_name = displayed_name:sub(1, display_width - 1) .. "…" end
 wait(function()
-  return vim.tbl_contains(api.nvim_buf_get_lines(window_bar_buf, 0, -1, false), " " .. new_name)
+  return vim.tbl_contains(api.nvim_buf_get_lines(window_bar_buf, 0, -1, false), displayed_name)
 end, "renamed window in the tmux bar")
 assert(tmux("display-message", "-p", "-t", third, "#{window_name}") == new_name, "tmux did not store the literal name")
 assert(api.nvim_get_current_buf() == window_bar_buf and api.nvim_win_get_cursor(0)[1] == 4,
@@ -6902,10 +6924,15 @@ local function test_terminal_view_container(repo)
     invoke_map("<C-i>")
     assert_true(vim.api.nvim_get_current_win() == bar and vim.fn.bufwinid(fourth_buf) ~= -1,
       "forward window bar jump did not restore the next tab and keep focus")
+    local function has_folded_window()
+      return vim.iter(vim.api.nvim_buf_get_lines(0, 0, -1, false)):any(function(line)
+        return line:match("^▸ %[%d+%]") ~= nil
+      end)
+    end
     invoke_map("h")
-    assert_true(vim.tbl_contains(vim.api.nvim_buf_get_lines(0, 0, -1, false), "▸ Window 2"), "window bar did not fold")
+    assert_true(has_folded_window(), "window bar did not fold")
     invoke_map("l")
-    assert_true(not vim.tbl_contains(vim.api.nvim_buf_get_lines(0, 0, -1, false), "▸ Window 2"), "window bar did not unfold")
+    assert_true(not has_folded_window(), "window bar did not unfold")
     invoke_map("<leader>e")
     assert_true(vim.api.nvim_get_current_buf() == fourth_buf, "window bar did not return focus to its active tab")
     invoke_map("<leader>-t")
@@ -7833,7 +7860,7 @@ local function test_agent_terminal_lifecycle(repo)
     assert_nonrecursive_map(lhs, "n", second_buf)
   end
   local terminal_maps = vim.api.nvim_buf_get_keymap(second_buf, "t")
-  for _, lhs in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
+  for _, lhs in ipairs({ "<C-h>", "<C-j>", "<C-k>" }) do
     local expected = vim.api.nvim_replace_termcodes(lhs, true, false, true)
     for _, map in ipairs(terminal_maps) do
       local actual = vim.api.nvim_replace_termcodes(map.lhs, true, false, true)
