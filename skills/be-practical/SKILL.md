@@ -28,6 +28,7 @@ description: "Use with every local skill for practical writing and coding: direc
 - Use `key: value` for direct mappings.
 - Use tables only for comparisons and numbered lists only when order matters.
 - Use exact identifiers, paths, values, APIs, fields, and messages from verified evidence.
+- If line is too long and have multiple key points, break it down to bullet point list.
 
 ## Contextual diffs
 
