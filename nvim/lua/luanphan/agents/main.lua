@@ -285,6 +285,7 @@ local function layout_agent(win, layout, opening)
   end
   local cwd = vim.b[vim.api.nvim_win_get_buf(win)].luanphan_agent_cwd
   local panes = agent_container:display(anchor, cwd, layout)
+  if not vim.api.nvim_win_is_valid(anchor) then return end
   if panes then
     for _, pane in ipairs(panes) do
       local tab = pane.tab
@@ -700,8 +701,6 @@ local function agent_spec(name)
   }
 end
 
-for _, name in ipairs(agent_order) do
-  M[#M + 1] = agent_spec(name)
-end
+M.spec = vim.tbl_map(agent_spec, agent_order)
 
 return M

@@ -137,10 +137,10 @@ function Container:display(anchor, context, layout)
 		visible = vim.tbl_filter(function(tab) return tab.separate_window or tab.bufnr == active end, self:tabs(context))
 	end
 	local panes = tiles.display(self, anchor, context, geometry, style, visible)
-	if not panes then return end
+	if not panes or not vim.api.nvim_win_is_valid(anchor) then return end
 	for index, pane in ipairs(panes) do
 		if pane.tab.separate_window then
-			editor.prepare(self, pane.win, pane.opened)
+			if vim.api.nvim_win_is_valid(pane.win) then editor.prepare(self, pane.win, pane.opened) end
 			table.remove(panes, index)
 			break
 		end

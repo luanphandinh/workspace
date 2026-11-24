@@ -799,6 +799,7 @@ function API.layout(win)
 end
 
 function API.prepare_tile(win, opened)
+  if not vim.api.nvim_win_is_valid(win) then return end
   local buf = vim.api.nvim_win_get_buf(win)
   if opened then
     configure_terminal_window(win)

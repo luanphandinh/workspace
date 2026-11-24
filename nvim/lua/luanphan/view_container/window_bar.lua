@@ -4,6 +4,7 @@ Bar.__index = Bar
 
 local api = vim.api
 local windows = require("luanphan.view_container.window")
+local editor = require("luanphan.view_container.editor")
 local sidebar = require("luanphan.view_container.sidebar")
 local tabs = require("luanphan.view_container.tab_render")
 local jump_lists = require("luanphan.view_container.jumplist")
@@ -124,12 +125,21 @@ function Bar:update_order(groups)
 end
 
 function Bar:focus_content()
+  if self.editor_focused and editor.focus(self.anchor) then return end
   local win = self.opts.active_window and self.opts.active_window() or self.anchor
   if valid(win) then api.nvim_set_current_win(win) end
 end
 
 function Bar:select(row, view_mode)
   local item = row and (row.item or row.group.active or row.group.items[1])
+  if item and item.separate_window then
+    return editor.select_sidebar(self.anchor, item.key, function()
+      local host = vim.iter(row.group.items):find(function(pane) return pane.id == item.host end)
+        or row.group.active or row.group.items[1]
+      if host then return self.opts.activate(host, true) end
+    end)
+  end
+  editor.select_sidebar(self.anchor)
   if item then return self.opts.activate(item, view_mode) end
 end
 
@@ -170,6 +180,11 @@ function Bar:refresh(keep_cursor, groups)
     tabs.render_windows(self)
     self:animate()
     return
+  end
+  local editor_win = editor.window(self.anchor)
+  local current = api.nvim_get_current_win()
+  if editor_win and (current == editor_win or (current == self.win and self.editor_focused)) then
+    active = api.nvim_win_get_buf(editor_win)
   end
   local live = {}
   for _, group in ipairs(groups) do
@@ -237,7 +252,7 @@ end
 
 function Bar:move(delta)
   local row = self:focused_row()
-  if not row then return end
+  if not row or not row.index then return end
   local items, index = row.item and row.group.items or row.groups, row.index
   local target = index + delta
   if row.item then target = (target - 1) % #items + 1 end
@@ -392,6 +407,7 @@ function Bar:close()
   if valid(self.anchor) then vim.w[self.anchor].luanphan_window_bar = nil end
   self.win, self.anchor, self.rows = nil, nil, {}
   self.rows_by_buffer, self.active_row = nil, nil
+  self.editor_focused = nil
   self:stop_timer()
   if valid(win) then api.nvim_win_close(win, true) end
 end
@@ -484,17 +500,25 @@ function M.create(opts)
   return bar
 end
 
-api.nvim_create_autocmd("WinEnter", {
+api.nvim_create_autocmd({ "WinEnter", "BufEnter", "BufFilePost" }, {
   group = api.nvim_create_augroup("LuanphanWindowBarFocus", { clear = true }),
-  callback = function()
+  callback = function(event)
     local win = api.nvim_get_current_win()
     local anchor = windows.group_anchor(win)
     if not valid(anchor) then return end
     local sidebar_win = vim.w[anchor].luanphan_window_bar
     if not valid(sidebar_win) or sidebar_win == win then return end
+    local editor_focused = win == editor.window(anchor)
+    if event.event ~= "WinEnter" and not editor_focused then return end
     for bar in pairs(bars) do
       if bar.win == sidebar_win and bar.style == "vertical" then
-        sidebar.follow(bar, api.nvim_win_get_buf(win))
+        bar.editor_focused = editor_focused
+        local buf = api.nvim_win_get_buf(win)
+        if event.event == "BufFilePost" or (editor_focused and not (bar.rows_by_buffer or {})[buf]) then
+          bar:refresh()
+        else
+          sidebar.follow(bar, buf)
+        end
         return
       end
     end

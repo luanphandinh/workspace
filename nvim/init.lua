@@ -32,7 +32,7 @@ local specs = {
   { import = "luanphan.plugins.editor" },
   { import = "luanphan.plugins.markdown" },
   { import = "luanphan.plugins.terminal" },
-  { import = "luanphan.agents.main" },
+  { import = "luanphan.plugins.agents" },
   { import = "luanphan.plugins.multi-cursor" },
   { import = "luanphan.plugins.which-key" },
 }

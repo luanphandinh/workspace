@@ -105,12 +105,17 @@ local function clear_tiles(self)
 end
 
 function M.refresh_tile_highlights(self)
-	if not self.tile_anchor then return end
+	local anchor = self.tile_anchor
+	if not anchor then return end
+	if not vim.api.nvim_win_is_valid(anchor) then
+		clear_tiles(self)
+		return
+	end
 	local current = vim.api.nvim_get_current_win()
 	local windows = self.tile_windows or {}
 	local border = focused_border()
-	local focused = current == self.tile_anchor
-	set_tile_highlights(self.tile_anchor, focused and border or thin_border, not focused and next(windows) ~= nil)
+	local focused = current == anchor
+	set_tile_highlights(anchor, focused and border or thin_border, not focused and next(windows) ~= nil)
 	for _, win in pairs(windows) do
 		set_tile_highlights(win, win == current and border or thin_border, win ~= current)
 	end

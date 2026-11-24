@@ -4,6 +4,7 @@ local views = require("luanphan.view_container.window")
 local editors = require("luanphan.editor_window")
 local editors_by_context = setmetatable({}, { __mode = "k" })
 local panels = setmetatable({}, { __mode = "k" })
+local sidebar_selection = setmetatable({}, { __mode = "k" })
 local editor_appearance = {}
 local tile, source
 local events = api.nvim_create_augroup("LuanphanViewEditor", { clear = true })
@@ -91,6 +92,49 @@ function M.focus(anchor)
   return true
 end
 
+function M.sidebar_items(anchor, groups)
+  local panel = panel_for(anchor)
+  local by_group = {}
+  if not panel then return by_group end
+  local win = M.window(anchor)
+  if win then
+    local anchor_buf = api.nvim_win_get_buf(anchor)
+    for _, group in ipairs(groups) do
+      local host = vim.iter(group.items):find(function(item) return item.bufnr == anchor_buf end)
+      if host then
+        tile.state.sidebar = { group = group.id, host = host.id }
+        break
+      end
+    end
+  end
+  for key, state in pairs(editors_by_context) do
+    if state.container == panel.container and state.sidebar then
+      local buf = win and tile.state == state and api.nvim_win_get_buf(win) or nil
+      local path = buf and api.nvim_buf_get_name(buf) or state.path
+      local group = state.sidebar.group
+      by_group[group] = by_group[group] or {}
+      table.insert(by_group[group], {
+        key = key, id = "editor:" .. tostring(key), bufnr = buf, separate_window = true,
+        label = path == "" and "Editor" or "Editor · " .. vim.fs.basename(path),
+        position = state.position, host = state.sidebar.host,
+      })
+    end
+  end
+  return by_group
+end
+
+function M.select_sidebar(anchor, key, activate)
+  local panel = panel_for(anchor)
+  if not panel then return false end
+  sidebar_selection[panel.container] = nil
+  if key == nil then return end
+  if panel.key == key then return M.focus(anchor) end
+  sidebar_selection[panel.container] = key
+  local selected = activate()
+  if not selected then sidebar_selection[panel.container] = nil end
+  return selected
+end
+
 function M.tab(key)
   local state = editors_by_context[key]
   if not state then return end
@@ -129,6 +173,13 @@ function M.prepare(container, win, opened)
   local state = editors_by_context[key]
   local changed = not tile or tile.win ~= win or tile.state ~= state or tile.buf ~= state.buf
   tile = { anchor = anchor, win = win, state = state, panel = panel, buf = state.buf }
+  if sidebar_selection[container] == key then
+    vim.schedule(function()
+      if sidebar_selection[container] ~= key then return end
+      sidebar_selection[container] = nil
+      if panels[container].key == key and views.group_anchor(api.nvim_get_current_win()) == anchor then M.focus(anchor) end
+    end)
+  end
   if opened or changed then editors.apply_appearance(win, tile_appearance(anchor)) end
   if not opened then return end
   api.nvim_win_call(win, function() vim.fn.winrestview(state.view) end)
@@ -153,7 +204,7 @@ end
 local function show(panel, buf, view)
   local previous = editors_by_context[panel.key]
   editors_by_context[panel.key] = { buf = buf, path = api.nvim_buf_get_name(buf), view = view,
-    position = previous and previous.position }
+    container = panel.container, position = previous and previous.position, sidebar = previous and previous.sidebar }
   panel.container.opts.editor.refresh(panel.anchor)
   local win = M.window(panel.anchor)
   if not win then editors_by_context[panel.key] = previous return false end
@@ -164,10 +215,41 @@ local function show(panel, buf, view)
   return true
 end
 
+local function reopen(panel, source_buf)
+  local container = panel.container
+  if panel_for(api.nvim_get_current_win()) or not api.nvim_buf_is_valid(source_buf) then return end
+  local context = container:context()
+  if context ~= nil and context ~= panel.context then return end
+  local source_tab = vim.iter(container.opts.tabs(panel.context) or {}):find(function(tab)
+    return tab.bufnr == source_buf
+  end)
+  if not source_tab then return end
+  container.opts.activate(source_tab, { view_mode = true })
+  local restored = panels[container]
+  if restored.key == panel.key and api.nvim_win_is_valid(restored.anchor) then return restored end
+end
+
 function M.open_reference(win, path, line, column)
   local panel = panel_for(win)
-  if not panel then return false end
-  return show(panel, vim.fn.bufadd(path), { lnum = tonumber(line) or 1, col = math.max(0, (tonumber(column) or 1) - 1) })
+  if not panel then return end
+  local source_buf = api.nvim_win_get_buf(win)
+  local buf = vim.fn.bufadd(path)
+  if not api.nvim_buf_is_loaded(buf) then
+    -- Let file-read and filetype callbacks finish before changing tile windows.
+    vim.fn.bufload(buf)
+  end
+  local current = panels[panel.container]
+  if api.nvim_buf_is_loaded(buf) and current.key == panel.key then
+    local view = { lnum = tonumber(line) or 1, col = math.max(0, (tonumber(column) or 1) - 1) }
+    if api.nvim_win_is_valid(current.anchor) and show(current, buf, view) then return true end
+    current = panels[panel.container]
+    if current.key == panel.key and not api.nvim_win_is_valid(current.anchor) then
+      local restored = reopen(panel, source_buf)
+      if restored and show(restored, buf, view) then return true end
+    end
+  end
+  vim.notify("Could not open the reference in an editor tile", vim.log.levels.WARN)
+  return false
 end
 
 function M.open_current()

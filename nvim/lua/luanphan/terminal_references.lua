@@ -397,9 +397,8 @@ function M.open(path, line, column)
     and vim.bo[source_buf].buftype == "terminal"
     and vim.b[source_buf].luanphan_persist_term
     and not vim.b[source_buf].luanphan_toggleterm
-  if require("luanphan.view_container.editor").open_reference(source, path, line, column) then
-    return true
-  end
+  local opened = require("luanphan.view_container.editor").open_reference(source, path, line, column)
+  if opened ~= nil then return opened end
   local editor_window = require("luanphan.editor_window")
   local views = require("luanphan.view_container.window")
   local target = editor_window.find(source)

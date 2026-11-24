@@ -4841,7 +4841,13 @@ local function test_agent_sidebar_restore(repo, agent)
     "assert(#saved == 1 and saved[1].thread_id == second, 'editor exit should preserve the remaining agent')",
   })
   if agent == "cursor" then
-    write(script, setup)
+    write(root .. "/settings.toml", { "[agent_float]", 'display_style = "tile"' })
+    write(script, vim.list_extend(vim.list_slice(setup), {
+      "local open = agents.open",
+      "agents.open = function(...) vim.g.smoke_shared_agent_open = 1; return open(...) end",
+    }))
+    local reference = repo .. "/local_workspaces/example-workspace/logs/example.json"
+    write(reference, { '{"fixture": true}' })
     local socket = vim.fn.tempname() .. ".sock"
     local child = vim.fn.jobstart({
       "nvim", "--headless", "--embed", "--listen", socket, "-c", "luafile " .. vim.fn.fnameescape(script),
@@ -4861,6 +4867,23 @@ local function test_agent_sidebar_restore(repo, agent)
       wait_until("the first UI restores the saved Cursor terminal", function()
         return vim.rpcrequest(rpc, "nvim_eval", "get(b:, 'luanphan_agent_thread_id', '')") == second
       end, 4000)
+      assert_true(vim.rpcrequest(rpc, "nvim_eval", "get(g:, 'smoke_shared_agent_open', 0)") == 1,
+        "the first UI restored the pane through a second agent controller")
+      vim.rpcrequest(rpc, "nvim_exec_lua", [[
+        local file, thread = ...
+        local agents = require('luanphan.agents.main')
+        local views = require('luanphan.view_container')
+        local startup_buf = vim.api.nvim_get_current_buf()
+        local peer = assert(agents.new('cursor', { thread_id = thread, view_mode = true }))
+        assert(agents.focus('cursor', startup_buf, { view_mode = true }))
+        local anchor = views.group_anchor(vim.api.nvim_get_current_win())
+        assert(require('luanphan.terminal_references').open(file), 'startup pane could not open its reference')
+        local editor = require('luanphan.view_container.editor').window(anchor)
+        assert(editor == vim.api.nvim_get_current_win() and vim.uv.fs_realpath(vim.api.nvim_buf_get_name(0)) == vim.uv.fs_realpath(file),
+          'the reference did not open in an editor tile')
+        assert(views.group_anchor(vim.fn.bufwinid(peer)) == anchor and #views.group_windows(anchor) == 4,
+          'opening the reference lost a pane or the sidebar')
+      ]], { reference, first })
     end, debug.traceback)
     pcall(vim.api.nvim_chan_send, child, vim.mpack.encode({ 2, "nvim_command", { "qa!" } }))
     if vim.fn.jobwait({ child }, 1000)[1] == -1 then vim.fn.jobstop(child) end
@@ -4959,6 +4982,21 @@ end
 tile_key('<C-h>', function() return api.nvim_get_current_buf() == agent end)
 assert(api.nvim_win_get_config(editor).border[1] == '┌', 'unfocused editor tile kept its focus border')
 tile_key('<C-l>', function() return api.nvim_get_current_win() == editor end)
+local function editor_sidebar_row()
+  local anchor = require('luanphan.view_container').group_anchor(vim.fn.bufwinid(agent))
+  local bar = vim.w[anchor].luanphan_window_bar
+  local lines = api.nvim_buf_get_lines(api.nvim_win_get_buf(bar), 0, -1, false)
+  for index, line in ipairs(lines) do
+    if vim.trim(line) == 'Editor · editor-source.txt' then return index, bar end
+  end
+end
+local row, bar = editor_sidebar_row()
+assert(row and api.nvim_win_get_cursor(bar)[1] == row, 'agent sidebar did not follow the editor tile')
+tile_key('<C-h>', function() return api.nvim_get_current_buf() == agent end)
+press('<leader>e')
+api.nvim_win_set_cursor(bar, { row, 0 })
+press('<CR>')
+assert(api.nvim_get_current_win() == editor, 'agent sidebar row did not focus the editor tile')
 local right = api.nvim_win_get_config(editor).col
 tile_key('<C-S-h>', function() return api.nvim_win_get_config(editor).col < right end)
 assert(api.nvim_get_current_win() == editor, 'moving editor tile lost focus')
@@ -4996,6 +5034,7 @@ api.nvim_set_current_win(reopened)
 vim.cmd.quit()
 vim.wait(30, function() return false end)
 assert(not current_editor_tile(), 'closing the editor tile immediately recreated it')
+assert(not editor_sidebar_row(), 'closing the editor tile left its sidebar entry behind')
 local linked = vim.fn.getcwd() .. '/editor-linked.txt'
 local function command_click(path, line, col)
   assert(agents.focus('codex', agent, { view_mode = true }))
@@ -5996,6 +6035,44 @@ local window_bar = require('luanphan.agents.window_bar')
 assert(window_bar.select_session({ agent = 'codex', bufnr = home, path = vim.b[home].luanphan_agent_cwd }, { view_mode = true }),
   'sidebar could not select an individual agent session')
 
+local reference = vim.fn.getcwd() .. '/example-reference.txt'
+vim.fn.writefile({ 'first', 'second' }, reference)
+local reference_buf = vim.fn.bufadd(reference)
+local reference_peer = vim.fn.bufwinid(home_peer)
+local peer_height = vim.api.nvim_win_get_height(reference_peer)
+local height_during_read
+vim.api.nvim_create_autocmd('BufReadPost', {
+  buffer = reference_buf,
+  once = true,
+  callback = function() height_during_read = vim.api.nvim_win_get_height(reference_peer) end,
+})
+assert(require('luanphan.terminal_references').open(reference, 2, 1), 'first reference failed after switching workspaces')
+assert(height_during_read == peer_height, 'the first file read ran while the panel was changing layout')
+local editor = require('luanphan.view_container.editor').window(anchor)
+assert(editor == vim.api.nvim_get_current_win() and vim.api.nvim_get_current_buf() == reference_buf,
+  'the first reference did not open in the tiled agent panel')
+assert(#view.group_windows(anchor) == 4 and vim.w[anchor].luanphan_window_bar == sidebar,
+  'opening the first reference closed part of the panel')
+choose_workspace(away_peer)
+local editor_row
+local sidebar_buf = vim.api.nvim_win_get_buf(sidebar)
+for index, line in ipairs(vim.api.nvim_buf_get_lines(sidebar_buf, 0, -1, false)) do
+  if vim.trim(line) == 'Editor · example-reference.txt' then editor_row = index end
+end
+assert(editor_row, 'switching workspaces hid the editor sidebar row')
+vim.api.nvim_set_current_win(sidebar)
+vim.api.nvim_win_set_cursor(sidebar, { editor_row, 0 })
+vim.fn.maparg('<CR>', 'n', false, true).callback()
+assert(vim.wait(1000, function()
+  return require('luanphan.view_container.editor').window(anchor) == vim.api.nvim_get_current_win()
+    and vim.api.nvim_buf_get_name(0) == reference
+    and vim.api.nvim_win_get_cursor(0)[1] == 2
+end, 20), 'selecting the editor row did not return to its workspace and tile')
+vim.cmd.quit()
+assert(vim.wait(1000, function() return #view.group_windows(anchor) == 3 end, 20),
+  'closing the reference did not restore the panel')
+assert(agents.focus('codex', home, { view_mode = true }))
+
 vim.g.neovide = true
 vim.api.nvim_exec_autocmds('UIEnter', {})
 local bar = vim.iter(pairs(vim.luanphan_window_bars)):find(function(candidate) return candidate.win == sidebar end)
@@ -6090,6 +6167,27 @@ end
 for _, buf in ipairs({ home, home_peer, away }) do
   assert(terminal.running(buf), 'hiding the panel stopped an agent job')
 end
+
+assert(agents.focus('codex', home, { view_mode = true }))
+local reopened_anchor = view.group_anchor(vim.api.nvim_get_current_win())
+local interrupted = vim.fn.getcwd() .. '/example-interrupted-reference.txt'
+local main_buf = vim.api.nvim_win_get_buf(require('luanphan.editor_window').find(reopened_anchor))
+vim.fn.writefile({ 'reference' }, interrupted)
+vim.api.nvim_create_autocmd('BufReadPost', {
+  buffer = vim.fn.bufadd(interrupted),
+  once = true,
+  callback = function() terminal.close_window(reopened_anchor) end,
+})
+assert(require('luanphan.terminal_references').open(interrupted), 'a panel close during the first file read lost the reference')
+local restored_anchor = view.group_anchor(vim.api.nvim_get_current_win())
+assert(require('luanphan.view_container.editor').window(restored_anchor) == vim.api.nvim_get_current_win()
+  and vim.uv.fs_realpath(vim.api.nvim_buf_get_name(0)) == vim.uv.fs_realpath(interrupted),
+  'an interrupted reference did not open in an editor tile')
+assert(#view.group_windows(reopened_anchor) == 0 and #view.group_windows(restored_anchor) == 4
+  and view.group_anchor(vim.fn.bufwinid(home)) == restored_anchor and terminal.running(home),
+  'an interrupted reference did not restore the original agent panel together')
+assert(vim.api.nvim_win_get_buf(require('luanphan.editor_window').find(restored_anchor)) == main_buf,
+  'an interrupted reference changed the main editor buffer')
 ]], "\n", { plain = true }))
   write(script, script_lines)
   local output = vim.fn.systemlist(child_nvim_luafile_command(repo, script))
@@ -6738,10 +6836,35 @@ api.nvim_feedkeys(vim.keycode("<C-h>"), "xt", false)
 assert(vim.wait(4000, function() return api.nvim_get_current_win() == terminal_win end), "editor could not navigate to tmux")
 api.nvim_feedkeys(vim.keycode("<C-l>"), "xt", false)
 assert(vim.wait(4000, function() return api.nvim_get_current_win() == editor_win end), "tmux could not navigate to the editor")
+api.nvim_set_current_win(terminal_win)
+api.nvim_feedkeys(vim.keycode(vim.g.mapleader .. "e"), "xt", false)
+local editor_sidebar = api.nvim_get_current_win()
+local editor_row
+for index, line in ipairs(api.nvim_buf_get_lines(0, 0, -1, false)) do
+  if vim.trim(line) == "Editor · example.txt" then editor_row = index end
+end
+assert(editor_row, "tmux sidebar omitted the editor tile")
+api.nvim_win_set_cursor(editor_sidebar, { editor_row, 0 })
+api.nvim_feedkeys(vim.keycode("<CR>"), "xt", false)
+assert(api.nvim_get_current_win() == editor_win, "tmux sidebar row did not focus the editor tile")
 local editor_col = api.nvim_win_get_config(editor_win).col
 api.nvim_feedkeys(vim.keycode("<C-S-h>"), "xt", false)
 assert(vim.wait(4000, function() return api.nvim_win_get_config(editor_win).col < editor_col end)
   and api.nvim_get_current_win() == editor_win, "moving the tmux editor tile lost its position or focus")
+api.nvim_set_current_win(terminal_win)
+tmux("select-window", "-t", saved[3])
+assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane == saved[3] end), "could not switch away from the editor tile")
+editor_row = nil
+for index, line in ipairs(api.nvim_buf_get_lines(api.nvim_win_get_buf(editor_sidebar), 0, -1, false)) do
+  if vim.trim(line) == "Editor · example.txt" then editor_row = index end
+end
+assert(editor_row, "switching tmux windows hid the editor sidebar row")
+api.nvim_set_current_win(editor_sidebar)
+api.nvim_win_set_cursor(editor_sidebar, { editor_row, 0 })
+api.nvim_feedkeys(vim.keycode("<CR>"), "xt", false)
+assert(vim.wait(4000, function()
+  return api.nvim_get_current_buf() == editor_buf and api.nvim_win_get_config(0).relative ~= ""
+end), "selecting the inactive tmux editor row did not restore its tile")
 api.nvim_feedkeys(vim.keycode(vim.g.mapleader .. "o"), "xt", false)
 assert(api.nvim_win_get_config(0).relative == "" and api.nvim_get_current_buf() == editor_buf
   and not api.nvim_win_is_valid(terminal_win), "tmux editor tile did not open the same buffer in the main editor")

@@ -1,5 +1,6 @@
 local M = {}
 local api = vim.api
+local editor = require("luanphan.view_container.editor")
 local ns = api.nvim_create_namespace("LuanphanWindowBar")
 local status_ns = api.nvim_create_namespace("LuanphanWindowBarStatus")
 local active_ns = api.nvim_create_namespace("LuanphanWindowBarActive")
@@ -69,6 +70,7 @@ end
 
 function M.render(bar, groups, active, offsets)
   local lines, rows, rows_by_buffer = {}, {}, {}
+  local editors = editor.sidebar_items(bar.anchor, groups)
   local width = api.nvim_win_get_width(bar.win) - 1
   local number_width = 2
   for _, offset in pairs(offsets) do number_width = math.max(number_width, #tostring(offset)) end
@@ -78,7 +80,16 @@ function M.render(bar, groups, active, offsets)
     local prefix = (folded and "▸ " or " ") .. ("[%d] "):format(index)
     lines[#lines + 1] = fit(prefix .. group.title, width)
     rows[#rows + 1] = { group = group, groups = groups, index = index }
-    for item_index, item in ipairs(group.items) do
+    local items = group.items
+    if editors[group.id] then
+      items = vim.list_slice(items)
+      for _, item in ipairs(editors[group.id]) do
+        table.insert(items, math.min(item.position or #items + 1, #items + 1), item)
+      end
+    end
+    local item_index = 0
+    for _, item in ipairs(items) do
+      if not item.separate_window then item_index = item_index + 1 end
       if not folded then
         local offset = string.format(number, offsets[item.bufnr] or "")
         local icon = item.icon or ""
@@ -86,10 +97,12 @@ function M.render(bar, groups, active, offsets)
         local status_col = icon_col - (icon == "" and 0 or 2)
         local label_width = bar.opts.status and status_col - #offset - 1 or icon_col - #offset
         local row = {
-          group = group, item = item, index = item_index,
+          group = group, item = item, index = not item.separate_window and item_index or nil,
           prefix_width = #offset, icon_col = icon_col, label_width = label_width,
         }
-        if bar.opts.status and label_width >= 0 and item.bufnr then row.status_col = status_col end
+        if bar.opts.status and label_width >= 0 and item.bufnr and not item.separate_window then
+          row.status_col = status_col
+        end
         rows[#rows + 1] = row
         lines[#lines + 1] = offset .. fit(item.label, label_width)
       end
