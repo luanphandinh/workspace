@@ -5026,7 +5026,7 @@ assert(api.nvim_get_current_win() == main_win and not api.nvim_win_is_valid(edit
 assert(vim.deep_equal(api.nvim_win_get_cursor(main_win), { 2, 1 }) and api.nvim_get_current_line() == 'second',
   'editor tile moved the main cursor')
 assert(api.nvim_buf_get_lines(main_buf, 2, 3, false)[1] == 'shared edit', 'editor tile did not share edits')
-local editor_tiles = require('luanphan.agents.plugins.editor.editor')
+local editor_tiles = require('luanphan.view_container.editor')
 local views = require('luanphan.view_container')
 local function current_editor_tile()
   local term_win = vim.fn.bufwinid(agent)
@@ -6282,6 +6282,12 @@ assert(api.nvim_get_current_buf() == lower and not window_bar():find('Window 2',
 vim.fn.chansend(vim.b[left].terminal_job_id, 'exit\n')
 assert(vim.wait(3000, function() return not api.nvim_buf_is_valid(left) and #floats() == 3 end),
   'pane exit did not reflow its window')
+local file = vim.fn.getcwd() .. '/example.txt'
+vim.fn.writefile({ 'first', 'second' }, file)
+assert(require('luanphan.terminal_references').open(file, 2, 3), 'shell could not open the editor tile')
+assert(#floats() == 4 and api.nvim_buf_get_name(0) == file, 'shell opened the file outside its panel')
+key('<leader>o')
+assert(#floats() == 0 and api.nvim_buf_get_name(0) == file, 'shell editor tile did not open in the main editor')
 ]=], "\n", { plain = true }))
   local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
   assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
@@ -6762,6 +6768,33 @@ panel.hide()
 initial[1], initial[2] = initial[2], initial[1]
 assert(vim.deep_equal(vim.json.decode(tmux("show-options", "-v", "-t", session_id, "@luanphan-window-order")), initial),
   "detaching the terminal lost the pending window order")
+panel.toggle()
+assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane == focus_pane end))
+local ref = vim.uv.fs_realpath(root) .. "/example.txt"
+vim.fn.writefile({ "first", "second" }, ref)
+local terminal_win = api.nvim_get_current_win()
+assert(require("luanphan.terminal_references").open(ref, 2, 3), "tmux could not open the editor tile")
+local editor_win, editor_buf = api.nvim_get_current_win(), api.nvim_get_current_buf()
+assert(editor_win ~= terminal_win and api.nvim_win_is_valid(terminal_win) and api.nvim_buf_get_name(editor_buf) == ref,
+  "tmux opened its reference outside the panel")
+assert(vim.deep_equal(api.nvim_win_get_cursor(editor_win), { 2, 2 }), "tmux editor tile lost the reference position")
+api.nvim_feedkeys(vim.keycode("<C-h>"), "xt", false)
+assert(vim.wait(4000, function() return api.nvim_get_current_win() == terminal_win end), "editor could not navigate to tmux")
+api.nvim_feedkeys(vim.keycode("<C-l>"), "xt", false)
+assert(vim.wait(4000, function() return api.nvim_get_current_win() == editor_win end), "tmux could not navigate to the editor")
+local editor_col = api.nvim_win_get_config(editor_win).col
+api.nvim_feedkeys(vim.keycode("<C-S-h>"), "xt", false)
+assert(vim.wait(4000, function() return api.nvim_win_get_config(editor_win).col < editor_col end)
+  and api.nvim_get_current_win() == editor_win, "moving the tmux editor tile lost its position or focus")
+api.nvim_feedkeys(vim.keycode(vim.g.mapleader .. "o"), "xt", false)
+assert(api.nvim_win_get_config(0).relative == "" and api.nvim_get_current_buf() == editor_buf
+  and not api.nvim_win_is_valid(terminal_win), "tmux editor tile did not open the same buffer in the main editor")
+panel.toggle()
+assert(vim.wait(4000, function()
+  local anchor = require("luanphan.view_container").group_anchor(api.nvim_get_current_win())
+  local win = require("luanphan.view_container.editor").window(anchor)
+  return win and api.nvim_win_get_buf(win) == editor_buf
+end), "tmux did not restore the editor tile after reopening")
 ]=])
   end, debug.traceback)
   vim.system({ "tmux", "-S", socket, "kill-server" }):wait()

@@ -13,7 +13,11 @@ function M.hide()
 end
 
 function M.toggle()
-  if M.hide() then return end
+  local editor_window = require("luanphan.view_container.editor").main_window()
+  if M.hide() then
+    if editor_window and vim.api.nvim_win_is_valid(editor_window) then vim.api.nvim_set_current_win(editor_window) end
+    return
+  end
   backend = open_backend()
   if backend then backend.toggle() end
 end

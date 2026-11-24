@@ -393,19 +393,19 @@ function M.open(path, line, column)
   local source = vim.api.nvim_get_current_win()
   local source_buf = vim.api.nvim_win_get_buf(source)
   local source_config = vim.api.nvim_win_get_config(source)
-  local close_agent_float = source_config.relative ~= ""
+  local close_float = source_config.relative ~= ""
     and vim.bo[source_buf].buftype == "terminal"
     and vim.b[source_buf].luanphan_persist_term
     and not vim.b[source_buf].luanphan_toggleterm
-  if close_agent_float and vim.b[source_buf].luanphan_agent_name
-    and require("luanphan.agents.main").open_file_in_tile(source, path, line, column) then
+  if require("luanphan.view_container.editor").open_reference(source, path, line, column) then
     return true
   end
   local editor_window = require("luanphan.editor_window")
+  local views = require("luanphan.view_container.window")
   local target = editor_window.find(source)
 
-  if not target and close_agent_float then
-    require("luanphan.agents.terminal-chat").close_window(source)
+  if not target and close_float then
+    views.close_group(views.group_anchor(source))
     source = nil
     target = editor_window.find()
   end
@@ -422,8 +422,8 @@ function M.open(path, line, column)
   local target_column = math.max(0, (tonumber(column) or 1) - 1)
   vim.api.nvim_win_set_cursor(target, { target_line, target_column })
 
-  if close_agent_float and source and vim.api.nvim_win_is_valid(source) then
-    require("luanphan.agents.terminal-chat").close_window(source)
+  if close_float and source and vim.api.nvim_win_is_valid(source) then
+    views.close_group(views.group_anchor(source))
   end
   return true
 end

@@ -60,7 +60,7 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
 ---@field on_close? fun(bufnr: integer, cwd: string)
 ---@field on_quit? fun(bufnr: integer, cwd: string): function?
 ---@field on_navigate? fun(win: integer, direction: string)
----@field on_float_layout? fun(win: integer, geometry?: table, style?: string, bar_frame?: table, bar_style?: string)
+---@field on_float_layout? fun(win: integer, layout: table, opening?: boolean)
 function M.create(profile)
   profile = vim.tbl_extend("force", {
     g_bufnr = "terminal_agent_bufnr",
@@ -293,36 +293,20 @@ local function resume_terminal_view(win, bufnr, opts)
   end, 10)
 end
 
-local function get_float_geometry()
-  local lines_avail = math.max(1, vim.o.lines - vim.o.cmdheight)
-  local sidebar_height = math.max(10, lines_avail - 2)
-
+local function get_float_layout()
   local settings = profile.on_float_layout and require("luanphan.global_settings").read().agent_float
-  local border = config.float_border or "single"
-  local border_size = border == "none" and 0 or 2
-  local frame = {
-    relative = "editor",
-    row = 0,
-    col = 0,
-    width = vim.o.columns - border_size,
-    height = sidebar_height + 2 - border_size,
-    border = border,
-    zindex = config.float_zindex,
-  }
-  local geometry, bar = require("luanphan.view_container.window_bar").float_geometry(
-    frame, settings or { total_width_percent = 80 }
-  )
-  if not settings then return geometry end
-  return geometry, settings.display_style, bar, settings.window_bar_style
+  return view_container.layout(settings or { total_width_percent = 80 }, {
+    border = config.float_border or "single", zindex = config.float_zindex, min_height = 12,
+  })
 end
 
 local function open_agent_float(bufnr)
-  local geometry, _, bar, bar_style = get_float_geometry()
-  local win = vim.api.nvim_open_win(bufnr, true, vim.tbl_extend("force", geometry, {
+  local layout = get_float_layout()
+  local win = vim.api.nvim_open_win(bufnr, true, vim.tbl_extend("force", layout.body, {
     style = "minimal",
   }))
   if profile.on_float_layout then
-    profile.on_float_layout(win, nil, nil, bar, bar_style)
+    profile.on_float_layout(win, layout, true)
   end
   return win
 end
@@ -419,12 +403,12 @@ end
 
 local function layout_float(win)
   if pending_tile_close[vim.w[win].luanphan_view_anchor] then return end
-  local cfg, style, bar, bar_style = get_float_geometry()
-  state.float_geometry = cfg
+  local layout = get_float_layout()
+  state.float_geometry = layout.body
   if profile.on_float_layout then
-    profile.on_float_layout(win, cfg, style, bar, bar_style)
+    profile.on_float_layout(win, layout)
   else
-    vim.api.nvim_win_set_config(win, cfg)
+    vim.api.nvim_win_set_config(win, layout.body)
     sync_terminal_grid(win, vim.api.nvim_win_get_buf(win))
   end
 end
@@ -677,7 +661,7 @@ local function start_terminal(buf, cwd, opts)
   local label = opts and opts.agent_label
   vim.b[buf].luanphan_agent_thread_id = thread_id
   vim.b[buf].luanphan_agent_saved_label = label
-  local geometry = get_float_geometry()
+  local geometry = get_float_layout().body
   local win = win_for_buf(buf)
   local width = win and vim.api.nvim_win_get_width(win) or geometry.width
   local height = win and vim.api.nvim_win_get_height(win) or geometry.height

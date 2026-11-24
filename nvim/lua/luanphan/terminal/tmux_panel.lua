@@ -11,6 +11,7 @@ end)
 local pty = require("luanphan.view_container.tmux.pane")
 local model = require("luanphan.view_container.tmux.windows")
 local views = require("luanphan.view_container")
+local editor = require("luanphan.view_container.editor")
 local bars = require("luanphan.view_container.window_bar")
 local settings = require("luanphan.global_settings")
 
@@ -36,15 +37,7 @@ local function geometry()
     layout_options = settings.read(path).floating_terminal
     layout_path, layout_stat = path, vim.uv.fs_stat(path)
   end
-  local options = layout_options
-  local border_size = options.display_style == "tile" and 2 or 0
-  local frame = {
-    relative = "editor", row = 0, col = 0, width = vim.o.columns - border_size,
-    height = math.max(4, vim.o.lines - vim.o.cmdheight) - border_size,
-    border = border_size == 0 and "none" or "single", zindex = 40,
-  }
-  local body, header = bars.float_geometry(frame, options)
-  return body, header, options
+  return views.layout(layout_options)
 end
 
 local function run(args, after, failed)
@@ -88,7 +81,7 @@ end
 
 local function activate(pane, view_mode)
   if not client or not pane then return false end
-  local target = { id = pane.id, enter = not view_mode }
+  local target = { id = pane.id, focus = not view_mode or editor.window(anchor) == api.nvim_get_current_win() }
   selection = target
   local commands = {}
   if pane.group.active ~= pane then
@@ -183,6 +176,7 @@ end
 
 local function bind_shortcuts(buf)
   local opts = { buffer = buf, silent = true, nowait = true }
+  editor.bind(buf)
   vim.keymap.set("n", "<leader>nw", new_window, vim.tbl_extend("force", opts, { desc = "New tmux window" }))
   for _, key in ipairs({ "<leader>nt", "<leader>fn" }) do
     vim.keymap.set("n", key, function() new_tab() end,
@@ -192,17 +186,12 @@ local function bind_shortcuts(buf)
 end
 
 local function select_neighbor(direction)
-  local neighbor = views.tile_neighbor(api.nvim_get_current_win(), direction)
-  if not neighbor then
-    if not tiles.tile_anchor and #current.items > 1 and (direction == "h" or direction == "l") then
-      tiles:cycle(current, direction == "h" and -1 or 1)
-    elseif direction == (bar.style == "horizontal" and "k" or "h") then
-      bar:focus()
-    end
-    return
-  end
-  local id = vim.b[api.nvim_win_get_buf(neighbor)].luanphan_tmux_pane
-  if id then activate(panes[id]) end
+  local moved = views.focus_neighbor(api.nvim_get_current_win(), direction, function(neighbor)
+    local id = vim.b[api.nvim_win_get_buf(neighbor)].luanphan_tmux_pane
+    if id then activate(panes[id]) end
+  end)
+  if moved then return end
+  if not tiles:navigate_tabs(direction, #current.items, true) then bar:focus_towards(direction) end
 end
 
 local function prepare_buffer(pane)
@@ -234,12 +223,18 @@ local function reorder_panes(items)
       commands[#commands + 1] = model.write(item, { pane_order = index })
     end
   end
-  batch(commands, refresh)
+  if #commands == 0 then render() else batch(commands, refresh) end
 end
 
 tiles = views.create({
   context = function() return current end,
   tabs = function(group) return group.items end,
+  editor = {
+    key = function(group) return "tmux:" .. session.id .. ":" .. group.id end,
+    active = function(group) return group.active.bufnr end,
+    refresh = function() render() end,
+    navigate = function(_, direction) select_neighbor(direction) end,
+  },
   reorder = reorder_panes,
   activate = activate,
   new = new_tab,
@@ -268,9 +263,10 @@ bar = bars.create({
 
 local function render_panel()
   if not current or not current.active then return end
-  local body, header, options = geometry()
+  local layout = geometry()
   local focus = focus_on_render or not valid(anchor) or vim.api.nvim_get_current_win() == anchor
-    or vim.w[api.nvim_get_current_win()].luanphan_view_anchor == anchor
+    or (vim.w[api.nvim_get_current_win()].luanphan_view_anchor == anchor
+      and api.nvim_get_current_win() ~= editor.window(anchor))
   local selected = current.active
   for _, pane in ipairs(current.items) do
     if not pane.bufnr or not api.nvim_buf_is_valid(pane.bufnr) then
@@ -288,16 +284,16 @@ local function render_panel()
     end
   end
   if not valid(anchor) then
-    anchor = api.nvim_open_win(selected.bufnr, false, vim.tbl_extend("force", body, { style = "minimal" }))
+    anchor = api.nvim_open_win(selected.bufnr, false, vim.tbl_extend("force", layout.body, { style = "minimal" }))
   end
   tiles.active_by_context = { [current] = { id = selected.id, bufnr = selected.bufnr } }
-  local displayed = tiles:display(anchor, current, body, options.display_style)
+  local displayed = tiles:display(anchor, current, layout)
   if not displayed then
     api.nvim_win_set_buf(anchor, selected.bufnr)
     tiles:render(anchor, current)
     displayed = { { win = anchor, tab = selected } }
   end
-  bar:layout(anchor, header, options.window_bar_style)
+  bar:layout(anchor, layout)
   local visible = {}
   for _, item in ipairs(displayed) do
     local pane, win = item.tab, item.win
@@ -400,7 +396,7 @@ local function apply_snapshot(records, completed_selection)
   if current then
     if selection then
       if current.active.id == selection.id then
-        focus_on_render = selection.enter or focus_on_render
+        focus_on_render = selection.focus or focus_on_render
         if selection.done then selection = nil end
       elseif selection == completed_selection then
         selection = nil
@@ -479,6 +475,7 @@ local topology_events = {
 
 open = function(target)
   require("luanphan.agents.main").hide()
+  editor.remember_source(api.nvim_get_current_win())
   session = target
   client = tmux:attach(target, {
     flags = "ignore-size,pause-after=5",
@@ -517,7 +514,7 @@ end
 
 function M.toggle()
   if M.hide() then return end
-  local body = geometry()
+  local body = geometry().body
   local target = tmux:ensure_session(previous_session, body.width, body.height - 1)
   if target then open(target) end
 end
@@ -544,6 +541,7 @@ api.nvim_create_autocmd("WinClosed", {
   group = events,
   callback = function(args)
     local win = tonumber(args.match)
+    if valid(win) and vim.w[win].luanphan_view_independent_tile then return end
     if win == anchor or win == bar.win or vim.tbl_contains(tiles.tile_windows or {}, win) then
       M.hide(win)
     end

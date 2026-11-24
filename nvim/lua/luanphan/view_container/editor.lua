@@ -1,11 +1,23 @@
 local M = {}
 local api = vim.api
-local views = require("luanphan.view_container")
+local views = require("luanphan.view_container.window")
 local editors = require("luanphan.editor_window")
-local workspaces = {}
+local editors_by_context = setmetatable({}, { __mode = "k" })
+local panels = setmetatable({}, { __mode = "k" })
 local editor_appearance = {}
 local tile, source
-local events = api.nvim_create_augroup("LuanphanAgentEditorTile", { clear = true })
+local events = api.nvim_create_augroup("LuanphanViewEditor", { clear = true })
+
+function M.register(container, anchor, context)
+  panels[container] = { container = container, anchor = anchor, context = context, key = container.opts.editor.key(context) }
+end
+
+local function panel_for(win)
+  local anchor = views.group_anchor(win)
+  for _, panel in pairs(panels) do
+    if panel.anchor == anchor and api.nvim_win_is_valid(anchor) then return panel end
+  end
+end
 
 local function remember()
   if not tile or not tile.win or not api.nvim_win_is_valid(tile.win) then return end
@@ -79,8 +91,8 @@ function M.focus(anchor)
   return true
 end
 
-function M.tab(cwd)
-  local state = workspaces[cwd]
+function M.tab(key)
+  local state = editors_by_context[key]
   if not state then return end
   if tile and tile.state == state and api.nvim_win_is_valid(tile.win)
     and api.nvim_win_get_buf(tile.win) ~= state.buf then remember() end
@@ -88,15 +100,35 @@ function M.tab(cwd)
     if vim.fn.filereadable(state.path) ~= 1 then return end
     state.buf = vim.fn.bufadd(state.path)
   end
-  local id = "editor:" .. cwd
-  return { id = id, order_key = id, bufnr = state.buf, separate_window = true,
+  return { id = "editor:" .. tostring(key), bufnr = state.buf, separate_window = true,
     title = state.path == "" and "Editor" or vim.fs.basename(state.path) }
 end
 
-function M.prepare(win, anchor, cwd, opened)
-  local state = workspaces[cwd]
+function M.add_tab(key, tabs)
+  local tab = M.tab(key)
+  if tab then
+    tabs = vim.list_slice(tabs)
+    table.insert(tabs, math.min(editors_by_context[key].position or #tabs + 1, #tabs + 1), tab)
+  end
+  return tabs
+end
+
+function M.remove_tab(key, tabs)
+  for index, tab in ipairs(tabs) do
+    if tab.separate_window then
+      editors_by_context[key].position = index
+      table.remove(tabs, index)
+      return
+    end
+  end
+end
+
+function M.prepare(container, win, opened)
+  local panel = panels[container]
+  local anchor, key = panel.anchor, panel.key
+  local state = editors_by_context[key]
   local changed = not tile or tile.win ~= win or tile.state ~= state or tile.buf ~= state.buf
-  tile = { anchor = anchor, win = win, state = state, cwd = cwd, buf = state.buf }
+  tile = { anchor = anchor, win = win, state = state, panel = panel, buf = state.buf }
   if opened or changed then editors.apply_appearance(win, tile_appearance(anchor)) end
   if not opened then return end
   api.nvim_win_call(win, function() vim.fn.winrestview(state.view) end)
@@ -108,22 +140,23 @@ function M.prepare(win, anchor, cwd, opened)
       remember()
       tile = nil
       if not closed.dismissing then return end
-      if workspaces[cwd] == closed.state then workspaces[cwd] = nil end
+      if editors_by_context[key] == closed.state then editors_by_context[key] = nil end
       vim.schedule(function()
         if not api.nvim_win_is_valid(anchor) then return end
         if api.nvim_win_get_config(0).relative == "" then api.nvim_set_current_win(anchor) end
-        closed.state.relayout(anchor)
+        container.opts.editor.refresh(anchor)
       end)
     end,
   })
 end
 
-function M.show(anchor, cwd, buf, view, relayout)
-  local previous = workspaces[cwd]
-  workspaces[cwd] = { buf = buf, path = api.nvim_buf_get_name(buf), view = view, relayout = relayout }
-  relayout(anchor)
-  local win = M.window(anchor)
-  if not win then workspaces[cwd] = previous return false end
+local function show(panel, buf, view)
+  local previous = editors_by_context[panel.key]
+  editors_by_context[panel.key] = { buf = buf, path = api.nvim_buf_get_name(buf), view = view,
+    position = previous and previous.position }
+  panel.container.opts.editor.refresh(panel.anchor)
+  local win = M.window(panel.anchor)
+  if not win then editors_by_context[panel.key] = previous return false end
   vim.cmd.stopinsert()
   api.nvim_set_current_win(win)
   vim.fn.winrestview(view)
@@ -131,14 +164,46 @@ function M.show(anchor, cwd, buf, view, relayout)
   return true
 end
 
-function M.current()
-  if tile and api.nvim_get_current_win() == tile.win then return tile.anchor, tile.cwd end
+function M.open_reference(win, path, line, column)
+  local panel = panel_for(win)
+  if not panel then return false end
+  return show(panel, vim.fn.bufadd(path), { lnum = tonumber(line) or 1, col = math.max(0, (tonumber(column) or 1) - 1) })
+end
+
+function M.open_current()
+  local panel = panel_for(api.nvim_get_current_win())
+  if not panel then return end
+  local main = M.source(panel.anchor)
+  if not main then return end
+  show(panel, api.nvim_win_get_buf(main), api.nvim_win_call(main, vim.fn.winsaveview))
+end
+
+function M.bind(buf)
+  vim.keymap.set("n", "<leader>ne", M.open_current,
+    { buffer = buf, silent = true, nowait = true, desc = "Open editor tile" })
+end
+
+function M.handle_key(action, value)
+  if not tile or api.nvim_get_current_win() ~= tile.win then return false end
+  local win = tile.win
+  vim.schedule(function()
+    if not tile or tile.win ~= win or api.nvim_get_current_win() ~= win then return end
+    local container, context = tile.panel.container, tile.panel.context
+    if action == "navigate" then
+      container.opts.editor.navigate(win, value)
+    elseif action == "move" then
+      container:move_tile(value, context)
+    else
+      container:cycle(context, value)
+    end
+  end)
+  return true
 end
 
 api.nvim_create_autocmd("QuitPre", {
   group = events,
   callback = function()
-    if not M.current() then return end
+    if not tile or api.nvim_get_current_win() ~= tile.win then return end
     local closing = tile
     closing.dismissing = true
     vim.schedule(function() closing.dismissing = nil end)

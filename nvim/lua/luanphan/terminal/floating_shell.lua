@@ -4,7 +4,10 @@ return require("luanphan.terminal.panel").create({
   settings = "floating_terminal",
   augroup = "LuanphanFloatingTerminal",
   close_on_exit = true,
-  on_open = function() require("luanphan.agents.main").hide() end,
+  on_open = function()
+    require("luanphan.agents.main").hide()
+    require("luanphan.view_container.editor").remember_source(api.nvim_get_current_win())
+  end,
   spawn = function(cwd)
     local buf = api.nvim_create_buf(false, true)
     vim.b[buf].luanphan_persist_term = true

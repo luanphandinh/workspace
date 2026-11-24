@@ -117,10 +117,12 @@ vim.keymap.set("x", "<leader>p", "\"_dP")
 
 -- Window / terminal navigation
 vim.keymap.set("n", "<leader>-t", function() require("luanphan.terminal").toggle() end, { desc = "Terminal" })
+vim.keymap.set("n", "<leader>o", function() require("luanphan.view_container.editor").open_in_main() end,
+  { desc = "Open tile file in main editor" })
 local function map_editor_tile_key(key, action, value, fallback)
   vim.keymap.set("n", key, function()
-    local agents = package.loaded["luanphan.agents.main"]
-    if agents and agents.editor_tile_key(action, value) then return "<Ignore>" end
+    local editor = package.loaded["luanphan.view_container.editor"]
+    if editor and editor.handle_key(action, value) then return "<Ignore>" end
     return fallback or key
   end, { expr = true, silent = true })
 end

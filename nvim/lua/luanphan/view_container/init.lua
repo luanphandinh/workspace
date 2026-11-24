@@ -1,11 +1,12 @@
 local window = require("luanphan.view_container.window")
 local tiles = require("luanphan.view_container.tile_render")
 local tabs = require("luanphan.view_container.tab_render")
+local bars = require("luanphan.view_container.window_bar")
+local editor = require("luanphan.view_container.editor")
 local M = vim.tbl_extend("force", window, {
 	tab_label = tabs.tab_label,
-	can_tile = tiles.can_tile,
 })
-local Container = { reserve = tabs.reserve, render = tabs.render, display = tiles.display,
+local Container = { reserve = tabs.reserve, render = tabs.render,
 	refresh_tile_highlights = tiles.refresh_tile_highlights }
 Container.__index = Container
 
@@ -60,6 +61,46 @@ function M.select(title, items, on_select, picker_opts)
 	select_item(title, items, on_select, picker_opts)
 end
 
+function M.focus_neighbor(win, direction, activate)
+	local neighbor = window.tile_neighbor(win, direction)
+	if not neighbor then return false end
+	local anchor = window.group_anchor(win)
+	if neighbor == editor.window(anchor) then
+		editor.focus(anchor)
+	else
+		activate(neighbor)
+	end
+	return true
+end
+
+function M.layout(settings, opts)
+	opts = opts or {}
+	local border = opts.border or (settings.display_style == "tile" and "single" or "none")
+	local inset = border == "none" and 0 or 2
+	local frame = {
+		relative = "editor", row = 0, col = 0, width = vim.o.columns - inset,
+		height = math.max(opts.min_height or 4, vim.o.lines - vim.o.cmdheight) - inset,
+		border = border, zindex = opts.zindex or 40,
+	}
+	local body, bar
+	if opts.docked then
+		if opts.win and vim.api.nvim_win_is_valid(opts.win) then
+			frame.row, frame.col = unpack(vim.api.nvim_win_get_position(opts.win))
+			frame.width = vim.api.nvim_win_get_width(opts.win)
+			frame.height = vim.api.nvim_win_get_height(opts.win)
+		end
+		local sidebar = math.min(42, math.max(3, math.floor(frame.width * 0.3)))
+		body, bar = bars.divide(frame, settings.window_bar_style, sidebar)
+	else
+		body, bar = bars.float_geometry(frame, settings)
+	end
+	return { body = body, bar = bar, display_style = settings.display_style, bar_style = settings.window_bar_style }
+end
+
+function M.has_room(layout, count)
+	return layout.display_style ~= "tile" or tiles.can_tile(layout.body, count)
+end
+
 function M.compact_picker_opts()
 	return {
 		layout_strategy = "center",
@@ -79,7 +120,32 @@ function Container:context()
 end
 
 function Container:tabs(context)
-	return self.opts.tabs(context or self:context()) or {}
+	context = context or self:context()
+	local items = self.opts.tabs(context) or {}
+	if self.opts.editor then return editor.add_tab(self.opts.editor.key(context), items) end
+	return items
+end
+
+function Container:display(anchor, context, layout)
+	local geometry, style = layout.body, layout.display_style
+	local options = self.opts.editor
+	if not options then return tiles.display(self, anchor, context, geometry, style) end
+	editor.register(self, anchor, context)
+	local visible
+	if style ~= "tile" and editor.tab(options.key(context)) then
+		local active = options.active and options.active(context) or vim.api.nvim_win_get_buf(anchor)
+		visible = vim.tbl_filter(function(tab) return tab.separate_window or tab.bufnr == active end, self:tabs(context))
+	end
+	local panes = tiles.display(self, anchor, context, geometry, style, visible)
+	if not panes then return end
+	for index, pane in ipairs(panes) do
+		if pane.tab.separate_window then
+			editor.prepare(self, pane.win, pane.opened)
+			table.remove(panes, index)
+			break
+		end
+	end
+	return panes
 end
 
 function Container:active(context)
@@ -121,6 +187,7 @@ function Container:move_tile(direction, context)
 	if not source or not target then return end
 
 	table.insert(tabs, target, table.remove(tabs, source))
+	if self.opts.editor then editor.remove_tab(self.opts.editor.key(context), tabs) end
 	self.opts.reorder(tabs, context, win)
 end
 
@@ -146,7 +213,23 @@ function Container:cycle(context, step)
 			break
 		end
 	end
-	self.opts.activate(tabs[((index - 1 + (step or 1)) % #tabs) + 1], { view_mode = true })
+	local next_tab = tabs[((index - 1 + (step or 1)) % #tabs) + 1]
+	if next_tab.separate_window then
+		editor.focus(self.tile_anchor)
+	else
+		self.opts.activate(next_tab, { view_mode = true })
+	end
+end
+
+function Container:navigate_tabs(direction, count, only_unsplit)
+	if count < 2 or (direction ~= "h" and direction ~= "l") then return false end
+	if only_unsplit then
+		if self.tile_anchor then return false end
+	elseif self.display_style ~= "tabs" then
+		return false
+	end
+	self:cycle(nil, direction == "h" and -1 or 1)
+	return true
 end
 
 function Container:pick(context)

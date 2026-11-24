@@ -6,7 +6,7 @@ local backend = require("luanphan.agents.tmux")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
 local view_container = require("luanphan.view_container")
-local editor_tile = require("luanphan.agents.plugins.editor.editor")
+local editor_tile = require("luanphan.view_container.editor")
 
 local agent_order = { "codex", "cursor", "claude", "terminal" }
 local agent_key = "<leader>a"
@@ -115,16 +115,6 @@ local function open_tabs(cwd, closing_bufnr)
   return tabs
 end
 
-local function panel_tabs(cwd)
-  local tabs = open_tabs(cwd)
-  local editor = editor_tile.tab(cwd)
-  if editor then
-    tabs[#tabs + 1] = editor
-    sessions.sort_by_order(tabs)
-  end
-  return tabs
-end
-
 local function most_recent_tab(cwd, agents_only)
   local selected = nil
   local selected_sequence = -1
@@ -208,29 +198,9 @@ function M.display_title(name, title)
   return title
 end
 
-local function relayout_editor_tile(anchor)
+local function relayout_agent_panel(anchor)
   local name = vim.b[vim.api.nvim_win_get_buf(anchor)].luanphan_agent_name
   if agent_defs[name] then setup_agent(name).layout(anchor) end
-end
-
-function M.open_file_in_tile(win, path, line, column)
-  local visible = visible_agent()
-  if not visible then return false end
-  local anchor = view_container.group_anchor(visible.win)
-  if view_container.group_anchor(win) ~= anchor then return false end
-  local buf = vim.fn.bufadd(path)
-  local view = { lnum = tonumber(line) or 1, col = math.max(0, (tonumber(column) or 1) - 1) }
-  return editor_tile.show(anchor, vim.b[visible.bufnr].luanphan_agent_cwd, buf, view, relayout_editor_tile)
-end
-
-local function open_editor_tile()
-  local visible = visible_agent()
-  if not visible then return end
-  local anchor = view_container.group_anchor(visible.win)
-  local source = editor_tile.source(anchor)
-  if not source then return end
-  local view = vim.api.nvim_win_call(source, vim.fn.winsaveview)
-  editor_tile.show(anchor, vim.b[visible.bufnr].luanphan_agent_cwd, vim.api.nvim_win_get_buf(source), view, relayout_editor_tile)
 end
 
 function M.names()
@@ -245,8 +215,7 @@ function M.map_create_shortcuts(bufnr)
     vim.tbl_extend("force", opts, { desc = "New terminal" }))
   vim.keymap.set("n", "<leader>na", function() M.new(M.default_agent()) end,
     vim.tbl_extend("force", opts, { desc = "New default terminal agent" }))
-  vim.keymap.set("n", "<leader>ne", open_editor_tile,
-    vim.tbl_extend("force", opts, { desc = "Open editor tile" }))
+  editor_tile.bind(bufnr)
   vim.keymap.set("n", "<leader>nA", function() agent_container:pick() end,
     vim.tbl_extend("force", opts, { desc = "Select terminal agent" }))
   if not vim.b[bufnr].luanphan_agent_new_menu then
@@ -311,33 +280,24 @@ local function restore_panel_sessions(cwd)
   end
 end
 
-local function layout_agent(win, geometry, style, bar_frame, bar_style)
+local function layout_agent(win, layout, opening)
   local window_bar = require("luanphan.agents.window_bar")
   local anchor = vim.w[win].luanphan_view_anchor or win
-  if not geometry then
-    window_bar.layout(anchor, bar_frame, bar_style)
+  if opening then
+    window_bar.layout(anchor, layout)
     return
   end
   local cwd = vim.b[vim.api.nvim_win_get_buf(win)].luanphan_agent_cwd
-  local visible_tabs
-  if style ~= "tile" and editor_tile.tab(cwd) then
-    local active = vim.api.nvim_win_get_buf(anchor)
-    visible_tabs = vim.tbl_filter(function(tab) return tab.separate_window or tab.bufnr == active end, panel_tabs(cwd))
-  end
-  local panes = agent_container:display(anchor, cwd, geometry, style, visible_tabs)
+  local panes = agent_container:display(anchor, cwd, layout)
   if panes then
     for _, pane in ipairs(panes) do
       local tab = pane.tab
-      if tab.separate_window then
-        editor_tile.prepare(pane.win, anchor, cwd, pane.opened)
-      else
-        if pane.opened or pane.win == anchor then
-          agent_container:bind(tab.bufnr, cwd)
-          bind_agent_pane(tab.bufnr)
-        end
-        local api = apis[tab.agent] or setup_agent(tab.agent)
-        api.prepare_tile(pane.win, pane.opened)
+      if pane.opened or pane.win == anchor then
+        agent_container:bind(tab.bufnr, cwd)
+        bind_agent_pane(tab.bufnr)
       end
+      local api = apis[tab.agent] or setup_agent(tab.agent)
+      api.prepare_tile(pane.win, pane.opened)
     end
     agent_container:refresh_tile_highlights()
   else
@@ -347,7 +307,7 @@ local function layout_agent(win, geometry, style, bar_frame, bar_style)
     bind_agent_pane(buf)
     apis[name].prepare_tile(anchor, false)
   end
-  window_bar.layout(anchor, bar_frame, bar_style)
+  window_bar.layout(anchor, layout)
   window_bar.refresh()
 end
 
@@ -508,7 +468,7 @@ function M.new(name, opts)
     local win, cwd = visible.win, vim.fn.getcwd()
     if win == vim.api.nvim_get_current_win() and vim.w[win].luanphan_view_anchor
       and (not opts or not opts.thread_id) then
-      local tabs = panel_tabs(cwd)
+      local tabs = open_tabs(cwd)
       for index, tab in ipairs(tabs) do
         if tab.bufnr == visible.bufnr then
           order_new_tile = function(bufnr)
@@ -654,7 +614,12 @@ end
 
 agent_container = view_container.create({
   context = vim.fn.getcwd,
-  tabs = panel_tabs,
+  tabs = open_tabs,
+  editor = {
+    key = function(cwd) return "agent:" .. cwd end,
+    refresh = relayout_agent_panel,
+    navigate = function(win, direction) require("luanphan.agents.window_bar").navigate(win, direction) end,
+  },
   title = function(buf, title)
     local buffer = vim.b[buf]
     title = M.display_title(buffer.luanphan_agent_name, title)
@@ -669,12 +634,7 @@ agent_container = view_container.create({
   end,
   choices = agent_choices,
   activate = function(tab, opts)
-    if tab.separate_window then
-      local visible = visible_agent()
-      if visible then editor_tile.focus(view_container.group_anchor(visible.win)) end
-    else
-      M.open(tab.agent, tab.bufnr, opts)
-    end
+    M.open(tab.agent, tab.bufnr, opts)
   end,
   create = function(choice)
     M.new(choice.id)
@@ -691,34 +651,17 @@ agent_container = view_container.create({
 
 function M.refresh_tabs(win)
   local anchor = view_container.group_anchor(win)
-  if anchor == agent_container.tile_anchor then return relayout_editor_tile(anchor) end
+  if anchor == agent_container.tile_anchor then return relayout_agent_panel(anchor) end
   local bufnr = vim.api.nvim_win_get_buf(win)
   agent_container:render(win, vim.b[bufnr].luanphan_agent_cwd)
 end
 
-function M.editor_tile_key(action, value)
-  local anchor, cwd = editor_tile.current()
-  if not anchor then return false end
-  local win = vim.api.nvim_get_current_win()
-  vim.schedule(function()
-    if vim.api.nvim_get_current_win() ~= win or editor_tile.current() ~= anchor then return end
-    if action == "navigate" then
-      require("luanphan.agents.window_bar").navigate(win, value)
-    elseif action == "move" then
-      agent_container:move_tile(value, cwd)
-    else
-      agent_container:cycle(cwd, value)
-    end
-  end)
-  return true
-end
 
 local function agent_spec(name)
   local def = agent_defs[name]
   local keys = {}
   local primary = name == agent_order[1]
   if primary then
-    keys[#keys + 1] = { "<leader>o", editor_tile.open_in_main, desc = "Open tile file in main editor" }
     keys[#keys + 1] = {
       agent_key,
       function()

@@ -1,6 +1,7 @@
 local M = {}
 local api = vim.api
 local views = require("luanphan.view_container")
+local editor = require("luanphan.view_container.editor")
 local bars = require("luanphan.view_container.window_bar")
 local window = require("luanphan.terminal.window")
 local settings = require("luanphan.global_settings")
@@ -8,7 +9,7 @@ local settings = require("luanphan.global_settings")
 function M.create(opts)
   local panel = {}
   local scopes = {}
-  local anchor, dock, current, layout
+  local anchor, dock, current
   local bar, inner, create_bar
   local rendering = false
 
@@ -52,6 +53,12 @@ function M.create(opts)
     end
   end
 
+  local function navigate(win, direction)
+    if views.focus_neighbor(win, direction, api.nvim_set_current_win) then return end
+    if inner:navigate_tabs(direction, #current.panes) then return end
+    if not bar:focus_towards(direction, true) and opts.docked then move_from_dock(direction) end
+  end
+
   local function save_views()
     if not is_open() then return end
     for _, win in ipairs(views.group_windows(anchor)) do
@@ -68,18 +75,7 @@ function M.create(opts)
   end
 
   local function geometry()
-    layout = settings.read()[opts.settings]
-    local frame = {
-      relative = "editor", row = 0, col = 0, width = vim.o.columns,
-      height = math.max(4, vim.o.lines - vim.o.cmdheight), border = "none", zindex = 40,
-    }
-    if not opts.docked then return bars.float_geometry(frame, layout) end
-    if dock and api.nvim_win_is_valid(dock) then
-      local pos = api.nvim_win_get_position(dock)
-      frame.row, frame.col = unpack(pos)
-      frame.width, frame.height = api.nvim_win_get_width(dock), api.nvim_win_get_height(dock)
-    end
-    return bars.divide(frame, layout.window_bar_style, math.min(42, math.max(3, math.floor(frame.width * 0.3))))
+    return views.layout(settings.read()[opts.settings], { docked = opts.docked, win = dock, border = "none" })
   end
 
   local function create_dock()
@@ -94,20 +90,20 @@ function M.create(opts)
 
   local function render_body(group, enter)
     if opts.docked and (not dock or not api.nvim_win_is_valid(dock)) then create_dock() end
-    local frame, bar_frame = geometry()
+    local layout = geometry()
     local desired = group.bufnr
     local original_win = api.nvim_get_current_win()
     local had_focus = is_open() and views.group_anchor(original_win) == anchor
     local previous = is_open() and api.nvim_win_get_buf(anchor)
     if not is_open() then
-      anchor = api.nvim_open_win(desired, false, vim.tbl_extend("force", frame, { style = "minimal" }))
+      anchor = api.nvim_open_win(desired, false, vim.tbl_extend("force", layout.body, { style = "minimal" }))
       if dock then vim.w[dock].luanphan_view_companion_anchor = anchor end
     end
     current = group
-    local panes = inner:display(anchor, group, frame, layout.display_style)
+    inner.active_by_context[group] = { id = "shell:" .. desired, bufnr = desired }
+    local panes = inner:display(anchor, group, layout)
     if not panes then
       api.nvim_win_set_buf(anchor, desired)
-      inner.active_by_context[group] = { id = "shell:" .. desired, bufnr = desired }
       inner:render(anchor, group)
       panes = { { win = anchor, opened = desired ~= previous, tab = { bufnr = desired } } }
     end
@@ -121,7 +117,7 @@ function M.create(opts)
       if pane.tab.term then pane.tab.term.window = pane.win end
       window.sync_grid(pane.win, pane.tab.bufnr)
     end
-    bar:layout(anchor, bar_frame, layout.window_bar_style)
+    bar:layout(anchor, layout)
     if enter or (had_focus and views.group_anchor(api.nvim_get_current_win()) ~= anchor) then focus_content() end
     if enter then bar.history.record(desired) end
     inner:refresh_tile_highlights()
@@ -174,8 +170,7 @@ function M.create(opts)
   end
 
   local function new_pane(group, command)
-    local frame = geometry()
-    if layout.display_style == "tile" and not views.can_tile(frame, #group.panes + 1) then
+    if not views.has_room(geometry(), #group.panes + 1) then
       vim.notify("No room for another terminal tile", vim.log.levels.WARN)
       return
     end
@@ -218,23 +213,13 @@ function M.create(opts)
       end
     else
       inner:bind(buf, group)
+      editor.bind(buf)
     end
     local left = opts.docked and function() move_from_dock("h") end or "<C-h>"
     vim.keymap.set("t", "<C-h>", left, keys)
     for _, direction in ipairs({ "h", "j", "k", "l" }) do
       vim.keymap.set("n", "<C-" .. direction .. ">", function()
-        local neighbor = views.tile_neighbor(api.nvim_get_current_win(), direction)
-        if neighbor then
-          api.nvim_set_current_win(neighbor)
-        elseif layout.window_bar_style == "vertical" and direction == "h" and layout.display_style == "tile" then
-          bar:focus()
-        elseif layout.display_style == "tabs" and (direction == "h" or direction == "l") and #group.panes > 1 then
-          inner:cycle(group, direction == "h" and -1 or 1)
-        elseif layout.window_bar_style == "vertical" and direction == "h" then
-          bar:focus()
-        elseif opts.docked then
-          move_from_dock(direction)
-        end
+        navigate(api.nvim_get_current_win(), direction)
       end, keys)
     end
     return result
@@ -277,6 +262,12 @@ function M.create(opts)
 
   inner = views.create({
     context = function() return current end,
+    editor = not opts.docked and {
+      key = function(group) return group end,
+      active = function(group) return group.bufnr end,
+      refresh = function() render(current, false) end,
+      navigate = navigate,
+    } or nil,
     tabs = function(group)
       local items = {}
       for index, pane in ipairs(group.panes) do
@@ -304,7 +295,7 @@ function M.create(opts)
       groups = function()
         local groups = {}
         for _, group in ipairs(owner.windows) do
-          local items = inner:tabs(group)
+          local items = inner.opts.tabs(group)
           local active
           for _, pane in ipairs(items) do
             pane.label = views.tab_label(pane.bufnr, pane.label)
@@ -322,6 +313,7 @@ function M.create(opts)
       end,
       reorder = function(group, items) inner.opts.reorder(items, group.source) end,
       bind = function(buf)
+        if not opts.docked then editor.bind(buf) end
         vim.keymap.set("n", "<leader>nw", panel.new_window, { buffer = buf, desc = "New terminal window" })
         vim.keymap.set("n", "<leader>nt", panel.new_tab, { buffer = buf, desc = "New terminal tab" })
       end,

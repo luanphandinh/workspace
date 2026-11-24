@@ -2,7 +2,7 @@ local M = {}
 local api = vim.api
 local agents = require("luanphan.agents.main")
 local tmux = require("luanphan.agents.tmux")
-local editor_tile = require("luanphan.agents.plugins.editor.editor")
+local editor_tile = require("luanphan.view_container.editor")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
 local close_window = require("luanphan.agents.terminal-chat").close_window
@@ -116,11 +116,11 @@ bar = require("luanphan.view_container.window_bar").create({
   end,
 })
 
-function M.layout(win, frame, style)
+function M.layout(win, layout)
   if valid(main) and main ~= win then close_window(main) end
   main = win
   local old = bar.win
-  bar:layout(win, frame, style)
+  bar:layout(win, layout)
   if bar.win ~= old then bar:refresh() end
 end
 
@@ -133,17 +133,11 @@ function M.update_title(buf)
 end
 
 function M.navigate(win, direction)
-  local neighbor = views.tile_neighbor(win, direction)
-  if neighbor then
-    if neighbor == editor_tile.window(views.group_anchor(win)) then
-      editor_tile.focus(views.group_anchor(win))
-    else
-      local buf = api.nvim_win_get_buf(neighbor)
-      agents.focus(vim.b[buf].luanphan_agent_name, buf, { view_mode = true })
-    end
-  elseif direction == (bar.style == "horizontal" and "k" or "h") then
-    bar:focus()
-  end
+  local moved = views.focus_neighbor(win, direction, function(neighbor)
+    local buf = api.nvim_win_get_buf(neighbor)
+    agents.focus(vim.b[buf].luanphan_agent_name, buf, { view_mode = true })
+  end)
+  if not moved then bar:focus_towards(direction) end
 end
 
 function M.attach(buf)

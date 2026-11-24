@@ -366,6 +366,14 @@ function Bar:focus()
   api.nvim_set_current_win(self.win)
 end
 
+function Bar:focus_towards(direction, vertical_only)
+  local towards_sidebar = self.style == "vertical" and direction == "h"
+  local towards_top_bar = not vertical_only and self.style == "horizontal" and direction == "k"
+  if not (towards_sidebar or towards_top_bar) then return false end
+  self:focus()
+  return true
+end
+
 function Bar:attach(buf)
   local opts = { buffer = buf, silent = true, nowait = true }
   vim.keymap.set("n", "<leader>e", function()
@@ -385,8 +393,13 @@ function Bar:close()
   if valid(win) then api.nvim_win_close(win, true) end
 end
 
-function Bar:layout(anchor, frame, style)
-  if not frame then self:close() return end
+function Bar:layout(anchor, layout)
+  local frame, style = layout.bar, layout.bar_style
+  if not frame then
+    self:close()
+    self.style = style
+    return
+  end
   if valid(self.win) and self.anchor == anchor and self.style == style then
     api.nvim_win_set_config(self.win, frame)
     return
