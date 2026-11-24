@@ -6,7 +6,7 @@ local providers, names = {}, {}
 local order = {}
 
 function M.key(session)
-  return session.bufnr or session.agent .. ":" .. session.thread_id
+  return session.order_key or session.bufnr or session.agent .. ":" .. session.thread_id
 end
 
 function M.set_order(sessions)

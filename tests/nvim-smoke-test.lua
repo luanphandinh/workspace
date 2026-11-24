@@ -4922,6 +4922,10 @@ local function test_panel_shell_sessions(repo)
     "exec cat",
   })
   write(root .. "/settings.toml", { "[agent_float]", 'display_style = "tile"' })
+  local editor_lines = { "first", "second", "third" }
+  for line = 4, 80 do editor_lines[line] = "line " .. line end
+  write(root .. "/editor-source.txt", editor_lines)
+  write(root .. "/editor-linked.txt", { "example", "reference" })
   local script = root .. "/session.lua"
   local terminal_socket = agent_socket(root .. "/floating")
   local setup = {
@@ -4944,6 +4948,7 @@ local function test_panel_shell_sessions(repo)
     "vim.o.shell = '/bin/sh'",
     "vim.o.columns = 160",
     "vim.o.lines = 48",
+    "vim.cmd.cd(root)",
     "local agents = require('luanphan.agents.main')",
     "local sessions = require('luanphan.agents.sessions')",
     "local terminal = require('luanphan.agents.terminal-chat')",
@@ -4956,12 +4961,134 @@ local function test_panel_shell_sessions(repo)
     assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
   end
   run([=[
+local api = vim.api
+local main_win = api.nvim_get_current_win()
+local original_path = vim.fn.getcwd() .. '/editor-source.txt'
+vim.cmd.edit(vim.fn.fnameescape(original_path))
+local main_buf = api.nvim_get_current_buf()
+api.nvim_win_set_cursor(main_win, { 2, 1 })
+vim.wo[main_win].number, vim.wo[main_win].relativenumber, vim.wo[main_win].cursorline = true, true, true
+vim.wo[main_win].signcolumn, vim.wo[main_win].statuscolumn = 'yes:2', '%s%l '
+vim.wo[main_win].winhighlight = 'Normal:Visual'
+local editors = require('luanphan.editor_window')
+local main_appearance = editors.appearance(main_win)
+local function check_tile_appearance(win)
+  local appearance = editors.appearance(win)
+  for _, option in ipairs({ 'number', 'relativenumber', 'cursorline', 'signcolumn', 'statuscolumn' }) do
+    assert(appearance[option] == main_appearance[option], 'editor tile lost ' .. option)
+  end
+  assert(appearance.winhighlight:find('NormalFloat:Visual', 1, true), 'editor tile lost its editor background')
+  assert(appearance.winbar ~= '' and appearance.winbar:find(vim.fs.basename(api.nvim_buf_get_name(api.nvim_win_get_buf(win))), 1, true),
+    'editor tile lost its filename bar')
+end
 local agent = assert(agents.new('codex', { thread_id = agent_id, view_mode = true }))
 assert(vim.wait(3000, function()
   return vim.tbl_contains(vim.api.nvim_buf_get_lines(agent, 0, -1, false),
     'pty=xterm-256color/truecolor/unset/unset/unset/unset')
 end), 'the native agent inherited the GUI launcher terminal environment')
 assert(vim.env.NO_COLOR == '1' and vim.env.TMUX == '/example/socket,1,0', 'starting an agent changed the editor environment')
+press('<leader>ne')
+local editor = api.nvim_get_current_win()
+assert(editor ~= main_win and api.nvim_get_current_buf() == main_buf, 'editor tile did not share the main buffer')
+assert(vim.wo[editor].number and vim.deep_equal(api.nvim_win_get_cursor(editor), { 2, 1 }), 'editor tile lost source options or position')
+check_tile_appearance(editor)
+assert(api.nvim_win_get_config(editor).border[1][2] == 'DiagnosticOk', 'focused editor tile has no green border')
+local function tile_key(key, condition)
+  api.nvim_feedkeys(vim.keycode(key), 'xt', false)
+  assert(vim.wait(1000, condition), 'editor tile did not handle ' .. key)
+end
+tile_key('<C-h>', function() return api.nvim_get_current_buf() == agent end)
+assert(api.nvim_win_get_config(editor).border[1] == '┌', 'unfocused editor tile kept its focus border')
+tile_key('<C-l>', function() return api.nvim_get_current_win() == editor end)
+local right = api.nvim_win_get_config(editor).col
+tile_key('<C-S-h>', function() return api.nvim_win_get_config(editor).col < right end)
+assert(api.nvim_get_current_win() == editor, 'moving editor tile lost focus')
+tile_key('<C-S-l>', function() return api.nvim_win_get_config(editor).col == right end)
+tile_key('<Tab>', function() return api.nvim_get_current_buf() == agent end)
+tile_key('<S-Tab>', function() return api.nvim_get_current_win() == editor end)
+local insert_border
+vim.defer_fn(function()
+  insert_border = api.nvim_win_get_config(editor).border[1][2]
+  api.nvim_input('<Esc>')
+end, 20)
+api.nvim_feedkeys('i', 'xt!', false)
+assert(insert_border == 'LuanphanTileInputBorder', 'editor insert mode has no orange border')
+api.nvim_buf_set_lines(main_buf, 2, 3, false, { 'shared edit' })
+vim.fn.winrestview({ lnum = 20, col = 1, topline = 15 })
+local saved_view = vim.fn.winsaveview()
+agents.toggle()
+assert(api.nvim_get_current_win() == main_win and not api.nvim_win_is_valid(editor), 'hiding agents left its editor tile open')
+assert(vim.deep_equal(api.nvim_win_get_cursor(main_win), { 2, 1 }) and api.nvim_get_current_line() == 'second',
+  'editor tile moved the main cursor')
+assert(api.nvim_buf_get_lines(main_buf, 2, 3, false)[1] == 'shared edit', 'editor tile did not share edits')
+local editor_tiles = require('luanphan.agents.plugins.editor.editor')
+local views = require('luanphan.view_container')
+local function current_editor_tile()
+  local term_win = vim.fn.bufwinid(agent)
+  if term_win ~= -1 then return editor_tiles.window(views.group_anchor(term_win)) end
+end
+agents.toggle()
+local reopened = assert(current_editor_tile(), 'reopening agents did not restore the editor tile')
+local reopened_view = api.nvim_win_call(reopened, vim.fn.winsaveview)
+assert(api.nvim_win_get_buf(reopened) == main_buf and reopened_view.lnum == saved_view.lnum
+  and reopened_view.col == saved_view.col and reopened_view.topline == saved_view.topline,
+  'reopening agents lost the editor file, cursor, or scroll position')
+api.nvim_set_current_win(reopened)
+vim.cmd.quit()
+vim.wait(30, function() return false end)
+assert(not current_editor_tile(), 'closing the editor tile immediately recreated it')
+local linked = vim.fn.getcwd() .. '/editor-linked.txt'
+local function command_click(path, line, col)
+  assert(agents.focus('codex', agent, { view_mode = true }))
+  local term_win = api.nvim_get_current_win()
+  local reference = ('./%s:%d:%d'):format(vim.fs.basename(path), line, col)
+  require('luanphan.terminal.window').send(agent, '\n' .. reference .. '\n')
+  local row
+  assert(vim.wait(3000, function()
+    for index, text in ipairs(api.nvim_buf_get_lines(agent, 0, -1, false)) do
+      if vim.trim(text) == reference then row = index end
+    end
+    return row ~= nil
+  end), 'terminal did not print a reference')
+  local mouse = vim.fn.getmousepos
+  vim.fn.getmousepos = function() return { winid = term_win, line = row, column = 1 } end
+  local result = vim.fn.maparg('<D-LeftMouse>', 'n', false, true).callback()
+  vim.fn.getmousepos = mouse
+  assert(result == '<Ignore>', 'Cmd+click did not consume the terminal reference')
+  assert(vim.wait(3000, function() return api.nvim_buf_get_name(0) == path end), 'file link did not open')
+  assert(api.nvim_win_get_config(0).relative == 'editor' and api.nvim_win_is_valid(term_win), 'file link closed the agents')
+  assert(vim.deep_equal(api.nvim_win_get_cursor(0), { line, col - 1 }), 'file link lost its location')
+  check_tile_appearance(api.nvim_get_current_win())
+  return api.nvim_get_current_win()
+end
+local linked_tile = command_click(linked, 2, 3)
+assert(command_click(original_path, 1, 2) == linked_tile, 'Cmd+click opened a second editor tile')
+assert(command_click(linked, 2, 3) == linked_tile)
+api.nvim_feedkeys(vim.keycode(vim.g.mapleader .. 'o'), 'xt', false)
+assert(api.nvim_get_current_win() == main_win and api.nvim_buf_get_name(0) == linked
+  and vim.deep_equal(api.nvim_win_get_cursor(0), { 2, 2 }), 'open in main editor lost the tile file or position')
+assert(not api.nvim_win_is_valid(linked_tile), 'open in main editor left the tile visible')
+assert(vim.deep_equal(editors.appearance(main_win), main_appearance), 'the reused editor window took on tile options')
+agents.toggle()
+local returned = assert(current_editor_tile(), 'open in main editor discarded the saved tile')
+assert(api.nvim_win_get_buf(returned) == vim.fn.bufnr(linked)
+  and vim.deep_equal(api.nvim_win_get_cursor(returned), { 2, 2 }), 'open in main editor lost the tile file or cursor')
+agents.toggle()
+local special = api.nvim_create_buf(false, true)
+api.nvim_open_win(special, false, { split = 'left', win = main_win })
+vim.cmd.quit()
+assert(not api.nvim_win_is_valid(main_win), 'fixture did not close the last regular editor window')
+agents.toggle()
+api.nvim_set_current_win(assert(current_editor_tile()))
+api.nvim_feedkeys(vim.keycode(vim.g.mapleader .. 'o'), 'xt', false)
+assert(require('luanphan.editor_window').is_editor(api.nvim_get_current_win())
+  and api.nvim_buf_get_name(0) == linked and vim.deep_equal(api.nvim_win_get_cursor(0), { 2, 2 }),
+  'open in main editor did not create a regular editor window')
+assert(vim.deep_equal(editors.appearance(api.nvim_get_current_win()), main_appearance), 'the new split took on tile options')
+agents.toggle()
+api.nvim_set_current_win(assert(current_editor_tile()))
+vim.cmd.quit()
+assert(vim.wait(1000, function() return not current_editor_tile() end))
 press('<leader>nt')
 local first = vim.api.nvim_get_current_buf()
 assert(vim.b[first].luanphan_agent_name == 'terminal', 'new terminal did not create a shell')
@@ -6607,7 +6734,7 @@ local function test_terminal_view_container(repo)
     invoke_map("<C-h>")
     assert_true(vim.api.nvim_get_current_buf() ~= first_buf and visible_toggleterm_window_count() == 1,
       "leaving the integrated terminal hid it or failed to focus the editor")
-    invoke_map("<C-l>")
+    vim.api.nvim_feedkeys(vim.keycode("<C-l>"), "xt", false)
     wait_until("editor can return to the docked terminal", function()
       return vim.api.nvim_get_current_buf() == first_buf
     end, 3000)

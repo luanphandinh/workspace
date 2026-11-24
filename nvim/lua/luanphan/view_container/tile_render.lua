@@ -8,7 +8,8 @@ local ascii_border = { "+", "=", "+", "|", "+", "=", "+", "|" }
 
 local function focused_border()
 	local chars = vim.o.ambiwidth == "double" and ascii_border or heavy_border
-	local highlight = vim.api.nvim_get_mode().mode == "t" and input_border_color or "DiagnosticOk"
+	local mode = vim.api.nvim_get_mode().mode:sub(1, 1)
+	local highlight = (mode == "t" or mode == "i" or mode == "R") and input_border_color or "DiagnosticOk"
 	return vim.tbl_map(function(char) return { char, highlight } end, chars)
 end
 
@@ -92,8 +93,7 @@ local function close_unused_tiles(anchor, retained)
 	if not anchor then return end
 	for _, win in ipairs(window.group_windows(anchor)) do
 		if win ~= anchor and vim.api.nvim_win_is_valid(win) and vim.w[win].luanphan_view_anchor == anchor then
-			local buf = vim.api.nvim_win_get_buf(win)
-			if not retained or retained[buf] ~= win then vim.api.nvim_win_close(win, true) end
+			if not retained or not vim.tbl_contains(retained, win) then vim.api.nvim_win_close(win, true) end
 		end
 	end
 end
@@ -119,16 +119,15 @@ end
 local function untile(self, anchor, context)
 	if self.tile_anchor ~= anchor then return end
 	local active = self:active(context)
-	if active then
-		local focus = self.tile_windows[active.bufnr] == vim.api.nvim_get_current_win()
+	if active and not active.separate_window then
+		local focus = self.tile_windows[active.id] == vim.api.nvim_get_current_win()
 		vim.api.nvim_win_set_buf(anchor, active.bufnr)
 		if focus then vim.api.nvim_set_current_win(anchor) end
 	end
 	clear_tiles(self)
 end
 
-local function tile(self, anchor, context, geometry)
-	local tabs = self:tabs(context)
+local function tile(self, anchor, context, geometry, tabs)
 	if #tabs == 0 then return end
 	local layout = tile_geometry(geometry, #tabs)
 	if not layout then return end
@@ -139,6 +138,7 @@ local function tile(self, anchor, context, geometry)
 			callback = function(args)
 				if args.event ~= "WinClosed" then return self:refresh_tile_highlights() end
 				local win = tonumber(args.match)
+				if win ~= anchor and vim.api.nvim_win_is_valid(win) and vim.w[win].luanphan_view_independent_tile then return end
 				if win == anchor or vim.tbl_contains(self.tile_windows or {}, win) then
 					reset_tiles(self, win)
 					window.close_group(anchor, win)
@@ -150,14 +150,17 @@ local function tile(self, anchor, context, geometry)
 	local previous = self.tile_windows or {}
 	local old_anchor_buf = vim.api.nvim_win_get_buf(anchor)
 	local anchor_buf = old_anchor_buf
-	if not vim.iter(tabs):any(function(tab) return tab.bufnr == anchor_buf end) then
-		anchor_buf = self:active(context).bufnr
+	if not vim.iter(tabs):any(function(tab) return tab.bufnr == anchor_buf and not tab.separate_window end) then
+		local active = self:active(context)
+		if active.separate_window then active = vim.iter(tabs):find(function(tab) return not tab.separate_window end) end
+		if not active then return end
+		anchor_buf = active.bufnr
 	end
 	-- Detach an outgoing terminal before resizing its anchor.
 	local scratch
 	for index, tab in ipairs(tabs) do
 		local is_anchor = tab.bufnr == anchor_buf
-		local win = is_anchor and anchor or previous[tab.bufnr]
+		local win = is_anchor and anchor or previous[tab.id]
 		local opened = not win or not vim.api.nvim_win_is_valid(win)
 		local frame = layout[index]
 		local reserve_bar
@@ -179,7 +182,8 @@ local function tile(self, anchor, context, geometry)
 			vim.api.nvim_win_set_config(win, frame)
 		end
 		vim.w[win].luanphan_view_anchor = anchor
-		if not is_anchor then windows[tab.bufnr] = win end
+		vim.w[win].luanphan_view_independent_tile = tab.separate_window or nil
+		if not is_anchor then windows[tab.id] = win end
 		if vim.api.nvim_win_get_buf(win) ~= tab.bufnr then
 			vim.api.nvim_win_set_buf(win, tab.bufnr)
 		end
@@ -187,7 +191,8 @@ local function tile(self, anchor, context, geometry)
 		self:render(win, context, tab)
 		panes[#panes + 1] = { win = win, tab = tab, opened = opened }
 	end
-	if anchor_buf ~= old_anchor_buf and previous[anchor_buf] == vim.api.nvim_get_current_win() then
+	if anchor_buf ~= old_anchor_buf and vim.tbl_contains(previous, vim.api.nvim_get_current_win())
+		and vim.api.nvim_get_current_buf() == anchor_buf then
 		vim.api.nvim_set_current_win(anchor)
 	end
 	if scratch then vim.api.nvim_buf_delete(scratch, { force = true }) end
@@ -196,9 +201,9 @@ local function tile(self, anchor, context, geometry)
 	return panes
 end
 
-function M.display(self, anchor, context, geometry, style)
+function M.display(self, anchor, context, geometry, style, visible_tabs)
 	self.display_style = style
-	local panes = style == "tile" and tile(self, anchor, context, geometry)
+	local panes = (style == "tile" or visible_tabs) and tile(self, anchor, context, geometry, visible_tabs or self:tabs(context))
 	if panes then return panes end
 	untile(self, anchor, context)
 	vim.api.nvim_win_set_config(anchor, geometry)

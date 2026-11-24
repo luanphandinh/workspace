@@ -397,6 +397,10 @@ function M.open(path, line, column)
     and vim.bo[source_buf].buftype == "terminal"
     and vim.b[source_buf].luanphan_persist_term
     and not vim.b[source_buf].luanphan_toggleterm
+  if close_agent_float and vim.b[source_buf].luanphan_agent_name
+    and require("luanphan.agents.main").open_file_in_tile(source, path, line, column) then
+    return true
+  end
   local editor_window = require("luanphan.editor_window")
   local target = editor_window.find(source)
 

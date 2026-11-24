@@ -117,10 +117,19 @@ vim.keymap.set("x", "<leader>p", "\"_dP")
 
 -- Window / terminal navigation
 vim.keymap.set("n", "<leader>-t", function() require("luanphan.terminal").toggle() end, { desc = "Terminal" })
-vim.keymap.set("n", "<C-h>", "<C-w>h", { silent = true })
-vim.keymap.set("n", "<C-j>", "<C-w>j", { silent = true })
-vim.keymap.set("n", "<C-k>", "<C-w>k", { silent = true })
-vim.keymap.set("n", "<C-l>", "<C-w>l", { silent = true })
+local function map_editor_tile_key(key, action, value, fallback)
+  vim.keymap.set("n", key, function()
+    local agents = package.loaded["luanphan.agents.main"]
+    if agents and agents.editor_tile_key(action, value) then return "<Ignore>" end
+    return fallback or key
+  end, { expr = true, silent = true })
+end
+for _, direction in ipairs({ "h", "j", "k", "l" }) do
+  map_editor_tile_key("<C-" .. direction .. ">", "navigate", direction, "<C-w>" .. direction)
+  map_editor_tile_key("<C-S-" .. direction .. ">", "move", direction)
+end
+map_editor_tile_key("<Tab>", "cycle", 1)
+map_editor_tile_key("<S-Tab>", "cycle", -1)
 
 -- |CTRL-W_o| like |:only| but keep nvim-tree / NERDTree sidebar if open
 local only_keep_tree = require("luanphan.win_only_tree").only_keep_tree

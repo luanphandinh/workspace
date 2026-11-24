@@ -1,4 +1,29 @@
 local M = {}
+local appearance_options = {
+  "number", "relativenumber", "numberwidth", "signcolumn", "statuscolumn", "foldcolumn",
+  "cursorline", "cursorlineopt", "cursorcolumn", "colorcolumn",
+  "wrap", "linebreak", "breakindent", "breakindentopt", "showbreak", "list", "listchars",
+  "scrolloff", "sidescrolloff", "winhighlight", "winblend", "winbar",
+}
+
+function M.appearance(win)
+  local options = {}
+  local scope = win and { win = win } or { scope = "global" }
+  for _, name in ipairs(appearance_options) do
+    options[name] = vim.api.nvim_get_option_value(name, scope)
+  end
+  return options
+end
+
+function M.apply_appearance(win, options)
+  local scope = { win = win, scope = "local" }
+  for _, name in ipairs(appearance_options) do
+    local value = options[name]
+    if value ~= nil and vim.api.nvim_get_option_value(name, { win = win }) ~= value then
+      vim.api.nvim_set_option_value(name, value, scope)
+    end
+  end
+end
 
 function M.is_editor(win)
   if not win or not vim.api.nvim_win_is_valid(win) then return false end

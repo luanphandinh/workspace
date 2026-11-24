@@ -1,6 +1,7 @@
 local M = {}
 local api = vim.api
 local agents = require("luanphan.agents.main")
+local editor_tile = require("luanphan.agents.plugins.editor.editor")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
 local close_window = require("luanphan.agents.terminal-chat").close_window
@@ -131,8 +132,12 @@ end
 function M.navigate(win, direction)
   local neighbor = views.tile_neighbor(win, direction)
   if neighbor then
-    local buf = api.nvim_win_get_buf(neighbor)
-    agents.focus(vim.b[buf].luanphan_agent_name, buf, { view_mode = true })
+    if neighbor == editor_tile.window(views.group_anchor(win)) then
+      editor_tile.focus(views.group_anchor(win))
+    else
+      local buf = api.nvim_win_get_buf(neighbor)
+      agents.focus(vim.b[buf].luanphan_agent_name, buf, { view_mode = true })
+    end
   elseif direction == (bar.style == "horizontal" and "k" or "h") then
     bar:focus()
   end
@@ -163,7 +168,7 @@ api.nvim_create_autocmd("WinEnter", {
   callback = function()
     local current = api.nvim_get_current_win()
     if main and current ~= bar.win and views.group_anchor(current) == main then
-      focused_terminal = current
+      if current ~= editor_tile.window(main) then focused_terminal = current end
       return
     end
     if switching_workspace or not valid(main) or api.nvim_win_get_config(current).relative ~= "" then return end
