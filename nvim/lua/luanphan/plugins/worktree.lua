@@ -35,10 +35,6 @@ local function setup()
   local agents = require("luanphan.agents.main")
   local terminal_agent = require("luanphan.agents.terminal-chat")
   local agent_sessions = require("luanphan.agents.sessions")
-  local AGENT_ORDER = {}
-  for index, agent in ipairs(agents.names()) do
-    AGENT_ORDER[agent] = index
-  end
   local recent_paths = require("luanphan.recent_paths")
   local compact_picker_opts = require("luanphan.view_container").compact_picker_opts
 
@@ -1269,80 +1265,18 @@ local function setup()
     end
   end
 
-  local function agent_before(a, b)
-    if a.last_used ~= b.last_used then
-      return a.last_used > b.last_used
-    end
-    if a.context ~= b.context then
-      return a.context < b.context
-    end
-    local a_order = AGENT_ORDER[a.agent] or math.huge
-    local b_order = AGENT_ORDER[b.agent] or math.huge
-    if a_order ~= b_order then
-      return a_order < b_order
-    end
-    return a.bufnr < b.bufnr
-  end
-
-  local function agent_workspace(cwd, root)
-    return workspace_root_for_path(cwd) or root or vim.fs.root(vim.uv.fs_realpath(cwd) or cwd, ".git") or cwd
+  local function agent_workspace(cwd)
+    return workspace_root_for_path(cwd) or vim.fs.root(vim.uv.fs_realpath(cwd) or cwd, ".git") or cwd
   end
 
   local function list_agent_sessions(include_saved)
     agents.restore_running()
     local instances = agent_sessions.instances(include_saved)
-    local roots = {}
+    local workspaces = {}
     for _, instance in ipairs(instances) do
       local cwd = instance.path
-      local root = roots[cwd]
-      if not root then root = vim.fs.root(vim.uv.fs_realpath(cwd) or cwd, ".git") or cwd end
-      roots[cwd] = root
-      if instance.bufnr then instance.destination = root end
-      instance.workspace = agent_workspace(cwd, root)
-    end
-    return instances
-  end
-
-  local function list_active_agents()
-    local agent_status = require("luanphan.agents.status")
-    local instances = list_agent_sessions()
-    for _, instance in ipairs(instances) do
-      local root, cwd = instance.destination, instance.path
-      local context = vim.fn.fnamemodify(root, ":t")
-      local workspace = workspace_root_for_path(root)
-      if workspace then
-        context = vim.fn.fnamemodify(workspace, ":t") .. "/" .. context
-      end
-      if cwd ~= root and path_is_in_dir(cwd, root) then
-        context = context .. "/" .. cwd:sub(#root + 2)
-      end
-      instance.context = context
-      instance.branch = project_branch(root)
-      instance.status = agent_status.current(instance.bufnr, agent_status.path(instance.agent, cwd))
-    end
-
-    table.sort(instances, agent_before)
-
-    local agent_width = 0
-    local workspace_width = 0
-    local current = safe_getcwd()
-    local current_destination = git_root(current) or workspace_root_for_path(current) or current
-    for _, instance in ipairs(instances) do
-      instance.workspace_label = string.format("%s [%s]", instance.context, instance.branch)
-      agent_width = math.max(agent_width, vim.fn.strdisplaywidth(instance.agent_label))
-      workspace_width = math.max(workspace_width, vim.fn.strdisplaywidth(instance.workspace_label))
-    end
-    for _, instance in ipairs(instances) do
-      local marker = instance.destination == current_destination and "* " or "  "
-      instance.display = string.format(
-        "%s%s%s  %s  [%s]",
-        marker,
-        instance.workspace_label,
-        string.rep(" ", workspace_width - vim.fn.strdisplaywidth(instance.workspace_label)),
-        instance.agent_label .. string.rep(" ", agent_width - vim.fn.strdisplaywidth(instance.agent_label)),
-        instance.status
-      )
-      instance.ordinal = instance.agent .. " " .. instance.agent_label .. " " .. instance.context
+      if not workspaces[cwd] then workspaces[cwd] = agent_workspace(cwd) end
+      instance.workspace = workspaces[cwd]
     end
     return instances
   end
@@ -2060,64 +1994,6 @@ local function setup()
     return focused
   end
 
-  local function agent_switch_targets(instances)
-    table.sort(instances, agent_before)
-    if #instances < 2 then
-      return instances
-    end
-
-    local ordered = { instances[2], instances[1] }
-    for index = 3, #instances do
-      ordered[#ordered + 1] = instances[index]
-    end
-    return ordered
-  end
-
-  local function pick_agent()
-    if rescue_deleted_cwd() then
-      return
-    end
-
-    local instances = list_active_agents()
-    instances = agent_switch_targets(instances)
-    if #instances == 0 then
-      vim.notify("no active agent terminals found", vim.log.levels.WARN)
-      return
-    end
-
-    local pickers, finders, conf, actions, action_state = telescope_modules()
-    if not pickers then return end
-    pickers.new(compact_picker_opts(), {
-      prompt_title = "Active Agents",
-      finder = finders.new_table({
-        results = instances,
-        entry_maker = function(instance)
-          return {
-            value = instance,
-            display = instance.display,
-            ordinal = instance.ordinal,
-          }
-        end,
-      }),
-      sorter = conf.generic_sorter({}),
-      attach_mappings = function(prompt_bufnr, _map)
-        actions.select_default:replace(function()
-          local selection = action_state.get_selected_entry()
-          actions.close(prompt_bufnr)
-          if not selection or not selection.value or not selection.value.path then
-            vim.notify("agent picker: no selection", vim.log.levels.WARN)
-            return
-          end
-          local instance = selection.value
-          vim.schedule(function()
-            require("luanphan.agents.window_bar").select_session(instance)
-          end)
-        end)
-        return true
-      end,
-    }):find()
-  end
-
   local function register_commands()
     pcall(vim.api.nvim_del_user_command, "WorktreeSwitch")
     pcall(vim.api.nvim_del_user_command, "FolderSwitch")
@@ -2125,7 +2001,6 @@ local function setup()
     pcall(vim.api.nvim_del_user_command, "RepositorySwitch")
     pcall(vim.api.nvim_del_user_command, "RepositoryAdd")
     pcall(vim.api.nvim_del_user_command, "RepositoryRemove")
-    pcall(vim.api.nvim_del_user_command, "AgentSwitch")
     vim.api.nvim_create_user_command("WorktreeSwitch", pick_worktree, {
       desc = "Switch nvim instance to another git worktree",
     })
@@ -2144,9 +2019,6 @@ local function setup()
     vim.api.nvim_create_user_command("RepositoryRemove", pick_remove_repository, {
       desc = "Remove a repository from the current workspace",
     })
-    vim.api.nvim_create_user_command("AgentSwitch", pick_agent, {
-      desc = "Switch nvim instance to a project with an active agent",
-    })
   end
 
   register_commands()
@@ -2159,7 +2031,6 @@ local function setup()
     pick_remove_repository = pick_remove_repository,
     pick_project = pick_project,
     pick_workspace_project = pick_workspace_project,
-    pick_agent = pick_agent,
     activate_workspace = activate_workspace,
     activate_agent = activate_agent,
     list_sibling_repos = list_sibling_repos,
@@ -2177,10 +2048,8 @@ local function setup()
     group_project_entries = group_project_entries,
     make_project_sorter = make_project_sorter,
     move_project_selection = move_project_selection,
-    list_active_agents = list_active_agents,
     list_agent_sessions = list_agent_sessions,
     agent_workspace = agent_workspace,
-    agent_switch_targets = agent_switch_targets,
     add_repository = add_repository,
     remove_repository = remove_repository,
     refire_filetype_all = refire_filetype_all,
@@ -2217,15 +2086,13 @@ local spec = {
     "RepositorySwitch",
     "RepositoryAdd",
     "RepositoryRemove",
-    "AgentSwitch",
   },
   keys = {
     { "<leader>wf", picker("pick_folder"), desc = "Pick workspace folder" },
-    { "<leader>wA", picker("pick_add_repository"), desc = "Add repository" },
+    { "<leader>wa", picker("pick_add_repository"), desc = "Add repository" },
     { "<leader>wd", picker("pick_remove_repository"), desc = "Remove repository" },
     { "<leader>wr", picker("pick_project"), desc = "Pick repository" },
     { "<leader>wp", picker("pick_workspace_project"), desc = "Pick workspace" },
-    { "<leader>wa", picker("pick_agent"), desc = "Switch active agent" },
   },
   config = ensure_setup,
   list_agent_sessions = function(include_saved)

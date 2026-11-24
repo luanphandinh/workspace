@@ -1788,7 +1788,6 @@ local function worktree_test_api()
   assert_true(_G._luanphan_wt_test and _G._luanphan_wt_test.switch_to, "worktree test hook is missing")
   for _, mapping in ipairs({
     { "<leader>wf", "n" },
-    { "<leader>wA", "n" },
     { "<leader>wd", "n" },
     { "<leader>wr", "n" },
     { "<leader>wp", "n" },
@@ -1834,10 +1833,11 @@ local function test_worktree_plugin_starts_lazy()
     type(global_settings_map) == "table" and type(global_settings_map.callback) == "function",
     "<leader>sg is not a lazy callback mapping"
   )
-  local add_repository_map = vim.fn.maparg("<leader>wA", "n", false, true)
+  local add_repository_map = vim.fn.maparg("<leader>wa", "n", false, true)
   assert_true(
-    type(add_repository_map) == "table" and type(add_repository_map.callback) == "function",
-    "<leader>wA is not a lazy callback mapping"
+    type(add_repository_map) == "table" and type(add_repository_map.callback) == "function"
+      and add_repository_map.desc == "Add repository",
+    "<leader>wa did not register the Add Repository picker"
   )
   local remove_repository_map = vim.fn.maparg("<leader>wd", "n", false, true)
   assert_true(
@@ -1845,12 +1845,8 @@ local function test_worktree_plugin_starts_lazy()
     "<leader>wd is not a lazy callback mapping"
   )
   assert_true(vim.fn.maparg("<leader>gP", "n") == "", "<leader>gP should not have a duplicate project picker")
-  local agent_map = vim.fn.maparg("<leader>wa", "n", false, true)
-  assert_true(
-    type(agent_map) == "table" and type(agent_map.callback) == "function",
-    "<leader>wa is not a lazy callback mapping"
-  )
-  for _, old_lhs in ipairs({ "<leader>gp", "<leader>gw", "<leader>g;", "<leader>w;" }) do
+  assert_true(vim.fn.exists(":AgentSwitch") == 0, "the old agent picker command is still registered")
+  for _, old_lhs in ipairs({ "<leader>gp", "<leader>gw", "<leader>g;", "<leader>w;", "<leader>wA" }) do
     assert_true(vim.fn.maparg(old_lhs, "n") == "", old_lhs .. " workspace mapping should be removed")
   end
 end
@@ -1859,11 +1855,10 @@ local function test_worktree_keymaps_dispatch_to_pickers()
   local worktree = worktree_test_api()
   for _, mapping in ipairs({
     { "<leader>wf", "n", "pick_folder" },
-    { "<leader>wA", "n", "pick_add_repository" },
+    { "<leader>wa", "n", "pick_add_repository" },
     { "<leader>wd", "n", "pick_remove_repository" },
     { "<leader>wr", "n", "pick_project" },
     { "<leader>wp", "n", "pick_workspace_project" },
-    { "<leader>wa", "n", "pick_agent" },
   }) do
     local method = mapping[3]
     local original = worktree[method]
@@ -3653,12 +3648,8 @@ end
 
 local function test_active_agent_discovery(repo, worktree)
   local api = worktree_test_api()
-  local agent_status = require("luanphan.agents.status")
   local original_buf = vim.api.nvim_get_current_buf()
   local original_cwd = vim.fn.getcwd()
-  local original_status_dir = vim.g.luanphan_agent_status_dir
-  local status_dir = vim.fn.tempname()
-  vim.g.luanphan_agent_status_dir = status_dir
   local agent_keys = { "codex_agent_bufnr", "claude_agent_bufnr", "cursor_agent_bufnr" }
   local saved = {}
   for _, key in ipairs(agent_keys) do
@@ -3693,64 +3684,29 @@ local function test_active_agent_discovery(repo, worktree)
     vim.g.codex_agent_bufnr = { [repo] = { repo_codex_buf }, [worktree] = { worktree_codex_buf } }
     vim.g.cursor_agent_bufnr = { [worktree] = { worktree_cursor_buf } }
     vim.g.claude_agent_bufnr = { [repo] = { 999999 } }
-    assert_true(agent_status.write("codex", repo, "running"), "failed to record first agent state")
-    assert_true(agent_status.write("cursor", worktree, "idle"), "failed to record second agent state")
-    wait_until("agent picker terminal titles", function()
+    wait_until("agent terminal titles", function()
       return vim.b[repo_codex_buf].term_title == "Review example parser"
         and vim.b[worktree_codex_buf].term_title == "Fix test failures"
     end, 3000)
 
-    local instances = api.list_active_agents()
-    assert_true(#instances == 3, "active agent discovery returned an unexpected instance count")
-    assert_true(instances[1].bufnr == repo_codex_buf, "active agent was not first in recency order")
-    assert_true(instances[1].agent_label == "Review example parser", "agent picker ignored the thread title")
-    assert_true(instances[1].display:find("Review example parser", 1, true), "agent picker display omitted the title")
-    local workspace_position = instances[1].display:find(instances[1].workspace_label, 1, true)
-    local session_position = instances[1].display:find(instances[1].agent_label, 1, true)
-    local status_position = instances[1].display:find("[" .. instances[1].status .. "]", 1, true)
-    assert_true(
-      workspace_position < session_position and session_position < status_position,
-      "agent picker columns are not workspace, session, status"
-    )
-    assert_true(instances[1].ordinal:find("Review example parser", 1, true), "thread title is not searchable")
-    assert_true(instances[3].agent_label == "cursor", "untitled agent did not retain its fallback label")
-    vim.b[repo_codex_buf].term_title = "Renamed parser review"
-    instances = api.list_active_agents()
-    assert_true(instances[1].bufnr == repo_codex_buf and instances[1].agent_label == "Renamed parser review", "renaming changed picker identity or left a stale title")
-    local switch_targets = api.agent_switch_targets(instances)
-    assert_true(#switch_targets == 3, "agent switch targets discarded an active agent")
-    assert_true(switch_targets[1].bufnr == worktree_codex_buf, "previous agent was not the first suggestion")
-    assert_true(switch_targets[2].bufnr == repo_codex_buf, "current agent was not retained after the suggestion")
-    assert_true(switch_targets[3].bufnr == worktree_cursor_buf, "older agent was not retained")
-
-    vim.b[worktree_codex_buf].luanphan_agent_last_used = 4
-    instances = api.list_active_agents()
-    switch_targets = api.agent_switch_targets(instances)
-    assert_true(switch_targets[1].bufnr == repo_codex_buf, "previous agent was not promoted after a switch")
-
-    vim.b[worktree_cursor_buf].luanphan_agent_last_used = 5
-    instances = api.list_active_agents()
-    switch_targets = api.agent_switch_targets(instances)
-    assert_true(switch_targets[1].bufnr == worktree_codex_buf, "flat agent history was not preserved across projects")
-    assert_true(switch_targets[2].bufnr == worktree_cursor_buf, "current agent was not retained in flat history")
-    assert_true(switch_targets[3].bufnr == repo_codex_buf, "older cross-project agent was not retained")
-
-    local by_key = {}
-    for _, instance in ipairs(instances) do
-      by_key[instance.agent .. "\0" .. instance.path] = instance
+    local function live_agents()
+      local instances = api.list_agent_sessions()
+      assert_true(#instances == 3, "agent session discovery returned an unexpected instance count")
+      local by_buffer = {}
+      for _, instance in ipairs(instances) do
+        by_buffer[instance.bufnr] = instance
+      end
+      return by_buffer
     end
-    local codex = by_key["codex\0" .. repo]
-    local cursor = by_key["cursor\0" .. worktree]
-    assert_true(codex ~= nil, "Codex agent path was not discovered")
-    assert_true(cursor ~= nil, "Cursor agent path was not discovered")
-    assert_true(by_key["claude\0" .. repo] == nil, "stale agent terminal survived discovery")
-    assert_true(codex.status == "running", "running agent state was not discovered")
-    assert_true(cursor.status == "idle", "idle agent state was not discovered")
-    assert_true(codex.display:find("%[running%]") ~= nil, "agent display omitted running state")
-    assert_true(cursor.display:find("%[idle%]") ~= nil, "agent display omitted idle state")
-    assert_true(codex.display:find("example%-repo") ~= nil, "agent display omitted repository context")
-    assert_true(cursor.display:find("%[feature%]") ~= nil, "agent display omitted branch context")
-    assert_true(vim.fn.exists(":AgentSwitch") == 2, "AgentSwitch command is missing")
+
+    local instances = live_agents()
+    local codex, peer, cursor = instances[repo_codex_buf], instances[worktree_codex_buf], instances[worktree_cursor_buf]
+    assert_true(codex and codex.workspace == realpath(repo), "Codex session has the wrong workspace")
+    assert_true(peer and peer.workspace == realpath(worktree), "worktree session has the wrong workspace")
+    assert_true(codex.agent_label == "Review example parser", "agent sessions ignored the terminal title")
+    assert_true(cursor and cursor.agent_label == "cursor", "untitled agent did not retain its fallback label")
+    vim.b[repo_codex_buf].term_title = "Renamed parser review"
+    assert_true(live_agents()[repo_codex_buf].agent_label == "Renamed parser review", "agent session kept a stale title")
 
     agents_module = require("luanphan.agents.main")
     original_focus = agents_module.focus
@@ -3777,8 +3733,6 @@ local function test_active_agent_discovery(repo, worktree)
   for _, item in ipairs(saved) do
     vim.g[item.key] = item.value
   end
-  vim.g.luanphan_agent_status_dir = original_status_dir
-  vim.fn.delete(status_dir, "rf")
   if vim.api.nvim_buf_is_valid(original_buf) then
     pcall(vim.api.nvim_set_current_buf, original_buf)
   end
@@ -5411,14 +5365,14 @@ local function test_agent_view_container(repo)
     for _, label in ipairs({ "codex 1", "codex 2", "cursor 1", "cursor 2", "claude 1", "claude 2" }) do
       assert_true(winbar:find(label, 1, true) ~= nil, "agent tab bar omitted " .. label)
     end
-    local active_instances = worktree_test_api().list_active_agents()
+    local active_instances = worktree_test_api().list_agent_sessions()
     local repo_instances = 0
     for _, instance in ipairs(active_instances) do
       if realpath(instance.path) == realpath(repo) then
         repo_instances = repo_instances + 1
       end
     end
-    assert_true(repo_instances == 6, "active-agent picker did not retain every terminal instance")
+    assert_true(repo_instances == 6, "agent session discovery did not retain every terminal instance")
 
     assert_true(agents.open("cursor"), "could not reactivate the selected terminal agent")
     wait_until("active agent before send", function()
@@ -5973,7 +5927,7 @@ local function test_agent_view_container(repo)
 end
 
 local function test_tiled_agent_workspace_picker(repo, worktree)
-  local fixture = temp_root .. "/tiled-agent-picker"
+  local fixture = temp_root .. "/tiled-workspace-picker"
   write_executable(fixture .. "/bin/mcodex", { "#!/bin/sh", "exec cat" })
   write(fixture .. "/settings.toml", { "[agent_float]", 'display_style = "tile"' })
   local script = fixture .. "/picker.lua"
@@ -6005,45 +5959,30 @@ local away, away_peer = new_agent(), new_agent()
 local anchor = view.group_anchor(vim.api.nvim_get_current_win())
 local sidebar = assert(vim.w[anchor].luanphan_window_bar)
 
-local function choose_agent(buf)
-  vim.fn.maparg('<leader>wa', 'n', false, true).callback()
+local function choose_workspace(buf)
+  vim.fn.maparg('<leader>ww', 'n', false, true).callback()
   local prompt = vim.api.nvim_get_current_buf()
-  local picker = assert(action_state.get_current_picker(prompt), 'active agent picker did not open')
+  local picker = assert(action_state.get_current_picker(prompt), 'agent window picker did not open')
   assert(picker.layout_strategy == 'center' and vim.api.nvim_win_get_width(0) <= 96,
-    'active agent picker did not use the compact centered layout')
-  assert(vim.wait(3000, function()
-    return picker.manager and picker.manager:num_results() == 4
-  end, 20), 'active agent picker did not list both tiled workspaces')
-  for _ = 1, 4 do
-    local selected = picker:get_selection()
-    if selected and selected.value.bufnr == buf then break end
-    actions.move_selection_next(prompt)
-  end
-  assert(picker:get_selection().value.bufnr == buf, 'active agent picker omitted the target tile')
+    'agent window picker did not use the compact centered layout')
+  assert(vim.wait(3000, function() return picker.manager and picker.manager:num_results() == 2 end, 20),
+    'agent window picker did not show one entry per workspace')
   actions.select_default(prompt)
-  assert(vim.wait(3000, function()
-    return vim.api.nvim_get_current_buf() == buf
-  end, 20), 'active agent picker did not focus the target tile')
+  assert(vim.wait(3000, function() return vim.api.nvim_get_current_buf() == buf end, 20),
+    'agent window picker did not return to the last session of the previous workspace')
   assert(#view.group_windows(anchor) == 3 and vim.w[anchor].luanphan_window_bar == sidebar,
-    'active agent picker did not keep the tiles and sidebar together')
+    'agent window picker did not keep the tiles and sidebar together')
 end
 
-choose_agent(home)
+choose_workspace(home_peer)
 assert(vim.fn.bufwinid(away) == -1 and vim.fn.bufwinid(away_peer) == -1,
-  'active agent picker left tiles from the previous workspace')
-choose_agent(away_peer)
+  'agent window picker left tiles from the previous workspace')
+choose_workspace(away_peer)
 assert(vim.fn.bufwinid(home) == -1 and vim.fn.bufwinid(home_peer) == -1,
-  'active agent picker left tiles on the return switch')
-vim.fn.maparg('<leader>ww', 'n', false, true).callback()
-local prompt = vim.api.nvim_get_current_buf()
-local picker = assert(action_state.get_current_picker(prompt), 'agent window picker did not open')
-assert(vim.wait(3000, function() return picker.manager and picker.manager:num_results() == 2 end, 20),
-  'agent window picker did not show one entry per workspace')
-actions.select_default(prompt)
-assert(vim.wait(3000, function() return vim.api.nvim_get_current_buf() == home end, 20),
-  'agent window picker did not return to the last session of the previous workspace')
-assert(#view.group_windows(anchor) == 3 and vim.w[anchor].luanphan_window_bar == sidebar,
-  'agent window picker replaced the panel')
+  'agent window picker left tiles on the return switch')
+local window_bar = require('luanphan.agents.window_bar')
+assert(window_bar.select_session({ agent = 'codex', bufnr = home, path = vim.b[home].luanphan_agent_cwd }, { view_mode = true }),
+  'sidebar could not select an individual agent session')
 
 vim.g.neovide = true
 vim.api.nvim_exec_autocmds('UIEnter', {})
@@ -6088,7 +6027,6 @@ assert(vim.wait(3000, function() return not vim.api.nvim_buf_is_valid(away_peer)
 local peer_win = vim.fn.bufwinid(home_peer)
 local extra = vim.api.nvim_open_win(home_peer, false, vim.api.nvim_win_get_config(peer_win))
 vim.w[extra].luanphan_view_anchor = anchor
-local window_bar = require('luanphan.agents.window_bar')
 assert(window_bar.select_session({ agent = 'codex', bufnr = away, path = destination }, { view_mode = true }),
   'sidebar could not switch to the single-tile workspace')
 assert(vim.api.nvim_get_current_win() == anchor and vim.api.nvim_win_get_buf(anchor) == away,
@@ -7608,7 +7546,6 @@ end
 local function test_workspace_keymaps_restart_lsp_for_selected_directory(repo, worktree)
   local api = worktree_test_api()
   local cases = {
-    { lhs = "<leader>wa", method = "pick_agent" },
     { lhs = "<leader>wp", method = "pick_workspace_project" },
     { lhs = "<leader>wr", method = "pick_project" },
     { lhs = "<leader>wf", method = "pick_folder" },
@@ -9281,7 +9218,7 @@ local setup_ok, setup_err = xpcall(function()
   end)
   test("floating terminal nests tabs inside global windows", agent_tests.floating_terminal)
   test("tmux terminal restores native panes across Neovim restarts", agent_tests.tmux_terminal)
-  test("active agent picker keeps the tiled panel together", function()
+  test("agent window picker keeps the tiled panel together", function()
     agent_tests.tiled_workspace_picker(repo, worktree)
   end)
   test("Codex sidebar restores exact threads across editor restarts", function()
@@ -9327,11 +9264,11 @@ local setup_ok, setup_err = xpcall(function()
     safe_cleanup_tests.repository_remove()
   end)
 
-  test("active agent picker discovers running project terminals", function()
+  test("agent sessions discover running project terminals", function()
     test_active_agent_discovery(repo, worktree)
   end)
 
-  test("agent picker replaces the visible repository agent window", function()
+  test("agent session selection replaces the visible repository agent window", function()
     test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
   end)
 

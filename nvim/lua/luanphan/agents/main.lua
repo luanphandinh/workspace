@@ -203,10 +203,6 @@ local function relayout_agent_panel(anchor)
   if agent_defs[name] then setup_agent(name).layout(anchor) end
 end
 
-function M.names()
-  return vim.list_slice(agent_order)
-end
-
 function M.map_create_shortcuts(bufnr)
   local opts = { buffer = bufnr, silent = true, nowait = true }
   -- Keep the editor's New buffer mapping from replacing a panel buffer.
