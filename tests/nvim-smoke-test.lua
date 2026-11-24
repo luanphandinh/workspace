@@ -5845,6 +5845,18 @@ local function test_agent_view_container(repo)
     invoke_map("<leader>e")
     local tile_sidebar = vim.api.nvim_get_current_win()
     assert_focused_tile(nil)
+    vim.api.nvim_win_set_cursor(tile_sidebar, { 1, 0 })
+    local tile_sidebar_buf = vim.api.nvim_win_get_buf(tile_sidebar)
+    local active_ns = vim.api.nvim_create_namespace("LuanphanWindowBarActive")
+    for _, pair in ipairs({ { 4, "claude" }, { 3, "codex 2" } }) do
+      vim.api.nvim_set_current_win(tile_window(tile_buffers[pair[1]]))
+      local row = vim.api.nvim_win_get_cursor(tile_sidebar)[1]
+      local line = vim.api.nvim_buf_get_lines(tile_sidebar_buf, row - 1, row, false)[1]
+      assert_true(vim.trim(line):gsub("^-?%d+%s+", "") == pair[2], "sidebar cursor did not follow the focused tile")
+      local mark = vim.api.nvim_buf_get_extmark_by_id(tile_sidebar_buf, active_ns, 1, {})
+      assert_true(mark[1] == row - 1, "sidebar highlight did not follow the focused tile")
+    end
+    invoke_map("<leader>e")
     invoke_map("<C-S-k>")
     assert_true(tile_config(3).row == 0 and tile_config(2).row == cut, "sidebar reorder did not move the tiles")
     assert_true(vim.api.nvim_get_current_win() == tile_sidebar, "tile reorder took focus from the sidebar")
@@ -6370,6 +6382,12 @@ assert(left.col == full.col and left.col + left.width + 2 == right.col
   "split panes did not fill the Neovim tile area")
 assert(vim.deep_equal(right.border[1], { "┏", "DiagnosticOk" }) and left.border[1] == "┌",
   "view mode should show a heavy green border only on the focused tile")
+key("<leader>e")
+assert(api.nvim_get_current_win() == bar_win, "could not focus the tmux sidebar")
+api.nvim_win_set_cursor(bar_win, { 1, 0 })
+key("<leader>e")
+assert(active() == second and api.nvim_win_get_cursor(bar_win)[1] == 3,
+  "leaving the tmux sidebar did not restore the row for the focused pane")
 local editing_border
 vim.defer_fn(function()
   if api.nvim_get_mode().mode == "t" then editing_border = config(second).border end

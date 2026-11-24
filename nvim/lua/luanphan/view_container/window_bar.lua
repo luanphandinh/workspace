@@ -178,7 +178,9 @@ function Bar:refresh(keep_cursor, groups)
     end
   end
   local selected = sidebar.render(self, groups, active, self.history.offsets(live))
-  if selected and not keep_cursor then api.nvim_win_set_cursor(self.win, { selected, 0 }) end
+  if selected and (not keep_cursor or api.nvim_get_current_win() ~= self.win) then
+    api.nvim_win_set_cursor(self.win, { selected, 0 })
+  end
   self:animate()
 end
 
@@ -389,6 +391,7 @@ function Bar:close()
   local win = self.win
   if valid(self.anchor) then vim.w[self.anchor].luanphan_window_bar = nil end
   self.win, self.anchor, self.rows = nil, nil, {}
+  self.rows_by_buffer, self.active_row = nil, nil
   self:stop_timer()
   if valid(win) then api.nvim_win_close(win, true) end
 end
@@ -480,6 +483,23 @@ function M.create(opts)
   bars[bar] = true
   return bar
 end
+
+api.nvim_create_autocmd("WinEnter", {
+  group = api.nvim_create_augroup("LuanphanWindowBarFocus", { clear = true }),
+  callback = function()
+    local win = api.nvim_get_current_win()
+    local anchor = windows.group_anchor(win)
+    if not valid(anchor) then return end
+    local sidebar_win = vim.w[anchor].luanphan_window_bar
+    if not valid(sidebar_win) or sidebar_win == win then return end
+    for bar in pairs(bars) do
+      if bar.win == sidebar_win and bar.style == "vertical" then
+        sidebar.follow(bar, api.nvim_win_get_buf(win))
+        return
+      end
+    end
+  end,
+})
 
 api.nvim_create_autocmd("VimLeavePre", {
   group = api.nvim_create_augroup("LuanphanWindowBarOrder", { clear = true }),

@@ -2,6 +2,7 @@ local M = {}
 local api = vim.api
 local ns = api.nvim_create_namespace("LuanphanWindowBar")
 local status_ns = api.nvim_create_namespace("LuanphanWindowBarStatus")
+local active_ns = api.nvim_create_namespace("LuanphanWindowBarActive")
 local window_title = "LuanphanWindowBarTitle"
 
 local function set_title_highlight()
@@ -49,8 +50,25 @@ function M.statuses(bar)
   end
 end
 
+local function mark_active(bar, row)
+  local buf = api.nvim_win_get_buf(bar.win)
+  if row then
+    api.nvim_buf_set_extmark(buf, active_ns, row - 1, 0, { id = 1, line_hl_group = "Title" })
+  else
+    api.nvim_buf_del_extmark(buf, active_ns, 1)
+  end
+  bar.active_row = row
+end
+
+function M.follow(bar, bufnr)
+  local row = bar.rows_by_buffer and bar.rows_by_buffer[bufnr]
+  if not row then return end
+  if row ~= bar.active_row then mark_active(bar, row) end
+  if api.nvim_win_get_cursor(bar.win)[1] ~= row then api.nvim_win_set_cursor(bar.win, { row, 0 }) end
+end
+
 function M.render(bar, groups, active, offsets)
-  local lines, rows, selection = {}, {}, nil
+  local lines, rows, rows_by_buffer = {}, {}, {}
   local width = api.nvim_win_get_width(bar.win) - 1
   local number_width = 2
   for _, offset in pairs(offsets) do number_width = math.max(number_width, #tostring(offset)) end
@@ -61,7 +79,6 @@ function M.render(bar, groups, active, offsets)
     lines[#lines + 1] = fit(prefix .. group.title, width)
     rows[#rows + 1] = { group = group, groups = groups, index = index }
     for item_index, item in ipairs(group.items) do
-      if folded and item.bufnr and item.bufnr == active then selection = #rows end
       if not folded then
         local offset = string.format(number, offsets[item.bufnr] or "")
         local icon = item.icon or ""
@@ -75,8 +92,8 @@ function M.render(bar, groups, active, offsets)
         if bar.opts.status and label_width >= 0 and item.bufnr then row.status_col = status_col end
         rows[#rows + 1] = row
         lines[#lines + 1] = offset .. fit(item.label, label_width)
-        if item.bufnr and item.bufnr == active then selection = #rows end
       end
+      if item.bufnr then rows_by_buffer[item.bufnr] = #rows end
     end
   end
   local buf = api.nvim_win_get_buf(bar.win)
@@ -102,10 +119,9 @@ function M.render(bar, groups, active, offsets)
       end
     end
   end
-  if selection then
-    api.nvim_buf_set_extmark(buf, ns, selection - 1, 0, { line_hl_group = "Title" })
-  end
-  bar.rows = rows
+  local selection = rows_by_buffer[active]
+  bar.rows, bar.rows_by_buffer = rows, rows_by_buffer
+  mark_active(bar, selection)
   M.statuses(bar)
   return selection
 end
