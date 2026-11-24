@@ -1,43 +1,77 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450" role="img" aria-labelledby="title description">
-  <title id="title">Editor and agent</title>
-  <desc id="description">Neovide connects to Neovim through RPC. Neovim runs mcodex in a terminal buffer, which connects to the Codex app-server through a Unix socket. Optional tmux panes can host Neovim or mcodex.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="586" viewBox="0 0 880 586" role="img" aria-labelledby="title description">
+  <title id="title">Neovim agent and terminal architecture</title>
+  <desc id="description">Neovide connects to Neovim over RPC. The shared view_container draws both panels. Agent plugins run Codex, Cursor, and Claude in the luanphan-agents tmux server. The floating terminal displays panes from the default tmux server. Codex connects to a shared app-server over a Unix socket.</desc>
   <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#555b67"/>
     </marker>
     <style>
-      text { font-family: sans-serif; font-size: 16px; fill: #333; text-anchor: middle; }
-      .machine { fill: #ffffde; stroke: #aaaa33; }
-      .component { fill: #ececff; stroke: #9370db; }
-      .connection { fill: none; stroke: #333; stroke-width: 1.5; marker-end: url(#arrow); }
+      text { font-family: system-ui, sans-serif; font-size: 16px; fill: #1f2937; text-anchor: middle; }
+      .heading { font-weight: 650; }
+      .detail { font-size: 13px; fill: #414956; }
+      .layer { fill: #f5f7fb; stroke: #adb6c8; }
+      .component { fill: #ffffff; stroke: #adb6c8; }
+      .shared { fill: #e8eefc; stroke: #7893cd; }
+      .agent { fill: #efe9fb; stroke: #a18bc9; }
+      .terminal { fill: #e5f4ef; stroke: #75a999; }
+      .link { fill: none; stroke: #555b67; stroke-width: 1.5; marker-end: url(#arrow); }
       .both { marker-start: url(#arrow); }
-      .optional { stroke-dasharray: 4 4; }
-      .label { font-size: 14px; }
     </style>
   </defs>
 
-  <rect class="machine" x="12" y="12" width="776" height="426"/>
-  <text x="400" y="39">Local development</text>
-  <rect class="component" x="35" y="100" width="150" height="50"/>
-  <text x="110" y="130">Neovide</text>
-  <rect class="component" x="315" y="100" width="140" height="50"/>
-  <text x="385" y="130">nvim</text>
-  <rect class="component" x="615" y="100" width="140" height="50"/>
-  <text x="685" y="130">tmux</text>
-  <rect class="component" x="315" y="260" width="140" height="50"/>
-  <text x="385" y="290">mcodex</text>
-  <rect class="component" x="285" y="365" width="200" height="55"/>
-  <text x="385" y="398">Codex app-server</text>
+  <rect x="1" y="1" width="878" height="584" rx="12" fill="#fcfcfd" stroke="#d3d8e0"/>
+  <rect class="component" x="342" y="16" width="196" height="42" rx="8"/>
+  <text class="heading" x="440" y="43">Neovide</text>
 
-  <path class="connection both" d="M 185 125 H 315"/>
-  <text class="label" x="250" y="111">Neovim RPC</text>
-  <path class="connection" d="M 385 150 V 260"/>
-  <text class="label" x="460" y="201">terminal</text>
-  <text class="label" x="460" y="221">buffer</text>
-  <path class="connection both" d="M 385 310 V 365"/>
-  <text class="label" x="460" y="343">Unix socket</text>
-  <path class="connection optional" d="M 615 125 H 455"/>
-  <text class="label" x="535" y="111">optional editor pane</text>
-  <path class="connection optional" d="M 685 150 V 285 H 455"/>
-  <text class="label" x="570" y="272">optional agent pane</text>
+  <rect class="layer" x="28" y="86" width="824" height="243" rx="10"/>
+  <text class="heading" x="87" y="113">Neovim</text>
+  <path class="link both" d="M 440 59 V 119"/>
+  <text class="detail" x="490" y="77">Neovim RPC</text>
+
+  <rect class="shared" x="53" y="120" width="774" height="56" rx="8"/>
+  <text class="heading" x="440" y="143">view_container</text>
+  <text class="detail" x="440" y="163">Window bar · tabs and tiles · shared editor tile</text>
+
+  <path class="link" d="M 289 176 V 195"/>
+  <path class="link" d="M 690 176 V 195"/>
+  <rect class="agent" x="53" y="196" width="472" height="54" rx="8"/>
+  <text class="heading" x="289" y="218">Agents · &lt;leader&gt;a</text>
+  <text class="detail" x="289" y="237">Codex, Cursor, and Claude plugins</text>
+  <rect class="terminal" x="553" y="196" width="274" height="54" rx="8"/>
+  <text class="heading" x="690" y="218">Floating terminal · &lt;leader&gt;t</text>
+  <text class="detail" x="690" y="237">Global tmux sessions and panes</text>
+
+  <path class="link" d="M 289 250 V 269"/>
+  <path class="link" d="M 690 250 V 269"/>
+  <rect class="shared" x="53" y="270" width="774" height="43" rx="8"/>
+  <text class="heading" x="440" y="297">Shared tmux transport</text>
+
+  <path class="link both" d="M 289 314 V 365"/>
+  <path class="link both" d="M 690 314 V 365"/>
+  <text class="detail" x="364" y="350">tmux control mode</text>
+  <text class="detail" x="765" y="350">tmux control mode</text>
+
+  <rect class="agent" x="53" y="366" width="472" height="55" rx="8"/>
+  <text class="heading" x="289" y="389">luanphan-agents tmux server</text>
+  <text class="detail" x="289" y="408">One tmux session per workspace</text>
+  <rect class="terminal" x="553" y="366" width="274" height="55" rx="8"/>
+  <text class="heading" x="690" y="389">Default tmux server</text>
+  <text class="detail" x="690" y="408">Reuses a session or creates one</text>
+
+  <path class="link" d="M 289 421 V 460"/>
+  <path class="link" d="M 289 440 H 127 V 460"/>
+  <path class="link" d="M 289 440 H 451 V 460"/>
+  <path class="link" d="M 690 421 V 460"/>
+  <rect class="component" x="53" y="461" width="148" height="42" rx="8"/>
+  <text x="127" y="487">Codex via mcodex</text>
+  <rect class="component" x="215" y="461" width="148" height="42" rx="8"/>
+  <text x="289" y="487">cursor-agent</text>
+  <rect class="component" x="377" y="461" width="148" height="42" rx="8"/>
+  <text x="451" y="487">claude</text>
+  <rect class="component" x="553" y="461" width="274" height="42" rx="8"/>
+  <text x="690" y="487">Shells and other terminal jobs</text>
+  <path class="link both" d="M 127 504 V 540"/>
+  <text class="detail" x="174" y="526">Unix socket</text>
+  <rect class="component" x="53" y="541" width="245" height="32" rx="8"/>
+  <text x="175" y="562">Shared Codex app-server</text>
 </svg>

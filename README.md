@@ -55,22 +55,20 @@ mkws --name example-b --branch example-branch-b --add repo-b front-end/repo-c@ex
 - `mkws resume` restores missing worktrees when the source repositories exist.
 - **Neovim navigation:** Space is `<leader>`. Use `<leader>wp` for workspaces, `<leader>wr` for repositories, and `<leader>ww` for windows in the active agent or terminal view. Use `:WorktreeSwitch` for Git worktrees.
 
-## Editor and agent
+## Neovim architecture
 
-![Local editor and agent connections](docs/local-development.svg)
+![Neovide connects to Neovim, where agents and the floating terminal share view_container and use separate tmux servers](docs/local-development.svg)
 
-- **Neovide:** Provides the graphical UI for Neovim.
-- **Neovim:** Runs [`mcodex`](bin/mcodex) in a terminal buffer scoped to the working directory.
-- **mcodex:** Starts or reuses the managed Codex daemon and connects its terminal UI. Without arguments, it opens the resume picker.
-- **Shared files:** The editor and agent work on the same saved files.
-- **Agent view:** `<leader>;` toggles the view or sends a visual selection. Switching repositories preserves agent terminals.
-- **Lifetime:** Hiding the view keeps its job running. Quitting the agent terminal disconnects its UI from the separate daemon.
+- [`view_container`](nvim/lua/luanphan/view_container) renders the window bar, tabs, tiles, and shared editor tile. Neovim owns the layout and focus. tmux runs the processes and keeps their terminal state.
+- `<leader>a` opens workspace agents. In visual mode it sends the selection to an agent. The [Codex, Cursor, and Claude plugins](nvim/lua/luanphan/agents/plugins) supply their own launch and session behavior. Codex uses [`mcodex`](bin/mcodex) to connect its TUI to a shared Codex app-server. Each workspace has a session on `luanphan-agents`, with one tmux window per agent tile.
+- `<leader>t` opens the global floating terminal. By default it reuses a session on the default tmux server or creates one if needed. It renders tmux panes as Neovim tabs or tiles. Hiding either floating panel keeps its jobs running.
+- `<leader>-t` opens the docked terminal for the current working directory. It uses Neovim terminal jobs.
 
 ## tmux as the glue
 
 - Groups editors, agents, tests, and logs, keeping processes running across terminal disconnects.
 - Run `nvim` and `mcodex` in separate panes, or use Neovide alongside them. New panes inherit the current directory.
-- `Ctrl-b w` opens the tmux session picker.
+- `Ctrl-b w` opens the tmux window picker. Use `tmux -L luanphan-agents attach` to attach to the agent server directly.
 
 ## Remote development
 
