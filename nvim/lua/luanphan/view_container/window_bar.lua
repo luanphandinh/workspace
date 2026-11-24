@@ -9,6 +9,7 @@ local tabs = require("luanphan.view_container.tab_render")
 local jump_lists = require("luanphan.view_container.jumplist")
 local bars = vim.luanphan_window_bars or setmetatable({}, { __mode = "k" })
 vim.luanphan_window_bars = bars
+local order_save_delay = 300
 
 local function valid(win)
   return win and api.nvim_win_is_valid(win)
@@ -73,12 +74,53 @@ end
 
 function Bar:groups()
   local groups = self.opts.groups()
+  if self.opts.load_order and not self.order_loaded then
+    self.order_loaded = true
+    self.order = self.opts.load_order()
+    self.saved_order = self.order
+  end
   if not self.order then return groups end
   local order = {}
   for index, id in ipairs(self.order) do order[id] = index end
   for index, group in ipairs(groups) do group.position = order[group.id] or #self.order + index end
   table.sort(groups, function(a, b) return a.position < b.position end)
   return groups
+end
+
+function Bar:flush_order()
+  if self.order_timer then vim.fn.timer_stop(self.order_timer) end
+  self.order_timer = nil
+  if self.opts.save_order and self.order and not vim.deep_equal(self.order, self.saved_order)
+    and self.opts.save_order(self.order) then
+    self.saved_order = self.order
+  end
+end
+
+function Bar:reset_order()
+  self:flush_order()
+  self.order, self.saved_order, self.order_loaded = nil, nil, nil
+end
+
+local function reorder_visible(previous, groups)
+  local ids, visible = {}, {}
+  for index, group in ipairs(groups) do ids[index], visible[group.id] = group.id, true end
+  local order, next_id = {}, 1
+  for _, id in ipairs(previous or {}) do
+    if visible[id] then
+      order[#order + 1] = ids[next_id]
+      next_id = next_id + 1
+    else
+      order[#order + 1] = id
+    end
+  end
+  return vim.list_extend(order, ids, next_id)
+end
+
+function Bar:update_order(groups)
+  self.order = reorder_visible(self.order, groups)
+  if not self.opts.save_order then return end
+  if self.order_timer then vim.fn.timer_stop(self.order_timer) end
+  self.order_timer = vim.fn.timer_start(order_save_delay, function() self:flush_order() end)
 end
 
 function Bar:focus_content()
@@ -113,9 +155,10 @@ function Bar:map_jumps(buf, keep_focus)
   end
 end
 
-function Bar:refresh(keep_cursor)
+function Bar:refresh(keep_cursor, groups)
   if not valid(self.win) or not valid(self.anchor) then return end
-  local active, groups = self:active(), self:groups()
+  local active = self:active()
+  groups = groups or self:groups()
   if self.style == "horizontal" then
     self.rows = {}
     for index, group in ipairs(groups) do
@@ -168,8 +211,8 @@ function Bar:rename_window()
   end)
 end
 
-function Bar:refresh_at(group, item)
-  self:refresh(true)
+function Bar:refresh_at(group, item, groups)
+  self:refresh(true, groups)
   for index, row in ipairs(self.rows) do
     if row.group.id == group and (row.item and row.item.id) == item then
       if self.style == "vertical" then
@@ -197,17 +240,16 @@ function Bar:move(delta)
   local target = index + delta
   if row.item then target = (target - 1) % #items + 1 end
   if target == index or not items[target] then return end
-  if not row.item and self.opts.reorder_groups then
-    self.opts.reorder_groups(row.group, items[target])
-    return
+  if not row.item and self.opts.save_order and not self.saved_order then
+    self.saved_order = vim.tbl_map(function(group) return group.id end, items)
   end
   table.insert(items, target, table.remove(items, index))
   if row.item then
     self.opts.reorder(row.group, items)
   else
-    self.order = vim.tbl_map(function(group) return group.id end, items)
+    self:update_order(items)
   end
-  self:refresh_at(row.group.id, row.item and row.item.id)
+  self:refresh_at(row.group.id, row.item and row.item.id, not row.item and items or nil)
 end
 
 function Bar:cycle(step)
@@ -405,10 +447,12 @@ function Bar:layout(anchor, frame, style)
       end
     end, opts)
   end
-  vim.keymap.set("n", "<C-S-j>", function() self:move(1) end,
-    vim.tbl_extend("force", opts, { desc = "Move sidebar item down" }))
-  vim.keymap.set("n", "<C-S-k>", function() self:move(-1) end,
-    vim.tbl_extend("force", opts, { desc = "Move sidebar item up" }))
+  for _, modifier in ipairs({ "C-S", "D-S" }) do
+    vim.keymap.set("n", "<" .. modifier .. "-j>", function() self:move(1) end,
+      vim.tbl_extend("force", opts, { desc = "Move sidebar item down" }))
+    vim.keymap.set("n", "<" .. modifier .. "-k>", function() self:move(-1) end,
+      vim.tbl_extend("force", opts, { desc = "Move sidebar item up" }))
+  end
   for _, key in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
     local to_content = key == (style == "horizontal" and "<C-j>" or "<C-l>")
     vim.keymap.set("n", key, to_content and function() self:focus_content() end or "<Nop>", opts)
@@ -423,5 +467,12 @@ function M.create(opts)
   bars[bar] = true
   return bar
 end
+
+api.nvim_create_autocmd("VimLeavePre", {
+  group = api.nvim_create_augroup("LuanphanWindowBarOrder", { clear = true }),
+  callback = function()
+    for bar in pairs(bars) do Bar.flush_order(bar) end
+  end,
+})
 
 return M

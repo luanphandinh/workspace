@@ -1,6 +1,7 @@
 local M = {}
 local api = vim.api
 local agents = require("luanphan.agents.main")
+local tmux = require("luanphan.agents.tmux")
 local editor_tile = require("luanphan.agents.plugins.editor.editor")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
@@ -83,6 +84,8 @@ bar = require("luanphan.view_container.window_bar").create({
   filetype = "agent-window-bar",
   history = agents.history,
   groups = groups,
+  load_order = tmux.load_window_order,
+  save_order = tmux.save_window_order,
   active_window = function()
     if valid(focused_terminal) and views.group_anchor(focused_terminal) == main then return focused_terminal end
     return main

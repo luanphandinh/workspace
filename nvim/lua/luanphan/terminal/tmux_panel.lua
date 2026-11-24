@@ -250,6 +250,8 @@ tiles = views.create({
 bar = bars.create({
   title = "Tmux Windows",
   groups = function() return windows end,
+  load_order = function() if session then return tmux:load_window_order(session.id) end end,
+  save_order = function(order) return session and tmux:save_window_order(session.id, order) end,
   active_window = active_window,
   activate = activate,
   rename_window = function(group, name)
@@ -261,16 +263,6 @@ bar = bars.create({
     batch(commands, refresh)
   end,
   reorder = function(_, items) reorder_panes(items) end,
-  reorder_groups = function(group, other)
-    local commands = {}
-    for _, pane in ipairs(group.items) do
-      commands[#commands + 1] = model.write(pane, { window_order = other.index })
-    end
-    for _, pane in ipairs(other.items) do
-      commands[#commands + 1] = model.write(pane, { window_order = group.index })
-    end
-    batch(commands, refresh)
-  end,
   bind = bind_shortcuts,
 })
 
@@ -463,6 +455,7 @@ end
 
 function M.hide(closing)
   if not client and not valid(anchor) then return false end
+  bar:reset_order()
   local connection, win, old = client, anchor, panes
   client, session, anchor, current = nil, nil, nil, nil
   windows, panes = {}, {}

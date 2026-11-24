@@ -31,6 +31,14 @@ local function run(args)
   return nil, vim.trim(result.stderr or "")
 end
 
+function M.load_window_order()
+  return server:load_window_order()
+end
+
+function M.save_window_order(order)
+  return server:save_window_order(nil, order)
+end
+
 local function launch_file()
   local lines = { "unset TMUX TMUX_PANE TERM_PROGRAM TERM_PROGRAM_VERSION", "export TERM=xterm-256color" }
   local env = vim.fn.environ()

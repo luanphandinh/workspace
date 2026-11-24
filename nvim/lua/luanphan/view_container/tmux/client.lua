@@ -4,6 +4,7 @@ Client.__index = Client
 
 local Server = {}
 Server.__index = Server
+local window_order = "@luanphan-window-order"
 
 function M.new(options)
   return setmetatable({ options = options }, Server)
@@ -29,6 +30,21 @@ end
 
 function Server:run(args)
   return vim.system(self:argv(args), { text = true, clear_env = true, env = environment() }):wait(2000)
+end
+
+function Server:load_window_order(session)
+  local args = session and { "show-options", "-v", "-t", session } or { "show-options", "-sv" }
+  args[#args + 1] = window_order
+  local result = self:run(args)
+  if result.code ~= 0 then return end
+  local ok, order = pcall(vim.json.decode, vim.trim(result.stdout or ""))
+  if ok and vim.islist(order) and vim.iter(order):all(function(id) return type(id) == "string" end) then return order end
+end
+
+function Server:save_window_order(session, order)
+  local args = session and { "set-option", "-t", session } or { "set-option", "-s" }
+  vim.list_extend(args, { window_order, vim.json.encode(order) })
+  return self:run(args).code == 0
 end
 
 local function quote(value)

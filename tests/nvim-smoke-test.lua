@@ -5985,6 +5985,7 @@ local function test_tiled_agent_workspace_picker(repo, worktree)
     "vim.g.luanphan_cursor_sessions_dir = " .. string.format("%q", fixture .. "/cursor-sessions"),
     "local destination = " .. string.format("%q", worktree),
   }
+  local restart_setup = vim.list_slice(script_lines)
   vim.list_extend(script_lines, vim.split([[
 vim.o.columns = 160
 vim.o.lines = 48
@@ -6104,6 +6105,28 @@ local second = vim.api.nvim_win_get_config(vim.fn.bufwinid(home_peer))
 assert(first.col + first.width + 2 == second.col and first.width + second.width + 2 == single_width,
   'returning from the single tile left overlapping panes')
 
+local backend = require('luanphan.agents.tmux')
+local save, load_groups = bar.opts.save_order, bar.opts.groups
+local saves, reads = 0, 0
+bar.opts.save_order = function(order) saves = saves + 1 return save(order) end
+bar.opts.groups = function() reads = reads + 1 return load_groups() end
+vim.api.nvim_set_current_win(sidebar)
+vim.api.nvim_win_set_cursor(sidebar, { 1, 0 })
+local initial_order = vim.tbl_map(function(group) return group.id end, bar.rows[1].groups)
+local function move(key) vim.api.nvim_feedkeys(vim.keycode(key), 'xt', false) end
+move('<D-S-j>')
+assert(bar.rows[1].group.id == initial_order[2], 'moving the workspace took focus or waited on tmux')
+move('<D-S-k>')
+vim.wait(350, function() return false end)
+assert(saves == 0, 'moving back to the original order wrote to tmux')
+move('<D-S-j>')
+move('<D-S-k>')
+move('<D-S-j>')
+assert(saves == 0 and reads == 0, 'moving workspaces queried groups or saved before the debounce')
+assert(vim.wait(1500, function() return saves == 1 end), 'final workspace order was not saved')
+assert(vim.deep_equal(backend.load_window_order(), { initial_order[2], initial_order[1] }),
+  'tmux did not store the final workspace order')
+
 local windows = view.group_windows(anchor)
 vim.api.nvim_create_autocmd('User', {
   pattern = 'SmokeHideAgentPanel',
@@ -6121,6 +6144,24 @@ end
   write(script, script_lines)
   local output = vim.fn.systemlist(child_nvim_luafile_command(repo, script))
   assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+  vim.list_extend(restart_setup, vim.split([[
+vim.o.columns = 160
+local agents = require('luanphan.agents.main')
+agents.toggle()
+local sidebar = assert(vim.w.luanphan_window_bar)
+local first = vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(sidebar), 0, 1, false)[1]
+assert(first == ' [1] ' .. vim.fs.basename(destination), 'restarting Neovim lost the reordered workspaces')
+vim.api.nvim_set_current_win(sidebar)
+vim.api.nvim_win_set_cursor(sidebar, { 1, 0 })
+vim.api.nvim_feedkeys(vim.keycode('<D-S-j>'), 'xt', false)
+]], "\n", { plain = true }))
+  write(script, restart_setup)
+  output = vim.fn.systemlist(child_nvim_luafile_command(repo, script))
+  assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+  local saved = vim.system({ "tmux", "-S", agent_socket(script), "show-options", "-sv", "@luanphan-window-order" },
+    { text = true }):wait()
+  assert_true(saved.code == 0 and vim.deep_equal(vim.json.decode(vim.trim(saved.stdout)), { realpath(repo), realpath(worktree) }),
+    "quitting before the debounce lost the pending workspace order")
 end
 
 local function test_floating_terminal_windows()
@@ -6708,6 +6749,19 @@ api.nvim_feedkeys("i", "xt!", false)
 assert(vim.wait(4000, function() return visible_output("USER_INPUT") end), "terminal mode lost typed input")
 assert(input_top == top and not visible_output("UNEXPECTED_FOCUS"),
   "entering or leaving terminal mode sent a focus report to tmux")
+vim.fn.maparg("<leader>e", "n", false, true).callback()
+local bar = vim.iter(pairs(vim.luanphan_window_bars)):find(function(item) return item.win == api.nvim_get_current_win() end)
+local initial = vim.tbl_map(function(group) return group.id end, bar.rows[1].groups)
+local session_id = tmux("display-message", "-p", "-t", focus_pane, "#{session_id}")
+api.nvim_win_set_cursor(bar.win, { 1, 0 })
+api.nvim_feedkeys(vim.keycode("<D-S-j>"), "xt", false)
+assert(bar.rows[1].group.id == initial[2], "native terminal window did not move immediately")
+assert(not pcall(tmux, "show-options", "-v", "-t", session_id, "@luanphan-window-order"),
+  "moving a terminal window saved before the debounce")
+panel.hide()
+initial[1], initial[2] = initial[2], initial[1]
+assert(vim.deep_equal(vim.json.decode(tmux("show-options", "-v", "-t", session_id, "@luanphan-window-order")), initial),
+  "detaching the terminal lost the pending window order")
 ]=])
   end, debug.traceback)
   vim.system({ "tmux", "-S", socket, "kill-server" }):wait()
