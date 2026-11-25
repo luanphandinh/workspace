@@ -5,32 +5,22 @@ local terminal_pane = require("luanphan.view_container.terminal")
 function M.create(profile)
   local backend, config, nx = profile.backend, profile.config, profile.notify
   local augroup_name = profile.augroup
-
-  local function cwd_key()
-    return vim.fn.getcwd()
-  end
+  local container = profile.container
 
   local function win_for_buf(bufnr)
     return vim.fn.win_findbuf(bufnr)[1]
   end
 
-  local function resume_terminal_view(win, bufnr, opts)
-    profile.mark_used(bufnr)
-    pcall(profile.on_show, bufnr, win, profile.cwd(bufnr) or cwd_key())
-    terminal_pane.focus_input(win, bufnr, opts and opts.view_mode)
+  local function show(buf, win)
+    local cwd = profile.cwd(buf) or container:context()
+    profile.on_show(buf, cwd)
+    container:present_tile(cwd, { id = buf, bufnr = buf }, win)
   end
 
-  local function get_float_layout()
-    return view_container.layout(profile.settings(), {
-      border = config.float_border or "single", zindex = config.float_zindex, min_height = 12,
-    })
-  end
-
-  local function open_float(bufnr)
-    local layout = get_float_layout()
-    local win = view_container.open_float(layout, bufnr, true)
-    profile.on_float_layout(win, layout, true)
-    return win
+  local function resume_terminal_view(win, buf, opts)
+    profile.mark_used(buf)
+    pcall(show, buf, win)
+    terminal_pane.focus_input(win, buf, opts and opts.view_mode)
   end
 
   local function apply_scrollback(buf)
@@ -40,52 +30,37 @@ function M.create(profile)
     end
   end
 
-  local function prepare_terminal_window(win)
-    if profile.on_prepare then
-      pcall(profile.on_prepare, win)
-    end
+  local function quit_action(buf)
+    local cwd = profile.cwd(buf)
+    if not cwd then return end
+    local next_tab = container:replacement(cwd, buf)
+    return function() container:focus_replacement(next_tab) end
   end
 
-  local function layout_float(win)
-    if not vim.api.nvim_win_is_valid(win) then return end
-    if terminal_pane.is_closing_tile(win) then return end
-    profile.on_float_layout(win, get_float_layout())
+  local function notify_close(buf)
+    local cwd = profile.cwd(buf)
+    local ok, cleanup = pcall(profile.on_close, buf, cwd)
+    if ok then container:remove_tab(buf, cwd, cleanup) end
   end
 
-  local function bind_terminal(buf)
-    terminal_pane.bind_navigation(buf, profile.on_navigate)
+  local function register_terminal(buf, cwd, launched)
+    terminal_pane.configure_buffer(buf)
+    container:bind_title(buf)
+    profile.on_register(buf, launched)
+    container:invalidate_sidebar()
+    apply_scrollback(buf)
+    terminal_pane.set_reference_cwd(buf, cwd)
+    local group = vim.api.nvim_create_augroup(augroup_name .. "_Window_" .. buf, { clear = true })
+    terminal_pane.bind_process(buf, group, backend, notify_close, quit_action)
+    container:bind_terminal(buf, cwd)
     if not profile.shell then
       vim.keymap.set("t", "<C-l>", "<Nop>", { buffer = buf, silent = true, nowait = true })
     end
   end
 
-  local function quit_action(buf)
-    local cwd = profile.cwd(buf)
-    if cwd and profile.on_quit then
-      local ok, action = pcall(profile.on_quit, buf, cwd)
-      if ok and type(action) == "function" then return action end
-    end
-  end
-
-  local function notify_close(buf)
-    if profile.on_close then
-      pcall(profile.on_close, buf, profile.cwd(buf))
-    end
-  end
-
-  local function register_terminal(buf, cwd, launched)
-    terminal_pane.configure_buffer(buf)
-    profile.on_register(buf, launched)
-    apply_scrollback(buf)
-    terminal_pane.set_reference_cwd(buf, cwd)
-    local group = vim.api.nvim_create_augroup(augroup_name .. "_Window_" .. buf, { clear = true })
-    terminal_pane.bind_process(buf, group, backend, notify_close, quit_action)
-    bind_terminal(buf)
-  end
-
   local function start_terminal(buf, cwd, opts)
     local win = win_for_buf(buf)
-    local geometry = not win and get_float_layout().body
+    local geometry = not win and container.opts.layout().body
     local width = win and vim.api.nvim_win_get_width(win) or geometry.width
     local height = win and vim.api.nvim_win_get_height(win) or geometry.height
     local command, data = profile.command(buf, cwd, opts)
@@ -101,14 +76,20 @@ function M.create(profile)
 
   local function mount_terminal(buf, opts)
     view_container.show_panel(profile.panel)
-    return terminal_pane.mount(buf, opts and opts.reuse_win, open_float, prepare_terminal_window,
-      profile.highlights, config.float_zindex)
+    local function open(initial)
+      local layout = container.opts.layout()
+      local win = container:open_float(layout, initial, true)
+      container:layout_sidebar(win, layout)
+      return win
+    end
+    return terminal_pane.mount(buf, opts and opts.reuse_win, open, function(win) container:reserve(win) end,
+      container.opts.highlights)
   end
 
   local function open_terminal(opts, on_start)
     local buf = vim.api.nvim_create_buf(false, true)
-    local win = mount_terminal(buf, opts)
-    local cwd = cwd_key()
+    local win = mount_terminal(buf, container:reuse(nil, opts))
+    local cwd = container:context()
     if not start_terminal(buf, cwd, opts) then return end
     if on_start then on_start(buf) end
     resume_terminal_view(win, buf, opts)
@@ -118,7 +99,6 @@ function M.create(profile)
   local function show_terminal(bufnr, opts)
     local win = mount_terminal(bufnr, opts)
     apply_scrollback(bufnr)
-    bind_terminal(bufnr)
     resume_terminal_view(win, bufnr, opts)
   end
 
@@ -145,29 +125,24 @@ function M.create(profile)
     return buf
   end
 
-  function API.focus(bufnr, opts)
+  function API.focus(bufnr, opts, reopen)
     local cur = bufnr or profile.current()
     if not cur or not backend.running(cur) then
       nx("no terminal — use " .. profile.hint_open .. " to open", vim.log.levels.INFO)
       return false
+    end
+    if not container:visible_window(profile.cwd(cur), cur) then
+      if reopen then container:hide() else opts = container:reuse(cur, opts) end
     end
     local win = win_for_buf(cur)
     if not win then
       show_terminal(cur, opts)
       return true
     end
-    terminal_pane.configure_window(win, profile.highlights)
+    terminal_pane.configure_window(win, container.opts.highlights)
     vim.api.nvim_set_current_win(win)
     resume_terminal_view(win, cur, opts)
     return true
-  end
-
-  function API.layout(win)
-    layout_float(win)
-  end
-
-  function API.prepare_tile(win, opened)
-    if opened then terminal_pane.configure_window(win, profile.highlights) end
   end
 
   function API.setup()
@@ -179,9 +154,10 @@ function M.create(profile)
     local win = cur and win_for_buf(cur)
     if win then
       view_container.show_panel(profile.panel)
-      prepare_terminal_window(win)
-      terminal_pane.configure_window(win, profile.highlights)
-      pcall(profile.on_show, cur, win, profile.cwd(cur))
+      container:use_anchor(view_container.group_anchor(win))
+      container:reserve(win)
+      terminal_pane.configure_window(win, container.opts.highlights)
+      pcall(show, cur, win)
     end
   end
 

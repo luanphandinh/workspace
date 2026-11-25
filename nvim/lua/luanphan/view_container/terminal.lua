@@ -110,7 +110,7 @@ function M.bind_navigation(buf, navigate)
   end
 end
 
-function M.mount(buf, win, open, prepare, highlights, zindex)
+function M.mount(buf, win, open, prepare, highlights)
   local placeholder
   if not win or not api.nvim_win_is_valid(win) then
     -- Reserve the winbar before attaching a live terminal so its grid stays stable.
@@ -121,7 +121,6 @@ function M.mount(buf, win, open, prepare, highlights, zindex)
   if api.nvim_win_get_buf(win) ~= buf then api.nvim_win_set_buf(win, buf) end
   if placeholder then pcall(api.nvim_buf_delete, placeholder, { force = true }) end
   api.nvim_set_current_win(win)
-  api.nvim_win_set_config(win, { zindex = zindex })
   M.configure_window(win, highlights)
   return win
 end

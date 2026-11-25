@@ -28,8 +28,7 @@ end
 
 local function refresh_layouts()
 	for container in pairs(watched_layouts) do
-		local anchor = container.layout_anchor
-		if anchor and vim.api.nvim_win_is_valid(anchor) then container.opts.relayout(anchor) end
+		container:relayout()
 	end
 end
 
@@ -155,10 +154,6 @@ function M.has_room(layout, count)
 	return layout.display_style ~= "tile" or tiles.can_tile(layout.body, count)
 end
 
-function M.open_float(layout, buf, enter)
-	return vim.api.nvim_open_win(buf, enter, vim.tbl_extend("force", layout.body, { style = "minimal" }))
-end
-
 function M.compact_picker_opts()
 	return {
 		layout_strategy = "center",
@@ -211,23 +206,65 @@ function Container:select_tab(context, tab)
 end
 
 function Container:visible_window(context, buf)
-	if self.layout_context ~= context or not self.visible_windows or not self.layout_anchor
-		or not vim.api.nvim_win_is_valid(self.layout_anchor) then return end
-	local win = self.visible_windows[buf]
+	if self.layout_context ~= context or not self.visible_panes or not self:anchor() then return end
+	local pane = self.visible_panes[buf]
+	local win = pane and pane.win
 	if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then return win end
 end
 
-function Container:content_window()
+function Container:anchor()
 	local anchor = self.layout_anchor
-	if not anchor or not vim.api.nvim_win_is_valid(anchor) then return end
+	return anchor and vim.api.nvim_win_is_valid(anchor) and anchor or nil
+end
+
+function Container:content_window()
+	local anchor = self:anchor()
+	if not anchor then return end
 	local current = vim.api.nvim_get_current_win()
 	local buf = vim.api.nvim_win_get_buf(current)
 	return self:visible_window(self.layout_context, buf) == current and current or anchor
 end
 
-function Container:hide()
+function Container:hide(closing)
 	local anchor = self.layout_anchor
-	return anchor and window.close_group(anchor) or false
+	if not anchor then return false end
+	self.layout_anchor, self.layout_context, self.visible_panes = nil, nil, nil
+	local bar = self.opts.bar()
+	if bar then bar:reset() end
+	return window.close_group(anchor, closing)
+end
+
+function Container:use_anchor(win)
+	if self.layout_anchor ~= win then
+		self:hide()
+		self.layout_anchor = win
+	end
+	return win
+end
+
+function Container:open_float(layout, buf, enter)
+	return self:use_anchor(vim.api.nvim_open_win(buf, enter,
+		vim.tbl_extend("force", layout.body, { style = "minimal" })))
+end
+
+function Container:watch(group, opts)
+	window.watch_panel(group, vim.tbl_extend("force", {
+		anchor = function() return self.layout_anchor end,
+		hide = function(win) return self:hide(win) end,
+		suspended = function() return self.switching end,
+	}, opts or {}))
+end
+
+function Container:with_panel_windows(callback)
+	local anchor = self:anchor()
+	if not anchor then return callback() end
+	vim.cmd.stopinsert()
+	local previous = self.switching
+	self.switching = true
+	local ok, result = pcall(callback, window.group_windows(anchor))
+	self.switching = previous
+	if not ok then error(result) end
+	return result
 end
 
 function Container:reuse(target, opts)
@@ -241,7 +278,7 @@ function Container:layout_sidebar(anchor, layout)
 end
 
 function Container:bind_title(bufnr)
-	tabs.bind_title(bufnr, self.opts.title)
+	if self.opts.title then tabs.bind_title(bufnr, self.opts.title) end
 end
 
 function Container:invalidate_sidebar()
@@ -263,13 +300,41 @@ function Container:present_tile(context, tab, win)
 	if self:visible_window(context, tab.bufnr) == win then return self:focus_tile(context, tab, false) end
 	self:select_tab(context, tab)
 	self.opts.bar().history.record(tab.bufnr)
-	return self.opts.relayout(win)
+	return self:relayout(win, context)
+end
+
+function Container:relayout(win, context)
+	local anchor = win and window.group_anchor(win) or self:anchor()
+	if not anchor or not vim.api.nvim_win_is_valid(anchor) or terminal.is_closing_tile(anchor) then return end
+	if self.opts.relayout then return self.opts.relayout(anchor) end
+	return self:reflow(anchor, context or self.layout_context or self:context(), self.opts.layout())
+end
+
+function Container:refresh()
+	self:invalidate_sidebar()
+	return self:relayout()
+end
+
+function Container:navigate(win, direction)
+	if self.opts.navigate then return self.opts.navigate(win, direction) end
+	return M.navigate(win, direction, function(neighbor)
+		local pane = self.visible_panes and self.visible_panes[vim.api.nvim_win_get_buf(neighbor)]
+		if pane then self.opts.activate(pane.tab, { view_mode = true }) end
+	end, self.opts.bar())
+end
+
+function Container:bind_terminal(buf, context)
+	self.opts.bar():attach_terminal(buf)
+	self:bind(buf, context)
+	self:bind_tile_moves(buf, context)
+	terminal.bind_navigation(buf, function(win, direction) self:navigate(win, direction) end)
+	if self.opts.editor then editor.bind(buf) end
 end
 
 function Container:reflow(anchor, context, layout, active, opts)
 	if active then self:select_tab(context, active) end
-	local previous = self.visible_windows or {}
-	for buf, win in pairs(previous) do terminal.save_view(win, buf) end
+	local previous = self.visible_panes or {}
+	for buf, pane in pairs(previous) do terminal.save_view(pane.win, buf) end
 	local panes = self:display(anchor, context, layout)
 	if not vim.api.nvim_win_is_valid(anchor) then return end
 	if not panes then
@@ -283,12 +348,18 @@ function Container:reflow(anchor, context, layout, active, opts)
 		self:render(anchor, context)
 		panes = tab and { { win = anchor, tab = tab } } or {}
 	end
-	self.layout_anchor, self.layout_context, self.visible_windows = anchor, context, {}
+	self:use_anchor(anchor)
+	self.layout_context, self.visible_panes = context, {}
 	self:layout_sidebar(anchor, layout)
 	for _, pane in ipairs(panes) do
-		pane.opened = pane.opened or previous[pane.tab.bufnr] ~= pane.win
-		self.visible_windows[pane.tab.bufnr] = pane.win
-		self.opts.prepare_pane(pane, context, anchor)
+		local old = previous[pane.tab.bufnr]
+		pane.opened = pane.opened or not old or old.win ~= pane.win
+		self.visible_panes[pane.tab.bufnr] = pane
+		if self.opts.prepare_pane then
+			self.opts.prepare_pane(pane, context, anchor)
+		elseif pane.opened then
+			terminal.configure_window(pane.win, self.opts.highlights)
+		end
 		terminal.show_view(pane.win, pane.tab.bufnr, pane.opened)
 	end
 	local bar = self.opts.bar()
@@ -453,19 +524,29 @@ function Container:remove_tab(bufnr, context, on_close)
 	local win = vim.fn.bufwinid(bufnr)
 	local reflow = win ~= -1 and win ~= vim.api.nvim_get_current_win() and vim.w[win].luanphan_view_anchor
 	if win == -1 and self.layout_context == context then reflow = self.layout_anchor end
-	if self.layout_context == context then self.visible_windows = nil end
+	if self.layout_context == context then self.visible_panes = nil end
 	local active = self.active_by_context[context]
 	if active and active.bufnr == bufnr then self.active_by_context[context] = nil end
 	vim.schedule(function()
-		on_close()
+		if on_close then on_close() end
 		local bar = self.opts.bar()
 		bar:invalidate()
 		if reflow and vim.api.nvim_win_is_valid(reflow) then
-			self.opts.relayout(reflow)
+			self:relayout(reflow, context)
 		else
 			bar:redraw()
 		end
 	end)
+end
+
+function Container:replacement(context, buf)
+	return M.replacement_tab(self.opts.tabs(context, buf), buf)
+end
+
+function Container:focus_replacement(tab)
+	if tab and self.opts.activate(tab, { view_mode = true }) then return end
+	local bar = self.opts.bar()
+	if not bar:jump(1, 1) then bar:jump(-1, 1) end
 end
 
 function M.create(opts)
@@ -478,7 +559,7 @@ function M.create(opts)
 		opts = opts,
 		active_by_context = {},
 	}, Container)
-	if opts.relayout then watched_layouts[container] = true end
+	if opts.relayout or opts.layout then watched_layouts[container] = true end
 	return container
 end
 

@@ -1,12 +1,9 @@
 local M = {}
-local jumplist = require("luanphan.view_container.jumplist").create()
-M.history = jumplist
 local terminal_agent = require("luanphan.agents.terminal-chat")
 local backend = require("luanphan.agents.tmux")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
 local view_container = require("luanphan.view_container")
-local editor_tile = require("luanphan.view_container.editor")
 
 local agent_order = { "codex", "cursor", "claude", "terminal" }
 local agent_key = "<leader>a"
@@ -54,28 +51,12 @@ function M.set_default_agent(name)
   return true
 end
 
-local function jump_available(bufnr)
-  if not terminal_agent.running(bufnr) then return false end
-  local cwd = vim.b[bufnr].luanphan_agent_cwd
-  return type(cwd) == "string" and vim.fn.isdirectory(cwd) == 1
-end
-
-local function jump_session(direction, count)
-  return jumplist.jump(direction, count or vim.v.count1, jump_available, function(bufnr)
-    local buf = vim.b[bufnr]
-    return require("luanphan.agents.window_bar").select_session({
-      agent = buf.luanphan_agent_name,
-      bufnr = bufnr,
-      path = buf.luanphan_agent_cwd,
-    }, { view_mode = true })
-  end)
-end
-
-local function agent_buffer(name, cwd)
+local function agent_buffer(name, cwd, prefer_visible)
   local selected = nil
   local selected_sequence = -1
   for _, pane in ipairs(backend.panes(name, cwd)) do
     local bufnr = pane.bufnr
+    if prefer_visible and vim.fn.bufwinid(bufnr) ~= -1 then return bufnr end
     local sequence = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0
     if sequence > selected_sequence then
       selected = bufnr
@@ -86,31 +67,7 @@ local function agent_buffer(name, cwd)
 end
 
 local function open_tabs(cwd, closing_bufnr)
-  local buffers = {}
-  for _, pane in ipairs(backend.panes(nil, cwd)) do
-    local name = pane.data.agent
-    buffers[name] = buffers[name] or {}
-    table.insert(buffers[name], pane.bufnr)
-  end
-  -- Keep the closing pane in order while choosing its replacement.
-  if closing_bufnr and not backend.running(closing_bufnr) then
-    local name = vim.b[closing_bufnr].luanphan_agent_name
-    buffers[name] = buffers[name] or {}
-    table.insert(buffers[name], closing_bufnr)
-    table.sort(buffers[name])
-  end
-  local tabs = {}
-  for _, name in ipairs(agent_order) do
-    local bufnrs = buffers[name] or {}
-    for index, bufnr in ipairs(bufnrs) do
-      tabs[#tabs + 1] = {
-        id = name .. ":" .. bufnr,
-        label = #bufnrs > 1 and (name .. " " .. index) or name,
-        agent = name,
-        bufnr = bufnr,
-      }
-    end
-  end
+  local tabs = sessions.live(cwd, closing_bufnr)
   if agent_container.display_style == "tile" then
     table.sort(tabs, function(a, b) return a.bufnr < b.bufnr end)
   end
@@ -122,10 +79,9 @@ local function most_recent_tab(cwd, agents_only)
   local selected = nil
   local selected_sequence = -1
   for _, tab in ipairs(open_tabs(cwd)) do
-    local sequence = tonumber(vim.b[tab.bufnr].luanphan_agent_last_used) or 0
-    if (not agents_only or is_agent(tab.agent)) and sequence > selected_sequence then
+    if (not agents_only or is_agent(tab.agent)) and tab.last_used > selected_sequence then
       selected = tab
-      selected_sequence = sequence
+      selected_sequence = tab.last_used
     end
   end
   return selected
@@ -162,7 +118,7 @@ local function visible_agent()
   if not win then return end
   local bufnr = vim.api.nvim_win_get_buf(win)
   local name = vim.b[bufnr].luanphan_agent_name
-  if agent_defs[name] then return { name = name, bufnr = bufnr, win = win } end
+  if agent_defs[name] then return { name = name, bufnr = bufnr } end
 end
 
 function M.agent_icon(name)
@@ -175,12 +131,6 @@ function M.display_title(name, title)
   return title
 end
 
-local function relayout_agent_panel(anchor)
-  if not vim.api.nvim_win_is_valid(anchor) then return end
-  local name = vim.b[vim.api.nvim_win_get_buf(anchor)].luanphan_agent_name
-  if agent_defs[name] then setup_agent(name).layout(anchor) end
-end
-
 function M.map_create_shortcuts(bufnr)
   local opts = { buffer = bufnr, silent = true, nowait = true }
   -- Keep the editor's New buffer mapping from replacing a panel buffer.
@@ -189,7 +139,6 @@ function M.map_create_shortcuts(bufnr)
     vim.tbl_extend("force", opts, { desc = "New terminal" }))
   vim.keymap.set("n", "<leader>na", function() M.new(M.default_agent()) end,
     vim.tbl_extend("force", opts, { desc = "New default terminal agent" }))
-  editor_tile.bind(bufnr)
   vim.keymap.set("n", "<leader>nA", function() agent_container:pick() end,
     vim.tbl_extend("force", opts, { desc = "Select terminal agent" }))
   if not vim.b[bufnr].luanphan_agent_new_menu then
@@ -199,12 +148,6 @@ function M.map_create_shortcuts(bufnr)
       vim.b[bufnr].luanphan_agent_new_menu = true
     end
   end
-end
-
-local function bind_agent_pane(bufnr)
-  require("luanphan.agents.window_bar").attach(bufnr)
-  M.map_create_shortcuts(bufnr)
-  agent_container:bind_tile_moves(bufnr, vim.b[bufnr].luanphan_agent_cwd)
 end
 
 local function resume_options(session)
@@ -254,22 +197,12 @@ local function restore_panel_sessions(cwd)
   end
 end
 
-local function layout_agent(win, layout, opening)
-  local anchor = vim.w[win].luanphan_view_anchor or win
-  if opening then
-    return agent_container:layout_sidebar(anchor, layout)
-  end
-  local cwd = vim.b[vim.api.nvim_win_get_buf(win)].luanphan_agent_cwd
-  agent_container:reflow(anchor, cwd, layout)
-end
-
 local function get_agent(name)
   if apis[name] then
     return apis[name]
   end
 
   local def = agent_defs[name]
-  local window_bar = require("luanphan.agents.window_bar")
   apis[name] = terminal_agent.create({
     name = name,
     shell = def.shell,
@@ -278,43 +211,28 @@ local function get_agent(name)
     hint_open = agent_key,
     defaults = def.defaults,
     panel = M,
-    on_float_layout = layout_agent,
-    on_navigate = window_bar.navigate,
-    on_prepare = function(win)
-      agent_container:reserve(win)
-    end,
+    container = agent_container,
+    current = function() return agent_buffer(name, vim.fn.getcwd(), true) end,
     on_register = function(buf, launched)
-      agent_container:bind_title(buf)
+      M.map_create_shortcuts(buf)
       if launched then sessions.save(buf) end
-      agent_container:invalidate_sidebar()
     end,
-    on_show = function(bufnr, win, cwd)
+    on_show = function(bufnr, cwd)
       backend.focus(bufnr)
       local seconds, microseconds = vim.uv.gettimeofday()
       vim.b[bufnr].luanphan_agent_saved_use = seconds + microseconds / 1000000
       remember_pane(bufnr)
       sessions.defer_save(bufnr)
       restore_panel_sessions(cwd)
-      agent_container:present_tile(cwd, { id = name .. ":" .. bufnr, bufnr = bufnr }, win)
     end,
     on_close = function(bufnr, cwd)
       local id = sessions.supported(name) and vim.b[bufnr].luanphan_agent_thread_id
       local lost = vim.b[bufnr].luanphan_agent_backend_lost
       if lost then restored_cwds[cwd] = nil end
-      agent_container:remove_tab(bufnr, cwd, function()
+      return function()
         if id and not lost and type(vim.v.exiting) ~= "number" then
           sessions.forget_buffer(bufnr, name, id)
         end
-      end)
-    end,
-    on_quit = function(bufnr, cwd)
-      local next_tab = view_container.replacement_tab(open_tabs(cwd, bufnr), bufnr)
-      return function()
-        if next_tab and jump_available(next_tab.bufnr)
-          and M.open(next_tab.agent, next_tab.bufnr, { view_mode = true }) then
-          return
-        end
-        if not jump_session(1, 1) then jump_session(-1, 1) end
       end
     end,
   })
@@ -371,18 +289,12 @@ function M.focus(name, bufnr, opts)
   if not agent_defs[name] then
     return false
   end
-  local target = bufnr or agent_buffer(name, vim.fn.getcwd())
-  if not target then
-    return setup_agent(name).focus(bufnr, opts)
-  end
-  if not agent_container:visible_window(vim.fn.getcwd(), target) then agent_container:hide() end
-  return setup_agent(name).focus(target, opts)
+  return setup_agent(name).focus(bufnr or agent_buffer(name, vim.fn.getcwd()), opts, true)
 end
 
 local function new_tile(name, opts)
   return agent_container:open_tile(vim.fn.getcwd(), function(place)
-    local launch_opts = agent_container:reuse(nil, opts)
-    return setup_agent(name).new(launch_opts, place and function(bufnr)
+    return setup_agent(name).new(opts, place and function(bufnr)
       sessions.set_order(place({ bufnr = bufnr }))
     end)
   end, opts and opts.thread_id)
@@ -395,9 +307,6 @@ function M.open(name, bufnr, opts)
   end
   local target = bufnr or agent_buffer(name, vim.fn.getcwd())
   if not target then return new_tile(name, opts) end
-  if not agent_container:visible_window(vim.fn.getcwd(), target) then
-    opts = agent_container:reuse(target, opts)
-  end
   return setup_agent(name).focus(target, opts)
 end
 
@@ -469,10 +378,11 @@ local function receive_terminal_event(args)
     status.update(bufnr, event.status)
     local changed_id = sessions.update(bufnr, event)
     remember_pane(bufnr)
+    local bar = agent_container.opts.bar()
     if changed_id then
-      require("luanphan.agents.window_bar").refresh(true)
+      bar:refresh(true)
     elseif event.refresh_title then
-      require("luanphan.agents.window_bar").update_title(bufnr)
+      bar:update_title(bufnr, view_container.tab_label(bufnr))
     end
   end
   if def and def.decode_event then
@@ -483,11 +393,8 @@ local function receive_terminal_event(args)
 end
 
 function M.hide(except)
-  return view_container.close_matching(function(buf)
-    local flags = vim.b[buf]
-    return vim.bo[buf].filetype == "agent-window-bar" or (vim.bo[buf].buftype == "terminal"
-      and flags.luanphan_persist_term and not flags.luanphan_floating_terminal and not flags.luanphan_toggleterm)
-  end, except)
+  if except and agent_container:visible_window(agent_container.layout_context, except) then return false end
+  return agent_container:hide()
 end
 
 function M.send_selection(name)
@@ -498,30 +405,21 @@ function M.send_selection(name)
     return false
   end
   local target = agent_buffer(name, vim.fn.getcwd())
-  local opts = agent_container:reuse(target)
-  setup_agent(name).send_selection(target, opts)
+  setup_agent(name).send_selection(target)
   return true
 end
 
 agent_container = view_container.create({
   context = vim.fn.getcwd,
   tabs = open_tabs,
-  relayout = relayout_agent_panel,
-  bar = function() return require("luanphan.agents.window_bar").bar end,
-  prepare_pane = function(pane, cwd, anchor)
-    local tab = pane.tab
-    if pane.opened or pane.win == anchor then
-      agent_container:bind(tab.bufnr, cwd)
-      bind_agent_pane(tab.bufnr)
-    end
-    local api = apis[tab.agent] or setup_agent(tab.agent)
-    api.prepare_tile(pane.win, pane.opened)
+  layout = function()
+    return view_container.layout(require("luanphan.global_settings").read().agent_float,
+      { border = "single", zindex = 45, min_height = 12 })
   end,
-  editor = {
-    key = function(cwd) return "agent:" .. cwd end,
-    refresh = relayout_agent_panel,
-    navigate = function(win, direction) require("luanphan.agents.window_bar").navigate(win, direction) end,
-  },
+  bar = function() return require("luanphan.agents.window_bar").bar end,
+  highlights = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,WinBarNC:Normal,"
+    .. "TabLineSel:Title,TabLine:LineNr,TabLineFill:Normal",
+  editor = { key = function(cwd) return "agent:" .. cwd end },
   title = function(buf, title)
     local buffer = vim.b[buf]
     title = M.display_title(buffer.luanphan_agent_name, title)
@@ -530,13 +428,13 @@ agent_container = view_container.create({
     end
     return title
   end,
-  reorder = function(tabs, _, win)
+  reorder = function(tabs)
     sessions.set_order(tabs)
-    M.refresh_tabs(win)
+    agent_container:refresh()
   end,
   choices = agent_choices,
   activate = function(tab, opts)
-    M.open(tab.agent, tab.bufnr, opts)
+    return M.open(tab.agent, tab.bufnr, opts)
   end,
   create = function(choice)
     M.new(choice.id)
@@ -550,15 +448,8 @@ agent_container = view_container.create({
   empty_message = "no terminal agents registered",
   cycle_desc = "Next agent session",
 })
-
-function M.refresh_tabs(win)
-  agent_container:invalidate_sidebar()
-  local anchor = view_container.group_anchor(win)
-  if anchor == agent_container.tile_anchor then return relayout_agent_panel(anchor) end
-  local bufnr = vim.api.nvim_win_get_buf(win)
-  agent_container:render(win, vim.b[bufnr].luanphan_agent_cwd)
-end
-
+M.container = agent_container
+agent_container:watch(vim.api.nvim_create_augroup("LuanphanAgentPanel", { clear = true }))
 
 local function agent_spec(name)
   local def = agent_defs[name]
@@ -602,7 +493,9 @@ local function agent_spec(name)
       vim.api.nvim_create_autocmd("TermRequest", { group = group, callback = receive_terminal_event })
       view_container.track_directory(group, function(cwd)
         local pane = visible_agent()
-        if pane and vim.b[pane.bufnr].luanphan_agent_cwd == cwd then return pane.win, pane end
+        if pane and vim.b[pane.bufnr].luanphan_agent_cwd == cwd then return pane end
+      end, function()
+        agent_container:hide()
       end, function(cwd, pane)
         if visible_agent() then return end
         local buf = terminal_agent.running(pane.bufnr) and pane.bufnr or agent_buffer(pane.name, cwd)

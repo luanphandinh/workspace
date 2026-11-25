@@ -3732,6 +3732,7 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
   local agents = require("luanphan.agents.main")
   local original_focus = agents.focus
   local buffers = {}
+  local panel = agents.container
 
   local function window_for_buffer(bufnr)
     for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -3749,30 +3750,14 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
     vim.b[old_buf].luanphan_agent_last_used = 1
     vim.b[target_buf].luanphan_agent_last_used = 2
 
-    vim.api.nvim_open_win(old_buf, true, {
-      relative = "editor",
-      row = 1,
-      col = 1,
-      width = 40,
-      height = 10,
-      style = "minimal",
-      border = "single",
-    })
+    panel:open_float(panel.opts.layout(), old_buf, true)
     assert_true(window_for_buffer(old_buf) ~= nil, "old repository agent fixture is not visible")
 
     agents.focus = function(name, bufnr)
       assert_true(name == "cursor", "agent switch focused the wrong agent type")
       assert_true(bufnr == target_buf, "agent switch did not focus the selected workspace terminal")
       if not window_for_buffer(target_buf) then
-        vim.api.nvim_open_win(target_buf, true, {
-          relative = "editor",
-          row = 1,
-          col = 1,
-          width = 40,
-          height = 10,
-          style = "minimal",
-          border = "single",
-        })
+        panel:open_float(panel.opts.layout(), target_buf, true)
       end
       return true
     end

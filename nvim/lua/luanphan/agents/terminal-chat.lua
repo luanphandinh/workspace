@@ -17,16 +17,11 @@ M.running, M.close_window = terminal_window.running, view_container.close_window
 local BASE_DEFAULTS = {
   cmd = "agent",
   args = {},
-  float_border = "single",
-  float_zindex = 45,
   scrollback = nil,
   max_send_chars = 256 * 1024,
   defer_send_ms = 200,
   send_mode = "lines_only",
 }
-
-local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,WinBarNC:Normal,"
-  .. "TabLineSel:Title,TabLine:LineNr,TabLineFill:Normal"
 
 ---@param profile table
 ---@field name? string stable provider name
@@ -36,12 +31,9 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
 ---@field hint_open string hint when no terminal (e.g. "<leader>a")
 ---@field defaults? table merged into BASE_DEFAULTS (cmd, args, …)
 ---@field panel? table owning view
----@field on_prepare? fun(win: integer)
----@field on_show? fun(bufnr: integer, win: integer, cwd: string)
----@field on_close? fun(bufnr: integer, cwd: string)
----@field on_quit? fun(bufnr: integer, cwd: string): function?
----@field on_navigate? fun(win: integer, direction: string)
----@field on_float_layout? fun(win: integer, layout: table, opening?: boolean)
+---@field container table owning view container
+---@field on_show? fun(bufnr: integer, cwd: string)
+---@field on_close fun(bufnr: integer, cwd: string): function?
 function M.create(profile)
   profile = vim.tbl_extend("force", {
     name = "terminal_agent",
@@ -60,24 +52,6 @@ function M.create(profile)
   local DEFAULTS = vim.tbl_deep_extend("force", vim.deepcopy(BASE_DEFAULTS), profile.defaults or {})
 
   local config = vim.deepcopy(DEFAULTS)
-
-  local function cwd_key()
-    return vim.fn.getcwd()
-  end
-
-  local function current_bufnr(cwd)
-    local selected
-    local selected_sequence = -1
-    for _, pane in ipairs(backend.panes(provider_name, cwd or cwd_key())) do
-      local buf = pane.bufnr
-      if vim.fn.bufwinid(buf) ~= -1 then return buf end
-      local sequence = tonumber(vim.b[buf].luanphan_agent_last_used) or 0
-      if sequence > selected_sequence then
-        selected, selected_sequence = buf, sequence
-      end
-    end
-    return selected
-  end
 
   local function command_for_agent(opts)
     local cmd = config.cmd
@@ -116,12 +90,9 @@ function M.create(profile)
     config = config,
     notify = nx,
     augroup = augroup_name,
-    current = current_bufnr,
     panes = function() return backend.panes(provider_name) end,
     cwd = function(buf) return vim.b[buf].luanphan_agent_cwd end,
     mark_used = mark_terminal_used,
-    settings = function() return require("luanphan.global_settings").read().agent_float end,
-    highlights = TERMINAL_WINHIGHLIGHT,
     command = function(buf, cwd, opts)
       local thread_id = opts and opts.thread_id
       if not thread_id and profile.new_session_id then thread_id = profile.new_session_id() end
@@ -225,7 +196,7 @@ function M.create(profile)
       if target_bufnr and M.running(target_bufnr) then
         return target_bufnr
       end
-      return current_bufnr()
+      return profile.current()
     end
 
     local function focus_term_win()

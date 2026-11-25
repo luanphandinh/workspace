@@ -10,14 +10,14 @@ local settings = require("luanphan.global_settings")
 function M.create(opts)
   local panel = { docked = opts.docked }
   local scopes = {}
-  local anchor, dock, current
+  local dock, current
   local bar, inner, create_bar
   local quitting
   local rendering = false
   local events = api.nvim_create_augroup(opts.augroup, { clear = true })
 
   local function is_open()
-    return anchor and api.nvim_win_is_valid(anchor)
+    return inner:anchor() ~= nil
   end
 
   local function scope_key()
@@ -27,7 +27,7 @@ function M.create(opts)
   end
 
   local function scope()
-    if is_open() and views.group_anchor(api.nvim_get_current_win()) == anchor then return current.scope end
+    if is_open() and views.group_anchor(api.nvim_get_current_win()) == inner:anchor() then return current.scope end
     local key = scope_key()
     if not scopes[key] then
       local owner = { windows = {}, next_id = 0, cwd = opts.docked and key or nil }
@@ -39,7 +39,7 @@ function M.create(opts)
 
   local function active_window()
     local win = current and vim.fn.bufwinid(current.bufnr)
-    return win and win ~= -1 and win or anchor
+    return win and win ~= -1 and win or inner:anchor()
   end
 
   local function move_from_dock(direction)
@@ -57,11 +57,11 @@ function M.create(opts)
     if not bar:focus_towards(direction, true) and opts.docked then move_from_dock(direction) end
   end
 
-  function panel.hide()
-    if not is_open() then return false end
-    quitting = nil
+  function panel.hide(closing)
+    if not inner.layout_anchor then return false end
+    quitting, dock = nil, nil
     current.scope.open = false
-    return views.close_group(anchor)
+    return inner:hide(closing)
   end
 
   local function geometry()
@@ -90,9 +90,10 @@ function M.create(opts)
     local layout = geometry()
     local desired = group.bufnr
     local original_win = api.nvim_get_current_win()
-    local had_focus = is_open() and views.group_anchor(original_win) == anchor
-    if not is_open() then
-      anchor = views.open_float(layout, desired, false)
+    local anchor = inner:anchor()
+    local had_focus = anchor and views.group_anchor(original_win) == anchor
+    if not anchor then
+      anchor = inner:open_float(layout, desired, false)
       if dock then vim.w[dock].luanphan_view_companion_anchor = anchor end
     end
     current = group
@@ -128,7 +129,7 @@ function M.create(opts)
     local requested = quitting == pane
     if requested then quitting = nil end
     local replace_focus = requested or api.nvim_get_current_buf() == pane.bufnr
-    local replacement = requested and views.replacement_tab(group.panes, pane.bufnr)
+    local replacement = requested and inner:replacement(group, pane.bufnr)
     table.remove(group.panes, index)
     local next_pane = replacement or group.panes[math.min(index, #group.panes)]
     if group.bufnr == pane.bufnr and next_pane then group.bufnr = next_pane.bufnr end
@@ -211,11 +212,7 @@ function M.create(opts)
     end
     local left = opts.docked and function() move_from_dock("h") end or "<C-h>"
     vim.keymap.set("t", "<C-h>", left, keys)
-    for _, direction in ipairs({ "h", "j", "k", "l" }) do
-      vim.keymap.set("n", "<C-" .. direction .. ">", function()
-        navigate(api.nvim_get_current_win(), direction)
-      end, keys)
-    end
+    terminal_pane.bind_navigation(buf, navigate)
     return result
   end
 
@@ -255,13 +252,13 @@ function M.create(opts)
 
   inner = views.create({
     context = function() return current end,
+    relayout = function() render(current, false) end,
+    navigate = navigate,
     prepare_pane = prepare_pane,
     bar = function() return bar end,
     editor = not opts.docked and {
       key = function(group) return group end,
       active = function(group) return group.bufnr end,
-      refresh = function() render(current, false) end,
-      navigate = navigate,
     } or nil,
     tabs = function(group)
       local items = {}
@@ -316,8 +313,7 @@ function M.create(opts)
     })
   end
 
-  views.watch_panel(events, {
-    anchor = function() return anchor end,
+  inner:watch(events, {
     docked = opts.docked,
     hide_on_terminal = true,
     suspended = function() return rendering or quitting end,
@@ -334,21 +330,13 @@ function M.create(opts)
         vim.schedule(function() if is_open() and api.nvim_get_current_win() == dock then bar:focus_content() end end)
       end
     end,
-    hide = function(win)
-      if not win then return panel.hide() end
-      local closing = anchor
-      if current then current.scope.open = false end
-      anchor, dock = nil, nil
-      if bar then bar:reset() end
-      if closing then views.close_group(closing, win) end
-    end,
+    hide = panel.hide,
   })
-  api.nvim_create_autocmd({ "VimResized", "WinResized" }, {
+  api.nvim_create_autocmd("WinResized", {
     group = events,
     callback = function()
       if not is_open() or rendering then return end
-      if vim.v.event.windows and (not dock or not vim.tbl_contains(vim.v.event.windows, dock)) then return end
-      render(current, false)
+      if dock and vim.tbl_contains(vim.v.event.windows, dock) then inner:relayout() end
     end,
   })
   api.nvim_create_autocmd("TermRequest", {
@@ -387,14 +375,6 @@ function M.create(opts)
       end,
     })
   end
-  api.nvim_create_autocmd("BufWritePost", {
-    group = events,
-    callback = function(ev)
-      if is_open() and vim.uv.fs_realpath(ev.file) == vim.uv.fs_realpath(settings.config_path()) then
-        render(current, false)
-      end
-    end,
-  })
   return panel
 end
 

@@ -14,7 +14,7 @@ function M.create(opts)
   local tmux = tmux_client.new(opts.server)
   local client, session, previous_session
   local windows, panes = {}, {}
-  local current, anchor, bar, tiles
+  local current, bar, tiles
   local rendering, refresh_queued, refresh_pending, refresh_again
   local creating, focus_on_render, selection, closing_pane
   local layout_path, layout_stat, layout_options
@@ -74,12 +74,13 @@ function M.create(opts)
   local function active_window()
     local buf = current and current.active and current.active.bufnr
     local win = buf and vim.fn.bufwinid(buf)
-    return win and win ~= -1 and win or anchor
+    return win and win ~= -1 and win or tiles:anchor()
   end
 
   local function should_focus(force)
     local win = api.nvim_get_current_win()
-    return force or not valid(anchor) or win == anchor
+    local anchor = tiles:anchor()
+    return force or not anchor or win == anchor
       or (views.group_anchor(win) == anchor and win ~= editor.window(anchor) and win ~= bar.win)
   end
 
@@ -92,7 +93,7 @@ function M.create(opts)
 
   local function activate(pane, view_mode)
     if not client or not pane then return false end
-    local focus = not view_mode or editor.window(anchor) == api.nvim_get_current_win()
+    local focus = not view_mode or editor.window(tiles:anchor()) == api.nvim_get_current_win()
     local visible = pane.group == current and tiles:visible_window(current, pane.bufnr)
     if visible and not selection and current.active == pane then return focus_visible(pane, focus) end
     local target = { id = pane.id, focus = focus, visible = visible, window = pane.window }
@@ -164,7 +165,6 @@ function M.create(opts)
 
   local function bind_shortcuts(buf)
     local opts = { buffer = buf, silent = true, nowait = true }
-    editor.bind(buf)
     vim.keymap.set("n", "<leader>nw", new_window, vim.tbl_extend("force", opts, { desc = "New tmux window" }))
     for _, key in ipairs({ "<leader>nt", "<leader>fn" }) do
       vim.keymap.set("n", key, function() new_tab() end,
@@ -188,7 +188,7 @@ function M.create(opts)
     closing_pane = pane
     return function()
       if closing_pane ~= pane then return end
-      local next_pane = views.replacement_tab(pane.group.items, pane.bufnr)
+      local next_pane = tiles:replacement(pane.group, pane.bufnr)
       local commands = { { "kill-pane", "-t", pane.id } }
       if next_pane then
         commands[#commands + 1] = model.write(next_pane, { active = true })
@@ -211,15 +211,12 @@ function M.create(opts)
     vim.b[buf].luanphan_tmux_pane = pane.id
     pane.bufnr, pane.repaint = buf, repaint
     terminal_pane.set_reference_cwd(buf, pane.cwd)
-    bar:attach_terminal(buf)
+    tiles:bind_terminal(buf)
     bind_shortcuts(buf)
-    terminal_pane.bind_navigation(buf, navigate)
     terminal_pane.bind_quit(buf, events, function() return prepare_quit(pane) end)
     local opts = { buffer = buf, silent = true, nowait = true }
     vim.keymap.set("t", "<C-]>", function() pty.input(pane, "\27") end,
       vim.tbl_extend("force", opts, { desc = "Send Escape to tmux pane" }))
-    tiles:bind(buf)
-    tiles:bind_tile_moves(buf)
   end
 
   local function reorder_panes(items)
@@ -250,13 +247,12 @@ function M.create(opts)
     tabs = function(group) return group.items end,
     insert_after_active = true,
     relayout = function() render() end,
+    navigate = navigate,
     bar = function() return bar end,
     prepare_pane = prepare_pane,
     editor = {
       key = function(group) return "tmux:" .. session.id .. ":" .. group.id end,
       active = function(group) return group.active.bufnr end,
-      refresh = function() render() end,
-      navigate = navigate,
     },
     reorder = reorder_panes,
     activate = activate,
@@ -281,7 +277,10 @@ function M.create(opts)
       batch(commands, refresh)
     end,
     reorder = function(_, items) reorder_panes(items) end,
-    bind = bind_shortcuts,
+    bind = function(buf)
+      editor.bind(buf)
+      bind_shortcuts(buf)
+    end,
   })
 
   local function render_panel()
@@ -295,9 +294,7 @@ function M.create(opts)
         prepare_buffer(pane)
       end
     end
-    if not valid(anchor) then
-      anchor = views.open_float(layout, selected.bufnr, false)
-    end
+    local anchor = tiles:anchor() or tiles:open_float(layout, selected.bufnr, false)
     tiles.active_by_context = {}
     if tiles:reflow(anchor, current, layout, selected, { focus = focus, record = not selection }) and focus then
       focus_on_render = false
@@ -359,7 +356,7 @@ function M.create(opts)
         end
       end
       render()
-    elseif valid(anchor) then
+    elseif tiles:anchor() then
       panel.hide()
     end
     for id, pane in pairs(old) do
@@ -406,16 +403,15 @@ function M.create(opts)
   end
 
   function panel.hide(closing)
-    if not client and not valid(anchor) then return false end
+    if not client and not tiles.layout_anchor then return false end
     bar:reset_order()
-    local connection, win, old = client, anchor, panes
-    client, session, anchor, current = nil, nil, nil, nil
+    local connection, old = client, panes
+    client, session, current = nil, nil, nil
     windows, panes = {}, {}
     refresh_queued, refresh_pending, refresh_again = nil, nil, nil
     creating, focus_on_render, selection, closing_pane = nil, nil, nil, nil
-    bar:reset()
     if connection then connection:detach() end
-    if win then views.close_group(win, closing) end
+    tiles:hide(closing)
     vim.schedule(function()
       for _, pane in pairs(old) do
         if pane.bufnr and api.nvim_buf_is_valid(pane.bufnr) then api.nvim_buf_delete(pane.bufnr, { force = true }) end
@@ -470,8 +466,7 @@ function M.create(opts)
     if target then open(target) end
   end
 
-  views.watch_panel(events, {
-    anchor = function() return anchor end,
+  tiles:watch(events, {
     hide = panel.hide,
     hide_on_terminal = true,
     suspended = function() return rendering or closing_pane end,

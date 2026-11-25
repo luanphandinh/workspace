@@ -474,7 +474,6 @@ function Bar:close()
 end
 
 function Bar:layout(anchor, layout)
-  if self.opts.on_layout then self.opts.on_layout(anchor) end
   local frame, style = layout.bar, layout.bar_style
   if not frame then
     self:close()

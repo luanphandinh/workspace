@@ -1,14 +1,11 @@
 local M = {}
-local api = vim.api
 local agents = require("luanphan.agents.main")
 local tmux = require("luanphan.agents.tmux")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
 local views = require("luanphan.view_container")
-local close_window = views.close_window
+local editor = require("luanphan.view_container.editor")
 
-local main
-local switching_workspace = false
 local bar
 
 local spinner = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
@@ -18,10 +15,6 @@ local status_icons = {
   blocked = { "!", "DiagnosticWarn" },
   error = { "!", "DiagnosticError" },
 }
-
-local function valid(win)
-  return win and api.nvim_win_is_valid(win)
-end
 
 local function groups()
   local threads = require("luanphan.plugins.worktree").list_agent_sessions(true)
@@ -63,32 +56,21 @@ end
 function M.select_session(session, opts)
   if not session then return false end
   local activate = require("luanphan.plugins.worktree").activate_agent
-  if not valid(main) then return activate(session, nil, opts) end
-  vim.cmd.stopinsert()
-  switching_workspace = true
-  local ok, result = pcall(activate, session, views.group_windows(main), opts)
-  switching_workspace = false
-  if not ok then error(result) end
-  return result
+  return agents.container:with_panel_windows(function(windows) return activate(session, windows, opts) end)
 end
 
 bar = require("luanphan.view_container.window_bar").create({
   title = "Workspaces",
   filetype = "agent-window-bar",
-  history = agents.history,
   groups = groups,
   load_order = tmux.load_window_order,
   save_order = tmux.save_window_order,
-  on_layout = function(win)
-    if valid(main) and main ~= win then close_window(main) end
-    main = win
-  end,
   activate = function(item, view_mode)
     return M.select_session(item.thread, view_mode and { view_mode = true } or nil)
   end,
   reorder = function(_, items)
     sessions.set_order(vim.tbl_map(function(item) return item.thread end, items))
-    agents.refresh_tabs(main)
+    agents.container:refresh()
   end,
   status = function(item, frame)
     local current = status.current(item.bufnr)
@@ -104,6 +86,7 @@ bar = require("luanphan.view_container.window_bar").create({
     end
   end,
   bind = function(buf)
+    editor.bind(buf)
     agents.map_create_shortcuts(buf)
     vim.keymap.set("n", "<leader>a", agents.toggle, { buffer = buf })
   end,
@@ -113,32 +96,5 @@ M.bar = bar
 function M.refresh(keep_cursor)
   bar:refresh(keep_cursor)
 end
-
-function M.update_title(buf)
-  bar:update_title(buf, views.tab_label(buf))
-end
-
-function M.navigate(win, direction)
-  views.navigate(win, direction, function(neighbor)
-    local buf = api.nvim_win_get_buf(neighbor)
-    agents.focus(vim.b[buf].luanphan_agent_name, buf, { view_mode = true })
-  end, bar)
-end
-
-function M.attach(buf)
-  bar:attach_terminal(buf)
-end
-
-local group = api.nvim_create_augroup("LuanphanAgentWindowBar", { clear = true })
-views.watch_panel(group, {
-  anchor = function() return main end,
-  suspended = function() return switching_workspace end,
-  hide = function(win)
-    local anchor = main
-    main = nil
-    bar:reset()
-    views.close_group(anchor, win)
-  end,
-})
 
 return M

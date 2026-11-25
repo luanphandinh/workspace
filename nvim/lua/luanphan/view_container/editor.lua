@@ -209,7 +209,7 @@ function M.prepare(container, win, opened)
       vim.schedule(function()
         if not api.nvim_win_is_valid(anchor) then return end
         if api.nvim_win_get_config(0).relative == "" then api.nvim_set_current_win(anchor) end
-        container.opts.editor.refresh(anchor)
+        container:relayout(anchor)
       end)
     end,
   })
@@ -219,7 +219,7 @@ local function show(panel, buf, view)
   local previous = editors_by_context[panel.key]
   editors_by_context[panel.key] = { buf = buf, path = api.nvim_buf_get_name(buf), view = view,
     container = panel.container, position = previous and previous.position, sidebar = previous and previous.sidebar }
-  panel.container.opts.editor.refresh(panel.anchor)
+  panel.container:relayout(panel.anchor)
   local win = M.window(panel.anchor)
   if not win then editors_by_context[panel.key] = previous return false end
   vim.cmd.stopinsert()
@@ -286,7 +286,7 @@ function M.handle_key(action, value)
     if not tile or tile.win ~= win or api.nvim_get_current_win() ~= win then return end
     local container, context = tile.panel.container, tile.panel.context
     if action == "navigate" then
-      container.opts.editor.navigate(win, value)
+      container:navigate(win, value)
     elseif action == "move" then
       container:move_tile(value, context)
     else

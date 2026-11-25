@@ -69,25 +69,6 @@ function M.close_window(win)
 	return M.close_group(M.group_anchor(win))
 end
 
-function M.close_matching(matches, except)
-	local keep_win = except and vim.fn.bufwinid(except) or -1
-	local keep_group = keep_win ~= -1 and M.group_anchor(keep_win)
-	local closed = false
-	for _, win in ipairs(vim.api.nvim_list_wins()) do
-		if vim.api.nvim_win_is_valid(win) then
-			local buf = vim.api.nvim_win_get_buf(win)
-			if buf ~= except and matches(buf) then
-				local anchor = M.group_anchor(win)
-				if anchor ~= keep_group then
-					local ok, hidden = pcall(M.close_group, anchor)
-					closed = (ok and hidden) or closed
-				end
-			end
-		end
-	end
-	return closed
-end
-
 function M.with_preserved_windows(callback)
 	local previous = preserve_windows
 	preserve_windows = true
@@ -97,7 +78,7 @@ function M.with_preserved_windows(callback)
 	return result
 end
 
-function M.track_directory(group, visible, restore)
+function M.track_directory(group, capture, hide, restore)
 	local saved = {}
 	vim.api.nvim_create_autocmd({ "DirChangedPre", "DirChanged" }, {
 		group = group,
@@ -105,9 +86,8 @@ function M.track_directory(group, visible, restore)
 			if preserve_windows then return end
 			local cwd = vim.fn.getcwd()
 			if event.event == "DirChangedPre" then
-				local win, pane = visible(cwd)
-				saved[cwd] = pane or win
-				if win then pcall(M.close_window, win) end
+				saved[cwd] = capture(cwd)
+				if saved[cwd] then hide() end
 			elseif saved[cwd] then
 				restore(cwd, saved[cwd])
 			end
