@@ -542,11 +542,17 @@ function Bar:layout(anchor, layout)
     end, opts)
   end
   for _, modifier in ipairs({ "C-S", "D-S" }) do
-    local cycle = modifier == "D-S" and self.opts.cycle_session
-    vim.keymap.set("n", "<" .. modifier .. "-j>", cycle and function() cycle(1) end or function() self:move(1) end,
-      vim.tbl_extend("force", opts, { desc = cycle and "Next tmux session" or "Move sidebar item down" }))
-    vim.keymap.set("n", "<" .. modifier .. "-k>", cycle and function() cycle(-1) end or function() self:move(-1) end,
-      vim.tbl_extend("force", opts, { desc = cycle and "Previous tmux session" or "Move sidebar item up" }))
+    vim.keymap.set("n", "<" .. modifier .. "-j>", function() self:move(1) end,
+      vim.tbl_extend("force", opts, { desc = "Move sidebar item down" }))
+    vim.keymap.set("n", "<" .. modifier .. "-k>", function() self:move(-1) end,
+      vim.tbl_extend("force", opts, { desc = "Move sidebar item up" }))
+  end
+  local cycle_session = self.opts.cycle_session
+  if cycle_session then
+    vim.keymap.set("n", "<C-S-h>", function() cycle_session(-1) end,
+      vim.tbl_extend("force", opts, { desc = "Previous tmux session" }))
+    vim.keymap.set("n", "<C-S-l>", function() cycle_session(1) end,
+      vim.tbl_extend("force", opts, { desc = "Next tmux session" }))
   end
   for _, key in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
     local to_content = key == (style == "horizontal" and "<C-j>" or "<C-l>")

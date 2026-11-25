@@ -6824,8 +6824,8 @@ local function session_sidebar(id)
   return win and vim.w[vim.w[win].luanphan_view_anchor or win].luanphan_window_bar == api.nvim_get_current_win()
 end
 key("<leader>e")
-for _, switch in ipairs({ { "<D-S-j>", session_a }, { "<D-S-j>", session_b },
-  { "<D-S-k>", session_a }, { "<D-S-k>", third } }) do
+for _, switch in ipairs({ { "<C-S-l>", session_a }, { "<C-S-l>", session_b },
+  { "<C-S-h>", session_a }, { "<C-S-h>", third } }) do
   key(switch[1])
   wait(function() return session_sidebar(switch[2]) end, "session switch kept focus in the sidebar")
 end
@@ -7010,7 +7010,7 @@ local bar = vim.iter(pairs(vim.luanphan_window_bars)):find(function(item) return
 local initial = vim.tbl_map(function(group) return group.id end, bar.rows[1].groups)
 local session_id = tmux("display-message", "-p", "-t", focus_pane, "#{session_id}")
 api.nvim_win_set_cursor(bar.win, { 1, 0 })
-api.nvim_feedkeys(vim.keycode("<C-S-j>"), "xt", false)
+api.nvim_feedkeys(vim.keycode("<D-S-j>"), "xt", false)
 assert(bar.rows[1].group.id == initial[2], "native terminal window did not move immediately")
 assert(not pcall(tmux, "show-options", "-v", "-t", session_id, "@luanphan-window-order"),
   "moving a terminal window saved before the debounce")
