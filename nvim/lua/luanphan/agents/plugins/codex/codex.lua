@@ -4,6 +4,7 @@ local M = {
   g_bufnr = "codex_agent_bufnr",
   notify_prefix = "codex_agent",
   augroup_prefix = "CodexAgent",
+  status = { initial = "idle" },
 }
 local pending = {}
 local uuid_prefix = string.rep("%x", 8) .. ("%-" .. string.rep("%x", 4)):rep(3) .. "%-" .. string.rep("%x", 5)

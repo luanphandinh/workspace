@@ -29,14 +29,20 @@ def command(agent):
     return f"{shlex.quote(str(STATUS_COMMAND))} {shlex.quote(agent)}"
 
 
-def is_managed_hook(hook):
+def is_managed_hook(hook, agent):
     if not isinstance(hook, dict):
         return False
     value = hook.get("command")
-    return isinstance(value, str) and STATUS_COMMAND.name in value
+    if not isinstance(value, str):
+        return False
+    try:
+        args = shlex.split(value)
+    except ValueError:
+        return False
+    return len(args) == 2 and pathlib.Path(args[0]).name == STATUS_COMMAND.name and args[1] == agent
 
 
-def remove_nested_hooks(hooks):
+def remove_nested_hooks(hooks, agent):
     for event in list(hooks):
         groups = hooks[event]
         if not isinstance(groups, list):
@@ -46,7 +52,7 @@ def remove_nested_hooks(hooks):
             if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
                 remaining_groups.append(group)
                 continue
-            remaining = [hook for hook in group["hooks"] if not is_managed_hook(hook)]
+            remaining = [hook for hook in group["hooks"] if not is_managed_hook(hook, agent)]
             if remaining:
                 updated = dict(group)
                 updated["hooks"] = remaining
@@ -57,12 +63,12 @@ def remove_nested_hooks(hooks):
             hooks.pop(event, None)
 
 
-def remove_flat_hooks(hooks):
+def remove_flat_hooks(hooks, agent):
     for event in list(hooks):
         entries = hooks[event]
         if not isinstance(entries, list):
             continue
-        remaining = [hook for hook in entries if not is_managed_hook(hook)]
+        remaining = [hook for hook in entries if not is_managed_hook(hook, agent)]
         if remaining:
             hooks[event] = remaining
         else:
@@ -71,6 +77,9 @@ def remove_flat_hooks(hooks):
 
 def sync(agent, spec):
     path = HOME / spec["path"]
+    enabled = spec.get("enabled", True)
+    if not enabled and not path.exists():
+        return
     data = read_json(path, {})
     if not isinstance(data, dict):
         raise SystemExit(f"sync-agent-status-hooks: expected object in {path}")
@@ -80,14 +89,17 @@ def sync(agent, spec):
     hooks = data.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise SystemExit(f"sync-agent-status-hooks: expected hooks object in {path}")
+    previous_hooks = hooks.copy()
     entry = {"command": command(agent)}
     if spec.get("nested"):
-        remove_nested_hooks(hooks)
+        remove_nested_hooks(hooks, agent)
         entry = {"hooks": [{"type": "command", **entry, "timeout": 10}]}
     else:
-        remove_flat_hooks(hooks)
-    hooks.setdefault(spec["event"], []).append(entry)
-    write_json(path, data)
+        remove_flat_hooks(hooks, agent)
+    if enabled:
+        hooks.setdefault(spec["event"], []).append(entry)
+    if enabled or hooks != previous_hooks:
+        write_json(path, data)
 
 
 def main():
@@ -101,7 +113,14 @@ def main():
     if not definitions:
         raise SystemExit("sync-agent-status-hooks: no hook definitions found")
     for agent, path in definitions:
-        sync(agent, read_json(path, {}))
+        spec = read_json(path, {})
+        marker = STATUS_COMMAND.parent / "agent-status-hooks" / f"{agent}.disabled"
+        if spec.get("enabled", True):
+            marker.unlink(missing_ok=True)
+        else:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.touch()
+        sync(agent, spec)
     print("sync-agent-status-hooks: updated status-only completion hooks")
 
 

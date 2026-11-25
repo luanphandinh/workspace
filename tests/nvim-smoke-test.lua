@@ -5592,23 +5592,32 @@ local function test_agent_view_container(repo)
     wait_until("sidebar renders an idle dot", function()
       return status_icon(main, other_buf) == "·"
     end, 3000)
+    local agent_status = require("luanphan.agents.status")
+    assert_true(agent_status.write("cursor", vim.b[first_cursor_buf].luanphan_agent_cwd, "done"),
+      "could not create the Cursor status fallback")
+    wait_until("sidebar reads the Cursor status fallback", function()
+      return status_icon(main, first_cursor_buf) == "✓"
+    end, 3000)
     terminal_io.send(first_cursor_buf, "\27]7501;state=done\27\\")
     wait_until("sidebar accepts terminal status from Cursor", function()
-      return status_icon(main, first_cursor_buf) == "✓"
+      return vim.b[first_cursor_buf].luanphan_agent_program_status == "done"
     end, 3000)
     terminal_io.send(first_cursor_buf, "\27]7501;state=clear\27\\")
     wait_until("sidebar clears the terminal status icon", function()
       return status_icon(main, first_cursor_buf) == nil
     end, 3000)
-    local agent_status = require("luanphan.agents.status")
-    assert_true(agent_status.write("codex", other_path, "done"), "could not record the hook's completion state")
-    wait_until("sidebar receives hook completion without switching focus", function()
-      local icon, col = status_icon(main, other_buf)
-      return icon == "✓" and col == sidebar_config.width - 4
-    end, 3000)
+    vim.api.nvim_set_current_win(main)
+    vim.defer_fn(function() vim.api.nvim_input("<CR><Esc>") end, 20)
+    vim.api.nvim_feedkeys("i", "xt!", false)
+    vim.api.nvim_set_current_win(sidebar)
+    assert_true(agent_status.read("codex", other_path) == "unknown", "Codex wrote a status file on launch or Enter")
+    assert_true(agent_status.write("codex", other_path, "done"), "could not create a stale hook status")
+    require("luanphan.agents.window_bar").refresh(true)
+    local idle_icon, idle_col = status_icon(main, other_buf)
+    assert_true(idle_icon == "·" and idle_col == sidebar_config.width - 4, "Codex sidebar read a stale hook status")
     terminal_io.send(other_buf, "\27]7501;state=working:app=codex\27\\")
     local frame
-    wait_until("sidebar uses terminal status ahead of the hook status", function()
+    wait_until("sidebar shows the native Codex working status", function()
       frame = status_icon(main, other_buf)
       return frame and vim.fn.char2nr(frame) >= 0x2800 and vim.fn.char2nr(frame) <= 0x28ff
     end, 3000)
@@ -8049,6 +8058,7 @@ local function test_agent_terminal_lifecycle(repo)
 
   local agent = require("luanphan.agents.terminal-chat").create({
     status_name = "example-agent",
+    status = { track_submit = true },
     g_bufnr = "toggleterm_hide_agent_bufnr",
     notify_prefix = "toggleterm_hide_agent",
     augroup_prefix = "ToggletermHideAgent",

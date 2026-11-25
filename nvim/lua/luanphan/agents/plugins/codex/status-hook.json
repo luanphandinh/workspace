@@ -1,5 +1,6 @@
 {
   "path": ".codex/hooks.json",
   "event": "Stop",
-  "nested": true
+  "nested": true,
+  "enabled": false
 }

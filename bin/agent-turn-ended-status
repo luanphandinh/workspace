@@ -2,6 +2,8 @@
 set -eu
 
 agent="${1:?agent name is required}"
+# Loaded threads can still invoke a retired hook.
+[ ! -f "$HOME/bin/agent-status-hooks/$agent.disabled" ] || exit 0
 cwd="$(pwd -P 2>/dev/null || pwd)"
 
 if command -v sha256sum >/dev/null 2>&1; then

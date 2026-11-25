@@ -30,10 +30,16 @@ fixtures = {
         ]},
     },
     home / ".codex" / "hooks.json": {
-        "hooks": {"Stop": [{"hooks": [
-            {"type": "command", "command": f"{status} codex"},
-            {"type": "command", "command": "custom-codex-hook"},
-        ]}]},
+        "hooks": {
+            "Stop": [
+                {"hooks": [
+                    {"type": "command", "command": "custom-codex-hook"},
+                    {"type": "command", "command": f"echo {status} codex"},
+                ]},
+                {"hooks": [{"type": "command", "command": f"{status} codex"}]},
+            ],
+            "SessionStart": [{"hooks": [{"type": "command", "command": "custom-session-hook"}]}],
+        },
     },
 }
 for path, data in fixtures.items():
@@ -69,8 +75,9 @@ assert sum(status in value and value.endswith(" cursor") for value in cursor_com
 
 codex = json.loads((home / ".codex" / "hooks.json").read_text())
 codex_commands = [hook["command"] for group in codex["hooks"]["Stop"] for hook in group["hooks"]]
-assert codex_commands.count("custom-codex-hook") == 1
-assert sum(status in value and value.endswith(" codex") for value in codex_commands) == 1
+assert codex_commands == ["custom-codex-hook", f"echo {status} codex"]
+assert len(codex["hooks"]["Stop"]) == 1
+assert codex["hooks"]["SessionStart"] == [{"hooks": [{"type": "command", "command": "custom-session-hook"}]}]
 
 config = (home / ".codex" / "config.toml").read_text()
 assert config == 'model = "example-model"\nnotify = ["custom-notify"]\n\n[features]\nmulti_agent = true\n'
@@ -87,5 +94,11 @@ else
 	status_key="$(printf '%s\n%s' example-agent "$project" | shasum -a 256 | awk '{ print $1 }')"
 fi
 [ "$(cat "$TMP/state/nvim/workspace-agent-status/$status_key")" = "done" ]
+
+(
+	cd "$TMP/project"
+	HOME="$TMP/home" XDG_STATE_HOME="$TMP/retired-state" sh "$ROOT/bin/agent-turn-ended-status" codex
+)
+[ ! -e "$TMP/retired-state" ]
 
 printf 'agent status hooks smoke test passed\n'

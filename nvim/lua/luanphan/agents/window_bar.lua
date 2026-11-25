@@ -31,7 +31,7 @@ local function groups()
     local workspace = thread.workspace
     by_workspace[workspace] = by_workspace[workspace] or {}
     table.insert(by_workspace[workspace], thread)
-    if thread.bufnr then
+    if thread.bufnr and agents.uses_status_file(thread.agent) then
       local path = status.path(thread.agent, thread.path)
       paths[thread.bufnr], counts[path] = path, (counts[path] or 0) + 1
     end

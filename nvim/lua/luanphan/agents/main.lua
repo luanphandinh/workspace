@@ -13,7 +13,11 @@ local agent_key = "<leader>a"
 
 local agent_defs = {}
 for _, name in ipairs(agent_order) do
-  agent_defs[name] = require("luanphan.agents.plugins." .. name .. "." .. name)
+  local def = require("luanphan.agents.plugins." .. name .. "." .. name)
+  if def.status then
+    def.status = vim.tbl_extend("force", { decode = status.from_osc }, def.status)
+  end
+  agent_defs[name] = def
 end
 sessions.setup(agent_defs, agent_order)
 
@@ -192,6 +196,11 @@ function M.agent_icon(name)
   return agent_defs[name].icon
 end
 
+function M.uses_status_file(name)
+  local options = agent_defs[name].status
+  return options and options.fallback_file
+end
+
 function M.display_title(name, title)
   local def = agent_defs[name]
   if def and def.display_title then return def.display_title(title) end
@@ -318,7 +327,7 @@ local function get_agent(name)
   apis[name] = terminal_agent.create({
     status_name = name,
     shell = def.shell,
-    native_status = def.native_status,
+    status = def.status,
     new_session_id = def.new_session_id,
     g_bufnr = def.g_bufnr,
     notify_prefix = def.notify_prefix,
@@ -544,7 +553,8 @@ local function receive_terminal_event(args)
   local def = agent_defs[name]
   local sequence = args.data and args.data.sequence
   if not name or not sequence then return end
-  local osc_status = status.from_osc(sequence)
+  local status_options = def and def.status
+  local osc_status = status_options and status_options.decode and status_options.decode(sequence)
   if osc_status then
     status.update(bufnr, osc_status)
     vim.schedule(function()

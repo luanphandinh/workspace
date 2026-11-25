@@ -4,7 +4,7 @@ local M = {
   g_bufnr = "cursor_agent_bufnr",
   notify_prefix = "cursor_agent",
   augroup_prefix = "CursorAgent",
-  native_status = true,
+  status = { fallback_file = true },
   defaults = {
     cmd = {
       "sh", "-c", [[export NVIM_CURSOR_AGENT_TTY="$(tty)"; exec cursor-agent --plugin-dir "$0" "$@"]],

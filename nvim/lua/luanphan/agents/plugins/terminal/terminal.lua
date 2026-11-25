@@ -5,7 +5,6 @@ local M = {
   notify_prefix = "panel_terminal",
   augroup_prefix = "PanelTerminal",
   shell = true,
-  native_status = true,
   restore_on_open = true,
   defaults = {
     cmd = function() return { vim.o.shell, "-i" } end,

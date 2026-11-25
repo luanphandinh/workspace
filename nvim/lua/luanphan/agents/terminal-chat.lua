@@ -49,7 +49,7 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
 ---@param profile table
 ---@field status_name? string stable name used by the cross-process status store
 ---@field shell? boolean forward Ctrl+L to an interactive shell
----@field native_status? boolean whether the program reports its own status
+---@field status? table provider status options
 ---@field new_session_id? fun(): string
 ---@field g_bufnr string vim.g key for buffer reuse after reload
 ---@field notify_prefix string prefix for :vim.notify
@@ -84,6 +84,7 @@ local state = {
 }
 
 local G_BUFNR = profile.g_bufnr
+local status_options = profile.status or {}
 
 local DEFAULTS = vim.tbl_deep_extend("force", vim.deepcopy(BASE_DEFAULTS), profile.defaults or {})
 
@@ -480,7 +481,7 @@ local function set_float_navigation_keymaps(bufnr)
 end
 
 local function attach_status_tracking(bufnr, cwd, initial_status)
-  if not profile.status_name or profile.native_status then return end
+  if not profile.status_name or not status_options.track_submit then return end
   local agent_status = require("luanphan.agents.status")
   if initial_status then
     agent_status.write(profile.status_name, cwd, initial_status)
@@ -648,6 +649,9 @@ end
 
 local function register_terminal(buf, cwd, initial_status)
   configure_terminal_buffer(buf)
+  if status_options.initial and not vim.b[buf].luanphan_agent_program_status then
+    require("luanphan.agents.status").update(buf, status_options.initial)
+  end
   apply_agent_scrollback(buf)
   set_agent_bufnr(buf, cwd)
   attach_term_close(buf)
