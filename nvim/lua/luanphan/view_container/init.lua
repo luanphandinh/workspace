@@ -12,6 +12,19 @@ local Container = { reserve = tabs.reserve, render = tabs.render,
 Container.__index = Container
 local watched_layouts = setmetatable({}, { __mode = "k" })
 local resize_timer
+local floating_panel
+
+function M.show_panel(panel)
+	if floating_panel and floating_panel ~= panel then floating_panel.hide() end
+	floating_panel = not panel.docked and panel or nil
+	if not panel.docked then editor.remember_source(vim.api.nvim_get_current_win()) end
+end
+
+function M.toggle_panel(panel, open)
+	local source = not panel.docked and editor.main_window()
+	if not panel.hide() then return (open or panel.open)() end
+	if source and vim.api.nvim_win_is_valid(source) then vim.api.nvim_set_current_win(source) end
+end
 
 local function refresh_layouts()
 	for container in pairs(watched_layouts) do

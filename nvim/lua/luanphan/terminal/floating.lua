@@ -1,4 +1,5 @@
 local M = {}
+local views = require("luanphan.view_container")
 local backend, tmux
 
 local function tmux_panel()
@@ -13,7 +14,6 @@ local function tmux_panel()
         end
         return { socket = socket, config = vim.g.luanphan_floating_tmux_config }
       end,
-      on_open = function() require("luanphan.agents.main").hide() end,
     })
   end
   return tmux
@@ -30,14 +30,13 @@ function M.hide()
   return backend and backend.hide() or false
 end
 
-function M.toggle()
-  local editor_window = require("luanphan.view_container.editor").main_window()
-  if M.hide() then
-    if editor_window and vim.api.nvim_win_is_valid(editor_window) then vim.api.nvim_set_current_win(editor_window) end
-    return
-  end
+function M.open()
   backend = open_backend()
-  if backend then backend.toggle() end
+  if backend then backend.open() end
+end
+
+function M.toggle()
+  return views.toggle_panel(M)
 end
 
 return M

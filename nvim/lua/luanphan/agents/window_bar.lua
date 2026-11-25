@@ -101,7 +101,7 @@ bar = require("luanphan.view_container.window_bar").create({
   end,
   bind = function(buf)
     agents.map_create_shortcuts(buf)
-    vim.keymap.set("n", "<leader>a", function() if valid(main) then close_window(main) end end, { buffer = buf })
+    vim.keymap.set("n", "<leader>a", agents.toggle, { buffer = buf })
   end,
 })
 

@@ -434,8 +434,7 @@ function M.create(opts)
   }
 
   open = function(target)
-    opts.on_open()
-    editor.remember_source(api.nvim_get_current_win())
+    views.show_panel(panel)
     session = target
     client = tmux:attach(target, {
       flags = "ignore-size,pause-after=5",
@@ -469,8 +468,7 @@ function M.create(opts)
     })
   end
 
-  function panel.toggle()
-    if panel.hide() then return end
+  function panel.open()
     local body = geometry().body
     local target = tmux:ensure_session(previous_session, body.width, body.height - 1)
     if target then open(target) end

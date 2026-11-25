@@ -2,8 +2,12 @@ return {
   {
     "MeanderingProgrammer/render-markdown.nvim",
     ft = "markdown",
+    keys = {
+      { "<leader>-p", "<cmd>RenderMarkdown buf_toggle<cr>", ft = "markdown", desc = "Toggle preview" },
+    },
     dependencies = { "nvim-tree/nvim-web-devicons" },
     opts = {
+      anti_conceal = { enabled = false },
       indent = {
         enabled = true,
         per_level = 2,
@@ -27,6 +31,25 @@ return {
           end,
         }, { __index = self })
         return border_row(body, row, position, lines)
+      end
+
+      local marks = require("render-markdown.lib.marks")
+      local replace = marks.replace
+      marks.replace = function(self, config, node, lines)
+        if config ~= self.context.config.pipe_table then
+          return replace(self, config, node, lines)
+        end
+        -- Keep one screen line per table row so the cursor can follow long tables.
+        local _, source = node:line("first", 0)
+        self:add(config, "table_border", node.start_row, 0, {
+          end_row = node.start_row,
+          end_col = #source,
+          conceal = "",
+          virt_text = lines[1],
+          virt_text_pos = "overlay",
+          virt_text_win_col = 0,
+          virt_lines = vim.list_slice(lines, 2),
+        })
       end
       require("render-markdown").setup(opts)
     end,

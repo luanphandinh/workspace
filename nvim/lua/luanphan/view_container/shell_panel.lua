@@ -8,7 +8,7 @@ local window = require("luanphan.terminal.window")
 local settings = require("luanphan.global_settings")
 
 function M.create(opts)
-  local panel = {}
+  local panel = { docked = opts.docked }
   local scopes = {}
   local anchor, dock, current
   local bar, inner, create_bar
@@ -225,7 +225,7 @@ function M.create(opts)
   end
 
   local function open_pane(group, command)
-    if not is_open() then opts.on_open() end
+    if not is_open() then views.show_panel(panel) end
     local result = new_pane(group, command)
     if not result then return end
     group.scope.active = group
@@ -251,11 +251,10 @@ function M.create(opts)
     return open_pane(group, command)
   end
 
-  function panel.toggle()
-    if panel.hide() then return end
+  function panel.open()
     local group = scope().active
     if not group then return panel.new_window() end
-    opts.on_open()
+    views.show_panel(panel)
     render(group, true)
   end
 

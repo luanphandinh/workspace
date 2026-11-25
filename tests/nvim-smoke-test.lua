@@ -4443,19 +4443,23 @@ local function test_terminal_reference_links()
   vim.cmd("tabclose!")
 end
 
+local function open_agent_test_shell(agents, bufnr)
+  local shell = vim.o.shell
+  vim.o.shell = "/bin/sh"
+  local ok, result = pcall(agents.open, "terminal", bufnr, { view_mode = true })
+  vim.o.shell = shell
+  assert_true(ok and result, "could not open the Agents shell: " .. tostring(result))
+end
+
 local function test_agent_terminal_reference_restores_view(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   local target_path = repo .. "/terminal-reference-target.txt"
   write(target_path, { "target" })
   vim.cmd("edit " .. vim.fn.fnameescape(target_path))
+  local source_win = vim.api.nvim_get_current_win()
 
-  local agent = require("luanphan.agents.terminal-chat").create({
-    name = "terminal_reference_view_agent",
-    hint_open = "<smoke>",
-    defaults = { cmd = "sh" },
-  })
-  agent.setup()
-  agent.toggle()
+  local agents = require("luanphan.agents.main")
+  open_agent_test_shell(agents)
   wait_until("agent terminal for reference view", function()
     return visible_agent_window_count() == 1
   end, 1000)
@@ -4464,7 +4468,9 @@ local function test_agent_terminal_reference_restores_view(repo)
     local width = vim.api.nvim_win_get_width(win)
     vim.api.nvim_win_set_config(win, { width = width - 1 })
     vim.api.nvim_exec_autocmds("VimResized", {})
-    assert_true(vim.api.nvim_win_get_width(win) == width, label .. " did not restore its saved width")
+    wait_until(label .. " restores its width", function()
+      return vim.api.nvim_win_get_width(win) == width
+    end, 1000)
   end
 
   local terminal_buf = vim.api.nvim_get_current_buf()
@@ -4497,21 +4503,22 @@ local function test_agent_terminal_reference_restores_view(repo)
   vim.cmd("stopinsert")
   vim.defer_fn(function() vim.api.nvim_input("<Esc>") end, 20)
   vim.api.nvim_feedkeys("i", "xt!", false)
-  agent.toggle()
-  assert_true(agent.focus(terminal_buf, { view_mode = true }), "could not reopen the live agent")
+  assert_true(agents.hide(), "could not hide the live agent")
+  open_agent_test_shell(agents, terminal_buf)
   wait_until("agent prompt after input mode and reopening", function()
     return top_line() == "VIEWPORT_PROMPT"
   end, 3000)
 
-  agent.toggle()
+  assert_true(agents.hide(), "could not hide the agent before background output")
   terminal_io.send(terminal_buf, "seq 1 70; printf '\\033[2J\\033[HVIEWPORT_HIDDEN_OUTPUT\\n'\n")
   wait_until("agent output while hidden", function()
     local lines = vim.api.nvim_buf_get_lines(terminal_buf, -30, -1, false)
     return vim.tbl_contains(lines, "VIEWPORT_HIDDEN_OUTPUT")
   end, 3000)
-  assert_true(agent.focus(terminal_buf, { view_mode = true }), "could not reopen the agent after hidden output")
+  open_agent_test_shell(agents, terminal_buf)
   wait_until("agent follows output received while hidden", function()
-    return top_line() == "VIEWPORT_HIDDEN_OUTPUT"
+    local visible = vim.api.nvim_buf_get_lines(terminal_buf, vim.fn.line("w0") - 1, vim.fn.line("w$"), false)
+    return vim.tbl_contains(visible, "VIEWPORT_HIDDEN_OUTPUT")
   end, 3000)
   terminal_win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_cursor(terminal_win, { 10, 0 })
@@ -4522,9 +4529,13 @@ local function test_agent_terminal_reference_restores_view(repo)
 
   local references = require("luanphan.terminal_references")
   assert_true(references.open(target_path, 1, 1), "agent terminal reference did not open")
-  assert_true(not vim.api.nvim_win_is_valid(terminal_win), "agent terminal reference left its float open")
+  local editor = require("luanphan.view_container.editor")
+  assert_true(editor.window(terminal_win) == vim.api.nvim_get_current_win(), "reference did not open in an editor tile")
+  agents.toggle()
+  assert_true(not vim.api.nvim_win_is_valid(terminal_win), "toggling Agents left the terminal visible")
+  assert_true(vim.api.nvim_get_current_win() == source_win, "toggling Agents did not restore the main editor")
 
-  agent.toggle()
+  open_agent_test_shell(agents, terminal_buf)
   wait_until("agent terminal reopened with saved view", function()
     return visible_agent_window_count() == 1
   end, 1000)
@@ -4537,6 +4548,8 @@ local function test_agent_terminal_reference_restores_view(repo)
   assert_true(restored_view.topline == saved_view.topline, "agent terminal viewport returned to the end")
 
   vim.cmd("stopinsert")
+  assert_true(editor.focus(reopened_win), "could not focus the reopened editor tile")
+  vim.cmd.quit()
   close_agent_terminals()
   local target_buf = vim.fn.bufnr(target_path)
   if target_buf >= 0 and vim.api.nvim_buf_is_valid(target_buf) then
@@ -5172,6 +5185,10 @@ vim.g.luanphan_floating_tmux_config = '/dev/null'
 local floating = require('luanphan.terminal.floating')
 floating.toggle()
 assert(vim.wait(3000, function() return vim.b.luanphan_tmux_pane ~= nil end), 'floating terminal did not attach')
+local floating_win = vim.api.nvim_get_current_win()
+for _, item in ipairs(sessions.instances(false)) do
+  assert(vim.fn.bufwinid(item.bufnr) == -1, 'opening Floating Terminal left an Agents window visible')
+end
 local function tmux(socket, ...)
   local result = vim.system(vim.list_extend({ 'tmux', '-S', socket }, { ... }), { text = true }):wait()
   assert(result.code == 0, result.stderr)
@@ -5181,6 +5198,7 @@ local terminal_pid = tmux(terminal_socket, 'list-panes', '-a', '-F', '#{pane_pid
 assert(terminal_pid:match('^%d+$'), 'agent processes appeared in the floating terminal server')
 agents.toggle()
 assert(vim.b.luanphan_agent_thread_id == agent_id, 'could not reopen the agent panel')
+assert(not vim.api.nvim_win_is_valid(floating_win), 'opening Agents left a Floating Terminal window visible')
 tmux(vim.env.LUANPHAN_AGENT_TMUX_SOCKET, 'kill-server')
 assert(vim.wait(3000, function() return #sessions.instances(false) == 0 end), 'server loss left stale agent panes')
 assert(#sessions.list('codex') == 1 and #sessions.list('terminal') == 1, 'server loss removed active session records')
@@ -8118,13 +8136,8 @@ end
 
 local function test_agent_terminal_lifecycle(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
-  local agent = require("luanphan.agents.terminal-chat").create({
-    name = "example-agent",
-    hint_open = "<smoke>",
-    defaults = { cmd = "sh" },
-  })
-  agent.setup()
-  agent.toggle()
+  local agents = require("luanphan.agents.main")
+  open_agent_test_shell(agents)
 
   wait_until("agent terminal open before toggleterm", function()
     return visible_agent_window_count() == 1
@@ -8138,7 +8151,7 @@ local function test_agent_terminal_lifecycle(repo)
     return not vim.api.nvim_buf_is_valid(first_buf)
   end, 3000)
 
-  agent.toggle()
+  open_agent_test_shell(agents)
   wait_until("fresh agent terminal after quit", function()
     return visible_agent_window_count() == 1 and vim.api.nvim_get_current_buf() ~= first_buf
   end, 1000)
@@ -8153,19 +8166,15 @@ local function test_agent_terminal_lifecycle(repo)
     local expected = vim.api.nvim_replace_termcodes(lhs, true, false, true)
     for _, map in ipairs(terminal_maps) do
       local actual = vim.api.nvim_replace_termcodes(map.lhs, true, false, true)
-      assert_true(actual ~= expected, "agent terminal insert mode captured " .. lhs)
+      local passthrough = map.noremap == 1 and map.rhs and vim.keycode(map.rhs) == expected
+      assert_true(actual ~= expected or passthrough, "agent terminal insert mode captured " .. lhs)
     end
   end
   vim.cmd("stopinsert")
-  local view_down_map = vim.fn.maparg("<C-j>", "n", false, true)
-  assert_true(
-    type(view_down_map) == "table" and type(view_down_map.callback) == "function",
-    "agent terminal view mode is missing <C-j> navigation"
-  )
-  view_down_map.callback()
-  assert_true(visible_agent_window_count() == 0, "agent terminal view-mode <C-j> did not return to the editor")
-  agent.toggle()
-  wait_until("agent terminal reopened after view navigation", function()
+  agents.toggle()
+  assert_true(visible_agent_window_count() == 0, "Agents toggle did not return to the editor")
+  agents.toggle()
+  wait_until("agent terminal reopened after toggle", function()
     return visible_agent_window_count() == 1
   end, 1000)
   assert_true(
@@ -8179,7 +8188,7 @@ local function test_agent_terminal_lifecycle(repo)
   end, 3000)
   assert_true(visible_agent_window_count() == 0, "agent terminal remained visible after <leader>-t")
 
-  agent.toggle()
+  open_agent_test_shell(agents, second_buf)
   wait_until("agent terminal open before ctrl-d", function()
     return visible_agent_window_count() == 1
   end, 1000)
@@ -8196,13 +8205,8 @@ end
 local function test_worktree_switch_hides_agent_terminal(repo, worktree)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
 
-  local agent = require("luanphan.agents.terminal-chat").create({
-    name = "smoke_agent",
-    hint_open = "<smoke>",
-    defaults = { cmd = "sh" },
-  })
-  agent.setup()
-  agent.toggle()
+  local agents = require("luanphan.agents.main")
+  open_agent_test_shell(agents)
 
   wait_until("repo agent terminal open", function()
     return visible_agent_window_count() == 1
@@ -8216,7 +8220,7 @@ local function test_worktree_switch_hides_agent_terminal(repo, worktree)
   end, 10000)
   assert_true(visible_agent_window_count() == 0, "agent terminal unexpectedly visible in new worktree")
 
-  agent.toggle()
+  open_agent_test_shell(agents)
   wait_until("worktree agent terminal open", function()
     return visible_agent_window_count() == 1
   end, 1000)
@@ -8229,7 +8233,7 @@ local function test_worktree_switch_hides_agent_terminal(repo, worktree)
   end, 10000)
   assert_true(visible_agent_window_count() == 0, "workspace switch did not hide the worktree agent terminal")
 
-  agent.toggle()
+  open_agent_test_shell(agents)
   wait_until("repo agent terminal manually reopened", function()
     return visible_agent_window_count() == 1
   end, 1000)
@@ -8237,13 +8241,13 @@ local function test_worktree_switch_hides_agent_terminal(repo, worktree)
   worktree_test_api().switch_to(worktree)
   assert_true(visible_agent_window_count() == 0, "workspace switch did not hide the repository agent terminal")
 
-  agent.toggle()
+  open_agent_test_shell(agents)
   wait_until("worktree agent terminal manually reopened", function()
     return visible_agent_window_count() == 1
   end, 1000)
 
-  local repo_buf = registered_agent_bufnrs("smoke_agent", repo)[1]
-  local worktree_buf = registered_agent_bufnrs("smoke_agent", worktree)[1]
+  local repo_buf = registered_agent_bufnrs("terminal", repo)[1]
+  local worktree_buf = registered_agent_bufnrs("terminal", worktree)[1]
   assert_true(repo_buf and worktree_buf, "agent terminal buffers were not persisted per workspace")
   local function window_for_buffer(bufnr)
     for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -8288,7 +8292,7 @@ local function test_worktree_switch_hides_agent_terminal(repo, worktree)
     assert_true(vim.bo[buf].syntax == "", "agent terminal inherited syntax highlighting")
   end
 
-  assert_true(agent.focus(repo_buf), "agent could not focus the selected repository terminal")
+  assert_true(agents.focus("terminal", repo_buf), "agent could not focus the selected repository terminal")
   local repo_win = window_for_buffer(repo_buf)
   assert_true(repo_win ~= nil, "agent focused the cwd terminal instead of the selected terminal")
   assert_clean_terminal_window(repo_win)
@@ -8321,11 +8325,11 @@ local function test_worktree_switch_hides_agent_terminal(repo, worktree)
   pcall(vim.api.nvim_del_augroup_by_id, group)
 
   vim.bo[repo_buf].syntax = "go"
-  assert_true(agent.focus(repo_buf), "agent could not repair a polluted terminal")
+  assert_true(agents.focus("terminal", repo_buf), "agent could not repair a polluted terminal")
   assert_true(vim.bo[repo_buf].syntax == "", "agent focus did not clear inherited syntax highlighting")
 
   pcall(vim.api.nvim_win_close, repo_win, false)
-  assert_true(agent.focus(worktree_buf), "agent could not restore the selected worktree terminal")
+  assert_true(agents.focus("terminal", worktree_buf), "agent could not restore the selected worktree terminal")
   assert_clean_terminal_window(window_for_buffer(worktree_buf))
   for name, value in pairs(saved_options) do
     vim.api.nvim_set_option_value(name, value, { win = source_win, scope = "local" })

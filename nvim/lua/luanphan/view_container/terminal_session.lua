@@ -16,17 +16,12 @@ function M.create(profile)
 
   local function resume_terminal_view(win, bufnr, opts)
     profile.mark_used(bufnr)
-    if profile.on_show then
-      pcall(profile.on_show, bufnr, win, profile.cwd(bufnr) or cwd_key())
-    else
-      terminal_pane.show_view(win, bufnr)
-    end
+    pcall(profile.on_show, bufnr, win, profile.cwd(bufnr) or cwd_key())
     terminal_pane.focus_input(win, bufnr, opts and opts.view_mode)
   end
 
   local function get_float_layout()
-    local settings = profile.settings and profile.settings()
-    return view_container.layout(settings or { total_width_percent = 80 }, {
+    return view_container.layout(profile.settings(), {
       border = config.float_border or "single", zindex = config.float_zindex, min_height = 12,
     })
   end
@@ -34,9 +29,7 @@ function M.create(profile)
   local function open_float(bufnr)
     local layout = get_float_layout()
     local win = view_container.open_float(layout, bufnr, true)
-    if profile.on_float_layout then
-      profile.on_float_layout(win, layout, true)
-    end
+    profile.on_float_layout(win, layout, true)
     return win
   end
 
@@ -56,19 +49,11 @@ function M.create(profile)
   local function layout_float(win)
     if not vim.api.nvim_win_is_valid(win) then return end
     if terminal_pane.is_closing_tile(win) then return end
-    local layout = get_float_layout()
-    if profile.on_float_layout then
-      profile.on_float_layout(win, layout)
-    else
-      vim.api.nvim_win_set_config(win, layout.body)
-      terminal_pane.show_view(win, vim.api.nvim_win_get_buf(win))
-    end
+    profile.on_float_layout(win, get_float_layout())
   end
 
-  local navigate = profile.on_navigate or function(win) pcall(view_container.close_window, win) end
-
   local function bind_terminal(buf)
-    terminal_pane.bind_navigation(buf, navigate)
+    terminal_pane.bind_navigation(buf, profile.on_navigate)
     if not profile.shell then
       vim.keymap.set("t", "<C-l>", "<Nop>", { buffer = buf, silent = true, nowait = true })
     end
@@ -115,6 +100,7 @@ function M.create(profile)
   end
 
   local function mount_terminal(buf, opts)
+    view_container.show_panel(profile.panel)
     return terminal_pane.mount(buf, opts and opts.reuse_win, open_float, prepare_terminal_window,
       profile.highlights, config.float_zindex)
   end
@@ -130,29 +116,13 @@ function M.create(profile)
   end
 
   local function show_terminal(bufnr, opts)
-    local cur = bufnr or profile.current()
-    if not cur then return end
-    local win = mount_terminal(cur, opts)
-    apply_scrollback(cur)
-    bind_terminal(cur)
-    resume_terminal_view(win, cur, opts)
+    local win = mount_terminal(bufnr, opts)
+    apply_scrollback(bufnr)
+    bind_terminal(bufnr)
+    resume_terminal_view(win, bufnr, opts)
   end
 
   local API = {}
-
-  function API.toggle()
-    local cur = profile.current()
-    if cur and backend.running(cur) then
-      local win = win_for_buf(cur)
-      if win then
-        view_container.close_window(win)
-        return
-      end
-      show_terminal()
-      return
-    end
-    open_terminal()
-  end
 
   function API.new(opts, on_start)
     return open_terminal(opts, on_start)
@@ -208,32 +178,10 @@ function M.create(profile)
     local cur = profile.current()
     local win = cur and win_for_buf(cur)
     if win then
+      view_container.show_panel(profile.panel)
       prepare_terminal_window(win)
       terminal_pane.configure_window(win, profile.highlights)
-      if profile.on_show then
-        pcall(profile.on_show, cur, win, profile.cwd(cur))
-      else
-        terminal_pane.show_view(win, cur)
-      end
-    end
-
-    if not profile.on_float_layout then
-      local group = vim.api.nvim_create_augroup(augroup_name, { clear = true })
-      vim.api.nvim_create_autocmd("VimResized", {
-        group = group,
-        callback = function()
-          local buf = profile.current()
-          local visible_win = buf and win_for_buf(buf)
-          if visible_win then layout_float(visible_win) end
-        end,
-      })
-      view_container.track_directory(group, function(cwd)
-        local buf = profile.current(cwd)
-        return buf and win_for_buf(buf)
-      end, function(cwd)
-        local buf = profile.current(cwd)
-        if buf and not win_for_buf(buf) then show_terminal(buf) end
-      end)
+      pcall(profile.on_show, cur, win, profile.cwd(cur))
     end
   end
 

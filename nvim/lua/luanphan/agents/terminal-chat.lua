@@ -35,6 +35,7 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
 ---@field new_session_id? fun(): string
 ---@field hint_open string hint when no terminal (e.g. "<leader>a")
 ---@field defaults? table merged into BASE_DEFAULTS (cmd, args, …)
+---@field panel? table owning view
 ---@field on_prepare? fun(win: integer)
 ---@field on_show? fun(bufnr: integer, win: integer, cwd: string)
 ---@field on_close? fun(bufnr: integer, cwd: string)
@@ -119,7 +120,7 @@ function M.create(profile)
     panes = function() return backend.panes(provider_name) end,
     cwd = function(buf) return vim.b[buf].luanphan_agent_cwd end,
     mark_used = mark_terminal_used,
-    settings = profile.on_float_layout and function() return require("luanphan.global_settings").read().agent_float end,
+    settings = function() return require("luanphan.global_settings").read().agent_float end,
     highlights = TERMINAL_WINHIGHLIGHT,
     command = function(buf, cwd, opts)
       local thread_id = opts and opts.thread_id

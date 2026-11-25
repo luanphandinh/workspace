@@ -279,14 +279,13 @@ local function get_agent(name)
     new_session_id = def.new_session_id,
     hint_open = agent_key,
     defaults = def.defaults,
+    panel = M,
     on_float_layout = layout_agent,
     on_navigate = window_bar.navigate,
     on_prepare = function(win)
       agent_container:reserve(win)
     end,
     on_show = function(bufnr, win, cwd)
-      local floating = package.loaded["luanphan.terminal.floating"]
-      if floating then floating.hide() end
       jumplist.record(bufnr)
       backend.focus(bufnr)
       local seconds, microseconds = vim.uv.gettimeofday()
@@ -421,14 +420,7 @@ function M.resume(session, opts)
   return M.new(session.agent, vim.tbl_extend("force", opts or {}, resume_options(session)))
 end
 
-function M.toggle()
-  require("luanphan.recent_paths").touch(vim.fn.getcwd())
-  local editor = editor_tile.main_window()
-  if M.hide() then
-    if editor and vim.api.nvim_win_is_valid(editor) then vim.api.nvim_set_current_win(editor) end
-    return
-  end
-  editor_tile.remember_source(vim.api.nvim_get_current_win())
+local function reopen()
   M.restore_running()
   local active = most_recent_tab(vim.fn.getcwd())
   local default = M.default_agent()
@@ -437,6 +429,11 @@ function M.toggle()
     if saved then return M.resume(saved) end
   end
   M.open(active and active.agent or default, active and active.bufnr or nil)
+end
+
+function M.toggle()
+  require("luanphan.recent_paths").touch(vim.fn.getcwd())
+  return view_container.toggle_panel(M, reopen)
 end
 
 local function restore_on_first_ui()

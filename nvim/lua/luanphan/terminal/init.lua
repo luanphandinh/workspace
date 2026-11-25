@@ -6,11 +6,6 @@ local function integrated()
     settings = "terminal_split",
     augroup = "LuanphanIntegratedTerminal",
     docked = true,
-    on_open = function()
-      local floating = package.loaded["luanphan.terminal.floating"]
-      if floating then floating.hide() end
-      require("luanphan.agents.main").hide()
-    end,
     spawn = function(cwd, opts)
       opts = opts or {}
       local Terminal = require("toggleterm.terminal").Terminal
@@ -54,7 +49,7 @@ end
 
 function M.toggle()
   require("lazy").load({ plugins = { "toggleterm.nvim" } })
-  integrated().toggle()
+  require("luanphan.view_container").toggle_panel(integrated())
 end
 
 M.spec = {
