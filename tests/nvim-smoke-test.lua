@@ -4478,8 +4478,42 @@ local function test_agent_terminal_reference_restores_view(repo)
   wait_until("agent terminal scrollback", function()
     return vim.api.nvim_buf_line_count(terminal_buf) > 60
   end, 1000)
+  local function top_line()
+    local top = vim.fn.winsaveview().topline
+    return vim.trim(vim.api.nvim_buf_get_lines(terminal_buf, top - 1, top, false)[1] or "")
+  end
+  terminal_io.send(terminal_buf, "printf '\\033[2J\\033[HVIEWPORT_PROMPT\\n'\n")
+  local prompt_row
+  wait_until("agent live prompt output", function()
+    for row, line in ipairs(vim.api.nvim_buf_get_lines(terminal_buf, 0, -1, false)) do
+      if line == "VIEWPORT_PROMPT" then
+        prompt_row = row
+        return true
+      end
+    end
+  end, 3000)
+  vim.fn.winrestview({ topline = prompt_row, lnum = prompt_row + 1, col = 0 })
   vim.wait(30)
   vim.cmd("stopinsert")
+  vim.defer_fn(function() vim.api.nvim_input("<Esc>") end, 20)
+  vim.api.nvim_feedkeys("i", "xt!", false)
+  agent.toggle()
+  assert_true(agent.focus(terminal_buf, { view_mode = true }), "could not reopen the live agent")
+  wait_until("agent prompt after input mode and reopening", function()
+    return top_line() == "VIEWPORT_PROMPT"
+  end, 3000)
+
+  agent.toggle()
+  terminal_io.send(terminal_buf, "seq 1 70; printf '\\033[2J\\033[HVIEWPORT_HIDDEN_OUTPUT\\n'\n")
+  wait_until("agent output while hidden", function()
+    local lines = vim.api.nvim_buf_get_lines(terminal_buf, -30, -1, false)
+    return vim.tbl_contains(lines, "VIEWPORT_HIDDEN_OUTPUT")
+  end, 3000)
+  assert_true(agent.focus(terminal_buf, { view_mode = true }), "could not reopen the agent after hidden output")
+  wait_until("agent follows output received while hidden", function()
+    return top_line() == "VIEWPORT_HIDDEN_OUTPUT"
+  end, 3000)
+  terminal_win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_cursor(terminal_win, { 10, 0 })
   vim.api.nvim_win_call(terminal_win, function()
     vim.cmd("normal! zt")

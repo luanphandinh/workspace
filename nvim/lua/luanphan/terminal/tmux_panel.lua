@@ -139,19 +139,6 @@ local function pick_session()
   end)
 end
 
-local function restore_view(pane)
-  if not pane.pending_view or pane.view_pending then return end
-  pane.view_pending = true
-  vim.schedule(function()
-    local view = pane.pending_view
-    pane.pending_view, pane.view_pending = nil, false
-    if panes[pane.id] ~= pane or not pane.visible or not view then return end
-    local win = vim.fn.bufwinid(pane.bufnr)
-    if win == -1 then return end
-    pty.apply_view(pane, win, view)
-  end)
-end
-
 paint = function(pane)
   if not pane.term or not pane.visible or pane.capturing or not client then return end
   local connection = client
@@ -160,16 +147,8 @@ paint = function(pane)
     if client ~= connection or panes[pane.id] ~= pane then return end
     pane.capturing = false
     if not lines or not pane.visible or pane.resizing then return end
-    local frame, output = pty.frame(pane, lines, flags, primary)
-    local in_input = api.nvim_get_current_buf() == pane.bufnr and api.nvim_get_mode().mode == "t"
-    local follow = not pane.painted or (in_input and output ~= "")
-    pane.frame, pane.ready, pane.painted = frame, true, true
-    if follow then
-      pane.pending_view = { row = frame.row, col = frame.col }
-      -- Cursor-only frames can leave the terminal buffer text untouched.
-      vim.defer_fn(function() restore_view(pane) end, 20)
-    end
-    if output ~= "" then pty.output(pane, output) end
+    pane.ready = true
+    pty.paint_frame(pane, lines, flags, primary)
     if pane.dirty then paint(pane) end
   end)
 end
@@ -277,10 +256,7 @@ local function render_panel()
   if valid(anchor) then
     for _, win in ipairs(views.group_windows(anchor)) do
       local pane = panes[vim.b[api.nvim_win_get_buf(win)].luanphan_tmux_pane]
-      if pane and pane.visible and not pane.pending_view then
-        pane.last_view = api.nvim_win_call(win, vim.fn.winsaveview)
-        pane.follow_live = pane.last_view.topline >= pty.live_topline(pane)
-      end
+      if pane and pane.visible then pty.save_view(pane, win) end
     end
   end
   if not valid(anchor) then
@@ -299,46 +275,23 @@ local function render_panel()
     local pane, win = item.tab, item.win
     visible[pane.id] = true
     vim.wo[win].winhighlight = "NormalFloat:Normal,WinBar:Normal,WinBarNC:Comment,TabLineFill:Normal"
-    vim.wo[win].scrolloff = 0
-    local width = api.nvim_win_get_width(win)
-    local height = math.max(1, api.nvim_win_get_height(win) - (vim.wo[win].winbar == "" and 0 or 1))
-    local resize = pane.width ~= width or pane.height ~= height
-    local follow = not pane.visible and pane.hidden_output and pane.follow_live
-    if not pane.visible and pane.painted and not follow then
-      if pane.last_view then pty.apply_view(pane, win, pane.last_view) end
-    end
-    pane.visible, pane.view_width, pane.view_height = true, width, height
-    pane.hidden_output = nil
+    pane.visible = true
     if not pane.term then
       pane.client = client
       pane.restore_primary = true
       pty.open(pane)
-      api.nvim_buf_attach(pane.bufnr, false, { on_lines = function() restore_view(pane) end })
     end
-    if resize then
-      local size = width .. "x" .. height
-      if pane.resizing ~= size then
-        pane.resizing = size
-        pty.resize(pane, width, height, function(ok)
-          if panes[pane.id] ~= pane or pane.resizing ~= size then return end
-          pane.resizing = nil
-          if ok then pane.width, pane.height = width, height end
-          if not pane.ready then paint(pane) end
-        end)
-      end
-    elseif not pane.ready and not pane.resizing then
-      paint(pane)
-    end
-    if follow and pane.ready then
-      pty.cursor(pane, function(view)
-        if panes[pane.id] ~= pane or not pane.visible then return end
-        pane.pending_view = view
-        restore_view(pane)
-      end)
-    end
+    pty.sync_grid(pane, win, function()
+      if panes[pane.id] == pane and not pane.ready then paint(pane) end
+    end)
+    pty.show_view(pane, win)
+    if not pane.ready and not pane.resizing then paint(pane) end
   end
   for id, pane in pairs(panes) do
-    if not visible[id] then pane.visible = false end
+    if pane.visible and not visible[id] then
+      pane.visible = false
+      pty.hide_view(pane)
+    end
   end
   if focus and valid(active_window()) then
     focus_on_render = false
@@ -487,9 +440,7 @@ open = function(target)
       local pane = panes[id]
       if not pane then return end
       if pane.ready then
-        if not pane.visible then pane.hidden_output = true end
-        pane.frame = nil
-        pty.output(pane, bytes)
+        pty.stream(pane, bytes)
       elseif pane.capturing then
         pane.dirty = true
       end

@@ -1,11 +1,45 @@
 local M = {}
 local api = vim.api
 local screen = require("luanphan.view_container.tmux.screen")
-local panes_by_buffer = setmetatable({}, { __mode = "v" })
+-- Agent buffers can outlive a config reload.
+local panes_by_buffer = vim.luanphan_tmux_panes_by_buffer or setmetatable({}, { __mode = "v" })
+vim.luanphan_tmux_panes_by_buffer = panes_by_buffer
 local history_position = "#{?#{!=:#{history_added},},#{history_added},#{history_size}}"
 local cursor_format = "#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{cursor_flag}"
   .. "\t#{keypad_cursor_flag}\t#{bracket_paste_flag}\t" .. history_position
   .. "\t#{pane_width}\t#{pane_height}\t#{history_generation}"
+
+function M.for_buffer(buf)
+  return panes_by_buffer[buf]
+end
+
+local function showing(pane, win)
+  return win and api.nvim_win_is_valid(win) and api.nvim_win_get_buf(win) == pane.bufnr
+end
+
+local function restore_pending_view(pane)
+  if not pane.pending_view or pane.view_pending then return end
+  pane.view_pending = true
+  vim.schedule(function()
+    local pending = pane.pending_view
+    pane.pending_view, pane.view_pending = nil, false
+    if pending and pane.view_win == pending.win and pane.client == pending.client
+      and (not pending.frame or pane.frame == pending.frame)
+      and showing(pane, pending.win) then
+      M.apply_view(pane, pending.win, pending.cursor)
+    end
+  end)
+end
+
+local function queue_cursor(pane, cursor, frame)
+  if not pane.view_win then return end
+  local pending = { cursor = cursor, frame = frame, win = pane.view_win, client = pane.client }
+  pane.pending_view = pending
+  -- A cursor-only frame can leave the terminal buffer text untouched.
+  vim.defer_fn(function()
+    if pane.pending_view == pending then restore_pending_view(pane) end
+  end, 20)
+end
 
 function M.input(pane, data)
   local client = pane.client
@@ -39,6 +73,11 @@ function M.open(pane, on_input)
     end,
   })
   panes_by_buffer[pane.bufnr] = pane
+  api.nvim_buf_attach(pane.bufnr, false, { on_lines = function() restore_pending_view(pane) end })
+  api.nvim_create_autocmd("BufWinLeave", {
+    buffer = pane.bufnr,
+    callback = function() M.hide_view(pane) end,
+  })
 end
 
 function M.output(pane, bytes)
@@ -48,20 +87,74 @@ function M.output(pane, bytes)
   pane.receiving = false
 end
 
-function M.resize(pane, width, height, callback)
-  pane.client:request({ "resize-window", "-t", pane.window, "-x", tostring(width), "-y", tostring(height) }, callback)
+function M.stream(pane, bytes)
+  if not pane.view_win then pane.hidden_output = true end
+  pane.frame = nil
+  M.output(pane, bytes)
 end
 
-function M.cursor(pane, callback)
-  pane.client:request({ "display-message", "-p", "-t", pane.id, "#{cursor_y}\t#{cursor_x}" }, function(ok, lines)
-    if not ok then return end
-    local row, col = (lines[1] or ""):match("^(%d+)\t(%d+)$")
-    if row then callback({ row = tonumber(row), col = tonumber(col) }) end
+function M.grid_size(win)
+  local height = api.nvim_win_get_height(win) - (vim.wo[win].winbar == "" and 0 or 1)
+  return math.max(1, api.nvim_win_get_width(win)), math.max(1, height)
+end
+
+function M.sync_grid(pane, win, callback)
+  local width, height = M.grid_size(win)
+  pane.view_width, pane.view_height = width, height
+  local client, pending = pane.client, pane.resizing
+  if not client or not client.job then return end
+  if pending and pending.client == client then
+    if pending.width == width and pending.height == height then return end
+  elseif pane.width == width and pane.height == height then
+    pane.resizing = nil
+    return
+  end
+  local request = { client = client, width = width, height = height }
+  pane.resizing = request
+  client:request({ "resize-window", "-t", pane.window, "-x", tostring(width), "-y", tostring(height) }, function(ok)
+    if pane.client ~= client then return end
+    if ok then pane.width, pane.height = width, height end
+    if pane.resizing ~= request then return end
+    pane.resizing = nil
+    if callback then callback() end
   end)
 end
 
 function M.live_topline(pane)
   return math.max(1, api.nvim_buf_line_count(pane.bufnr) - pane.view_height + 1)
+end
+
+function M.save_view(pane, win)
+  if pane.pending_view or not showing(pane, win) then return end
+  pane.last_view = api.nvim_win_call(win, vim.fn.winsaveview)
+  pane.follow_live = pane.last_view.topline >= M.live_topline(pane)
+end
+
+function M.hide_view(pane)
+  M.save_view(pane, pane.view_win)
+  pane.view_win, pane.pending_view, pane.cursor_request = nil, nil, nil
+end
+
+function M.show_view(pane, win)
+  if pane.view_win == win then return end
+  pane.view_win = win
+  vim.wo[win].scrolloff = 0
+  local follow = pane.hidden_output and pane.follow_live ~= false
+  pane.hidden_output = nil
+  if pane.last_view and not follow then
+    M.apply_view(pane, win, pane.last_view)
+  elseif pane.ready and pane.frame and pane.frame.width == pane.view_width and pane.frame.height == pane.view_height then
+    queue_cursor(pane, pane.frame, pane.frame)
+  elseif pane.ready and follow and pane.client then
+    local client, request = pane.client, {}
+    pane.cursor_request = request
+    client:request({ "display-message", "-p", "-t", pane.id, "#{cursor_y}\t#{cursor_x}" }, function(ok, lines)
+      if not ok or pane.client ~= client or pane.cursor_request ~= request or not showing(pane, win) then return end
+      pane.cursor_request = nil
+      local row, col = (lines[1] or ""):match("^(%d+)\t(%d+)$")
+      if row then queue_cursor(pane, { row = tonumber(row), col = tonumber(col) }) end
+    end)
+  end
 end
 
 function M.resolve_hyperlink(buf, row, column, callback)
@@ -132,6 +225,17 @@ function M.frame(pane, lines, flags, primary)
   end
   local frame, output = screen.frame(pane, lines, flags)
   return frame, saved_screen .. output
+end
+
+function M.paint_frame(pane, lines, flags, primary)
+  local first = not pane.painted
+  local frame, output = M.frame(pane, lines, flags, primary)
+  local in_input = api.nvim_get_current_buf() == pane.bufnr and api.nvim_get_mode().mode == "t"
+  pane.frame, pane.painted = frame, true
+  if (first and pane.follow_live ~= false) or (in_input and output ~= "") then
+    queue_cursor(pane, frame, frame)
+  end
+  if output ~= "" then M.output(pane, output) end
 end
 
 return M

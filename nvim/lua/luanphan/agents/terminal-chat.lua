@@ -142,19 +142,15 @@ local function resume_terminal_view(win, bufnr, opts)
     pcall(profile.on_show, bufnr, win, vim.b[bufnr].luanphan_agent_cwd or cwd_key())
   end
   sync_terminal_grid(win, bufnr)
-  local saved = vim.b[bufnr].luanphan_terminal_view
-  local restore_saved = type(saved) == "table" and saved.follow == false and type(saved.view) == "table"
-  if (opts and opts.view_mode) or restore_saved then
+  if opts and opts.view_mode then
     vim.schedule(function()
-      if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == bufnr then
-        if opts and opts.view_mode and vim.api.nvim_get_current_win() == win then
-          vim.cmd("stopinsert")
-        end
-        terminal_window.restore_view(win, bufnr)
+      if vim.api.nvim_get_current_win() == win and vim.api.nvim_win_get_buf(win) == bufnr then
+        vim.cmd("stopinsert")
       end
     end)
     return
   end
+  if terminal_window.is_scrolled(bufnr) then return end
 
   vim.defer_fn(function()
     if vim.api.nvim_win_is_valid(win)
@@ -521,7 +517,6 @@ function API.prepare_tile(win, opened)
   local buf = vim.api.nvim_win_get_buf(win)
   if opened then
     configure_terminal_window(win)
-    terminal_window.restore_view(win, buf)
   end
   sync_terminal_grid(win, buf)
 end

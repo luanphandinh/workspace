@@ -124,9 +124,7 @@ local function paint(pane)
     if pane.client ~= connection then return end
     pane.capturing = false
     if not lines then return end
-    local frame, bytes = pty.frame(pane, lines, flags, primary)
-    pane.frame, pane.painted = frame, true
-    if bytes ~= "" then pty.output(pane, bytes) end
+    pty.paint_frame(pane, lines, flags, primary)
     if pane.dirty then
       paint(pane)
     else
@@ -134,14 +132,6 @@ local function paint(pane)
       local pending = pane.pending_osc
       pane.pending_osc = nil
       if pending and vim.startswith(pending, "\27]") then pty.output(pane, pending) end
-      vim.defer_fn(function()
-        if state.buffers[pane.bufnr] ~= pane or pane.frame ~= frame then return end
-        local win = vim.fn.bufwinid(pane.bufnr)
-        local view = vim.b[pane.bufnr].luanphan_terminal_view
-        if win ~= -1 and (not view or view.follow) then
-          pty.apply_view(pane, win, frame)
-        end
-      end, 20)
     end
   end)
 end
@@ -180,8 +170,7 @@ connect = function(group)
       local pane = group.panes[id]
       if not pane then return end
       if pane.ready then
-        pane.frame = nil
-        pty.output(pane, bytes)
+        pty.stream(pane, bytes)
       else
         pane.dirty = true
         captured_output(pane, bytes)
@@ -347,13 +336,6 @@ function M.stop(buf)
   if not result then return false end
   finish(pane, false)
   return true
-end
-
-function M.resize(buf, width, height)
-  local pane = state.buffers[buf]
-  if not pane or not pane.client or (pane.view_width == width and pane.view_height == height) then return end
-  pane.view_width, pane.view_height = width, height
-  pty.resize(pane, width, height)
 end
 
 function M.update(buf, changes)
