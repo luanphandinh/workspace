@@ -1,8 +1,6 @@
 local M = {
   icon = "\u{ec5c}",
   plugin = "luanphan-cursor-agent",
-  notify_prefix = "cursor_agent",
-  augroup_prefix = "CursorAgent",
   status = { initial = "idle" },
   defaults = {
     cmd = {

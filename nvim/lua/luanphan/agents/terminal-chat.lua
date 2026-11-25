@@ -45,12 +45,10 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
   .. "TabLineSel:Title,TabLine:LineNr,TabLineFill:Normal"
 
 ---@param profile table
----@field status_name? string stable provider name
+---@field name? string stable provider name
 ---@field shell? boolean forward Ctrl+L to an interactive shell
 ---@field status? table provider status options
 ---@field new_session_id? fun(): string
----@field notify_prefix string prefix for :vim.notify
----@field augroup_prefix string prefix for autocmd groups
 ---@field hint_open string hint when no terminal (e.g. "<leader>a")
 ---@field defaults? table merged into BASE_DEFAULTS (cmd, args, …)
 ---@field on_prepare? fun(win: integer)
@@ -61,19 +59,19 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
 ---@field on_float_layout? fun(win: integer, layout: table, opening?: boolean)
 function M.create(profile)
   profile = vim.tbl_extend("force", {
-    notify_prefix = "terminal_agent",
-    augroup_prefix = "TerminalAgent",
+    name = "terminal_agent",
     hint_open = "<leader>xx",
     defaults = {},
   }, profile)
 
+  local provider_name = profile.name
+  local augroup_name = "LuanphanAgent_" .. provider_name
   local function nx(msg, level)
-    vim.notify(profile.notify_prefix .. ": " .. msg, level or vim.log.levels.INFO)
+    vim.notify(provider_name .. ": " .. msg, level or vim.log.levels.INFO)
   end
 
 
 local visibility = {}
-local provider_name = profile.status_name or profile.notify_prefix
 local status_options = profile.status or {}
 
 local DEFAULTS = vim.tbl_deep_extend("force", vim.deepcopy(BASE_DEFAULTS), profile.defaults or {})
@@ -317,7 +315,7 @@ local function terminal_closed(buf)
 end
 
 local function attach_window_events(buf)
-  local ag = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Window_" .. buf, { clear = true })
+  local ag = vim.api.nvim_create_augroup(augroup_name .. "_Window_" .. buf, { clear = true })
   vim.api.nvim_create_autocmd("WinLeave", {
     group = ag,
     buffer = buf,
@@ -665,9 +663,10 @@ function API.setup(opts)
     end
   end
 
+  local group = vim.api.nvim_create_augroup(augroup_name, { clear = true })
   if not profile.on_float_layout then
     vim.api.nvim_create_autocmd("VimResized", {
-      group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Resize", { clear = true }),
+      group = group,
       callback = function()
         local buf = current_bufnr()
         local visible_win = buf and win_for_buf(buf)
@@ -679,7 +678,7 @@ function API.setup(opts)
   -- Per-worktree visibility: remember whether the agent was visible in the old cwd;
   -- auto-restore when returning to a cwd where it was visible last.
   vim.api.nvim_create_autocmd("DirChangedPre", {
-    group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "DirPre", { clear = true }),
+    group = group,
     callback = function()
       if preserve_windows then return end
       local old = cwd_key()
@@ -699,7 +698,7 @@ function API.setup(opts)
   })
 
   vim.api.nvim_create_autocmd("DirChanged", {
-    group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Dir", { clear = true }),
+    group = group,
     callback = function()
       if preserve_windows then return end
       local new = cwd_key()

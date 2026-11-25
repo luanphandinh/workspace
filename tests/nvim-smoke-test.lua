@@ -4450,8 +4450,7 @@ local function test_agent_terminal_reference_restores_view(repo)
   vim.cmd("edit " .. vim.fn.fnameescape(target_path))
 
   local agent = require("luanphan.agents.terminal-chat").create({
-    notify_prefix = "terminal_reference_view_agent",
-    augroup_prefix = "TerminalReferenceViewAgent",
+    name = "terminal_reference_view_agent",
     hint_open = "<smoke>",
     defaults = { cmd = "sh" },
   })
@@ -8007,9 +8006,7 @@ end
 local function test_agent_terminal_lifecycle(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   local agent = require("luanphan.agents.terminal-chat").create({
-    status_name = "example-agent",
-    notify_prefix = "toggleterm_hide_agent",
-    augroup_prefix = "ToggletermHideAgent",
+    name = "example-agent",
     hint_open = "<smoke>",
     defaults = { cmd = "sh" },
   })
@@ -8087,8 +8084,7 @@ local function test_worktree_switch_hides_agent_terminal(repo, worktree)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
 
   local agent = require("luanphan.agents.terminal-chat").create({
-    notify_prefix = "smoke_agent",
-    augroup_prefix = "SmokeAgent",
+    name = "smoke_agent",
     hint_open = "<smoke>",
     defaults = { cmd = "sh" },
   })

@@ -1,8 +1,6 @@
 local M = {
   icon = "\u{ec81}",
   plugin = "luanphan-codex-agent",
-  notify_prefix = "codex_agent",
-  augroup_prefix = "CodexAgent",
   status = { initial = "idle" },
 }
 local pending = {}

@@ -325,12 +325,10 @@ local function get_agent(name)
   local def = agent_defs[name]
   local window_bar = require("luanphan.agents.window_bar")
   apis[name] = terminal_agent.create({
-    status_name = name,
+    name = name,
     shell = def.shell,
     status = def.status,
     new_session_id = def.new_session_id,
-    notify_prefix = def.notify_prefix,
-    augroup_prefix = def.augroup_prefix,
     hint_open = agent_key,
     defaults = def.defaults,
     on_float_layout = layout_agent,

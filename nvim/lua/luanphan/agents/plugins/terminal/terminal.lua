@@ -1,8 +1,6 @@
 local M = {
   icon = "\u{f489}",
   plugin = "luanphan-panel-terminal",
-  notify_prefix = "panel_terminal",
-  augroup_prefix = "PanelTerminal",
   shell = true,
   restore_on_open = true,
   defaults = {
