@@ -207,11 +207,6 @@ local function relayout_agent_panel(anchor)
   if agent_defs[name] then setup_agent(name).layout(anchor) end
 end
 
-local function refresh_visible_layout()
-  local active = visible_agent()
-  if active then relayout_agent_panel(view_container.group_anchor(active.win)) end
-end
-
 function M.map_create_shortcuts(bufnr)
   local opts = { buffer = bufnr, silent = true, nowait = true }
   -- Keep the editor's New buffer mapping from replacing a panel buffer.
@@ -293,28 +288,7 @@ local function layout_agent(win, layout, opening)
     return
   end
   local cwd = vim.b[vim.api.nvim_win_get_buf(win)].luanphan_agent_cwd
-  local panes = agent_container:display(anchor, cwd, layout)
-  if not vim.api.nvim_win_is_valid(anchor) then return end
-  if panes then
-    for _, pane in ipairs(panes) do
-      local tab = pane.tab
-      if pane.opened or pane.win == anchor then
-        agent_container:bind(tab.bufnr, cwd)
-        bind_agent_pane(tab.bufnr)
-      end
-      local api = apis[tab.agent] or setup_agent(tab.agent)
-      api.prepare_tile(pane.win, pane.opened)
-    end
-    agent_container:refresh_tile_highlights()
-  else
-    local buf = vim.api.nvim_win_get_buf(anchor)
-    local name = vim.b[buf].luanphan_agent_name
-    agent_container:attach(anchor, buf, name .. ":" .. buf, cwd)
-    bind_agent_pane(buf)
-    apis[name].prepare_tile(anchor, false)
-  end
-  window_bar.layout(anchor, layout)
-  window_bar.refresh()
+  if agent_container:reflow(anchor, cwd, layout) then window_bar.refresh() end
 end
 
 local function get_agent(name)
@@ -348,9 +322,13 @@ local function get_agent(name)
         sessions.save(bufnr)
       end
       restore_panel_sessions(cwd)
-      agent_container:attach(win, bufnr, name .. ":" .. bufnr, cwd)
-      bind_agent_pane(bufnr)
-      apis[name].layout(win)
+      local tab = { id = name .. ":" .. bufnr, bufnr = bufnr }
+      if agent_container:focus_visible(cwd, tab, false) == win then
+        window_bar.follow(bufnr)
+      else
+        agent_container:select_tab(cwd, tab)
+        apis[name].layout(win)
+      end
     end,
     on_close = function(bufnr, cwd)
       local id = sessions.supported(name) and vim.b[bufnr].luanphan_agent_thread_id
@@ -358,13 +336,17 @@ local function get_agent(name)
       if lost then restored_cwds[cwd] = nil end
       local win = vim.fn.bufwinid(bufnr)
       local reflow = win ~= -1 and win ~= vim.api.nvim_get_current_win() and vim.w[win].luanphan_view_anchor
+      if win == -1 and agent_container.layout_context == cwd then reflow = agent_container.layout_anchor end
       agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
       vim.schedule(function()
         if id and not lost and type(vim.v.exiting) ~= "number" then
           sessions.forget_buffer(bufnr, name, id)
         end
-        if reflow and vim.api.nvim_win_is_valid(reflow) then M.refresh_tabs(reflow) end
-        window_bar.refresh()
+        if reflow and vim.api.nvim_win_is_valid(reflow) then
+          relayout_agent_panel(reflow)
+        else
+          window_bar.refresh()
+        end
       end)
     end,
     on_quit = function(bufnr, cwd)
@@ -437,7 +419,7 @@ function M.focus(name, bufnr, opts)
   if not target then
     return setup_agent(name).focus(bufnr, opts)
   end
-  close_visible_agents(target)
+  if not agent_container:visible_window(vim.fn.getcwd(), target) then close_visible_agents(target) end
   return setup_agent(name).focus(target, opts)
 end
 
@@ -447,6 +429,9 @@ function M.open(name, bufnr, opts)
     return false
   end
   local target = bufnr or agent_buffer(name, vim.fn.getcwd())
+  if target and agent_container:visible_window(vim.fn.getcwd(), target) then
+    return setup_agent(name).focus(target, opts)
+  end
   local visible = visible_agent()
   if visible and visible.bufnr ~= target then
     setup_agent(visible.name).save_view(visible.win)
@@ -607,6 +592,17 @@ end
 agent_container = view_container.create({
   context = vim.fn.getcwd,
   tabs = open_tabs,
+  relayout = relayout_agent_panel,
+  layout_bar = function(anchor, layout) require("luanphan.agents.window_bar").layout(anchor, layout) end,
+  prepare_pane = function(pane, cwd, anchor)
+    local tab = pane.tab
+    if pane.opened or pane.win == anchor then
+      agent_container:bind(tab.bufnr, cwd)
+      bind_agent_pane(tab.bufnr)
+    end
+    local api = apis[tab.agent] or setup_agent(tab.agent)
+    api.prepare_tile(pane.win, pane.opened)
+  end,
   editor = {
     key = function(cwd) return "agent:" .. cwd end,
     refresh = relayout_agent_panel,
@@ -684,31 +680,11 @@ local function agent_spec(name)
     keys = keys,
     init = primary and function()
       local group = vim.api.nvim_create_augroup("LuanphanAgentStartup", { clear = true })
-      local resize_timer
       vim.api.nvim_create_autocmd({ "VimEnter", "UIEnter" }, {
         group = group,
         callback = function() vim.schedule(restore_on_first_ui) end,
       })
       vim.api.nvim_create_autocmd("TermRequest", { group = group, callback = receive_terminal_event })
-      vim.api.nvim_create_autocmd("VimResized", {
-        group = group,
-        callback = function()
-          if resize_timer then vim.fn.timer_stop(resize_timer) end
-          resize_timer = vim.fn.timer_start(250, function()
-            resize_timer = nil
-            refresh_visible_layout()
-          end)
-        end,
-      })
-      vim.api.nvim_create_autocmd("BufWritePost", {
-        group = group,
-        callback = function(args)
-          local path = vim.uv.fs_realpath(require("luanphan.global_settings").config_path())
-          if path and path == vim.uv.fs_realpath(vim.api.nvim_buf_get_name(args.buf)) then
-            refresh_visible_layout()
-          end
-        end,
-      })
     end or nil,
     config = function()
       setup_agent(name)

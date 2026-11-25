@@ -5438,10 +5438,17 @@ local function test_agent_view_container(repo)
     end
     assert_true(repo_instances == 6, "agent session discovery did not retain every terminal instance")
 
+    local hidden = assert(agents.new("claude", { view_mode = true }))
     assert_true(agents.open("cursor"), "could not reactivate the selected terminal agent")
     wait_until("active agent before send", function()
       return vim.api.nvim_get_current_buf() == cursor_buf
     end, 3000)
+    assert_true(rendered_winbar():find("claude 3", 1, true), "third terminal tab did not appear")
+    terminal_io.stop(hidden)
+    wait_until("hidden agent exit updates tabs", function()
+      return not vim.api.nvim_buf_is_valid(hidden) and not rendered_winbar():find("claude 3", 1, true)
+    end, 3000)
+    assert_true(vim.api.nvim_get_current_buf() == cursor_buf, "hidden agent exit changed focus")
 
     agents.toggle()
     assert_true(visible_agent_window_count() == 0, "agent container did not hide")
@@ -5877,6 +5884,18 @@ local function test_agent_view_container(repo)
     assert_true(agents.focus("claude", tile_buffers[4], { view_mode = true }), "could not focus the last tile")
     assert_focused_tile(4)
     assert_true(agents.focus("codex", tile_buffers[1], { view_mode = true }), "could not focus the left tile")
+    local worktree = require("luanphan.plugins.worktree")
+    local list_agents, scans = worktree.list_agent_sessions, 0
+    worktree.list_agent_sessions = function(...)
+      scans = scans + 1
+      return list_agents(...)
+    end
+    local moved, move_error = pcall(invoke_map, "<C-l>")
+    worktree.list_agent_sessions = list_agents
+    assert_true(moved, tostring(move_error))
+    assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[2]), "focus did not move to the visible agent tile")
+    assert_true(scans == 0, "agent tile focus scanned the session list")
+    invoke_map("<C-h>")
     for _, move in ipairs({ { "l", 2 }, { "j", 3 }, { "l", 4 }, { "k", 2 }, { "h", 1 } }) do
       local key, index = "<C-" .. move[1] .. ">", move[2]
       invoke_map(key)
@@ -6508,6 +6527,24 @@ assert(left.col == full.col and left.col + left.width + 2 == right.col
   "split panes did not fill the Neovim tile area")
 assert(vim.deep_equal(right.border[1], { "┏", "DiagnosticOk" }) and left.border[1] == "┌",
   "view mode should show a heavy green border only on the focused tile")
+local pane = require("luanphan.view_container.tmux.pane").for_buffer(api.nvim_get_current_buf())
+local client = pane.client
+vim.wait(50, function() return false end)
+wait(function() return not client.pending and #client.queue == 0 end, "finish opening both tiles")
+local request, scans = client.request, 0
+client.request = function(self, args, ...)
+  if args[1] == "list-panes" then scans = scans + 1 end
+  return request(self, args, ...)
+end
+key("<C-h>")
+wait(function() return active() == first and tmux("display-message", "-p", "#{pane_id}") == first end,
+  "focus and select the visible left tmux tile")
+key("<C-l>")
+wait(function() return active() == second and tmux("display-message", "-p", "#{pane_id}") == second end,
+  "focus and select the visible right tmux tile")
+vim.wait(50, function() return false end)
+client.request = request
+assert(scans == 0, "focus between visible tmux tiles requested a pane listing")
 key("<leader>e")
 assert(api.nvim_get_current_win() == bar_win, "could not focus the tmux sidebar")
 api.nvim_win_set_cursor(bar_win, { 1, 0 })

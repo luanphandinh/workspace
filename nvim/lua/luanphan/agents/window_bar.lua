@@ -113,13 +113,15 @@ bar = require("luanphan.view_container.window_bar").create({
 function M.layout(win, layout)
   if valid(main) and main ~= win then close_window(main) end
   main = win
-  local old = bar.win
   bar:layout(win, layout)
-  if bar.win ~= old then bar:refresh() end
 end
 
 function M.refresh(keep_cursor)
   bar:refresh(keep_cursor)
+end
+
+function M.follow(buf)
+  bar:follow(buf, true)
 end
 
 function M.update_title(buf)

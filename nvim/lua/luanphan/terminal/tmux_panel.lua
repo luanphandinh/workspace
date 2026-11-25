@@ -79,9 +79,29 @@ local function active_window()
   return win and win ~= -1 and win or anchor
 end
 
+local function should_focus(force)
+  local win = api.nvim_get_current_win()
+  return force or not valid(anchor) or win == anchor
+    or (views.group_anchor(win) == anchor and win ~= editor.window(anchor) and win ~= bar.win)
+end
+
+local function focus_visible(pane, force)
+  if pane.group ~= current or not tiles:visible_window(current, pane.bufnr) then return false end
+  current.active.data.active = false
+  current.active, pane.data.active = pane, true
+  local focus = should_focus(force)
+  tiles:focus_visible(current, pane, focus)
+  bar.history.record(pane.bufnr)
+  bar:follow(pane.bufnr, true)
+  return true
+end
+
 local function activate(pane, view_mode)
   if not client or not pane then return false end
-  local target = { id = pane.id, focus = not view_mode or editor.window(anchor) == api.nvim_get_current_win() }
+  local focus = not view_mode or editor.window(anchor) == api.nvim_get_current_win()
+  local visible = pane.group == current and tiles:visible_window(current, pane.bufnr)
+  if visible and not selection and current.active == pane then return focus_visible(pane, focus) end
+  local target = { id = pane.id, focus = focus, visible = visible, window = pane.window }
   selection = target
   local commands = {}
   if pane.group.active ~= pane then
@@ -91,6 +111,10 @@ local function activate(pane, view_mode)
   commands[#commands + 1] = { "select-window", "-t", session.id .. ":" .. pane.window }
   batch(commands, function(ok)
     if selection ~= target then return end
+    if ok and target.visible and focus_visible(pane, target.focus) then
+      selection = nil
+      return
+    end
     if ok then target.done = true else selection = nil end
     refresh()
   end)
@@ -205,9 +229,28 @@ local function reorder_panes(items)
   if #commands == 0 then render() else batch(commands, refresh) end
 end
 
+local function prepare_pane(item)
+  local pane, win = item.tab, item.win
+  vim.wo[win].winhighlight = "NormalFloat:Normal,WinBar:Normal,WinBarNC:Comment,TabLineFill:Normal"
+  pane.visible = true
+  if not pane.term then
+    pane.client = client
+    pane.restore_primary = true
+    pty.open(pane)
+  end
+  pty.sync_grid(pane, win, function()
+    if panes[pane.id] == pane and not pane.ready then paint(pane) end
+  end)
+  pty.show_view(pane, win)
+  if not pane.ready and not pane.resizing then paint(pane) end
+end
+
 tiles = views.create({
   context = function() return current end,
   tabs = function(group) return group.items end,
+  relayout = function() render() end,
+  layout_bar = function(win, layout) bar:layout(win, layout) end,
+  prepare_pane = prepare_pane,
   editor = {
     key = function(group) return "tmux:" .. session.id .. ":" .. group.id end,
     active = function(group) return group.active.bufnr end,
@@ -243,9 +286,7 @@ bar = bars.create({
 local function render_panel()
   if not current or not current.active then return end
   local layout = geometry()
-  local focus = focus_on_render or not valid(anchor) or vim.api.nvim_get_current_win() == anchor
-    or (vim.w[api.nvim_get_current_win()].luanphan_view_anchor == anchor
-      and api.nvim_get_current_win() ~= editor.window(anchor))
+  local focus = should_focus(focus_on_render)
   local selected = current.active
   for _, pane in ipairs(current.items) do
     if not pane.bufnr or not api.nvim_buf_is_valid(pane.bufnr) then
@@ -260,46 +301,19 @@ local function render_panel()
     end
   end
   if not valid(anchor) then
-    anchor = api.nvim_open_win(selected.bufnr, false, vim.tbl_extend("force", layout.body, { style = "minimal" }))
+    anchor = views.open_float(layout, selected.bufnr, false)
   end
-  tiles.active_by_context = { [current] = { id = selected.id, bufnr = selected.bufnr } }
-  local displayed = tiles:display(anchor, current, layout)
-  if not displayed then
-    api.nvim_win_set_buf(anchor, selected.bufnr)
-    tiles:render(anchor, current)
-    displayed = { { win = anchor, tab = selected } }
-  end
-  bar:layout(anchor, layout)
-  local visible = {}
-  for _, item in ipairs(displayed) do
-    local pane, win = item.tab, item.win
-    visible[pane.id] = true
-    vim.wo[win].winhighlight = "NormalFloat:Normal,WinBar:Normal,WinBarNC:Comment,TabLineFill:Normal"
-    pane.visible = true
-    if not pane.term then
-      pane.client = client
-      pane.restore_primary = true
-      pty.open(pane)
-    end
-    pty.sync_grid(pane, win, function()
-      if panes[pane.id] == pane and not pane.ready then paint(pane) end
-    end)
-    pty.show_view(pane, win)
-    if not pane.ready and not pane.resizing then paint(pane) end
-  end
-  for id, pane in pairs(panes) do
-    if pane.visible and not visible[id] then
+  tiles.active_by_context = {}
+  if not tiles:reflow(anchor, current, layout, selected) then return end
+  for _, pane in pairs(panes) do
+    if pane.visible and not tiles:visible_window(current, pane.bufnr) then
       pane.visible = false
       pty.hide_view(pane)
     end
   end
-  if focus and valid(active_window()) then
-    focus_on_render = false
-    api.nvim_set_current_win(active_window())
-  end
+  if tiles:focus_visible(current, selected, focus) and focus then focus_on_render = false end
   if not selection then bar.history.record(selected.bufnr) end
   bar:refresh(api.nvim_get_current_win() == bar.win)
-  tiles:refresh_tile_highlights()
 end
 
 render = function()
@@ -446,6 +460,11 @@ open = function(target)
       end
     end,
     event = function(event, payload)
+      if event == "session-window-changed" and current then
+        local window = payload:match("^%$%d+ (@%d+)")
+        if (selection and selection.visible and window == selection.window)
+          or (not selection and current.active and window == current.active.window) then return end
+      end
       if topology_events[event] then
         refresh()
       elseif event == "pause" then
@@ -496,16 +515,6 @@ api.nvim_create_autocmd("WinClosed", {
     if win == anchor or win == bar.win or vim.tbl_contains(tiles.tile_windows or {}, win) then
       M.hide(win)
     end
-  end,
-})
-api.nvim_create_autocmd("VimResized", {
-  group = events,
-  callback = function() if valid(anchor) then render() end end,
-})
-api.nvim_create_autocmd("BufWritePost", {
-  group = events,
-  callback = function(args)
-    if valid(anchor) and vim.uv.fs_realpath(args.file) == vim.uv.fs_realpath(settings.config_path()) then render() end
   end,
 })
 api.nvim_create_autocmd("DirChangedPre", { group = events, callback = function() M.hide() end })

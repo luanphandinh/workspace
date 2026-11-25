@@ -170,9 +170,7 @@ end
 
 local function open_agent_float(bufnr)
   local layout = get_float_layout()
-  local win = vim.api.nvim_open_win(bufnr, true, vim.tbl_extend("force", layout.body, {
-    style = "minimal",
-  }))
+  local win = view_container.open_float(layout, bufnr, true)
   if profile.on_float_layout then
     profile.on_float_layout(win, layout, true)
   end

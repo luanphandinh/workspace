@@ -199,6 +199,35 @@ function Bar:refresh(keep_cursor, groups)
   self:animate()
 end
 
+function Bar:follow(buf, refresh_history)
+  if not self:visible() then return end
+  local first = self.rows[1]
+  if not first then return end
+  if self.style == "vertical" then
+    local row = self.rows[(self.rows_by_buffer or {})[buf]]
+    if not row then return end
+    local keep_cursor = api.nvim_get_current_win() == self.win
+    if not keep_cursor then sidebar.follow(self, buf) end
+    if refresh_history then
+      local item = row.item or vim.iter(row.group.items):find(function(candidate) return candidate.bufnr == buf end)
+      if item and not item.separate_window then row.group.active = item end
+      self:refresh(keep_cursor, first.groups)
+    end
+  elseif not self.editor_focused then
+    for index, row in ipairs(self.rows) do
+      local item = vim.iter(row.group.items):find(function(candidate) return candidate.bufnr == buf end)
+      if item then
+        if refresh_history then row.group.active = item end
+        if row.active == item then return end
+        if self.rows[self.selected] then self.rows[self.selected].active = nil end
+        self.selected, row.active = index, item
+        tabs.render_windows(self)
+        return
+      end
+    end
+  end
+end
+
 function Bar:animate()
   if not self.opts.status or not self:visible() or self.timer then return end
   self.timer = vim.fn.timer_start(130, function()
@@ -511,13 +540,14 @@ api.nvim_create_autocmd({ "WinEnter", "BufEnter", "BufFilePost" }, {
     local editor_focused = win == editor.window(anchor)
     if event.event ~= "WinEnter" and not editor_focused then return end
     for bar in pairs(bars) do
-      if bar.win == sidebar_win and bar.style == "vertical" then
+      if bar.win == sidebar_win then
         bar.editor_focused = editor_focused
         local buf = api.nvim_win_get_buf(win)
-        if event.event == "BufFilePost" or (editor_focused and not (bar.rows_by_buffer or {})[buf]) then
+        if bar.style == "vertical"
+          and (event.event == "BufFilePost" or (editor_focused and not (bar.rows_by_buffer or {})[buf])) then
           bar:refresh()
         else
-          sidebar.follow(bar, buf)
+          bar:follow(buf)
         end
         return
       end

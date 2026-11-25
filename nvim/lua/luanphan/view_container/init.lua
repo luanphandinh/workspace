@@ -9,6 +9,34 @@ local M = vim.tbl_extend("force", window, {
 local Container = { reserve = tabs.reserve, render = tabs.render,
 	refresh_tile_highlights = tiles.refresh_tile_highlights }
 Container.__index = Container
+local watched_layouts = setmetatable({}, { __mode = "k" })
+local resize_timer
+
+local function refresh_layouts()
+	for container in pairs(watched_layouts) do
+		local anchor = container.layout_anchor
+		if anchor and vim.api.nvim_win_is_valid(anchor) then container.opts.relayout(anchor) end
+	end
+end
+
+local layout_events = vim.api.nvim_create_augroup("LuanphanViewLayout", { clear = true })
+vim.api.nvim_create_autocmd("VimResized", {
+	group = layout_events,
+	callback = function()
+		if resize_timer then vim.fn.timer_stop(resize_timer) end
+		resize_timer = vim.fn.timer_start(250, function()
+			resize_timer = nil
+			refresh_layouts()
+		end)
+	end,
+})
+vim.api.nvim_create_autocmd("BufWritePost", {
+	group = layout_events,
+	callback = function(event)
+		local path = vim.uv.fs_realpath(require("luanphan.global_settings").config_path())
+		if path and path == vim.uv.fs_realpath(vim.api.nvim_buf_get_name(event.buf)) then refresh_layouts() end
+	end,
+})
 
 local function select_item(title, items, on_select, picker_opts)
 	local ok_pickers, pickers = pcall(require, "telescope.pickers")
@@ -101,6 +129,10 @@ function M.has_room(layout, count)
 	return layout.display_style ~= "tile" or tiles.can_tile(layout.body, count)
 end
 
+function M.open_float(layout, buf, enter)
+	return vim.api.nvim_open_win(buf, enter, vim.tbl_extend("force", layout.body, { style = "minimal" }))
+end
+
 function M.compact_picker_opts()
 	return {
 		layout_strategy = "center",
@@ -146,6 +178,50 @@ function Container:display(anchor, context, layout)
 		end
 	end
 	return panes
+end
+
+function Container:select_tab(context, tab)
+	self.active_by_context[context] = { id = tab.id, bufnr = tab.bufnr }
+end
+
+function Container:visible_window(context, buf)
+	if self.layout_context ~= context or not self.visible_windows or not self.layout_anchor
+		or not vim.api.nvim_win_is_valid(self.layout_anchor) then return end
+	local win = self.visible_windows[buf]
+	if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then return win end
+end
+
+function Container:focus_visible(context, tab, focus)
+	local win = self:visible_window(context, tab.bufnr)
+	if not win then return end
+	self:select_tab(context, tab)
+	if focus and vim.api.nvim_get_current_win() ~= win then vim.api.nvim_set_current_win(win) end
+	return win
+end
+
+function Container:reflow(anchor, context, layout, active)
+	if active then self:select_tab(context, active) end
+	local panes = self:display(anchor, context, layout)
+	if not vim.api.nvim_win_is_valid(anchor) then return end
+	if not panes then
+		if active and vim.api.nvim_win_get_buf(anchor) ~= active.bufnr then
+			self:reserve(anchor)
+			vim.api.nvim_win_set_buf(anchor, active.bufnr)
+		end
+		local buf = vim.api.nvim_win_get_buf(anchor)
+		local tab = active or vim.iter(self:tabs(context)):find(function(item) return item.bufnr == buf end)
+		if tab then self:select_tab(context, tab) end
+		self:render(anchor, context)
+		panes = tab and { { win = anchor, tab = tab } } or {}
+	end
+	self.layout_anchor, self.layout_context, self.visible_windows = anchor, context, {}
+	if self.opts.layout_bar then self.opts.layout_bar(anchor, layout) end
+	for _, pane in ipairs(panes) do
+		self.visible_windows[pane.tab.bufnr] = pane.win
+		self.opts.prepare_pane(pane, context, anchor)
+	end
+	self:refresh_tile_highlights()
+	return anchor
 end
 
 function Container:active(context)
@@ -281,6 +357,7 @@ end
 
 function Container:forget(id, bufnr, context)
 	context = context or self:context()
+	if self.layout_context == context then self.visible_windows = nil end
 	local active = self.active_by_context[context]
 	if active and active.id == id and active.bufnr == bufnr then
 		self.active_by_context[context] = nil
@@ -293,10 +370,12 @@ function M.create(opts)
 	assert(type(opts.tabs) == "function", "view container tabs callback is required")
 	assert(type(opts.choices) == "function" or type(opts.new) == "function", "view container picker or new callback is required")
 	assert(type(opts.activate) == "function", "view container activate callback is required")
-	return setmetatable({
+	local container = setmetatable({
 		opts = opts,
 		active_by_context = {},
 	}, Container)
+	if opts.relayout then watched_layouts[container] = true end
+	return container
 end
 
 return M
