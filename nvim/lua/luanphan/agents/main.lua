@@ -14,9 +14,7 @@ local agent_key = "<leader>a"
 local agent_defs = {}
 for _, name in ipairs(agent_order) do
   local def = require("luanphan.agents.plugins." .. name .. "." .. name)
-  if def.status then
-    def.status = vim.tbl_extend("force", { decode = status.from_osc }, def.status)
-  end
+  def.status = vim.tbl_extend("force", { decode = status.from_osc }, def.status or {})
   agent_defs[name] = def
 end
 sessions.setup(agent_defs, agent_order)
@@ -194,11 +192,6 @@ end
 
 function M.agent_icon(name)
   return agent_defs[name].icon
-end
-
-function M.uses_status_file(name)
-  local options = agent_defs[name].status
-  return options and options.fallback_file
 end
 
 function M.display_title(name, title)

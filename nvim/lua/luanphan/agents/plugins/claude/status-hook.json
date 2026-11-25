@@ -1,6 +1,0 @@
-{
-  "path": ".claude/settings.json",
-  "event": "Stop",
-  "nested": true,
-  "settings": { "agentPushNotifEnabled": false }
-}

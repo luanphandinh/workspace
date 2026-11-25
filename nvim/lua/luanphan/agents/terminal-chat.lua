@@ -47,7 +47,7 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
   .. "TabLineSel:Title,TabLine:LineNr,TabLineFill:Normal"
 
 ---@param profile table
----@field status_name? string stable name used by the cross-process status store
+---@field status_name? string stable provider name
 ---@field shell? boolean forward Ctrl+L to an interactive shell
 ---@field status? table provider status options
 ---@field new_session_id? fun(): string
@@ -480,18 +480,6 @@ local function set_float_navigation_keymaps(bufnr)
   end
 end
 
-local function attach_status_tracking(bufnr, cwd, initial_status)
-  if not profile.status_name or not status_options.track_submit then return end
-  local agent_status = require("luanphan.agents.status")
-  if initial_status then
-    agent_status.write(profile.status_name, cwd, initial_status)
-  end
-  vim.keymap.set("t", "<CR>", function()
-    agent_status.write(profile.status_name, cwd, "running")
-    return vim.api.nvim_replace_termcodes("<CR>", true, false, true)
-  end, { buffer = bufnr, expr = true, silent = true })
-end
-
 local function quit_action(buf)
   local cwd = vim.b[buf].luanphan_agent_cwd
   if cwd and profile.on_quit then
@@ -621,7 +609,6 @@ local function restore_agent_bufnr()
             attach_quit_detach(nr)
             apply_agent_scrollback(nr)
             set_float_navigation_keymaps(nr)
-            attach_status_tracking(nr, cwd)
             require("luanphan.terminal_references").attach(nr, cwd)
           end
         end
@@ -647,7 +634,7 @@ local function restore_agent_bufnr()
   end
 end
 
-local function register_terminal(buf, cwd, initial_status)
+local function register_terminal(buf, cwd)
   configure_terminal_buffer(buf)
   if status_options.initial and not vim.b[buf].luanphan_agent_program_status then
     require("luanphan.agents.status").update(buf, status_options.initial)
@@ -657,7 +644,6 @@ local function register_terminal(buf, cwd, initial_status)
   attach_term_close(buf)
   attach_quit_detach(buf)
   set_float_navigation_keymaps(buf)
-  attach_status_tracking(buf, cwd, initial_status)
 end
 
 local function start_terminal(buf, cwd, opts)
@@ -683,7 +669,7 @@ local function start_terminal(buf, cwd, opts)
     vim.api.nvim_buf_delete(buf, { force = true })
     return false
   end
-  register_terminal(buf, cwd, "idle")
+  register_terminal(buf, cwd)
   return true
 end
 

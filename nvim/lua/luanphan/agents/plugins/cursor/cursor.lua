@@ -4,7 +4,7 @@ local M = {
   g_bufnr = "cursor_agent_bufnr",
   notify_prefix = "cursor_agent",
   augroup_prefix = "CursorAgent",
-  status = { fallback_file = true },
+  status = { initial = "idle" },
   defaults = {
     cmd = {
       "sh", "-c", [[export NVIM_CURSOR_AGENT_TTY="$(tty)"; exec cursor-agent --plugin-dir "$0" "$@"]],
@@ -42,7 +42,7 @@ function M.decode_event(bufnr, event, emit)
   if id then
     vim.schedule(function()
       if not vim.api.nvim_buf_is_valid(bufnr) then return end
-      emit({ thread_id = id, status = vim.b[bufnr].luanphan_agent_program_status or "idle" })
+      emit({ thread_id = id })
     end)
   elseif event.title then
     local buf = vim.b[bufnr]

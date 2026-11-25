@@ -26,15 +26,11 @@ end
 
 local function groups()
   local threads = require("luanphan.plugins.worktree").list_agent_sessions(true)
-  local by_workspace, paths, counts = {}, {}, {}
+  local by_workspace = {}
   for _, thread in ipairs(threads) do
     local workspace = thread.workspace
     by_workspace[workspace] = by_workspace[workspace] or {}
     table.insert(by_workspace[workspace], thread)
-    if thread.bufnr and agents.uses_status_file(thread.agent) then
-      local path = status.path(thread.agent, thread.path)
-      paths[thread.bufnr], counts[path] = path, (counts[path] or 0) + 1
-    end
   end
   local workspaces = vim.tbl_keys(by_workspace)
   table.sort(workspaces)
@@ -53,11 +49,9 @@ local function groups()
     end
     sessions.sort_by_order(entries)
     for _, thread in ipairs(entries) do
-      local path = paths[thread.bufnr]
       local item = {
         id = sessions.key(thread), bufnr = thread.bufnr, label = thread.agent_label,
         icon = agents.agent_icon(thread.agent), thread = thread,
-        status_path = counts[path] == 1 and path or nil,
       }
       group.items[#group.items + 1] = item
       if thread == recent then group.active = item end
@@ -98,8 +92,8 @@ bar = require("luanphan.view_container.window_bar").create({
     agents.refresh_tabs(main)
   end,
   status = function(item, frame)
-    local current = status.current(item.bufnr, item.status_path)
-    if current == "working" or current == "running" then return spinner[(frame - 1) % #spinner + 1], "DiagnosticInfo" end
+    local current = status.current(item.bufnr)
+    if current == "working" then return spinner[(frame - 1) % #spinner + 1], "DiagnosticInfo" end
     local icon = status_icons[current]
     if icon then return unpack(icon) end
   end,

@@ -3258,7 +3258,6 @@ local function test_workspace_folder_browser()
     "recent.touch(" .. string.format("%q", recent_b) .. ")",
     "recent.touch(" .. string.format("%q", station) .. ")",
     "vim.env.PATH = " .. string.format("%q", shim_dir .. ":") .. " .. vim.env.PATH",
-    "vim.g.luanphan_agent_status_dir = " .. string.format("%q", temp_root .. "/folder-picker-agent-status"),
     "local agents = require('luanphan.agents.main')",
     "local global_settings = vim.g.luanphan_global_settings_path",
     "vim.g.luanphan_global_settings_path = " .. string.format("%q", temp_root .. "/folder-picker-agent-settings.toml"),
@@ -4752,7 +4751,6 @@ local function test_agent_sidebar_restore(repo, agent)
     "vim.g.luanphan_codex_sessions_dir = root .. '/codex-state'",
     "vim.g.luanphan_cursor_sessions_dir = root .. '/cursor-state'",
     "vim.g.luanphan_terminal_sessions_dir = root .. '/terminal-state'",
-    "vim.g.luanphan_agent_status_dir = root .. '/status'",
     "vim.g.luanphan_default_agent_file = root .. '/default'",
     "vim.g.luanphan_recent_paths_file = root .. '/recent'",
     "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
@@ -5210,7 +5208,6 @@ end
 
 local function test_agent_view_container(repo)
   local shim_dir = temp_root .. "/agent-view-shims"
-  local status_dir = temp_root .. "/agent-view-status"
   local invoke_log = temp_root .. "/agent-view-invocations.log"
   local input_log = temp_root .. "/agent-view-input"
   local source = repo .. "/agent-view.txt"
@@ -5232,7 +5229,6 @@ local function test_agent_view_container(repo)
   local old_input = vim.env.NVIM_AGENT_SMOKE_INPUT
   local old_columns = vim.o.columns
   local old_lines = vim.o.lines
-  local old_status_dir = vim.g.luanphan_agent_status_dir
   local old_global_settings = vim.g.luanphan_global_settings_path
   local old_codex_sessions = vim.g.luanphan_codex_sessions_dir
   local old_cursor_sessions = vim.g.luanphan_cursor_sessions_dir
@@ -5242,7 +5238,6 @@ local function test_agent_view_container(repo)
   vim.env.PATH = shim_dir .. ":" .. old_path
   vim.env.NVIM_AGENT_SMOKE_LOG = invoke_log
   vim.env.NVIM_AGENT_SMOKE_INPUT = input_log
-  vim.g.luanphan_agent_status_dir = status_dir
   vim.g.luanphan_global_settings_path = settings_path
   vim.g.luanphan_codex_sessions_dir = temp_root .. "/agent-view-codex-sessions"
   vim.g.luanphan_cursor_sessions_dir = temp_root .. "/agent-view-cursor-sessions"
@@ -5592,15 +5587,13 @@ local function test_agent_view_container(repo)
     wait_until("sidebar renders an idle dot", function()
       return status_icon(main, other_buf) == "·"
     end, 3000)
-    local agent_status = require("luanphan.agents.status")
-    assert_true(agent_status.write("cursor", vim.b[first_cursor_buf].luanphan_agent_cwd, "done"),
-      "could not create the Cursor status fallback")
-    wait_until("sidebar reads the Cursor status fallback", function()
-      return status_icon(main, first_cursor_buf) == "✓"
+    terminal_io.send(first_cursor_buf, "\27]0;cursor - 🔄 working\7")
+    wait_until("sidebar reads working status from the Cursor terminal title", function()
+      return vim.b[first_cursor_buf].luanphan_agent_program_status == "working"
     end, 3000)
-    terminal_io.send(first_cursor_buf, "\27]7501;state=done\27\\")
-    wait_until("sidebar accepts terminal status from Cursor", function()
-      return vim.b[first_cursor_buf].luanphan_agent_program_status == "done"
+    terminal_io.send(first_cursor_buf, "\27]0;cursor - ✅ ready\7")
+    wait_until("Cursor terminal title completion becomes a checkmark", function()
+      return status_icon(main, first_cursor_buf) == "✓"
     end, 3000)
     terminal_io.send(first_cursor_buf, "\27]7501;state=clear\27\\")
     wait_until("sidebar clears the terminal status icon", function()
@@ -5610,11 +5603,8 @@ local function test_agent_view_container(repo)
     vim.defer_fn(function() vim.api.nvim_input("<CR><Esc>") end, 20)
     vim.api.nvim_feedkeys("i", "xt!", false)
     vim.api.nvim_set_current_win(sidebar)
-    assert_true(agent_status.read("codex", other_path) == "unknown", "Codex wrote a status file on launch or Enter")
-    assert_true(agent_status.write("codex", other_path, "done"), "could not create a stale hook status")
-    require("luanphan.agents.window_bar").refresh(true)
     local idle_icon, idle_col = status_icon(main, other_buf)
-    assert_true(idle_icon == "·" and idle_col == sidebar_config.width - 4, "Codex sidebar read a stale hook status")
+    assert_true(idle_icon == "·" and idle_col == sidebar_config.width - 4, "Enter changed the Codex sidebar status")
     terminal_io.send(other_buf, "\27]7501;state=working:app=codex\27\\")
     local frame
     wait_until("sidebar shows the native Codex working status", function()
@@ -6001,7 +5991,6 @@ local function test_agent_view_container(repo)
   vim.env.NVIM_AGENT_SMOKE_INPUT = old_input
   vim.o.columns = old_columns
   vim.o.lines = old_lines
-  vim.g.luanphan_agent_status_dir = old_status_dir
   vim.g.luanphan_global_settings_path = old_global_settings
   close_agent_terminals()
   vim.g.luanphan_codex_sessions_dir = old_codex_sessions
@@ -8051,14 +8040,8 @@ end
 
 local function test_agent_terminal_lifecycle(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
-  local agent_status = require("luanphan.agents.status")
-  local original_status_dir = vim.g.luanphan_agent_status_dir
-  local status_dir = vim.fn.tempname()
-  vim.g.luanphan_agent_status_dir = status_dir
-
   local agent = require("luanphan.agents.terminal-chat").create({
     status_name = "example-agent",
-    status = { track_submit = true },
     g_bufnr = "toggleterm_hide_agent_bufnr",
     notify_prefix = "toggleterm_hide_agent",
     augroup_prefix = "ToggletermHideAgent",
@@ -8114,11 +8097,6 @@ local function test_agent_terminal_lifecycle(repo)
     (tonumber(vim.b[second_buf].luanphan_agent_last_used) or 0) > second_used,
     "refocused agent terminal did not advance its use order"
   )
-  assert_true(agent_status.read("example-agent", repo) == "idle", "new agent terminal did not start idle")
-  local submit_map = vim.fn.maparg("<CR>", "t", false, true)
-  assert_true(type(submit_map) == "table" and type(submit_map.callback) == "function", "agent submit tracking is missing")
-  submit_map.callback()
-  assert_true(agent_status.read("example-agent", repo) == "running", "agent submit did not record running state")
 
   invoke_map("<leader>-t")
   wait_until("toggleterm open after agent terminal", function()
@@ -8138,8 +8116,6 @@ local function test_agent_terminal_lifecycle(repo)
 
   close_agent_terminals()
   close_toggleterm_terminals()
-  vim.g.luanphan_agent_status_dir = original_status_dir
-  vim.fn.delete(status_dir, "rf")
 end
 
 local function test_worktree_switch_hides_agent_terminal(repo, worktree)

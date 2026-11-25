@@ -258,16 +258,10 @@ workspace-bin: ## Install ./bin scripts and workspace shell setup
 	find ~/bin -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 	cp -r ./bin/. ~/bin/
 	find ~/bin -type f -exec chmod +x {} +
-	@mkdir -p ~/bin/agent-status-hooks
-	@for hook in ./nvim/lua/luanphan/agents/plugins/*/status-hook.json; do \
-		agent=$$(basename "$$(dirname "$$hook")"); \
-		cp "$$hook" ~/bin/agent-status-hooks/"$$agent.json" || exit $$?; \
-	done
-	@python3 ~/bin/sync-agent-status-hooks
 	@sh ./bin/workspace-shell-sync
 	@sh ./bin/tmux-refresh-idle-zshrc
 
-test: mkws-test skills-hub-test skills-sync-test install-agent-clis-test cmds-hub-test codex-config-test agent-status-hooks-test workspace-shell-test agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test tunnel-test neovide-remote-test wsync-test go-remote-test go-wrapper-test nix-test nix-install-test ## Run smoke tests
+test: mkws-test skills-hub-test skills-sync-test install-agent-clis-test cmds-hub-test codex-config-test workspace-shell-test agent-session-test mcursor-persist-test epoch-tools-test base64-tools-test tunnel-test neovide-remote-test wsync-test go-remote-test go-wrapper-test nix-test nix-install-test ## Run smoke tests
 
 .PHONY: nix-install-test
 nix-install-test: ## Verify Nix installation modes and privilege handling
@@ -290,9 +284,6 @@ cmds-hub-test: ## Run cmds-hub smoke tests
 
 codex-config-test: ## Run Codex config smoke tests
 	sh ./tests/codex-config-smoke-test.sh
-
-agent-status-hooks-test: ## Run agent status hook smoke tests
-	sh ./tests/agent-status-hooks-smoke-test.sh
 
 agent-session-test: ## Run durable agent-session bridge smoke tests
 	sh ./tests/agent-session-smoke-test.sh
