@@ -5450,6 +5450,15 @@ local function test_agent_view_container(repo)
     end, 3000)
     assert_true(vim.api.nvim_get_current_buf() == cursor_buf, "hidden agent exit changed focus")
 
+    local nearby = repo .. "/other-directory"
+    vim.fn.mkdir(nearby, "p")
+    vim.cmd.cd(nearby)
+    assert_true(visible_agent_window_count() == 0, "changing directory kept the previous Agents panel visible")
+    vim.cmd.cd(repo)
+    wait_until("return to the same Agents pane", function()
+      return visible_agent_window_count() == 1 and vim.api.nvim_get_current_buf() == cursor_buf
+    end, 3000)
+
     agents.toggle()
     assert_true(visible_agent_window_count() == 0, "agent container did not hide")
 
@@ -6353,8 +6362,10 @@ key('<leader>nt')
 local new_pane = api.nvim_get_current_buf()
 assert(new_pane ~= other_window and #floats() == 3 and window_bar():find('Window 2', 1, true)
   and not window_bar():find('Window 3', 1, true), 'new terminal tab opened a window')
-vim.fn.chansend(vim.b[new_pane].terminal_job_id, 'exit\n')
-assert(vim.wait(3000, function() return api.nvim_get_current_buf() == other_window end), 'new terminal tab did not return to its neighbor')
+vim.cmd.quit()
+assert(vim.wait(3000, function()
+  return not api.nvim_buf_is_valid(new_pane) and api.nvim_get_current_buf() == other_window
+end), 'direct quit did not close the shell and return to its neighbor')
 key('<leader>t')
 assert(#floats() == 0, 'toggle left part of the panel open')
 for _, buf in ipairs({ left, upper, lower, other_window }) do
@@ -6370,7 +6381,7 @@ key('<leader>t')
 assert(api.nvim_get_current_buf() == other_window and vim.b[other_window].luanphan_terminal_reference_cwd == root,
   'floating windows lost their original shell across workspaces')
 
-vim.fn.chansend(vim.b[other_window].terminal_job_id, 'exit\n')
+api.nvim_feedkeys(vim.keycode(':q<CR>'), 'xt', false)
 assert(vim.wait(3000, function() return not api.nvim_buf_is_valid(other_window) and #floats() == 4 end),
   'last pane exit did not remove its window')
 assert(api.nvim_get_current_buf() == lower and not window_bar():find('Window 2', 1, true), 'window exit lost the previous pane')
@@ -6663,9 +6674,11 @@ for _, move in ipairs({ { "<C-S-k>", upper.row }, { "<C-S-j>", lower.row } }) do
     and tmux("display-message", "-p", "-t", bottom, "#{pane_active}") == "1",
     "moving vertically left focus in the original tile slot")
 end
-tmux("kill-pane", "-t", bottom)
-tmux("select-window", "-t", second)
-wait(function() return active() == second and not pane_window(bottom) end, "remove third tile")
+key(":q<CR>")
+wait(function() return active() == second and not pane_window(bottom) end, "quit focuses the neighboring tile")
+assert(not vim.tbl_contains(vim.split(tmux("list-panes", "-a", "-F", "#{pane_id}"), "\n"), bottom),
+  ":q left the selected tmux process running")
+assert(tmux("display-message", "-p", "-t", first, "#{pane_pid}") == shell_pid, ":q stopped another tile")
 local tile = api.nvim_get_current_win()
 assert(vim.w[tile].luanphan_view_anchor ~= tile, "the split did not open a separate tile")
 api.nvim_win_close(tile, true)
@@ -6674,6 +6687,14 @@ assert(not vim.iter(api.nvim_list_wins()):any(function(win)
 end), "closing a tile left other panes visible")
 panel.toggle()
 wait(function() return active() == second end, "reattach after closing a tile")
+key("<leader>nt")
+wait(function() return active() and active() ~= first and active() ~= second end, "create a tile for direct quit")
+local disposable = active()
+vim.cmd.quit()
+wait(function() return active() == second and pane_window(first) and not pane_window(disposable) end,
+  "direct quit reopens the remaining panes")
+assert(not vim.tbl_contains(vim.split(tmux("list-panes", "-a", "-F", "#{pane_id}"), "\n"), disposable),
+  "direct quit left the selected tmux process running")
 local moved_win = api.nvim_get_current_win()
 local right_edge = api.nvim_win_get_config(0).col
 key("<C-S-h>")

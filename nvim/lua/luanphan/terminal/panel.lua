@@ -3,6 +3,7 @@ local api = vim.api
 local views = require("luanphan.view_container")
 local editor = require("luanphan.view_container.editor")
 local bars = require("luanphan.view_container.window_bar")
+local terminal_pane = require("luanphan.view_container.terminal")
 local window = require("luanphan.terminal.window")
 local settings = require("luanphan.global_settings")
 
@@ -11,7 +12,9 @@ function M.create(opts)
   local scopes = {}
   local anchor, dock, current
   local bar, inner, create_bar
+  local quitting
   local rendering = false
+  local events = api.nvim_create_augroup(opts.augroup, { clear = true })
 
   local function is_open()
     return anchor and api.nvim_win_is_valid(anchor)
@@ -69,6 +72,7 @@ function M.create(opts)
 
   function panel.hide()
     if not is_open() then return false end
+    quitting = nil
     current.scope.open = false
     save_views()
     return views.close_group(anchor)
@@ -88,39 +92,30 @@ function M.create(opts)
     api.nvim_win_set_width(dock, math.min(100, math.floor(vim.o.columns * 0.6)))
   end
 
+  local function prepare_pane(pane)
+    local tab, win = pane.tab, pane.win
+    bar:attach(tab.bufnr)
+    vim.wo[win].winhighlight = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,WinBarNC:Normal,TabLineFill:Normal"
+    if pane.opened then window.restore_view(win, tab.bufnr) end
+    if tab.term then tab.term.window = win end
+    window.sync_grid(win, tab.bufnr)
+  end
+
   local function render_body(group, enter)
     if opts.docked and (not dock or not api.nvim_win_is_valid(dock)) then create_dock() end
     local layout = geometry()
     local desired = group.bufnr
     local original_win = api.nvim_get_current_win()
     local had_focus = is_open() and views.group_anchor(original_win) == anchor
-    local previous = is_open() and api.nvim_win_get_buf(anchor)
     if not is_open() then
-      anchor = api.nvim_open_win(desired, false, vim.tbl_extend("force", layout.body, { style = "minimal" }))
+      anchor = views.open_float(layout, desired, false)
       if dock then vim.w[dock].luanphan_view_companion_anchor = anchor end
     end
     current = group
-    inner.active_by_context[group] = { id = "shell:" .. desired, bufnr = desired }
-    local panes = inner:display(anchor, group, layout)
-    if not panes then
-      api.nvim_win_set_buf(anchor, desired)
-      inner:render(anchor, group)
-      panes = { { win = anchor, opened = desired ~= previous, tab = { bufnr = desired } } }
-    end
-    for _, pane in ipairs(panes) do
-      bar:attach(pane.tab.bufnr)
-      vim.wo[pane.win].winhighlight =
-        "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,WinBarNC:Normal,TabLineFill:Normal"
-      if pane.opened or (pane.win == anchor and previous ~= pane.tab.bufnr) then
-        window.restore_view(pane.win, pane.tab.bufnr)
-      end
-      if pane.tab.term then pane.tab.term.window = pane.win end
-      window.sync_grid(pane.win, pane.tab.bufnr)
-    end
-    bar:layout(anchor, layout)
+    local active = vim.iter(group.panes):find(function(pane) return pane.bufnr == desired end)
+    inner:reflow(anchor, group, layout, active)
     if enter or (had_focus and views.group_anchor(api.nvim_get_current_win()) ~= anchor) then focus_content() end
     if enter then bar.history.record(desired) end
-    inner:refresh_tile_highlights()
     bar:refresh()
   end
 
@@ -149,9 +144,12 @@ function M.create(opts)
   local function remove_pane(group, pane, defer)
     local index = vim.iter(group.panes):enumerate():find(function(_, item) return item == pane end)
     if not index then return end
-    local replace_focus = api.nvim_get_current_buf() == pane.bufnr
+    local requested = quitting == pane
+    if requested then quitting = nil end
+    local replace_focus = requested or api.nvim_get_current_buf() == pane.bufnr
+    local replacement = requested and views.replacement_tab(group.panes, pane.bufnr)
     table.remove(group.panes, index)
-    local next_pane = group.panes[math.min(index, #group.panes)]
+    local next_pane = replacement or group.panes[math.min(index, #group.panes)]
     if group.bufnr == pane.bufnr and next_pane then group.bufnr = next_pane.bufnr end
     local owner = group.scope
     if not next_pane then
@@ -161,8 +159,12 @@ function M.create(opts)
       if owner.active == group then owner.active = owner.windows[math.min(position, #owner.windows)] end
     end
     local function reflow()
-      if current == group and is_open() then
-        if owner.active then render(owner.active, replace_focus) else panel.hide() end
+      if current == group and (is_open() or requested) then
+        if owner.active then
+          render(owner.active, replace_focus)
+        elseif not panel.hide() then
+          owner.open = false
+        end
       end
       owner.bar:refresh(true)
     end
@@ -185,6 +187,14 @@ function M.create(opts)
       callback = function() remove_pane(group, pane, true) end,
     })
     if opts.close_on_exit then
+      terminal_pane.bind_quit(buf, events, function()
+        if quitting == pane then return function() end end
+        if not window.running(buf) then return end
+        quitting = pane
+        return function()
+          if not window.stop(buf) and quitting == pane then quitting = nil end
+        end
+      end)
       api.nvim_create_autocmd("TermClose", {
         buffer = buf, once = true,
         callback = function()
@@ -262,6 +272,8 @@ function M.create(opts)
 
   inner = views.create({
     context = function() return current end,
+    prepare_pane = prepare_pane,
+    layout_bar = function(win, layout) bar:layout(win, layout) end,
     editor = not opts.docked and {
       key = function(group) return group end,
       active = function(group) return group.bufnr end,
@@ -320,7 +332,6 @@ function M.create(opts)
     })
   end
 
-  local events = api.nvim_create_augroup(opts.augroup, { clear = true })
   api.nvim_create_autocmd("WinLeave", {
     group = events,
     callback = function(ev)
@@ -332,7 +343,7 @@ function M.create(opts)
   api.nvim_create_autocmd("WinEnter", {
     group = events,
     callback = function()
-      if rendering or not is_open() then return end
+      if rendering or quitting or not is_open() then return end
       local win = api.nvim_get_current_win()
       if views.group_anchor(win) == anchor then
         local buf = api.nvim_win_get_buf(win)
@@ -346,7 +357,8 @@ function M.create(opts)
       elseif not opts.docked and (api.nvim_win_get_config(win).relative == "" or vim.bo.buftype == "terminal") then
         local previous = anchor
         vim.schedule(function()
-          if previous == anchor and is_open() and views.group_anchor(api.nvim_get_current_win()) ~= anchor then panel.hide() end
+          if not quitting and previous == anchor and is_open()
+            and views.group_anchor(api.nvim_get_current_win()) ~= anchor then panel.hide() end
         end)
       end
     end,
@@ -354,6 +366,7 @@ function M.create(opts)
   api.nvim_create_autocmd("WinClosed", {
     group = events,
     callback = function(args)
+      if quitting then return end
       local win = tonumber(args.match)
       if win ~= anchor and win ~= (bar and bar.win) and win ~= dock then return end
       local closing = anchor

@@ -65,4 +65,25 @@ function M.bind_navigation(buf, navigate)
   end
 end
 
+function M.bind_quit(buf, group, prepare)
+  api.nvim_create_autocmd({ "CmdlineLeave", "QuitPre" }, {
+    buffer = buf,
+    group = group,
+    callback = function(event)
+      local typed = event.event == "CmdlineLeave"
+      if typed then
+        if vim.fn.getcmdtype() ~= ":" or vim.v.event.abort then return end
+        local command = vim.trim(vim.fn.getcmdline()):gsub("!$", "")
+        if command == "" or not vim.startswith("quit", command) then return end
+      end
+      local close = prepare(not typed)
+      if not close then return end
+      if typed then vim.cmd("let v:event.abort = v:true") end
+      vim.schedule(function()
+        if type(vim.v.exiting) ~= "number" then close() end
+      end)
+    end,
+  })
+end
+
 return M

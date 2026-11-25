@@ -237,4 +237,22 @@ function M.paint_frame(pane, lines, flags, primary)
   if output ~= "" then M.output(pane, output) end
 end
 
+function M.paint(pane, visible, ready)
+  if not pane.term or not pane.client or pane.capturing or (visible and not visible(pane)) then return end
+  local connection = pane.client
+  pane.capturing, pane.ready, pane.dirty = true, false, false
+  M.capture(pane, function(lines, flags, primary)
+    if pane.client ~= connection then return end
+    pane.capturing = false
+    if not lines or (visible and not visible(pane)) then return end
+    M.paint_frame(pane, lines, flags, primary)
+    if pane.dirty then
+      M.paint(pane, visible, ready)
+      return
+    end
+    pane.ready = true
+    if ready then ready(pane) end
+  end)
+end
+
 return M

@@ -191,6 +191,16 @@ local function close_visible_agents(except_bufnr)
   end
 end
 
+local function panel_options(visible, target, opts)
+  if not visible or visible.bufnr == target then
+    close_visible_agents(target)
+    return opts
+  end
+  setup_agent(visible.name).save_view(visible.win)
+  close_visible_agents(visible.bufnr)
+  return vim.tbl_extend("force", opts or {}, { reuse_win = view_container.group_anchor(visible.win) })
+end
+
 function M.agent_icon(name)
   return agent_defs[name].icon
 end
@@ -350,15 +360,7 @@ local function get_agent(name)
       end)
     end,
     on_quit = function(bufnr, cwd)
-      local tabs = open_tabs(cwd, bufnr)
-      local next_tab
-      for index, tab in ipairs(tabs) do
-        if tab.bufnr == bufnr then
-          next_tab = index > 1 and tabs[index - 1] or tabs[2]
-          break
-        end
-      end
-      agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
+      local next_tab = view_container.replacement_tab(open_tabs(cwd, bufnr), bufnr)
       return function()
         if next_tab and jump_available(next_tab.bufnr)
           and M.open(next_tab.agent, next_tab.bufnr, { view_mode = true }) then
@@ -432,14 +434,7 @@ function M.open(name, bufnr, opts)
   if target and agent_container:visible_window(vim.fn.getcwd(), target) then
     return setup_agent(name).focus(target, opts)
   end
-  local visible = visible_agent()
-  if visible and visible.bufnr ~= target then
-    setup_agent(visible.name).save_view(visible.win)
-    close_visible_agents(visible.bufnr)
-    opts = vim.tbl_extend("force", opts or {}, { reuse_win = vim.w[visible.win].luanphan_view_anchor or visible.win })
-  else
-    close_visible_agents(target)
-  end
+  opts = panel_options(visible_agent(), target, opts)
   if target then
     return setup_agent(name).focus(target, opts)
   end
@@ -468,9 +463,7 @@ function M.new(name, opts)
         end
       end
     end
-    setup_agent(visible.name).save_view(visible.win)
-    close_visible_agents(visible.bufnr)
-    opts = vim.tbl_extend("force", opts or {}, { reuse_win = vim.w[visible.win].luanphan_view_anchor or visible.win })
+    opts = panel_options(visible, nil, opts)
   end
   return setup_agent(name).new(opts, order_new_tile)
 end
@@ -577,14 +570,7 @@ function M.send_selection(name)
     return false
   end
   local target = agent_buffer(name, vim.fn.getcwd())
-  local opts
-  if visible and visible.bufnr ~= target then
-    setup_agent(visible.name).save_view(visible.win)
-    close_visible_agents(visible.bufnr)
-    opts = { reuse_win = vim.w[visible.win].luanphan_view_anchor or visible.win }
-  else
-    close_visible_agents(target)
-  end
+  local opts = panel_options(visible, target)
   setup_agent(name).send_selection(target, opts)
   return true
 end
@@ -685,6 +671,14 @@ local function agent_spec(name)
         callback = function() vim.schedule(restore_on_first_ui) end,
       })
       vim.api.nvim_create_autocmd("TermRequest", { group = group, callback = receive_terminal_event })
+      terminal_agent.track_directory(group, function(cwd)
+        local pane = visible_agent()
+        if pane and vim.b[pane.bufnr].luanphan_agent_cwd == cwd then return pane.win, pane end
+      end, function(cwd, pane)
+        if visible_agent() then return end
+        local buf = terminal_agent.running(pane.bufnr) and pane.bufnr or agent_buffer(pane.name, cwd)
+        if buf then M.open(pane.name, buf) end
+      end)
     end or nil,
     config = function()
       setup_agent(name)

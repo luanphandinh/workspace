@@ -20,10 +20,11 @@ local client, session, previous_session
 local windows, panes = {}, {}
 local current, anchor, bar, tiles
 local rendering, refresh_queued, refresh_pending, refresh_again
-local creating, focus_on_render, selection
+local creating, focus_on_render, selection, closing_pane
 local layout_path, layout_stat, layout_options
 
-local refresh, render, open, paint
+local refresh, render, open
+local events = api.nvim_create_augroup("LuanphanTmuxTerminal", { clear = true })
 
 local function valid(win)
   return win and api.nvim_win_is_valid(win)
@@ -164,18 +165,8 @@ local function pick_session()
   end)
 end
 
-paint = function(pane)
-  if not pane.term or not pane.visible or pane.capturing or not client then return end
-  local connection = client
-  pane.capturing, pane.ready, pane.dirty = true, false, false
-  pty.capture(pane, function(lines, flags, primary)
-    if client ~= connection or panes[pane.id] ~= pane then return end
-    pane.capturing = false
-    if not lines or not pane.visible or pane.resizing then return end
-    pane.ready = true
-    pty.paint_frame(pane, lines, flags, primary)
-    if pane.dirty then paint(pane) end
-  end)
+local function can_paint(pane)
+  return client ~= nil and pane.client == client and panes[pane.id] == pane and pane.visible and not pane.resizing
 end
 
 local function bind_shortcuts(buf)
@@ -198,6 +189,27 @@ local function navigate(win, direction)
   end)
 end
 
+local function prepare_quit(pane)
+  if not client or panes[pane.id] ~= pane then return end
+  if closing_pane == pane then return function() end end
+  closing_pane = pane
+  return function()
+    if closing_pane ~= pane then return end
+    local next_pane = views.replacement_tab(pane.group.items, pane.bufnr)
+    local commands = { { "kill-pane", "-t", pane.id } }
+    if next_pane then
+      commands[#commands + 1] = model.write(next_pane, { active = true })
+      commands[#commands + 1] = { "select-window", "-t", session.id .. ":" .. next_pane.window }
+    end
+    if selection and selection.id == pane.id then selection = nil end
+    batch(commands, function(ok)
+      if closing_pane == pane then closing_pane = nil end
+      if ok then focus_on_render = true end
+      refresh()
+    end)
+  end
+end
+
 local function prepare_buffer(pane)
   local buf = api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "hide"
@@ -209,6 +221,7 @@ local function prepare_buffer(pane)
   bar:attach_terminal(buf)
   bind_shortcuts(buf)
   terminal_pane.bind_navigation(buf, navigate)
+  terminal_pane.bind_quit(buf, events, function() return prepare_quit(pane) end)
   local opts = { buffer = buf, silent = true, nowait = true }
   vim.keymap.set("t", "<C-]>", function() pty.input(pane, "\27") end,
     vim.tbl_extend("force", opts, { desc = "Send Escape to tmux pane" }))
@@ -239,10 +252,10 @@ local function prepare_pane(item)
     terminal_pane.configure_buffer(pane.bufnr)
   end
   pty.sync_grid(pane, win, function()
-    if panes[pane.id] == pane and not pane.ready then paint(pane) end
+    if not pane.ready then pty.paint(pane, can_paint) end
   end)
   pty.show_view(pane, win)
-  if not pane.ready and not pane.resizing then paint(pane) end
+  if not pane.ready then pty.paint(pane, can_paint) end
 end
 
 tiles = views.create({
@@ -382,19 +395,19 @@ local function apply_snapshot(records, completed_selection)
 end
 
 refresh = function()
-  if not client or refresh_queued or creating then return end
+  if not client or refresh_queued or creating or closing_pane then return end
   if refresh_pending then refresh_again = true return end
   local connection = client
   refresh_queued = true
   vim.schedule(function()
     if client ~= connection then return end
-    if creating then refresh_queued = false return end
+    if creating or closing_pane then refresh_queued = false return end
     refresh_queued, refresh_pending = false, true
     local completed_selection = selection and selection.done and selection
     client:request({ "list-panes", "-s", "-t", session.id, "-F", model.format }, function(ok, lines)
       if client ~= connection then return end
       refresh_pending = false
-      if ok and not creating then
+      if ok and not creating and not closing_pane then
         local records = model.read(lines)
         local commands = model.migrate(records)
         if #commands > 0 then
@@ -423,7 +436,7 @@ function M.hide(closing)
   client, session, anchor, current = nil, nil, nil, nil
   windows, panes = {}, {}
   refresh_queued, refresh_pending, refresh_again = nil, nil, nil
-  creating, focus_on_render, selection = nil, nil, nil
+  creating, focus_on_render, selection, closing_pane = nil, nil, nil, nil
   bar.win, bar.anchor = nil, nil
   if connection then connection:detach() end
   if win then views.close_group(win, closing) end
@@ -471,7 +484,7 @@ open = function(target)
         local pane = panes[payload]
         if pane then pane.ready = false end
         client:request({ "refresh-client", "-A", payload .. ":continue" }, function(ok)
-          if ok and pane then paint(pane) end
+          if ok and pane then pty.paint(pane, can_paint) end
         end)
       end
     end,
@@ -489,11 +502,10 @@ function M.toggle()
   if target then open(target) end
 end
 
-local events = api.nvim_create_augroup("LuanphanTmuxTerminal", { clear = true })
 api.nvim_create_autocmd("WinEnter", {
   group = events,
   callback = function()
-    if rendering or not valid(anchor) then return end
+    if rendering or closing_pane or not valid(anchor) then return end
     local win = api.nvim_get_current_win()
     local pane = panes[vim.b.luanphan_tmux_pane]
     if pane and vim.fn.bufwinid(pane.bufnr) == win then
@@ -502,7 +514,8 @@ api.nvim_create_autocmd("WinEnter", {
       and (api.nvim_win_get_config(win).relative == "" or vim.bo.buftype == "terminal") then
       local previous = anchor
       vim.schedule(function()
-        if anchor == previous and views.group_anchor(api.nvim_get_current_win()) ~= anchor then M.hide() end
+        if not closing_pane and anchor == previous
+          and views.group_anchor(api.nvim_get_current_win()) ~= anchor then M.hide() end
       end)
     end
   end,
@@ -510,6 +523,7 @@ api.nvim_create_autocmd("WinEnter", {
 api.nvim_create_autocmd("WinClosed", {
   group = events,
   callback = function(args)
+    if closing_pane then return end
     local win = tonumber(args.match)
     if valid(win) and vim.w[win].luanphan_view_independent_tile then return end
     if win == anchor or win == bar.win or vim.tbl_contains(tiles.tile_windows or {}, win) then

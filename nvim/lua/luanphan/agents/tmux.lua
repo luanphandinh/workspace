@@ -116,24 +116,10 @@ local function start(pane)
   end)
 end
 
-local function paint(pane)
-  if pane.capturing then return end
-  local connection = pane.client
-  pane.capturing, pane.dirty = true, false
-  pty.capture(pane, function(lines, flags, primary)
-    if pane.client ~= connection then return end
-    pane.capturing = false
-    if not lines then return end
-    pty.paint_frame(pane, lines, flags, primary)
-    if pane.dirty then
-      paint(pane)
-    else
-      pane.ready = true
-      local pending = pane.pending_osc
-      pane.pending_osc = nil
-      if pending and vim.startswith(pending, "\27]") then pty.output(pane, pending) end
-    end
-  end)
+local function finish_capture(pane)
+  local pending = pane.pending_osc
+  pane.pending_osc = nil
+  if pending and vim.startswith(pending, "\27]") then pty.output(pane, pending) end
 end
 
 -- A snapshot restores the screen, but tmux does not include OSC events in it.
@@ -163,7 +149,7 @@ connect = function(group)
     flags = "ignore-size",
     ready = function()
       for _, pane in pairs(group.panes) do
-        if pane.data.gate then start(pane) else paint(pane) end
+        if pane.data.gate then start(pane) else pty.paint(pane, nil, finish_capture) end
       end
     end,
     output = function(id, bytes)
@@ -232,7 +218,7 @@ local function attach(buf, record, new)
       return false
     end
   elseif group.client.ready then
-    if record.data.gate then start(record) else paint(record) end
+    if record.data.gate then start(record) else pty.paint(record, nil, finish_capture) end
   end
   return true
 end

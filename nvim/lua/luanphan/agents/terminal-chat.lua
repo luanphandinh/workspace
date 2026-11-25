@@ -29,6 +29,24 @@ function M.with_preserved_windows(callback)
   return result
 end
 
+function M.track_directory(group, visible, restore)
+  local saved = {}
+  vim.api.nvim_create_autocmd({ "DirChangedPre", "DirChanged" }, {
+    group = group,
+    callback = function(event)
+      if preserve_windows then return end
+      local cwd = vim.fn.getcwd()
+      if event.event == "DirChangedPre" then
+        local win, pane = visible(cwd)
+        saved[cwd] = pane or win
+        if win then pcall(M.close_window, win) end
+      elseif saved[cwd] then
+        restore(cwd, saved[cwd])
+      end
+    end,
+  })
+end
+
 M.running = terminal_window.running
 
 local BASE_DEFAULTS = {
@@ -72,7 +90,6 @@ function M.create(profile)
   end
 
 
-local visibility = {}
 local status_options = profile.status or {}
 
 local DEFAULTS = vim.tbl_deep_extend("force", vim.deepcopy(BASE_DEFAULTS), profile.defaults or {})
@@ -270,36 +287,13 @@ local function attach_window_events(buf)
       vim.schedule(function() backend.stop(buf) end)
     end,
   })
-  if profile.on_quit then
-    vim.api.nvim_create_autocmd("CmdlineLeave", {
-      group = ag,
-      buffer = buf,
-      callback = function()
-        if vim.fn.getcmdtype() ~= ":" or vim.v.event.abort then return end
-        local command = vim.trim(vim.fn.getcmdline()):gsub("!$", "")
-        if command == "" or not vim.startswith("quit", command) then return end
-        if not backend.running(buf) then return end
-        -- Let the pane exit handler choose a replacement before the window closes.
-        vim.cmd("let v:event.abort = v:true")
-        vim.schedule(function()
-          backend.stop(buf)
-        end)
-      end,
-    })
-  end
-  vim.api.nvim_create_autocmd("QuitPre", {
-    group = ag,
-    buffer = buf,
-    once = true,
-    callback = function()
-      local action = quit_action(buf)
-      vim.schedule(function()
-        if type(vim.v.exiting) == "number" or not backend.running(buf) then return end
-        backend.stop(buf)
-        if action then pcall(action) end
-      end)
-    end,
-  })
+  terminal_pane.bind_quit(buf, ag, function(direct)
+    if not backend.running(buf) then return end
+    local action = direct and quit_action(buf)
+    return function()
+      if backend.stop(buf) and action then pcall(action) end
+    end
+  end)
 end
 
 local function register_terminal(buf, cwd)
@@ -320,8 +314,8 @@ local function start_terminal(buf, cwd, opts)
   local label = opts and opts.agent_label
   vim.b[buf].luanphan_agent_thread_id = thread_id
   vim.b[buf].luanphan_agent_saved_label = label
-  local geometry = get_float_layout().body
   local win = win_for_buf(buf)
+  local geometry = not win and get_float_layout().body
   local width = win and vim.api.nvim_win_get_width(win) or geometry.width
   local height = win and vim.api.nvim_win_get_height(win) or geometry.height
   local data = {
@@ -341,20 +335,26 @@ local function start_terminal(buf, cwd, opts)
   return true
 end
 
+local function mount_terminal(buf, opts)
+  local win = opts and opts.reuse_win
+  local placeholder
+  if not win or not vim.api.nvim_win_is_valid(win) then
+    -- Reserve the winbar before attaching a live terminal so its grid stays stable.
+    if vim.bo[buf].buftype == "terminal" then placeholder = vim.api.nvim_create_buf(false, true) end
+    win = open_agent_float(placeholder or buf)
+  end
+  prepare_terminal_window(win)
+  if vim.api.nvim_win_get_buf(win) ~= buf then vim.api.nvim_win_set_buf(win, buf) end
+  if placeholder then pcall(vim.api.nvim_buf_delete, placeholder, { force = true }) end
+  vim.api.nvim_set_current_win(win)
+  vim.api.nvim_win_set_config(win, { zindex = config.float_zindex })
+  terminal_pane.configure_window(win, TERMINAL_WINHIGHLIGHT)
+  return win
+end
+
 local function open_terminal(opts, on_start)
   local buf = vim.api.nvim_create_buf(false, true)
-  local reuse_win = opts and opts.reuse_win
-  local win
-  if reuse_win and vim.api.nvim_win_is_valid(reuse_win) then
-    win = reuse_win
-    vim.api.nvim_win_set_buf(win, buf)
-    vim.api.nvim_set_current_win(win)
-  else
-    win = open_agent_float(buf)
-  end
-  vim.api.nvim_win_set_config(win, { zindex = config.float_zindex })
-  prepare_terminal_window(win)
-  terminal_pane.configure_window(win, TERMINAL_WINHIGHLIGHT)
+  local win = mount_terminal(buf, opts)
   local cwd = cwd_key()
   if not start_terminal(buf, cwd, opts) then return end
   if on_start then on_start(buf) end
@@ -365,22 +365,7 @@ end
 local function show_terminal(bufnr, opts)
   local cur = bufnr or current_bufnr()
   if not cur then return end
-  local reuse_win = opts and opts.reuse_win
-  local win
-  if reuse_win and vim.api.nvim_win_is_valid(reuse_win) then
-    win = reuse_win
-    prepare_terminal_window(win)
-    vim.api.nvim_win_set_buf(win, cur)
-    vim.api.nvim_set_current_win(win)
-  else
-    local placeholder = vim.api.nvim_create_buf(false, true)
-    win = open_agent_float(placeholder)
-    prepare_terminal_window(win)
-    vim.api.nvim_win_set_buf(win, cur)
-    pcall(vim.api.nvim_buf_delete, placeholder, { force = true })
-  end
-  vim.api.nvim_win_set_config(win, { zindex = config.float_zindex })
-  terminal_pane.configure_window(win, TERMINAL_WINHIGHLIGHT)
+  local win = mount_terminal(cur, opts)
   apply_agent_scrollback(cur)
   bind_terminal(cur)
   resume_terminal_view(win, cur, opts)
@@ -599,8 +584,8 @@ function API.setup(opts)
     end
   end
 
-  local group = vim.api.nvim_create_augroup(augroup_name, { clear = true })
   if not profile.on_float_layout then
+    local group = vim.api.nvim_create_augroup(augroup_name, { clear = true })
     vim.api.nvim_create_autocmd("VimResized", {
       group = group,
       callback = function()
@@ -609,43 +594,14 @@ function API.setup(opts)
         if visible_win then layout_float(visible_win) end
       end,
     })
+    M.track_directory(group, function(cwd)
+      local buf = current_bufnr(cwd)
+      return buf and win_for_buf(buf)
+    end, function(cwd)
+      local buf = current_bufnr(cwd)
+      if buf and not win_for_buf(buf) then show_terminal(buf) end
+    end)
   end
-
-  -- Per-worktree visibility: remember whether the agent was visible in the old cwd;
-  -- auto-restore when returning to a cwd where it was visible last.
-  vim.api.nvim_create_autocmd("DirChangedPre", {
-    group = group,
-    callback = function()
-      if preserve_windows then return end
-      local old = cwd_key()
-      local cur = current_bufnr(old)
-      if not cur or not M.running(cur) then
-        visibility[old] = false
-        return
-      end
-      local win = win_for_buf(cur)
-      if win then
-        visibility[old] = true
-        pcall(M.close_window, win)
-      else
-        visibility[old] = false
-      end
-    end,
-  })
-
-  vim.api.nvim_create_autocmd("DirChanged", {
-    group = group,
-    callback = function()
-      if preserve_windows then return end
-      local new = cwd_key()
-      if not visibility[new] then return end
-      local cur = current_bufnr(new)
-      if not cur or not M.running(cur) then return end
-      if win_for_buf(cur) then return end
-      show_terminal()
-    end,
-  })
-
 end
 
   return API

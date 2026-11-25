@@ -107,6 +107,12 @@ function M.navigate(win, direction, activate, bar, cycle_tabs)
 	return bar:focus_towards(direction)
 end
 
+function M.replacement_tab(items, buf)
+	for index, item in ipairs(items) do
+		if item.bufnr == buf then return items[index > 1 and index - 1 or index + 1] end
+	end
+end
+
 function M.layout(settings, opts)
 	opts = opts or {}
 	local border = opts.border or (settings.display_style == "tile" and "single" or "none")
@@ -207,6 +213,7 @@ end
 
 function Container:reflow(anchor, context, layout, active)
 	if active then self:select_tab(context, active) end
+	local previous = self.visible_windows or {}
 	local panes = self:display(anchor, context, layout)
 	if not vim.api.nvim_win_is_valid(anchor) then return end
 	if not panes then
@@ -223,6 +230,7 @@ function Container:reflow(anchor, context, layout, active)
 	self.layout_anchor, self.layout_context, self.visible_windows = anchor, context, {}
 	if self.opts.layout_bar then self.opts.layout_bar(anchor, layout) end
 	for _, pane in ipairs(panes) do
+		pane.opened = pane.opened or previous[pane.tab.bufnr] ~= pane.win
 		self.visible_windows[pane.tab.bufnr] = pane.win
 		self.opts.prepare_pane(pane, context, anchor)
 	end
