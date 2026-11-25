@@ -5822,6 +5822,16 @@ local function test_agent_view_container(repo)
     vim.api.nvim_win_close(sidebar, false)
     assert_true(not vim.api.nvim_win_is_valid(main), "closing the sidebar left the terminal visible")
 
+    write(settings_path, { "[agent_float]", "total_width_percent = 3" })
+    vim.cmd.cd({ args = { other_path } })
+    local narrow = assert(agents.new("codex", { view_mode = true }))
+    assert_true(not vim.w.luanphan_window_bar, "narrow agent panel unexpectedly displayed a sidebar")
+    terminal_io.stop(narrow)
+    wait_until("closing the last tile without a sidebar returns to the previous workspace", function()
+      return not vim.api.nvim_buf_is_valid(narrow) and vim.api.nvim_get_current_buf() == first_cursor_buf
+        and realpath(vim.fn.getcwd()) == realpath(repo)
+    end, 3000)
+
     close_agent_terminals()
     vim.o.lines = 48
     write(settings_path, {

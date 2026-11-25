@@ -14,6 +14,7 @@ function M.register(container, anchor, context)
 end
 
 local function panel_for(win)
+  if not win then return end
   local anchor = views.group_anchor(win)
   for _, panel in pairs(panels) do
     if panel.anchor == anchor and api.nvim_win_is_valid(anchor) then return panel end
