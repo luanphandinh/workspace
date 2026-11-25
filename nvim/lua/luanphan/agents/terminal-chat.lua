@@ -48,6 +48,7 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
 
 ---@param profile table
 ---@field status_name? string stable name used by the cross-process status store
+---@field shell? boolean forward Ctrl+L to an interactive shell
 ---@field native_status? boolean whether the program reports its own status
 ---@field new_session_id? fun(): string
 ---@field g_bufnr string vim.g key for buffer reuse after reload
@@ -462,7 +463,7 @@ end
 local function set_float_navigation_keymaps(bufnr)
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
   local opts = { buffer = bufnr, silent = true, nowait = true }
-  vim.keymap.set("t", "<C-l>", "<Nop>", opts)
+  if not profile.shell then vim.keymap.set("t", "<C-l>", "<Nop>", opts) end
   local function navigate(direction)
     local win = vim.api.nvim_get_current_win()
     if vim.api.nvim_win_get_buf(win) ~= bufnr then return end

@@ -317,6 +317,7 @@ local function get_agent(name)
   local window_bar = require("luanphan.agents.window_bar")
   apis[name] = terminal_agent.create({
     status_name = name,
+    shell = def.shell,
     native_status = def.native_status,
     new_session_id = def.new_session_id,
     g_bufnr = def.g_bufnr,

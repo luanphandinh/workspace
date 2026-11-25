@@ -40,9 +40,10 @@ function M.save_window_order(order)
 end
 
 local function launch_file()
-  local lines = { "unset TMUX TMUX_PANE TERM_PROGRAM TERM_PROGRAM_VERSION", "export TERM=xterm-256color" }
+  local lines = { "unset TMUX TMUX_PANE TERM_PROGRAM TERM_PROGRAM_VERSION VIM VIMRUNTIME", "export TERM=xterm-256color" }
   local env = vim.fn.environ()
   env.TMUX, env.TMUX_PANE, env.TERM, env.PWD, env.SHLVL, env._ = nil, nil, nil, nil, nil, nil
+  env.VIM, env.VIMRUNTIME = nil, nil
   if env.TERM_PROGRAM == "tmux" then
     env.TERM_PROGRAM, env.TERM_PROGRAM_VERSION = nil, nil
   end

@@ -22,9 +22,22 @@ end
 
 local function remember()
   if not tile or not tile.win or not api.nvim_win_is_valid(tile.win) then return end
-  tile.state.buf = api.nvim_win_get_buf(tile.win)
-  tile.state.path = api.nvim_buf_get_name(tile.state.buf)
+  local buf = api.nvim_win_get_buf(tile.win)
+  if vim.bo[buf].buftype ~= "" then return end
+  tile.state.buf = buf
+  tile.state.path = api.nvim_buf_get_name(buf)
   tile.state.view = api.nvim_win_call(tile.win, vim.fn.winsaveview)
+end
+
+local function restorable_state(key)
+  local state = editors_by_context[key]
+  if not state then return end
+  if tile and tile.state == state and api.nvim_win_is_valid(tile.win)
+    and api.nvim_win_get_buf(tile.win) ~= state.buf then remember() end
+  if api.nvim_buf_is_valid(state.buf) or (state.path ~= "" and vim.fn.filereadable(state.path) == 1) then
+    return state
+  end
+  editors_by_context[key] = nil
 end
 
 local function detach()
@@ -108,7 +121,7 @@ function M.sidebar_items(anchor, groups)
     end
   end
   for key, state in pairs(editors_by_context) do
-    if state.container == panel.container and state.sidebar then
+    if state.container == panel.container and state.sidebar and restorable_state(key) then
       local buf = win and tile.state == state and api.nvim_win_get_buf(win) or nil
       local path = buf and api.nvim_buf_get_name(buf) or state.path
       local group = state.sidebar.group
@@ -136,12 +149,9 @@ function M.select_sidebar(anchor, key, activate)
 end
 
 function M.tab(key)
-  local state = editors_by_context[key]
+  local state = restorable_state(key)
   if not state then return end
-  if tile and tile.state == state and api.nvim_win_is_valid(tile.win)
-    and api.nvim_win_get_buf(tile.win) ~= state.buf then remember() end
   if not api.nvim_buf_is_valid(state.buf) then
-    if vim.fn.filereadable(state.path) ~= 1 then return end
     state.buf = vim.fn.bufadd(state.path)
   end
   return { id = "editor:" .. tostring(key), bufnr = state.buf, separate_window = true,
@@ -182,7 +192,11 @@ function M.prepare(container, win, opened)
   end
   if opened or changed then editors.apply_appearance(win, tile_appearance(anchor)) end
   if not opened then return end
-  api.nvim_win_call(win, function() vim.fn.winrestview(state.view) end)
+  api.nvim_win_call(win, function()
+    -- New floats inherit the opening window's jump list.
+    vim.cmd.clearjumps()
+    vim.fn.winrestview(state.view)
+  end)
   api.nvim_create_autocmd("WinClosed", {
     group = events, pattern = tostring(win), once = true,
     callback = function()
