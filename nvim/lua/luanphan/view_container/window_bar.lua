@@ -431,6 +431,12 @@ function Bar:attach(buf)
     vim.tbl_extend("force", opts, { expr = true }))
 end
 
+function Bar:attach_terminal(buf)
+  self:attach(buf)
+  self:map_jumps(buf, false)
+  vim.keymap.set("t", "<C-h>", "<C-h>", { buffer = buf, silent = true, nowait = true })
+end
+
 function Bar:close()
   local win = self.win
   if valid(self.anchor) then vim.w[self.anchor].luanphan_window_bar = nil end

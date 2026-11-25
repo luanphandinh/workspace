@@ -9,6 +9,7 @@
 
 local M = {}
 local view_container = require("luanphan.view_container")
+local terminal_pane = require("luanphan.view_container.terminal")
 local terminal_window = require("luanphan.terminal.window")
 local backend = require("luanphan.agents.tmux")
 local sync_terminal_grid = terminal_window.sync_grid
@@ -184,54 +185,6 @@ local function apply_agent_scrollback(buf)
   end
 end
 
-local function configure_terminal_buffer(buf)
-  pcall(vim.treesitter.stop, buf)
-  pcall(vim.api.nvim_buf_call, buf, function()
-    vim.bo.syntax = ""
-    vim.b.matchparen_timeout = 0
-    vim.b.matchparen_insert_timeout = 0
-  end)
-end
-
-local function configure_terminal_window(win)
-  if not win or not vim.api.nvim_win_is_valid(win) then
-    return
-  end
-  local buf = vim.api.nvim_win_get_buf(win)
-  if vim.bo[buf].buftype == "terminal" then configure_terminal_buffer(buf) end
-  local options = {
-    breakindent = false,
-    colorcolumn = "",
-    concealcursor = "",
-    conceallevel = 0,
-    cursorbind = false,
-    cursorcolumn = false,
-    cursorline = false,
-    diff = false,
-    foldcolumn = "0",
-    foldenable = false,
-    foldexpr = "0",
-    foldmethod = "manual",
-    linebreak = false,
-    list = false,
-    number = false,
-    relativenumber = false,
-    scrollbind = false,
-    smoothscroll = false,
-    spell = false,
-    statuscolumn = "",
-    winblend = 0,
-    winfixbuf = false,
-    winfixheight = false,
-    winfixwidth = false,
-    winhighlight = TERMINAL_WINHIGHLIGHT,
-    wrap = false,
-  }
-  for name, value in pairs(options) do
-    pcall(vim.api.nvim_set_option_value, name, value, { win = win, scope = "local" })
-  end
-end
-
 local function prepare_terminal_window(win)
   if profile.on_prepare then
     pcall(profile.on_prepare, win)
@@ -250,22 +203,12 @@ local function layout_float(win)
   end
 end
 
-local function set_float_navigation_keymaps(bufnr)
-  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
-  local opts = { buffer = bufnr, silent = true, nowait = true }
-  if not profile.shell then vim.keymap.set("t", "<C-l>", "<Nop>", opts) end
-  local function navigate(direction)
-    local win = vim.api.nvim_get_current_win()
-    if vim.api.nvim_win_get_buf(win) ~= bufnr then return end
-    if profile.on_navigate then
-      profile.on_navigate(win, direction)
-    else
-      pcall(M.close_window, win)
-    end
-  end
-  for _, direction in ipairs({ "h", "j", "k", "l" }) do
-    local key = "<C-" .. direction .. ">"
-    vim.keymap.set("n", key, function() navigate(direction) end, opts)
+local navigate = profile.on_navigate or function(win) pcall(M.close_window, win) end
+
+local function bind_terminal(buf)
+  terminal_pane.bind_navigation(buf, navigate)
+  if not profile.shell then
+    vim.keymap.set("t", "<C-l>", "<Nop>", { buffer = buf, silent = true, nowait = true })
   end
 end
 
@@ -360,15 +303,15 @@ local function attach_window_events(buf)
 end
 
 local function register_terminal(buf, cwd)
-  configure_terminal_buffer(buf)
+  terminal_pane.configure_buffer(buf)
   if status_options.initial and not vim.b[buf].luanphan_agent_program_status then
     require("luanphan.agents.status").update(buf, status_options.initial)
   end
   apply_agent_scrollback(buf)
-  require("luanphan.terminal_references").attach(buf, cwd)
+  terminal_pane.set_reference_cwd(buf, cwd)
   backend.on_exit(buf, function() terminal_closed(buf) end)
   attach_window_events(buf)
-  set_float_navigation_keymaps(buf)
+  bind_terminal(buf)
 end
 
 local function start_terminal(buf, cwd, opts)
@@ -411,7 +354,7 @@ local function open_terminal(opts, on_start)
   end
   vim.api.nvim_win_set_config(win, { zindex = config.float_zindex })
   prepare_terminal_window(win)
-  configure_terminal_window(win)
+  terminal_pane.configure_window(win, TERMINAL_WINHIGHLIGHT)
   local cwd = cwd_key()
   if not start_terminal(buf, cwd, opts) then return end
   if on_start then on_start(buf) end
@@ -437,9 +380,9 @@ local function show_terminal(bufnr, opts)
     pcall(vim.api.nvim_buf_delete, placeholder, { force = true })
   end
   vim.api.nvim_win_set_config(win, { zindex = config.float_zindex })
-  configure_terminal_window(win)
+  terminal_pane.configure_window(win, TERMINAL_WINHIGHLIGHT)
   apply_agent_scrollback(cur)
-  set_float_navigation_keymaps(cur)
+  bind_terminal(cur)
   resume_terminal_view(win, cur, opts)
 end
 
@@ -496,7 +439,7 @@ function API.focus(bufnr, opts)
     show_terminal(cur, opts)
     return true
   end
-  configure_terminal_window(win)
+  terminal_pane.configure_window(win, TERMINAL_WINHIGHLIGHT)
   vim.api.nvim_set_current_win(win)
   resume_terminal_view(win, cur, opts)
   return true
@@ -514,7 +457,7 @@ function API.prepare_tile(win, opened)
   if not vim.api.nvim_win_is_valid(win) then return end
   local buf = vim.api.nvim_win_get_buf(win)
   if opened then
-    configure_terminal_window(win)
+    terminal_pane.configure_window(win, TERMINAL_WINHIGHLIGHT)
   end
   sync_terminal_grid(win, buf)
 end
@@ -648,7 +591,7 @@ function API.setup(opts)
   local win = cur and win_for_buf(cur)
   if win then
     prepare_terminal_window(win)
-    configure_terminal_window(win)
+    terminal_pane.configure_window(win, TERMINAL_WINHIGHLIGHT)
     if profile.on_show then
       pcall(profile.on_show, cur, win, vim.b[cur].luanphan_agent_cwd)
     else

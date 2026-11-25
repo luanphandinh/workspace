@@ -129,17 +129,14 @@ function M.update_title(buf)
 end
 
 function M.navigate(win, direction)
-  local moved = views.focus_neighbor(win, direction, function(neighbor)
+  views.navigate(win, direction, function(neighbor)
     local buf = api.nvim_win_get_buf(neighbor)
     agents.focus(vim.b[buf].luanphan_agent_name, buf, { view_mode = true })
-  end)
-  if not moved then bar:focus_towards(direction) end
+  end, bar)
 end
 
 function M.attach(buf)
-  bar:attach(buf)
-  bar:map_jumps(buf, false)
-  vim.keymap.set("t", "<C-h>", "<C-h>", { buffer = buf, silent = true, nowait = true })
+  bar:attach_terminal(buf)
 end
 
 local group = api.nvim_create_augroup("LuanphanAgentWindowBar", { clear = true })

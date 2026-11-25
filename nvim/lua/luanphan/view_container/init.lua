@@ -101,6 +101,12 @@ function M.focus_neighbor(win, direction, activate)
 	return true
 end
 
+function M.navigate(win, direction, activate, bar, cycle_tabs)
+	if M.focus_neighbor(win, direction, activate) then return true end
+	if cycle_tabs and cycle_tabs(direction) then return true end
+	return bar:focus_towards(direction)
+end
+
 function M.layout(settings, opts)
 	opts = opts or {}
 	local border = opts.border or (settings.display_style == "tile" and "single" or "none")

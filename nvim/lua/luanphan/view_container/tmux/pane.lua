@@ -138,7 +138,6 @@ end
 function M.show_view(pane, win)
   if pane.view_win == win then return end
   pane.view_win = win
-  vim.wo[win].scrolloff = 0
   local follow = pane.hidden_output and pane.follow_live ~= false
   pane.hidden_output = nil
   if pane.last_view and not follow then

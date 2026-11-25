@@ -6470,9 +6470,20 @@ end
 local function key(keys)
   api.nvim_feedkeys(vim.keycode(keys:gsub("<leader>", vim.g.mapleader)), "xt", false)
 end
+local source_win = api.nvim_get_current_win()
+vim.wo[source_win].list, vim.wo[source_win].spell, vim.wo[source_win].wrap = true, true, true
+vim.wo[source_win].foldmethod, vim.wo[source_win].signcolumn, vim.wo[source_win].scrolloff = "marker", "yes", 8
 key("<leader>t")
 wait(function() return active() and vim.bo.buftype == "terminal" end, "create and attach")
 local first = active()
+local first_win = pane_window(first)
+assert(not vim.wo[first_win].list and not vim.wo[first_win].spell and not vim.wo[first_win].wrap
+  and vim.wo[first_win].foldmethod == "manual" and vim.wo[first_win].signcolumn == "no"
+  and vim.wo[first_win].scrolloff == 0, "floating terminal inherited editor window options")
+assert(vim.bo[api.nvim_win_get_buf(first_win)].syntax == "" and vim.b.matchparen_timeout == 0,
+  "floating terminal inherited syntax or matchparen")
+assert(vim.wo[source_win].foldmethod == "marker" and vim.wo[source_win].scrolloff == 8,
+  "terminal setup changed the source editor options")
 require("luanphan.global_settings").open_editor()
 local settings_buf = api.nvim_get_current_buf()
 local settings_lines = api.nvim_buf_get_lines(settings_buf, 0, -1, false)
@@ -6517,6 +6528,8 @@ wait(function() return active() and active() ~= first end, "new terminal tile")
 local second = active()
 assert(tmux("display-message", "-p", "-t", second, "#{pane_current_path}") == vim.uv.fs_realpath("/tmp"),
   "new tile did not inherit the source shell's working directory")
+assert(vim.b[api.nvim_win_get_buf(pane_window(first))].luanphan_terminal_reference_cwd == vim.uv.fs_realpath("/tmp"),
+  "a terminal cwd change did not update relative references")
 assert(tmux("display-message", "-p", "-t", first, "#{window_id}")
   ~= tmux("display-message", "-p", "-t", second, "#{window_id}"), "tiles share a tmux window")
 wait(function() return same_grid(first) and same_grid(second) end, "exact PTY sizes for two tiles")

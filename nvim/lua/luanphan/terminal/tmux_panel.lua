@@ -9,6 +9,7 @@ local tmux = require("luanphan.view_container.tmux.client").new(function()
   return { socket = socket, config = vim.g.luanphan_floating_tmux_config }
 end)
 local pty = require("luanphan.view_container.tmux.pane")
+local terminal_pane = require("luanphan.view_container.terminal")
 local model = require("luanphan.view_container.tmux.windows")
 local views = require("luanphan.view_container")
 local editor = require("luanphan.view_container.editor")
@@ -188,13 +189,13 @@ local function bind_shortcuts(buf)
   vim.keymap.set("n", "<leader>ns", pick_session, vim.tbl_extend("force", opts, { desc = "Select tmux session" }))
 end
 
-local function select_neighbor(direction)
-  local moved = views.focus_neighbor(api.nvim_get_current_win(), direction, function(neighbor)
+local function navigate(win, direction)
+  views.navigate(win, direction, function(neighbor)
     local id = vim.b[api.nvim_win_get_buf(neighbor)].luanphan_tmux_pane
     if id then activate(panes[id]) end
+  end, bar, function(step)
+    return current and tiles:navigate_tabs(step, #current.items, true)
   end)
-  if moved then return end
-  if not tiles:navigate_tabs(direction, #current.items, true) then bar:focus_towards(direction) end
 end
 
 local function prepare_buffer(pane)
@@ -204,18 +205,14 @@ local function prepare_buffer(pane)
   vim.b[buf].luanphan_floating_terminal = true
   vim.b[buf].luanphan_tmux_pane = pane.id
   pane.bufnr = buf
-  if pane.cwd then require("luanphan.terminal_references").attach(buf, pane.cwd) end
-  bar:attach(buf)
-  bar:map_jumps(buf, false)
+  terminal_pane.set_reference_cwd(buf, pane.cwd)
+  bar:attach_terminal(buf)
   bind_shortcuts(buf)
+  terminal_pane.bind_navigation(buf, navigate)
   local opts = { buffer = buf, silent = true, nowait = true }
-  vim.keymap.set("t", "<C-h>", "<C-h>", opts)
   vim.keymap.set("t", "<C-]>", function() pty.input(pane, "\27") end,
     vim.tbl_extend("force", opts, { desc = "Send Escape to tmux pane" }))
   tiles:bind(buf)
-  for _, direction in ipairs({ "h", "j", "k", "l" }) do
-    vim.keymap.set("n", "<C-" .. direction .. ">", function() select_neighbor(direction) end, opts)
-  end
   tiles:bind_tile_moves(buf)
 end
 
@@ -231,12 +228,15 @@ end
 
 local function prepare_pane(item)
   local pane, win = item.tab, item.win
-  vim.wo[win].winhighlight = "NormalFloat:Normal,WinBar:Normal,WinBarNC:Comment,TabLineFill:Normal"
+  if pane.view_win ~= win then
+    terminal_pane.configure_window(win, "NormalFloat:Normal,WinBar:Normal,WinBarNC:Comment,TabLineFill:Normal")
+  end
   pane.visible = true
   if not pane.term then
     pane.client = client
     pane.restore_primary = true
     pty.open(pane)
+    terminal_pane.configure_buffer(pane.bufnr)
   end
   pty.sync_grid(pane, win, function()
     if panes[pane.id] == pane and not pane.ready then paint(pane) end
@@ -255,7 +255,7 @@ tiles = views.create({
     key = function(group) return "tmux:" .. session.id .. ":" .. group.id end,
     active = function(group) return group.active.bufnr end,
     refresh = function() render() end,
-    navigate = function(_, direction) select_neighbor(direction) end,
+    navigate = navigate,
   },
   reorder = reorder_panes,
   activate = activate,
@@ -342,8 +342,8 @@ local function apply_snapshot(records, completed_selection)
     local old_cwd = pane.cwd
     for key, value in pairs(record) do pane[key] = value end
     pane.group = group
-    if pane.bufnr and pane.cwd ~= old_cwd and pane.cwd ~= "" then
-      require("luanphan.terminal_references").attach(pane.bufnr, pane.cwd)
+    if pane.bufnr and pane.cwd ~= old_cwd then
+      terminal_pane.set_reference_cwd(pane.bufnr, pane.cwd)
     end
     group.items[#group.items + 1], listed[pane.id] = pane, pane
     if data.active then group.active = pane end
