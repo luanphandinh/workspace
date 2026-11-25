@@ -255,14 +255,12 @@ local function restore_panel_sessions(cwd)
 end
 
 local function layout_agent(win, layout, opening)
-  local window_bar = require("luanphan.agents.window_bar")
   local anchor = vim.w[win].luanphan_view_anchor or win
   if opening then
-    window_bar.layout(anchor, layout)
-    return
+    return agent_container:layout_sidebar(anchor, layout)
   end
   local cwd = vim.b[vim.api.nvim_win_get_buf(win)].luanphan_agent_cwd
-  if agent_container:reflow(anchor, cwd, layout) then window_bar.refresh() end
+  agent_container:reflow(anchor, cwd, layout)
 end
 
 local function get_agent(name)
@@ -285,23 +283,19 @@ local function get_agent(name)
     on_prepare = function(win)
       agent_container:reserve(win)
     end,
+    on_register = function(buf, launched)
+      agent_container:bind_title(buf)
+      if launched then sessions.save(buf) end
+      agent_container:invalidate_sidebar()
+    end,
     on_show = function(bufnr, win, cwd)
-      jumplist.record(bufnr)
       backend.focus(bufnr)
       local seconds, microseconds = vim.uv.gettimeofday()
       vim.b[bufnr].luanphan_agent_saved_use = seconds + microseconds / 1000000
       remember_pane(bufnr)
-      if sessions.supported(name) then
-        sessions.save(bufnr)
-      end
+      sessions.defer_save(bufnr)
       restore_panel_sessions(cwd)
-      local tab = { id = name .. ":" .. bufnr, bufnr = bufnr }
-      if agent_container:focus_visible(cwd, tab, false) == win then
-        window_bar.follow(bufnr)
-      else
-        agent_container:select_tab(cwd, tab)
-        apis[name].layout(win)
-      end
+      agent_container:present_tile(cwd, { id = name .. ":" .. bufnr, bufnr = bufnr }, win)
     end,
     on_close = function(bufnr, cwd)
       local id = sessions.supported(name) and vim.b[bufnr].luanphan_agent_thread_id
@@ -347,22 +341,28 @@ function M.restore_running()
   if #running == 0 then return end
   local saved = {}
   for _, session in ipairs(sessions.list()) do
-    saved[sessions.key(session)] = session.last_used
+    saved[sessions.key(session)] = session
   end
   for _, record in ipairs(running) do
     local data = record.data
-    data.used_at = math.max(data.used_at or 0, data.thread_id and saved[sessions.key(data)] or 0)
+    local session = data.thread_id and saved[sessions.key(data)]
+    data.used_at = math.max(data.used_at or 0, session and session.last_used or 0)
   end
   table.sort(running, function(a, b)
     if a.data.used_at ~= b.data.used_at then return a.data.used_at < b.data.used_at end
     return (a.data.used or 0) < (b.data.used or 0)
   end)
   for _, record in ipairs(running) do
-    if record.data.used_at > 0 or (record.data.used or 0) > 0 then
-      record.data.used = (vim.g.luanphan_agent_use_sequence or 0) + 1
-      vim.g.luanphan_agent_use_sequence = record.data.used
+    local data = record.data
+    if data.used_at > 0 or (data.used or 0) > 0 then
+      data.used = (vim.g.luanphan_agent_use_sequence or 0) + 1
+      vim.g.luanphan_agent_use_sequence = data.used
     end
-    setup_agent(record.data.agent).adopt(record)
+    local buf = setup_agent(data.agent).adopt(record)
+    if buf then
+      local session = data.thread_id and saved[sessions.key(data)]
+      vim.b[buf].luanphan_agent_saved_label = session and session.agent_label or M.display_title(data.agent, data.label)
+    end
   end
 end
 
@@ -507,8 +507,7 @@ agent_container = view_container.create({
   context = vim.fn.getcwd,
   tabs = open_tabs,
   relayout = relayout_agent_panel,
-  layout_bar = function(anchor, layout) require("luanphan.agents.window_bar").layout(anchor, layout) end,
-  refresh_bar = function() require("luanphan.agents.window_bar").refresh() end,
+  bar = function() return require("luanphan.agents.window_bar").bar end,
   prepare_pane = function(pane, cwd, anchor)
     local tab = pane.tab
     if pane.opened or pane.win == anchor then
@@ -553,6 +552,7 @@ agent_container = view_container.create({
 })
 
 function M.refresh_tabs(win)
+  agent_container:invalidate_sidebar()
   local anchor = view_container.group_anchor(win)
   if anchor == agent_container.tile_anchor then return relayout_agent_panel(anchor) end
   local bufnr = vim.api.nvim_win_get_buf(win)

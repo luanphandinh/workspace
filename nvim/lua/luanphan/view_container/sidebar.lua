@@ -90,6 +90,7 @@ function M.render(bar, groups, active, offsets)
     local item_index = 0
     for _, item in ipairs(items) do
       if not item.separate_window then item_index = item_index + 1 end
+      if item.bufnr and item.bufnr == active and not item.separate_window then group.active = item end
       if not folded then
         local offset = string.format(number, offsets[item.bufnr] or "")
         local icon = item.icon or ""

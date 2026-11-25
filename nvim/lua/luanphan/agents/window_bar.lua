@@ -79,6 +79,10 @@ bar = require("luanphan.view_container.window_bar").create({
   groups = groups,
   load_order = tmux.load_window_order,
   save_order = tmux.save_window_order,
+  on_layout = function(win)
+    if valid(main) and main ~= win then close_window(main) end
+    main = win
+  end,
   activate = function(item, view_mode)
     return M.select_session(item.thread, view_mode and { view_mode = true } or nil)
   end,
@@ -105,18 +109,9 @@ bar = require("luanphan.view_container.window_bar").create({
   end,
 })
 
-function M.layout(win, layout)
-  if valid(main) and main ~= win then close_window(main) end
-  main = win
-  bar:layout(win, layout)
-end
-
+M.bar = bar
 function M.refresh(keep_cursor)
   bar:refresh(keep_cursor)
-end
-
-function M.follow(buf)
-  bar:follow(buf, true)
 end
 
 function M.update_title(buf)

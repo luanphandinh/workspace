@@ -4,6 +4,7 @@ local backend = require("luanphan.agents.tmux")
 local uuid = "^" .. string.rep("%x", 8) .. ("%-" .. string.rep("%x", 4)):rep(3) .. "%-" .. string.rep("%x", 12) .. "$"
 local providers, names = {}, {}
 local order = {}
+local pending, save_timer = {}, nil
 
 function M.key(session)
   return session.bufnr or session.agent .. ":" .. session.thread_id
@@ -43,8 +44,12 @@ local function state_dir(agent)
     or (vim.fn.stdpath("state") .. "/workspace-" .. agent .. "-sessions")
 end
 
-local function read(agent, id)
-  local ok, lines = pcall(vim.fn.readfile, state_dir(agent) .. "/" .. id .. ".json")
+local function session_path(agent, id)
+  return state_dir(agent) .. "/" .. id .. ".json"
+end
+
+local function read(path, id)
+  local ok, lines = pcall(vim.fn.readfile, path)
   if not ok then return nil end
   local decoded, record = pcall(vim.json.decode, table.concat(lines, "\n"))
   if not decoded or type(record) ~= "table" or record.thread_id ~= id
@@ -62,7 +67,7 @@ local function list(agent)
   for name, kind in vim.fs.dir(dir) do
     local id = name:match("^(.*)%.json$")
     if kind == "file" and id and id:match(uuid) then
-      local record = read(agent, id)
+      local record = read(dir .. "/" .. name, id)
       if record then
         record.agent = agent
         records[#records + 1] = record
@@ -131,7 +136,9 @@ end
 
 function M.forget(agent, id)
   if M.supported(agent) and M.valid_id(id) then
-    uv.fs_unlink(state_dir(agent) .. "/" .. id .. ".json")
+    local path = session_path(agent, id)
+    pending[path] = nil
+    uv.fs_unlink(path)
   end
 end
 
@@ -145,23 +152,25 @@ function M.forget_buffer(bufnr, agent, id)
   M.forget(agent, id)
 end
 
-function M.save(bufnr)
+local function snapshot(bufnr)
   local buf = vim.b[bufnr]
   local agent, id, cwd = buf.luanphan_agent_name, buf.luanphan_agent_thread_id, buf.luanphan_agent_cwd
   if not M.supported(agent) or not M.valid_id(id) or not cwd then return end
   local saved_title = providers[agent].saved_title
   local label = saved_title and saved_title(bufnr)
   if label == false then return end
-  local record = {
+  return session_path(agent, id), {
     thread_id = id,
     path = uv.fs_realpath(cwd) or cwd,
     agent_label = label and label ~= "" and label or buf.luanphan_agent_saved_label or agent,
     last_used = buf.luanphan_agent_saved_use or os.time(),
   }
-  if vim.deep_equal(read(agent, id), record) then return end
-  local dir = state_dir(agent)
-  if not pcall(vim.fn.mkdir, dir, "p", 448) then return end
-  local path = dir .. "/" .. id .. ".json"
+end
+
+local function store(path, record, delayed)
+  local previous = read(path, record.thread_id)
+  if vim.deep_equal(previous, record) or (delayed and previous and previous.last_used > record.last_used) then return end
+  if not pcall(vim.fn.mkdir, vim.fs.dirname(path), "p", 448) then return end
   local tmp = path .. "." .. vim.fn.getpid() .. ".tmp"
   local wrote, result = pcall(vim.fn.writefile, { vim.json.encode(record) }, tmp, "s")
   if wrote and result == 0 then
@@ -169,6 +178,34 @@ function M.save(bufnr)
   end
   uv.fs_unlink(tmp)
 end
+
+function M.save(bufnr)
+  local path, record = snapshot(bufnr)
+  if not path then return end
+  pending[path] = nil
+  store(path, record)
+end
+
+local function flush()
+  if save_timer then vim.fn.timer_stop(save_timer) end
+  save_timer = nil
+  local writes = pending
+  pending = {}
+  for path, record in pairs(writes) do store(path, record, true) end
+end
+
+function M.defer_save(bufnr)
+  local path, record = snapshot(bufnr)
+  if not path then return end
+  pending[path] = record
+  if save_timer then vim.fn.timer_stop(save_timer) end
+  save_timer = vim.fn.timer_start(250, flush)
+end
+
+vim.api.nvim_create_autocmd("VimLeavePre", {
+  group = vim.api.nvim_create_augroup("LuanphanAgentSessionSave", { clear = true }),
+  callback = flush,
+})
 
 function M.update(bufnr, event)
   local buf = vim.b[bufnr]

@@ -151,7 +151,7 @@ end
 
 function Bar:jump(direction, count, keep_focus)
   local rows = {}
-  for _, group in ipairs(self:groups()) do
+  for _, group in ipairs(self.cached_groups or self:groups()) do
     for _, item in ipairs(group.items) do
       if item.bufnr then rows[item.bufnr] = { item = item } end
     end
@@ -175,12 +175,16 @@ function Bar:refresh(keep_cursor, groups)
   if not valid(self.win) or not valid(self.anchor) then return end
   local active = self:active()
   groups = groups or self:groups()
+  self.cached_groups = groups
   if self.style == "horizontal" then
     self.rows = {}
     for index, group in ipairs(groups) do
       local item = vim.iter(group.items):find(function(candidate) return candidate.bufnr and candidate.bufnr == active end)
       self.rows[index] = { group = group, groups = groups, index = index, active = item }
-      if item and not keep_cursor then self.selected = index end
+      if item then
+        group.active = item
+        if not keep_cursor then self.selected = index end
+      end
     end
     self.selected = math.max(1, math.min(self.selected, #self.rows))
     tabs.render_windows(self)
@@ -205,8 +209,19 @@ function Bar:refresh(keep_cursor, groups)
   self:animate()
 end
 
+function Bar:redraw(keep_cursor)
+  self:refresh(keep_cursor, self.cached_groups)
+end
+
+function Bar:invalidate()
+  self.cached_groups = nil
+end
+
 function Bar:follow(buf, refresh_history)
   if not self:visible() then return end
+  if refresh_history and not self.cached_groups then
+    return self:redraw(api.nvim_get_current_win() == self.win)
+  end
   local first = self.rows[1]
   if not first then return end
   if self.style == "vertical" then
@@ -214,11 +229,7 @@ function Bar:follow(buf, refresh_history)
     if not row then return end
     local keep_cursor = api.nvim_get_current_win() == self.win
     if not keep_cursor then sidebar.follow(self, buf) end
-    if refresh_history then
-      local item = row.item or vim.iter(row.group.items):find(function(candidate) return candidate.bufnr == buf end)
-      if item and not item.separate_window then row.group.active = item end
-      self:refresh(keep_cursor, first.groups)
-    end
+    if refresh_history then self:redraw(keep_cursor) end
   elseif not self.editor_focused then
     for index, row in ipairs(self.rows) do
       local item = vim.iter(row.group.items):find(function(candidate) return candidate.bufnr == buf end)
@@ -244,6 +255,10 @@ function Bar:animate()
 end
 
 function Bar:update_title(buf, label)
+  for _, group in ipairs(self.cached_groups or {}) do
+    local item = vim.iter(group.items):find(function(candidate) return candidate.bufnr == buf end)
+    if item then item.label = label break end
+  end
   if self.style == "vertical" and valid(self.win) then sidebar.update_title(self, buf, label) end
 end
 
@@ -282,7 +297,7 @@ function Bar:fold(value)
   local row = self:focused_row()
   if not row or self.folded[row.group.id] == value then return end
   self.folded[row.group.id] = value
-  self:refresh_at(row.group.id)
+  self:refresh_at(row.group.id, nil, self.cached_groups)
 end
 
 function Bar:move(delta)
@@ -307,7 +322,7 @@ end
 function Bar:cycle(step)
   local items, active = {}, self:active()
   local index = 1
-  for _, group in ipairs(self:groups()) do
+  for _, group in ipairs(self.cached_groups or self:groups()) do
     local item = group.active and group.active.bufnr and group.active
       or vim.iter(group.items):find(function(candidate) return candidate.bufnr end)
     if item then
@@ -446,6 +461,7 @@ end
 function Bar:reset()
   if valid(self.anchor) then vim.w[self.anchor].luanphan_window_bar = nil end
   self.win, self.anchor, self.rows = nil, nil, {}
+  self.cached_groups = nil
   self.rows_by_buffer, self.active_row = nil, nil
   self.editor_focused, self.focused_window = nil, nil
   self:stop_timer()
@@ -458,6 +474,7 @@ function Bar:close()
 end
 
 function Bar:layout(anchor, layout)
+  if self.opts.on_layout then self.opts.on_layout(anchor) end
   local frame, style = layout.bar, layout.bar_style
   if not frame then
     self:close()
@@ -562,7 +579,7 @@ api.nvim_create_autocmd({ "WinEnter", "BufEnter", "BufFilePost" }, {
         if event.event == "WinEnter" and vim.bo[buf].buftype == "terminal" then bar.focused_window = win end
         if bar.style == "vertical"
           and (event.event == "BufFilePost" or (editor_focused and not (bar.rows_by_buffer or {})[buf])) then
-          bar:refresh()
+          bar:redraw()
         else
           bar:follow(buf)
         end

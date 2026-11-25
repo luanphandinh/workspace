@@ -42,11 +42,6 @@ function M.create(opts)
     return win and win ~= -1 and win or anchor
   end
 
-  local function focus_content()
-    local win = active_window()
-    if win then api.nvim_set_current_win(win) end
-  end
-
   local function move_from_dock(direction)
     if not dock or not api.nvim_win_is_valid(dock) then return end
     local target = api.nvim_win_call(dock, function() return vim.fn.win_getid(vim.fn.winnr(direction)) end)
@@ -102,10 +97,7 @@ function M.create(opts)
     end
     current = group
     local active = vim.iter(group.panes):find(function(pane) return pane.bufnr == desired end)
-    inner:reflow(anchor, group, layout, active)
-    if enter or (had_focus and views.group_anchor(api.nvim_get_current_win()) ~= anchor) then focus_content() end
-    if enter then bar.history.record(desired) end
-    bar:refresh()
+    inner:reflow(anchor, group, layout, active, { focus = enter, restore_focus = had_focus, record = enter })
   end
 
   local function render(group, enter)
@@ -125,6 +117,7 @@ function M.create(opts)
   local function activate(pane)
     pane.group.scope.active = pane.group
     pane.group.bufnr = pane.bufnr
+    if pane.group == current and inner:focus_tile(current, pane, true) then return true end
     render(pane.group, true)
     return api.nvim_get_current_buf() == pane.bufnr
   end
@@ -146,15 +139,16 @@ function M.create(opts)
       if #owner.windows == 0 then owner.next_id = 0 end
       if owner.active == group then owner.active = owner.windows[math.min(position, #owner.windows)] end
     end
+    owner.bar:invalidate()
     local function reflow()
       if current == group and (is_open() or requested) then
         if owner.active then
-          render(owner.active, replace_focus)
+          return render(owner.active, replace_focus)
         elseif not panel.hide() then
           owner.open = false
         end
       end
-      owner.bar:refresh(true)
+      owner.bar:redraw(true)
     end
     if defer then vim.schedule(reflow) else reflow() end
   end
@@ -171,6 +165,7 @@ function M.create(opts)
     local pane = { bufnr = buf, id = "shell:" .. buf, label = result.label or "shell", group = group, term = result.term }
     group.panes[#group.panes + 1] = pane
     group.bufnr = buf
+    group.scope.bar:invalidate()
     api.nvim_create_autocmd("BufWipeout", {
       buffer = buf, once = true,
       callback = function() remove_pane(group, pane, true) end,
@@ -261,7 +256,7 @@ function M.create(opts)
   inner = views.create({
     context = function() return current end,
     prepare_pane = prepare_pane,
-    layout_bar = function(win, layout) bar:layout(win, layout) end,
+    bar = function() return bar end,
     editor = not opts.docked and {
       key = function(group) return group end,
       active = function(group) return group.bufnr end,
@@ -281,6 +276,7 @@ function M.create(opts)
       local originals = {}
       for _, pane in ipairs(group.panes) do originals[pane.id] = pane end
       group.panes = vim.tbl_map(function(pane) return originals[pane.id] end, panes)
+      group.scope.bar:invalidate()
       render(group, false)
     end,
     activate = activate,
@@ -330,12 +326,12 @@ function M.create(opts)
     enter = function(win)
       if rendering or quitting then return end
       local buf = api.nvim_win_get_buf(win)
-      if vim.bo[buf].buftype == "terminal" then
+      if vim.bo[buf].buftype == "terminal" and buf ~= current.bufnr then
         current.bufnr = buf
-        bar.history.record(buf)
-        bar:refresh()
+        local pane = vim.iter(current.panes):find(function(item) return item.bufnr == buf end)
+        if pane then inner:focus_tile(current, pane, false) end
       elseif win == dock then
-        vim.schedule(function() if is_open() and api.nvim_get_current_win() == dock then focus_content() end end)
+        vim.schedule(function() if is_open() and api.nvim_get_current_win() == dock then bar:focus_content() end end)
       end
     end,
     hide = function(win)

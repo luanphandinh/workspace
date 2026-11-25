@@ -5143,9 +5143,20 @@ assert(vim.wait(3000, function()
 end, 20), 'shell did not switch to its alternate screen')
 local ids = { vim.b[first].luanphan_agent_thread_id, vim.b[second].luanphan_agent_thread_id }
 assert(#sessions.list('terminal') == 2 and ids[1] ~= ids[2], 'shell slots were not saved independently')
+local session_file = vim.g.luanphan_terminal_sessions_dir .. '/' .. ids[1] .. '.json'
+local function saved_use()
+  return vim.json.decode(vim.fn.readfile(session_file)[1]).last_used
+end
+local initial_use = saved_use()
+assert(agents.focus('terminal', first, { view_mode = true }))
+assert(agents.focus('terminal', second, { view_mode = true }))
+assert(agents.focus('terminal', first, { view_mode = true }))
+local last_focus = vim.b[first].luanphan_agent_saved_use
+assert(saved_use() == initial_use, 'moving tile focus wrote the session file inline')
+assert(vim.wait(2000, function() return saved_use() == last_focus end), 'last tile focus was not persisted')
 vim.fn.writefile(ids, root .. '/ids')
 assert(agents.open('codex', agent, { view_mode = true }))
-os.exit(0)
+vim.cmd('qa!')
 ]=])
   run([=[
 agents.toggle()
@@ -6053,7 +6064,11 @@ end
 
 local function test_tiled_agent_workspace_picker(repo, worktree)
   local fixture = temp_root .. "/tiled-workspace-picker"
-  write_executable(fixture .. "/bin/mcodex", { "#!/bin/sh", "exec cat" })
+  write_executable(fixture .. "/bin/mcodex", {
+    "#!/bin/sh",
+    'if [ "$2" != "-c" ]; then printf "\\033]0;%.29s... | Example background thread\\007" "$2"; fi',
+    "exec cat",
+  })
   write(fixture .. "/settings.toml", { "[agent_float]", 'display_style = "tile"' })
   local script = fixture .. "/picker.lua"
   local script_lines = {
@@ -6074,13 +6089,17 @@ local terminal = require('luanphan.agents.terminal-chat')
 local view = require('luanphan.view_container')
 local actions = require('telescope.actions')
 local action_state = require('telescope.actions.state')
-local function new_agent()
-  return agents.new('codex', { view_mode = true })
+local function new_agent(id)
+  return agents.new('codex', { view_mode = true, thread_id = id, args = id and { 'resume', id } })
 end
 local home, home_peer = new_agent(), new_agent()
 agents.hide()
 vim.cmd.cd({ args = { destination } })
-local away, away_peer = new_agent(), new_agent()
+local id = '00000000-0001-4000-8000-000000000001'
+local away, away_peer = new_agent(id), new_agent()
+assert(vim.wait(3000, function()
+  return (vim.b[away].term_title or ''):find('Example background thread', 1, true)
+end), 'background pane did not receive its title')
 local anchor = view.group_anchor(vim.api.nvim_get_current_win())
 local sidebar = assert(vim.w[anchor].luanphan_window_bar)
 
@@ -6171,13 +6190,14 @@ worktree_api.activate_agent = function(...)
   return activate(...)
 end
 vim.api.nvim_feedkeys(vim.keycode('<D-2>'), 'xt', false)
-bar.opts.groups, worktree_api.activate_agent = groups, activate
 assert(vim.api.nvim_get_current_buf() == away_peer and #view.group_windows(anchor) == 3,
   'Cmd+2 did not switch to the second workspace in place')
 vim.api.nvim_set_current_win(sidebar)
 vim.api.nvim_feedkeys(vim.keycode('<D-1>'), 'xt', false)
 assert(vim.api.nvim_get_current_buf() == home and vim.w[anchor].luanphan_window_bar == sidebar,
   'Cmd+1 did not restore the first workspace from the sidebar')
+assert(rebuilds == 0, 'switching between live workspaces rebuilt the sidebar groups')
+bar.opts.groups, worktree_api.activate_agent = groups, activate
 vim.api.nvim_feedkeys(vim.keycode('<D-9>'), 'xt', false)
 assert(vim.api.nvim_get_current_buf() == home, 'out-of-range window shortcut changed focus')
 
@@ -6271,8 +6291,17 @@ vim.o.columns = 160
 local agents = require('luanphan.agents.main')
 agents.toggle()
 local sidebar = assert(vim.w.luanphan_window_bar)
-local first = vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(sidebar), 0, 1, false)[1]
-assert(first == ' [1] ' .. vim.fs.basename(destination), 'restarting Neovim lost the reordered workspaces')
+local function sidebar_rows()
+  return vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(sidebar), 0, -1, false)
+end
+assert(sidebar_rows()[1] == ' [1] ' .. vim.fs.basename(destination), 'restarting Neovim lost the reordered workspaces')
+local function has_title()
+  return table.concat(sidebar_rows(), '\n'):find('Example background thread', 1, true)
+end
+assert(has_title(), 'restored workspace showed a raw session ID before focus')
+local bars = require('luanphan.view_container.window_bar')
+assert(bars.focus_window(1) and bars.focus_window(2), 'could not switch between restored workspaces')
+assert(has_title(), 'workspace switch brought a raw session ID back into the sidebar')
 vim.api.nvim_set_current_win(sidebar)
 vim.api.nvim_win_set_cursor(sidebar, { 1, 0 })
 vim.api.nvim_feedkeys(vim.keycode('<D-S-j>'), 'xt', false)

@@ -87,11 +87,7 @@ function M.create(opts)
     if pane.group ~= current or not tiles:visible_window(current, pane.bufnr) then return false end
     current.active.data.active = false
     current.active, pane.data.active = pane, true
-    local focus = should_focus(force)
-    tiles:focus_visible(current, pane, focus)
-    bar.history.record(pane.bufnr)
-    bar:follow(pane.bufnr, true)
-    return true
+    return tiles:focus_tile(current, pane, should_focus(force))
   end
 
   local function activate(pane, view_mode)
@@ -254,7 +250,7 @@ function M.create(opts)
     tabs = function(group) return group.items end,
     insert_after_active = true,
     relayout = function() render() end,
-    layout_bar = function(win, layout) bar:layout(win, layout) end,
+    bar = function() return bar end,
     prepare_pane = prepare_pane,
     editor = {
       key = function(group) return "tmux:" .. session.id .. ":" .. group.id end,
@@ -303,10 +299,9 @@ function M.create(opts)
       anchor = views.open_float(layout, selected.bufnr, false)
     end
     tiles.active_by_context = {}
-    if not tiles:reflow(anchor, current, layout, selected) then return end
-    if tiles:focus_visible(current, selected, focus) and focus then focus_on_render = false end
-    if not selection then bar.history.record(selected.bufnr) end
-    bar:refresh(api.nvim_get_current_win() == bar.win)
+    if tiles:reflow(anchor, current, layout, selected, { focus = focus, record = not selection }) and focus then
+      focus_on_render = false
+    end
   end
 
   render = function()
@@ -353,6 +348,7 @@ function M.create(opts)
     end
     local old = panes
     windows, panes, current = next_windows, listed, selected or next_windows[1]
+    bar:invalidate()
     if current then
       if selection then
         if current.active.id == selection.id then

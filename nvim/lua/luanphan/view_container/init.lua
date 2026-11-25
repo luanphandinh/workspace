@@ -236,15 +236,37 @@ function Container:reuse(target, opts)
 	return vim.tbl_extend("force", opts or {}, { reuse_win = self.layout_anchor })
 end
 
-function Container:focus_visible(context, tab, focus)
+function Container:layout_sidebar(anchor, layout)
+	self.opts.bar():layout(anchor, layout)
+end
+
+function Container:bind_title(bufnr)
+	tabs.bind_title(bufnr, self.opts.title)
+end
+
+function Container:invalidate_sidebar()
+	self.opts.bar():invalidate()
+end
+
+function Container:focus_tile(context, tab, focus)
 	local win = self:visible_window(context, tab.bufnr)
 	if not win then return end
 	self:select_tab(context, tab)
 	if focus and vim.api.nvim_get_current_win() ~= win then vim.api.nvim_set_current_win(win) end
+	local bar = self.opts.bar()
+	bar.history.record(tab.bufnr)
+	bar:follow(tab.bufnr, true)
 	return win
 end
 
-function Container:reflow(anchor, context, layout, active)
+function Container:present_tile(context, tab, win)
+	if self:visible_window(context, tab.bufnr) == win then return self:focus_tile(context, tab, false) end
+	self:select_tab(context, tab)
+	self.opts.bar().history.record(tab.bufnr)
+	return self.opts.relayout(win)
+end
+
+function Container:reflow(anchor, context, layout, active, opts)
 	if active then self:select_tab(context, active) end
 	local previous = self.visible_windows or {}
 	for buf, win in pairs(previous) do terminal.save_view(win, buf) end
@@ -262,14 +284,22 @@ function Container:reflow(anchor, context, layout, active)
 		panes = tab and { { win = anchor, tab = tab } } or {}
 	end
 	self.layout_anchor, self.layout_context, self.visible_windows = anchor, context, {}
-	if self.opts.layout_bar then self.opts.layout_bar(anchor, layout) end
+	self:layout_sidebar(anchor, layout)
 	for _, pane in ipairs(panes) do
 		pane.opened = pane.opened or previous[pane.tab.bufnr] ~= pane.win
 		self.visible_windows[pane.tab.bufnr] = pane.win
 		self.opts.prepare_pane(pane, context, anchor)
 		terminal.show_view(pane.win, pane.tab.bufnr, pane.opened)
 	end
+	local bar = self.opts.bar()
+	if opts and active then
+		local focus = opts.focus or (opts.restore_focus and M.group_anchor(vim.api.nvim_get_current_win()) ~= anchor)
+		local win = focus and self:visible_window(context, active.bufnr)
+		if win and vim.api.nvim_get_current_win() ~= win then vim.api.nvim_set_current_win(win) end
+		if opts.record then bar.history.record(active.bufnr) end
+	end
 	self:refresh_tile_highlights()
+	bar:redraw(vim.api.nvim_get_current_win() == bar.win)
 	return anchor
 end
 
@@ -428,10 +458,12 @@ function Container:remove_tab(bufnr, context, on_close)
 	if active and active.bufnr == bufnr then self.active_by_context[context] = nil end
 	vim.schedule(function()
 		on_close()
+		local bar = self.opts.bar()
+		bar:invalidate()
 		if reflow and vim.api.nvim_win_is_valid(reflow) then
 			self.opts.relayout(reflow)
 		else
-			self.opts.refresh_bar()
+			bar:redraw()
 		end
 	end)
 end

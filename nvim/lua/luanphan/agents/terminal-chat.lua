@@ -136,10 +136,11 @@ function M.create(profile)
         label = label or provider_name,
       }
     end,
-    on_register = function(buf)
+    on_register = function(buf, launched)
       if status_options.initial and not vim.b[buf].luanphan_agent_program_status then
         require("luanphan.agents.status").update(buf, status_options.initial)
       end
+      if profile.on_register then profile.on_register(buf, launched) end
     end,
     on_adopt = function(buf, data)
       vim.b[buf].luanphan_agent_thread_id = data.thread_id

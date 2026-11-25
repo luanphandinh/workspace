@@ -73,9 +73,9 @@ function M.create(profile)
     end
   end
 
-  local function register_terminal(buf, cwd)
+  local function register_terminal(buf, cwd, launched)
     terminal_pane.configure_buffer(buf)
-    profile.on_register(buf)
+    profile.on_register(buf, launched)
     apply_scrollback(buf)
     terminal_pane.set_reference_cwd(buf, cwd)
     local group = vim.api.nvim_create_augroup(augroup_name .. "_Window_" .. buf, { clear = true })
@@ -95,7 +95,7 @@ function M.create(profile)
       vim.api.nvim_buf_delete(buf, { force = true })
       return false
     end
-    register_terminal(buf, cwd)
+    register_terminal(buf, cwd, true)
     return true
   end
 
