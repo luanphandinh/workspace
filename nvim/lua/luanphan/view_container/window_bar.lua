@@ -68,8 +68,14 @@ function Bar:stop_timer()
   self.timer = nil
 end
 
+function Bar:content_window()
+  if self.opts.active_window then return self.opts.active_window() or self.anchor end
+  local win = self.focused_window
+  return valid(win) and windows.group_anchor(win) == self.anchor and win or self.anchor
+end
+
 function Bar:active()
-  local win = self.opts.active_window and self.opts.active_window() or self.anchor
+  local win = self:content_window()
   return valid(win) and api.nvim_win_get_buf(win)
 end
 
@@ -126,7 +132,7 @@ end
 
 function Bar:focus_content()
   if self.editor_focused and editor.focus(self.anchor) then return end
-  local win = self.opts.active_window and self.opts.active_window() or self.anchor
+  local win = self:content_window()
   if valid(win) then api.nvim_set_current_win(win) end
 end
 
@@ -437,13 +443,17 @@ function Bar:attach_terminal(buf)
   vim.keymap.set("t", "<C-h>", "<C-h>", { buffer = buf, silent = true, nowait = true })
 end
 
-function Bar:close()
-  local win = self.win
+function Bar:reset()
   if valid(self.anchor) then vim.w[self.anchor].luanphan_window_bar = nil end
   self.win, self.anchor, self.rows = nil, nil, {}
   self.rows_by_buffer, self.active_row = nil, nil
-  self.editor_focused = nil
+  self.editor_focused, self.focused_window = nil, nil
   self:stop_timer()
+end
+
+function Bar:close()
+  local win = self.win
+  self:reset()
   if valid(win) then api.nvim_win_close(win, true) end
 end
 
@@ -549,6 +559,7 @@ api.nvim_create_autocmd({ "WinEnter", "BufEnter", "BufFilePost" }, {
       if bar.win == sidebar_win then
         bar.editor_focused = editor_focused
         local buf = api.nvim_win_get_buf(win)
+        if event.event == "WinEnter" and vim.bo[buf].buftype == "terminal" then bar.focused_window = win end
         if bar.style == "vertical"
           and (event.event == "BufFilePost" or (editor_focused and not (bar.rows_by_buffer or {})[buf])) then
           bar:refresh()

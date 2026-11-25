@@ -2,7 +2,7 @@ local M = {}
 
 local function integrated()
   if vim.luanphan_integrated_terminal then return vim.luanphan_integrated_terminal end
-  vim.luanphan_integrated_terminal = require("luanphan.terminal.panel").create({
+  vim.luanphan_integrated_terminal = require("luanphan.view_container.shell_panel").create({
     settings = "terminal_split",
     augroup = "LuanphanIntegratedTerminal",
     docked = true,

@@ -103,6 +103,34 @@ function M.stream(pane, bytes)
   M.output(pane, bytes)
 end
 
+-- A snapshot restores the screen, but tmux does not include OSC events in it.
+local function replay_osc(pane, bytes)
+  local pending = (pane.pending_osc or "") .. bytes
+  while true do
+    local start_at = pending:find("\27]", 1, true)
+    if not start_at then
+      pane.pending_osc = pending:sub(-1) == "\27" and "\27" or nil
+      return
+    end
+    local bell = pending:find("\7", start_at + 2, true)
+    local st = pending:find("\27\\", start_at + 2, true)
+    local last = (st and (not bell or st < bell)) and st + 1 or bell
+    if not last then
+      pane.pending_osc = #pending - start_at < 65536 and pending:sub(start_at) or nil
+      return
+    end
+    M.output(pane, pending:sub(start_at, last))
+    pending = pending:sub(last + 1)
+  end
+end
+
+function M.receive(pane, bytes)
+  if not pane then return end
+  if pane.ready then return M.stream(pane, bytes) end
+  if pane.capturing or pane.replay_osc then pane.dirty = true end
+  if pane.replay_osc then replay_osc(pane, bytes) end
+end
+
 function M.grid_size(win)
   local height = api.nvim_win_get_height(win) - (vim.wo[win].winbar == "" and 0 or 1)
   return math.max(1, api.nvim_win_get_width(win)), math.max(1, height)
@@ -253,7 +281,7 @@ function M.paint_frame(pane, lines, flags, primary)
   if output ~= "" then M.output(pane, output) end
 end
 
-function M.paint(pane, visible, ready)
+function M.paint(pane, visible)
   if not pane.term or not pane.client or pane.capturing or (visible and not visible(pane)) then return end
   local connection = pane.client
   pane.capturing, pane.ready, pane.dirty = true, false, false
@@ -263,11 +291,13 @@ function M.paint(pane, visible, ready)
     if not lines or (visible and not visible(pane)) then return end
     M.paint_frame(pane, lines, flags, primary)
     if pane.dirty then
-      M.paint(pane, visible, ready)
+      M.paint(pane, visible)
       return
     end
     pane.ready = true
-    if ready then ready(pane) end
+    local pending = pane.pending_osc
+    pane.pending_osc = nil
+    if pending and vim.startswith(pending, "\27]") then M.output(pane, pending) end
   end)
 end
 

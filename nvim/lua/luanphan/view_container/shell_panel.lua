@@ -321,39 +321,30 @@ function M.create(opts)
     })
   end
 
-  api.nvim_create_autocmd("WinEnter", {
-    group = events,
-    callback = function()
-      if rendering or quitting or not is_open() then return end
-      local win = api.nvim_get_current_win()
-      if views.group_anchor(win) == anchor then
-        local buf = api.nvim_win_get_buf(win)
-        if vim.bo[buf].buftype == "terminal" then
-          current.bufnr = buf
-          bar.history.record(buf)
-          bar:refresh()
-        elseif win == dock then
-          vim.schedule(function() if is_open() and api.nvim_get_current_win() == dock then focus_content() end end)
-        end
-      elseif not opts.docked and (api.nvim_win_get_config(win).relative == "" or vim.bo.buftype == "terminal") then
-        local previous = anchor
-        vim.schedule(function()
-          if not quitting and previous == anchor and is_open()
-            and views.group_anchor(api.nvim_get_current_win()) ~= anchor then panel.hide() end
-        end)
+  views.watch_panel(events, {
+    anchor = function() return anchor end,
+    docked = opts.docked,
+    hide_on_terminal = true,
+    suspended = function() return rendering or quitting end,
+    closing = function() return quitting end,
+    companion = function(win) return win == dock end,
+    enter = function(win)
+      if rendering or quitting then return end
+      local buf = api.nvim_win_get_buf(win)
+      if vim.bo[buf].buftype == "terminal" then
+        current.bufnr = buf
+        bar.history.record(buf)
+        bar:refresh()
+      elseif win == dock then
+        vim.schedule(function() if is_open() and api.nvim_get_current_win() == dock then focus_content() end end)
       end
     end,
-  })
-  api.nvim_create_autocmd("WinClosed", {
-    group = events,
-    callback = function(args)
-      if quitting then return end
-      local win = tonumber(args.match)
-      if win ~= anchor and win ~= (bar and bar.win) and win ~= dock then return end
+    hide = function(win)
+      if not win then return panel.hide() end
       local closing = anchor
       if current then current.scope.open = false end
       anchor, dock = nil, nil
-      if bar then bar.win, bar.anchor = nil, nil end
+      if bar then bar:reset() end
       if closing then views.close_group(closing, win) end
     end,
   })

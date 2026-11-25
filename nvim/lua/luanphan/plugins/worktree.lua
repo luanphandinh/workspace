@@ -36,7 +36,8 @@ local function setup()
   local terminal_agent = require("luanphan.agents.terminal-chat")
   local agent_sessions = require("luanphan.agents.sessions")
   local recent_paths = require("luanphan.recent_paths")
-  local compact_picker_opts = require("luanphan.view_container").compact_picker_opts
+  local views = require("luanphan.view_container")
+  local compact_picker_opts = views.compact_picker_opts
 
   -- Transient map of "apply this cursor when the file is first BufReadPost'd
   -- in the current nvim session". Populated by `restore_buffers`, consumed
@@ -270,25 +271,6 @@ local function setup()
       end
     end
     return nil
-  end
-
-  local function close_other_agent_windows(target_bufnr)
-    local target_win = target_bufnr and vim.fn.bufwinid(target_bufnr) or -1
-    local group = target_win ~= -1 and vim.w[target_win].luanphan_view_anchor
-    for _, win in ipairs(vim.api.nvim_list_wins()) do
-      if vim.api.nvim_win_is_valid(win) then
-        local buf = vim.api.nvim_win_get_buf(win)
-        if buf ~= target_bufnr
-          and (not group or vim.w[win].luanphan_view_anchor ~= group)
-          and vim.bo[buf].buftype == "terminal"
-          and vim.b[buf].luanphan_persist_term
-          and not vim.b[buf].luanphan_toggleterm
-          and not vim.b[buf].luanphan_floating_terminal
-        then
-          pcall(terminal_agent.close_window, win)
-        end
-      end
-    end
   end
 
   local function find_tree_window()
@@ -1323,7 +1305,7 @@ local function setup()
     close_toggleterm_windows()
 
     -- 3. cd. Fires DirChangedPre/DirChanged for the persistent-terminal modules.
-    terminal_agent.with_preserved_windows(function()
+    views.with_preserved_windows(function()
       vim.cmd.cd({ args = { path } })
     end)
     recent_paths.touch(visit_path or path)
@@ -1985,7 +1967,7 @@ local function setup()
     if agent_windows then
       focused = agents.open(instance.agent, instance.bufnr, opts)
     else
-      close_other_agent_windows(instance.bufnr)
+      agents.hide(instance.bufnr)
       focused = agents.focus(instance.agent, instance.bufnr, opts)
     end
     if not focused then

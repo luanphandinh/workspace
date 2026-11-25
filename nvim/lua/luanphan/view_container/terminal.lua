@@ -1,6 +1,7 @@
 local M = {}
 local api = vim.api
 local tmux = require("luanphan.view_container.tmux.pane")
+local closing_tiles = {}
 
 local window_options = {
   breakindent = false,
@@ -107,6 +108,81 @@ function M.bind_navigation(buf, navigate)
       if api.nvim_win_get_buf(win) == buf then navigate(win, direction) end
     end, opts)
   end
+end
+
+function M.mount(buf, win, open, prepare, highlights, zindex)
+  local placeholder
+  if not win or not api.nvim_win_is_valid(win) then
+    -- Reserve the winbar before attaching a live terminal so its grid stays stable.
+    if vim.bo[buf].buftype == "terminal" then placeholder = api.nvim_create_buf(false, true) end
+    win = open(placeholder or buf)
+  end
+  prepare(win)
+  if api.nvim_win_get_buf(win) ~= buf then api.nvim_win_set_buf(win, buf) end
+  if placeholder then pcall(api.nvim_buf_delete, placeholder, { force = true }) end
+  api.nvim_set_current_win(win)
+  api.nvim_win_set_config(win, { zindex = zindex })
+  M.configure_window(win, highlights)
+  return win
+end
+
+function M.focus_input(win, buf, view_mode)
+  local function focused()
+    return api.nvim_get_current_win() == win and api.nvim_win_get_buf(win) == buf
+  end
+  if view_mode then
+    vim.schedule(function() if focused() then vim.cmd.stopinsert() end end)
+  elseif not M.is_scrolled(buf) then
+    vim.defer_fn(function() if focused() then vim.cmd.startinsert() end end, 10)
+  end
+end
+
+function M.is_closing_tile(win)
+  return closing_tiles[vim.w[win].luanphan_view_anchor]
+end
+
+function M.bind_process(buf, group, process, on_close, replacement)
+  local windows = require("luanphan.view_container.window")
+  process.on_exit(buf, function()
+    local win = vim.fn.win_findbuf(buf)[1]
+    local anchor = win and vim.w[win].luanphan_view_anchor
+    local action = win and (not anchor or win == api.nvim_get_current_win()) and replacement(buf)
+    -- Give the replacement a chance to take focus before a resize rebuilds the panel.
+    if action and anchor then closing_tiles[anchor] = true end
+    on_close(buf)
+    vim.schedule(function()
+      if action and anchor then closing_tiles[anchor] = nil end
+      local function showing()
+        return win and api.nvim_win_is_valid(win) and api.nvim_win_get_buf(win) == buf
+      end
+      if action and showing() then pcall(action) end
+      if showing() then
+        if anchor and win ~= anchor then
+          pcall(api.nvim_win_close, win, true)
+        else
+          pcall(windows.close_window, win)
+        end
+      end
+      if api.nvim_buf_is_valid(buf) then pcall(api.nvim_buf_delete, buf, { force = true }) end
+    end)
+  end)
+  api.nvim_create_autocmd("BufWipeout", {
+    group = group,
+    buffer = buf,
+    once = true,
+    callback = function()
+      if type(vim.v.exiting) == "number" or not process.running(buf) then return end
+      on_close(buf)
+      vim.schedule(function() process.stop(buf) end)
+    end,
+  })
+  M.bind_quit(buf, group, function(direct)
+    if not process.running(buf) then return end
+    local action = direct and replacement(buf)
+    return function()
+      if process.stop(buf) and action then pcall(action) end
+    end
+  end)
 end
 
 function M.bind_quit(buf, group, prepare)

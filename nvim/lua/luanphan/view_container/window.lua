@@ -1,6 +1,7 @@
 local M = {}
 local terminal = require("luanphan.view_container.terminal")
 local closing_groups = {}
+local preserve_windows = false
 
 function M.group_anchor(win)
 	if not vim.api.nvim_win_is_valid(win) then return win end
@@ -62,6 +63,94 @@ function M.close_group(anchor, closing)
 	closing_groups[anchor] = nil
 	if failure then error(failure) end
 	return closed or false
+end
+
+function M.close_window(win)
+	return M.close_group(M.group_anchor(win))
+end
+
+function M.close_matching(matches, except)
+	local keep_win = except and vim.fn.bufwinid(except) or -1
+	local keep_group = keep_win ~= -1 and M.group_anchor(keep_win)
+	local closed = false
+	for _, win in ipairs(vim.api.nvim_list_wins()) do
+		if vim.api.nvim_win_is_valid(win) then
+			local buf = vim.api.nvim_win_get_buf(win)
+			if buf ~= except and matches(buf) then
+				local anchor = M.group_anchor(win)
+				if anchor ~= keep_group then
+					local ok, hidden = pcall(M.close_group, anchor)
+					closed = (ok and hidden) or closed
+				end
+			end
+		end
+	end
+	return closed
+end
+
+function M.with_preserved_windows(callback)
+	local previous = preserve_windows
+	preserve_windows = true
+	local ok, result = pcall(callback)
+	preserve_windows = previous
+	if not ok then error(result) end
+	return result
+end
+
+function M.track_directory(group, visible, restore)
+	local saved = {}
+	vim.api.nvim_create_autocmd({ "DirChangedPre", "DirChanged" }, {
+		group = group,
+		callback = function(event)
+			if preserve_windows then return end
+			local cwd = vim.fn.getcwd()
+			if event.event == "DirChangedPre" then
+				local win, pane = visible(cwd)
+				saved[cwd] = pane or win
+				if win then pcall(M.close_window, win) end
+			elseif saved[cwd] then
+				restore(cwd, saved[cwd])
+			end
+		end,
+	})
+end
+
+function M.watch_panel(group, opts)
+	local function suspended()
+		return opts.suspended and opts.suspended()
+	end
+
+	local function outside(win, anchor)
+		return M.group_anchor(win) ~= anchor and (vim.api.nvim_win_get_config(win).relative == ""
+			or (opts.hide_on_terminal and vim.bo[vim.api.nvim_win_get_buf(win)].buftype == "terminal"))
+	end
+
+	vim.api.nvim_create_autocmd({ "WinEnter", "WinClosed" }, {
+		group = group,
+		callback = function(event)
+			local anchor = opts.anchor()
+			if not anchor then return end
+			if event.event == "WinClosed" then
+				local win = tonumber(event.match)
+				if opts.closing and opts.closing() then return end
+				local sidebar = vim.api.nvim_win_is_valid(anchor) and vim.w[anchor].luanphan_window_bar
+				if win == anchor or win == sidebar or (opts.companion and opts.companion(win)) then
+					opts.hide(win)
+				end
+				return
+			end
+			if not vim.api.nvim_win_is_valid(anchor) then return end
+			local win = vim.api.nvim_get_current_win()
+			if M.group_anchor(win) == anchor then
+				if opts.enter then opts.enter(win) end
+			elseif not opts.docked and not suspended() and outside(win, anchor) then
+				vim.schedule(function()
+					if opts.anchor() == anchor and vim.api.nvim_win_is_valid(anchor) and not suspended()
+						and outside(vim.api.nvim_get_current_win(), anchor) then opts.hide() end
+				end)
+			end
+		end,
+	})
 end
 
 return M

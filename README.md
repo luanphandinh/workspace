@@ -59,7 +59,7 @@ mkws --name example-b --branch example-branch-b --add repo-b front-end/repo-c@ex
 
 ![Neovide connects to Neovim, where agents and the floating terminal share view_container and use separate tmux servers](docs/local-development.svg)
 
-- [`view_container`](nvim/lua/luanphan/view_container) renders the window bar, tabs, tiles, and shared editor tile. Neovim owns the layout and focus. tmux runs the processes and keeps their terminal state.
+- [`view_container`](nvim/lua/luanphan/view_container) owns panel lifecycle, layout, focus, the sidebar, and the editor tile. The shared tmux backend runs processes and keeps terminal history. Each panel supplies its commands and sidebar data.
 - `<leader>a` opens workspace agents. In visual mode it sends the selection to an agent. The [Codex, Cursor, and Claude plugins](nvim/lua/luanphan/agents/plugins) supply their own launch and session behavior. Codex uses [`mcodex`](bin/mcodex) to connect its TUI to a shared Codex app-server. Each workspace has a session on `luanphan-agents`, with one tmux window per agent tile.
 - `<leader>t` opens the global floating terminal. By default it reuses a session on the default tmux server or creates one if needed. It renders tmux panes as Neovim tabs or tiles. Hiding either floating panel keeps its jobs running.
 - In a terminal tile in either floating panel, `:q` closes that tile and terminates its process. In an editor tile, `:q` closes the editor tile.

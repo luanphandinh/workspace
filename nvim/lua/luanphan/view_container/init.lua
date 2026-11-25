@@ -204,6 +204,25 @@ function Container:visible_window(context, buf)
 	if win and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then return win end
 end
 
+function Container:content_window()
+	local anchor = self.layout_anchor
+	if not anchor or not vim.api.nvim_win_is_valid(anchor) then return end
+	local current = vim.api.nvim_get_current_win()
+	local buf = vim.api.nvim_win_get_buf(current)
+	return self:visible_window(self.layout_context, buf) == current and current or anchor
+end
+
+function Container:hide()
+	local anchor = self.layout_anchor
+	return anchor and window.close_group(anchor) or false
+end
+
+function Container:reuse(target, opts)
+	local win = self:content_window()
+	if not win or vim.api.nvim_win_get_buf(win) == target then return opts end
+	return vim.tbl_extend("force", opts or {}, { reuse_win = self.layout_anchor })
+end
+
 function Container:focus_visible(context, tab, focus)
 	local win = self:visible_window(context, tab.bufnr)
 	if not win then return end
@@ -372,13 +391,21 @@ function Container:attach(win, bufnr, id, context)
 	if not vim.w[win].luanphan_view_anchor then self:render(win, context) end
 end
 
-function Container:forget(id, bufnr, context)
-	context = context or self:context()
+function Container:remove_tab(bufnr, context, on_close)
+	local win = vim.fn.bufwinid(bufnr)
+	local reflow = win ~= -1 and win ~= vim.api.nvim_get_current_win() and vim.w[win].luanphan_view_anchor
+	if win == -1 and self.layout_context == context then reflow = self.layout_anchor end
 	if self.layout_context == context then self.visible_windows = nil end
 	local active = self.active_by_context[context]
-	if active and active.id == id and active.bufnr == bufnr then
-		self.active_by_context[context] = nil
-	end
+	if active and active.bufnr == bufnr then self.active_by_context[context] = nil end
+	vim.schedule(function()
+		on_close()
+		if reflow and vim.api.nvim_win_is_valid(reflow) then
+			self.opts.relayout(reflow)
+		else
+			self.opts.refresh_bar()
+		end
+	end)
 end
 
 function M.create(opts)

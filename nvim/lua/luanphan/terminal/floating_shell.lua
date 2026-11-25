@@ -1,6 +1,6 @@
 local api = vim.api
 
-return require("luanphan.terminal.panel").create({
+return require("luanphan.view_container.shell_panel").create({
   settings = "floating_terminal",
   augroup = "LuanphanFloatingTerminal",
   close_on_exit = true,

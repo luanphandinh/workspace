@@ -2,13 +2,12 @@ local M = {}
 local api = vim.api
 local agents = require("luanphan.agents.main")
 local tmux = require("luanphan.agents.tmux")
-local editor_tile = require("luanphan.view_container.editor")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
-local close_window = require("luanphan.agents.terminal-chat").close_window
 local views = require("luanphan.view_container")
+local close_window = views.close_window
 
-local main, focused_terminal
+local main
 local switching_workspace = false
 local bar
 
@@ -80,10 +79,6 @@ bar = require("luanphan.view_container.window_bar").create({
   groups = groups,
   load_order = tmux.load_window_order,
   save_order = tmux.save_window_order,
-  active_window = function()
-    if valid(focused_terminal) and views.group_anchor(focused_terminal) == main then return focused_terminal end
-    return main
-  end,
   activate = function(item, view_mode)
     return M.select_session(item.thread, view_mode and { view_mode = true } or nil)
   end,
@@ -140,34 +135,14 @@ function M.attach(buf)
 end
 
 local group = api.nvim_create_augroup("LuanphanAgentWindowBar", { clear = true })
-api.nvim_create_autocmd("WinClosed", {
-  group = group,
-  callback = function(args)
-    local win = tonumber(args.match)
-    if win ~= main and win ~= bar.win then return end
+views.watch_panel(group, {
+  anchor = function() return main end,
+  suspended = function() return switching_workspace end,
+  hide = function(win)
     local anchor = main
-    main, focused_terminal = nil, nil
-    bar.win, bar.anchor = nil, nil
-    bar:stop_timer()
-    if anchor then views.close_group(anchor, win) end
-  end,
-})
-
-api.nvim_create_autocmd("WinEnter", {
-  group = group,
-  callback = function()
-    local current = api.nvim_get_current_win()
-    if main and current ~= bar.win and views.group_anchor(current) == main then
-      if current ~= editor_tile.window(main) then focused_terminal = current end
-      return
-    end
-    if switching_workspace or not valid(main) or api.nvim_win_get_config(current).relative ~= "" then return end
-    local win = main
-    vim.schedule(function()
-      if win == main and not switching_workspace and valid(win) and api.nvim_win_get_config(0).relative == "" then
-        close_window(win)
-      end
-    end)
+    main = nil
+    bar:reset()
+    views.close_group(anchor, win)
   end,
 })
 

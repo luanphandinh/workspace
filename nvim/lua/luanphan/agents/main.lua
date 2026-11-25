@@ -158,46 +158,11 @@ function M.pick_default_agent()
 end
 
 local function visible_agent()
-  local current = vim.api.nvim_get_current_win()
-  local selected = vim.api.nvim_win_get_buf(current)
-  local name = vim.b[selected].luanphan_agent_name
-  if agent_defs[name] and vim.w[current].luanphan_view_anchor then
-    return { name = name, bufnr = selected, win = current }
-  end
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    if vim.api.nvim_win_is_valid(win) then
-      local bufnr = vim.api.nvim_win_get_buf(win)
-      local name = vim.b[bufnr].luanphan_agent_name
-      if agent_defs[name] and vim.b[bufnr].luanphan_persist_term then
-        return { name = name, bufnr = bufnr, win = win }
-      end
-    end
-  end
-  return nil
-end
-
-local function close_visible_agents(except_bufnr)
-  local keep_win = except_bufnr and vim.fn.bufwinid(except_bufnr) or -1
-  local keep_group = keep_win ~= -1 and vim.w[keep_win].luanphan_view_anchor
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    if vim.api.nvim_win_is_valid(win) then
-      local bufnr = vim.api.nvim_win_get_buf(win)
-      local name = vim.b[bufnr].luanphan_agent_name
-      if bufnr ~= except_bufnr and agent_defs[name] and vim.b[bufnr].luanphan_persist_term
-          and (not keep_group or vim.w[win].luanphan_view_anchor ~= keep_group) then
-        pcall(terminal_agent.close_window, win)
-      end
-    end
-  end
-end
-
-local function panel_options(visible, target, opts)
-  if not visible or visible.bufnr == target then
-    close_visible_agents(target)
-    return opts
-  end
-  close_visible_agents(visible.bufnr)
-  return vim.tbl_extend("force", opts or {}, { reuse_win = view_container.group_anchor(visible.win) })
+  local win = agent_container:content_window()
+  if not win then return end
+  local bufnr = vim.api.nvim_win_get_buf(win)
+  local name = vim.b[bufnr].luanphan_agent_name
+  if agent_defs[name] then return { name = name, bufnr = bufnr, win = win } end
 end
 
 function M.agent_icon(name)
@@ -343,18 +308,9 @@ local function get_agent(name)
       local id = sessions.supported(name) and vim.b[bufnr].luanphan_agent_thread_id
       local lost = vim.b[bufnr].luanphan_agent_backend_lost
       if lost then restored_cwds[cwd] = nil end
-      local win = vim.fn.bufwinid(bufnr)
-      local reflow = win ~= -1 and win ~= vim.api.nvim_get_current_win() and vim.w[win].luanphan_view_anchor
-      if win == -1 and agent_container.layout_context == cwd then reflow = agent_container.layout_anchor end
-      agent_container:forget(name .. ":" .. bufnr, bufnr, cwd)
-      vim.schedule(function()
+      agent_container:remove_tab(bufnr, cwd, function()
         if id and not lost and type(vim.v.exiting) ~= "number" then
           sessions.forget_buffer(bufnr, name, id)
-        end
-        if reflow and vim.api.nvim_win_is_valid(reflow) then
-          relayout_agent_panel(reflow)
-        else
-          window_bar.refresh()
         end
       end)
     end,
@@ -420,7 +376,7 @@ function M.focus(name, bufnr, opts)
   if not target then
     return setup_agent(name).focus(bufnr, opts)
   end
-  if not agent_container:visible_window(vim.fn.getcwd(), target) then close_visible_agents(target) end
+  if not agent_container:visible_window(vim.fn.getcwd(), target) then agent_container:hide() end
   return setup_agent(name).focus(target, opts)
 end
 
@@ -433,7 +389,7 @@ function M.open(name, bufnr, opts)
   if target and agent_container:visible_window(vim.fn.getcwd(), target) then
     return setup_agent(name).focus(target, opts)
   end
-  opts = panel_options(visible_agent(), target, opts)
+  opts = agent_container:reuse(target, opts)
   if target then
     return setup_agent(name).focus(target, opts)
   end
@@ -462,7 +418,7 @@ function M.new(name, opts)
         end
       end
     end
-    opts = panel_options(visible, nil, opts)
+    opts = agent_container:reuse(nil, opts)
   end
   return setup_agent(name).new(opts, order_new_tile)
 end
@@ -542,23 +498,12 @@ local function receive_terminal_event(args)
   end
 end
 
-function M.hide()
-  local hidden = false
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    if vim.api.nvim_win_is_valid(win) then
-      local bufnr = vim.api.nvim_win_get_buf(win)
-      if vim.bo[bufnr].filetype == "agent-window-bar"
-        or (vim.bo[bufnr].buftype == "terminal"
-        and vim.b[bufnr].luanphan_persist_term
-        and not vim.b[bufnr].luanphan_floating_terminal
-        and not vim.b[bufnr].luanphan_toggleterm)
-      then
-        local ok, closed = pcall(terminal_agent.close_window, win)
-        hidden = (ok and closed) or hidden
-      end
-    end
-  end
-  return hidden
+function M.hide(except)
+  return view_container.close_matching(function(buf)
+    local flags = vim.b[buf]
+    return vim.bo[buf].filetype == "agent-window-bar" or (vim.bo[buf].buftype == "terminal"
+      and flags.luanphan_persist_term and not flags.luanphan_floating_terminal and not flags.luanphan_toggleterm)
+  end, except)
 end
 
 function M.send_selection(name)
@@ -569,7 +514,7 @@ function M.send_selection(name)
     return false
   end
   local target = agent_buffer(name, vim.fn.getcwd())
-  local opts = panel_options(visible, target)
+  local opts = agent_container:reuse(target)
   setup_agent(name).send_selection(target, opts)
   return true
 end
@@ -579,6 +524,7 @@ agent_container = view_container.create({
   tabs = open_tabs,
   relayout = relayout_agent_panel,
   layout_bar = function(anchor, layout) require("luanphan.agents.window_bar").layout(anchor, layout) end,
+  refresh_bar = function() require("luanphan.agents.window_bar").refresh() end,
   prepare_pane = function(pane, cwd, anchor)
     local tab = pane.tab
     if pane.opened or pane.win == anchor then
@@ -670,7 +616,7 @@ local function agent_spec(name)
         callback = function() vim.schedule(restore_on_first_ui) end,
       })
       vim.api.nvim_create_autocmd("TermRequest", { group = group, callback = receive_terminal_event })
-      terminal_agent.track_directory(group, function(cwd)
+      view_container.track_directory(group, function(cwd)
         local pane = visible_agent()
         if pane and vim.b[pane.bufnr].luanphan_agent_cwd == cwd then return pane.win, pane end
       end, function(cwd, pane)
