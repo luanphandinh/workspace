@@ -5139,6 +5139,10 @@ assert(agents.focus('terminal', first, { view_mode = true }))
 local last_focus = vim.b[first].luanphan_agent_saved_use
 assert(saved_use() == initial_use, 'moving tile focus wrote the session file inline')
 assert(vim.wait(2000, function() return saved_use() == last_focus end), 'last tile focus was not persisted')
+local previous_use = vim.b[second].luanphan_agent_last_used
+api.nvim_set_current_win(vim.fn.bufwinid(second))
+assert(vim.wait(1000, function() return vim.b[second].luanphan_agent_last_used > previous_use end),
+  'native window focus did not record the selected tile')
 vim.fn.writefile(ids, root .. '/ids')
 assert(agents.open('codex', agent, { view_mode = true }))
 vim.cmd('qa!')

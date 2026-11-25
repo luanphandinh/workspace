@@ -252,6 +252,19 @@ function Container:watch(group, opts)
 		anchor = function() return self.layout_anchor end,
 		hide = function(win) return self:hide(win) end,
 		suspended = function() return self.switching end,
+		enter = function(win)
+			local context, buf = self.layout_context, vim.api.nvim_win_get_buf(win)
+			local active = self.active_by_context[context]
+			if self:visible_window(context, buf) ~= win or (active and active.bufnr == buf) then return end
+			vim.schedule(function()
+				local selected = self.active_by_context[context]
+				if vim.api.nvim_get_current_win() == win and self:visible_window(context, buf) == win
+					and (not selected or selected.bufnr ~= buf) then
+					local pane = self.visible_panes[buf]
+					self.opts.activate(pane.tab, { view_mode = vim.api.nvim_get_mode().mode ~= "t" })
+				end
+			end)
+		end,
 	}, opts or {}))
 end
 
