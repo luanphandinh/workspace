@@ -1,5 +1,37 @@
 return {
   {
+    "MeanderingProgrammer/render-markdown.nvim",
+    ft = "markdown",
+    dependencies = { "nvim-tree/nvim-web-devicons" },
+    opts = {
+      indent = {
+        enabled = true,
+        per_level = 2,
+        skip_level = 0,
+        skip_heading = true,
+        icon = "",
+      },
+      pipe_table = { grid = true },
+    },
+    config = function(_, opts)
+      local renderer = require("render-markdown.render.markdown.table")
+      local border_row = renderer.border_row
+      renderer.border_row = function(self, row, position, lines)
+        if position ~= "body" or not self.context.config.indent.enabled then
+          return border_row(self, row, position, lines)
+        end
+        -- Body dividers already have the section indent in their row prefix.
+        local body = setmetatable({
+          indent = function()
+            return { line = function() return self:line() end }
+          end,
+        }, { __index = self })
+        return border_row(body, row, position, lines)
+      end
+      require("render-markdown").setup(opts)
+    end,
+  },
+  {
     "iamcco/markdown-preview.nvim",
     cmd = { "MarkdownPreviewToggle", "MarkdownPreview", "MarkdownPreviewStop" },
     ft = { "markdown", "rmd" },

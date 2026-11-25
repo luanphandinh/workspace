@@ -380,20 +380,26 @@ function M.focus(name, bufnr, opts)
   return setup_agent(name).focus(target, opts)
 end
 
+local function new_tile(name, opts)
+  return agent_container:open_tile(vim.fn.getcwd(), function(place)
+    local launch_opts = agent_container:reuse(nil, opts)
+    return setup_agent(name).new(launch_opts, place and function(bufnr)
+      sessions.set_order(place({ bufnr = bufnr }))
+    end)
+  end, opts and opts.thread_id)
+end
+
 function M.open(name, bufnr, opts)
   M.restore_running()
   if not agent_defs[name] then
     return false
   end
   local target = bufnr or agent_buffer(name, vim.fn.getcwd())
-  if target and agent_container:visible_window(vim.fn.getcwd(), target) then
-    return setup_agent(name).focus(target, opts)
+  if not target then return new_tile(name, opts) end
+  if not agent_container:visible_window(vim.fn.getcwd(), target) then
+    opts = agent_container:reuse(target, opts)
   end
-  opts = agent_container:reuse(target, opts)
-  if target then
-    return setup_agent(name).focus(target, opts)
-  end
-  return setup_agent(name).new(opts)
+  return setup_agent(name).focus(target, opts)
 end
 
 function M.new(name, opts)
@@ -401,26 +407,7 @@ function M.new(name, opts)
   if not agent_defs[name] then
     return false
   end
-  local order_new_tile
-  local visible = visible_agent()
-  if visible then
-    local win, cwd = visible.win, vim.fn.getcwd()
-    if win == vim.api.nvim_get_current_win() and vim.w[win].luanphan_view_anchor
-      and (not opts or not opts.thread_id) then
-      local tabs = open_tabs(cwd)
-      for index, tab in ipairs(tabs) do
-        if tab.bufnr == visible.bufnr then
-          order_new_tile = function(bufnr)
-            table.insert(tabs, index + 1, { bufnr = bufnr })
-            sessions.set_order(tabs)
-          end
-          break
-        end
-      end
-    end
-    opts = agent_container:reuse(nil, opts)
-  end
-  return setup_agent(name).new(opts, order_new_tile)
+  return new_tile(name, opts)
 end
 
 function M.resume(session, opts)

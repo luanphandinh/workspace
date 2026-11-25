@@ -6687,14 +6687,22 @@ assert(not vim.iter(api.nvim_list_wins()):any(function(win)
 end), "closing a tile left other panes visible")
 panel.toggle()
 wait(function() return active() == second end, "reattach after closing a tile")
+key("<C-h>")
+wait(function() return active() == first end, "select the first tile for insertion")
 key("<leader>nt")
 wait(function() return active() and active() ~= first and active() ~= second end, "create a tile for direct quit")
 local disposable = active()
+for order, id in ipairs({ first, disposable, second }) do
+  local metadata = tmux("display-message", "-p", "-t", id, "#{@luanphan-view-window}")
+  assert(vim.json.decode(metadata).pane_order == order, "new tile order was not saved after the focused tile")
+end
 vim.cmd.quit()
-wait(function() return active() == second and pane_window(first) and not pane_window(disposable) end,
+wait(function() return active() == first and pane_window(second) and not pane_window(disposable) end,
   "direct quit reopens the remaining panes")
 assert(not vim.tbl_contains(vim.split(tmux("list-panes", "-a", "-F", "#{pane_id}"), "\n"), disposable),
   "direct quit left the selected tmux process running")
+key("<C-l>")
+wait(function() return active() == second end, "restore focus to the second tile")
 local moved_win = api.nvim_get_current_win()
 local right_edge = api.nvim_win_get_config(0).col
 key("<C-S-h>")

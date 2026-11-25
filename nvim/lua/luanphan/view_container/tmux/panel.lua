@@ -130,26 +130,23 @@ function M.create(opts)
 
   local function new_tab()
     if not current or not current.active or creating then return end
-    local group = current
-    local active = group.active
-    local function done()
-      creating = false
-      focus_new_pane()
-    end
-    creating = true
-    run({ "new-window", "-P", "-F", "#{pane_id}", "-t", session.id .. ":", "-c", "#{pane_current_path}",
-      "-n", group.title }, function(lines)
-      local pane = { id = lines[1], data = active.data }
-      local items = vim.list_slice(group.items)
-      for index, item in ipairs(items) do
-        if item == active then table.insert(items, index + 1, pane) break end
+    local group, active = current, current.active
+    return tiles:open_tile(group, function(place)
+      local function done()
+        creating = false
+        focus_new_pane()
       end
-      local commands = {}
-      for index, item in ipairs(items) do
-        commands[#commands + 1] = model.write(item, { pane_order = index, active = item == pane })
-      end
-      batch(commands, done)
-    end, done)
+      creating = true
+      run({ "new-window", "-P", "-F", "#{pane_id}", "-t", session.id .. ":", "-c", "#{pane_current_path}",
+        "-n", group.title }, function(lines)
+        local pane = { id = lines[1], data = active.data }
+        local commands = {}
+        for index, item in ipairs(place(pane)) do
+          commands[#commands + 1] = model.write(item, { pane_order = index, active = item == pane })
+        end
+        batch(commands, done)
+      end, done)
+    end)
   end
 
   local function pick_session()
@@ -255,6 +252,7 @@ function M.create(opts)
   tiles = views.create({
     context = function() return current end,
     tabs = function(group) return group.items end,
+    insert_after_active = true,
     relayout = function() render() end,
     layout_bar = function(win, layout) bar:layout(win, layout) end,
     prepare_pane = prepare_pane,

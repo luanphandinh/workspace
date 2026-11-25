@@ -260,9 +260,9 @@ function Container:reflow(anchor, context, layout, active)
 	return anchor
 end
 
-function Container:active(context)
+function Container:active(context, tabs)
 	context = context or self:context()
-	local tabs = self:tabs(context)
+	tabs = tabs or self:tabs(context)
 	local current_buf = vim.api.nvim_get_current_buf()
 	for _, tab in ipairs(tabs) do
 		if tab.bufnr == current_buf then
@@ -279,6 +279,21 @@ function Container:active(context)
 		end
 	end
 	return tabs[1]
+end
+
+function Container:open_tile(context, spawn, keep_order)
+	local focused = self.tile_anchor
+		and self:visible_window(context, vim.api.nvim_get_current_buf()) == vim.api.nvim_get_current_win()
+	if keep_order or not (focused or self.opts.insert_after_active) then return spawn() end
+
+	local tabs = vim.list_slice(self.opts.tabs(context))
+	local active = self:active(context, tabs)
+	local index = vim.iter(tabs):enumerate():find(function(_, tab) return tab == active end)
+	if not index then return spawn() end
+	return spawn(function(tab)
+		table.insert(tabs, index + 1, tab)
+		return tabs
+	end)
 end
 
 function Container:move_tile(direction, context)
