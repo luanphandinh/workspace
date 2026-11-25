@@ -1,14 +1,12 @@
 local M = {
   icon = "\u{f489}",
   plugin = "luanphan-panel-terminal",
-  g_bufnr = "panel_terminal_bufnr",
   notify_prefix = "panel_terminal",
   augroup_prefix = "PanelTerminal",
   shell = true,
   restore_on_open = true,
   defaults = {
     cmd = function() return { vim.o.shell, "-i" } end,
-    detach_on_quit = true,
   },
 }
 

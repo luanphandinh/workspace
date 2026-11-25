@@ -224,6 +224,9 @@ local function attach(buf, record, new)
   record.view_width, record.view_height = record.width, record.height
   group.panes[record.id], state.buffers[buf] = record, record
   vim.b[buf].luanphan_agent_tmux_pane = record.id
+  vim.b[buf].luanphan_persist_term = true
+  vim.b[buf].luanphan_agent_name = record.data.agent
+  vim.b[buf].luanphan_agent_cwd = record.data.cwd
   local win
   if vim.fn.bufwinid(buf) == -1 then
     win = api.nvim_open_win(buf, false, {
@@ -304,6 +307,18 @@ end
 function M.running(buf)
   local pane = state.buffers[buf]
   return pane ~= nil and pane.group.panes[pane.id] == pane
+end
+
+function M.panes(agent, cwd)
+  local panes = {}
+  for buf, pane in pairs(state.buffers) do
+    if (not agent or pane.data.agent == agent) and (not cwd or pane.data.cwd == cwd)
+      and api.nvim_buf_is_valid(buf) and vim.bo[buf].buftype == "terminal" then
+      panes[#panes + 1] = pane
+    end
+  end
+  table.sort(panes, function(a, b) return a.bufnr < b.bufnr end)
+  return panes
 end
 
 function M.on_exit(buf, callback)

@@ -1,7 +1,6 @@
 local M = {
   icon = "\u{ec5c}",
   plugin = "luanphan-cursor-agent",
-  g_bufnr = "cursor_agent_bufnr",
   notify_prefix = "cursor_agent",
   augroup_prefix = "CursorAgent",
   status = { initial = "idle" },
@@ -10,7 +9,6 @@ local M = {
       "sh", "-c", [[export NVIM_CURSOR_AGENT_TTY="$(tty)"; exec cursor-agent --plugin-dir "$0" "$@"]],
       vim.fn.stdpath("config") .. "/lua/luanphan/agents/plugins/cursor",
     },
-    detach_on_quit = true,
   },
 }
 

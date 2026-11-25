@@ -71,23 +71,11 @@ local function jump_session(direction, count)
   end)
 end
 
-local function agent_buffers(name, cwd, closing_bufnr)
-  local def = agent_defs[name]
-  local buffers = def and vim.g[def.g_bufnr] or nil
-  local result = {}
-  local stored = type(buffers) == "table" and buffers[cwd] or nil
-  for _, bufnr in ipairs(type(stored) == "table" and stored or {}) do
-    if bufnr == closing_bufnr or terminal_agent.running(bufnr) then
-      result[#result + 1] = bufnr
-    end
-  end
-  return result
-end
-
 local function agent_buffer(name, cwd)
   local selected = nil
   local selected_sequence = -1
-  for _, bufnr in ipairs(agent_buffers(name, cwd)) do
+  for _, pane in ipairs(backend.panes(name, cwd)) do
+    local bufnr = pane.bufnr
     local sequence = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0
     if sequence > selected_sequence then
       selected = bufnr
@@ -98,9 +86,22 @@ local function agent_buffer(name, cwd)
 end
 
 local function open_tabs(cwd, closing_bufnr)
+  local buffers = {}
+  for _, pane in ipairs(backend.panes(nil, cwd)) do
+    local name = pane.data.agent
+    buffers[name] = buffers[name] or {}
+    table.insert(buffers[name], pane.bufnr)
+  end
+  -- Keep the closing pane in order while choosing its replacement.
+  if closing_bufnr and not backend.running(closing_bufnr) then
+    local name = vim.b[closing_bufnr].luanphan_agent_name
+    buffers[name] = buffers[name] or {}
+    table.insert(buffers[name], closing_bufnr)
+    table.sort(buffers[name])
+  end
   local tabs = {}
   for _, name in ipairs(agent_order) do
-    local bufnrs = agent_buffers(name, cwd, closing_bufnr)
+    local bufnrs = buffers[name] or {}
     for index, bufnr in ipairs(bufnrs) do
       tabs[#tabs + 1] = {
         id = name .. ":" .. bufnr,
@@ -201,8 +202,14 @@ function M.display_title(name, title)
 end
 
 local function relayout_agent_panel(anchor)
+  if not vim.api.nvim_win_is_valid(anchor) then return end
   local name = vim.b[vim.api.nvim_win_get_buf(anchor)].luanphan_agent_name
   if agent_defs[name] then setup_agent(name).layout(anchor) end
+end
+
+local function refresh_visible_layout()
+  local active = visible_agent()
+  if active then relayout_agent_panel(view_container.group_anchor(active.win)) end
 end
 
 function M.map_create_shortcuts(bufnr)
@@ -260,8 +267,8 @@ local function restore_panel_sessions(cwd)
   for _, name in ipairs(agent_order) do
     if agent_defs[name].restore_on_open then
       local live = {}
-      for _, buf in ipairs(agent_buffers(name, cwd)) do
-        local id = vim.b[buf].luanphan_agent_thread_id
+      for _, pane in ipairs(backend.panes(name, cwd)) do
+        local id = vim.b[pane.bufnr].luanphan_agent_thread_id
         if id then live[id] = true end
       end
       local saved_sessions = sessions.list(name)
@@ -322,7 +329,6 @@ local function get_agent(name)
     shell = def.shell,
     status = def.status,
     new_session_id = def.new_session_id,
-    g_bufnr = def.g_bufnr,
     notify_prefix = def.notify_prefix,
     augroup_prefix = def.augroup_prefix,
     hint_open = agent_key,
@@ -489,25 +495,12 @@ end
 function M.resume(session, opts)
   if not sessions.supported(session.agent) or not sessions.valid_id(session.thread_id) then return false end
   M.restore_running()
-  for _, buf in ipairs(agent_buffers(session.agent, session.path)) do
-    if vim.b[buf].luanphan_agent_thread_id == session.thread_id then
-      return M.open(session.agent, buf, opts)
+  for _, pane in ipairs(backend.panes(session.agent, session.path)) do
+    if vim.b[pane.bufnr].luanphan_agent_thread_id == session.thread_id then
+      return M.open(session.agent, pane.bufnr, opts)
     end
   end
   return M.new(session.agent, vim.tbl_extend("force", opts or {}, resume_options(session)))
-end
-
-function M.toggle_agent(name)
-  if not agent_defs[name] then
-    return false
-  end
-  local target = agent_buffer(name, vim.fn.getcwd())
-  local visible = visible_agent()
-  if target and visible and visible.bufnr == target then
-    setup_agent(name).toggle()
-    return true
-  end
-  return M.open(name, target)
 end
 
 function M.toggle()
@@ -693,11 +686,31 @@ local function agent_spec(name)
     keys = keys,
     init = primary and function()
       local group = vim.api.nvim_create_augroup("LuanphanAgentStartup", { clear = true })
+      local resize_timer
       vim.api.nvim_create_autocmd({ "VimEnter", "UIEnter" }, {
         group = group,
         callback = function() vim.schedule(restore_on_first_ui) end,
       })
       vim.api.nvim_create_autocmd("TermRequest", { group = group, callback = receive_terminal_event })
+      vim.api.nvim_create_autocmd("VimResized", {
+        group = group,
+        callback = function()
+          if resize_timer then vim.fn.timer_stop(resize_timer) end
+          resize_timer = vim.fn.timer_start(250, function()
+            resize_timer = nil
+            refresh_visible_layout()
+          end)
+        end,
+      })
+      vim.api.nvim_create_autocmd("BufWritePost", {
+        group = group,
+        callback = function(args)
+          local path = vim.uv.fs_realpath(require("luanphan.global_settings").config_path())
+          if path and path == vim.uv.fs_realpath(vim.api.nvim_buf_get_name(args.buf)) then
+            refresh_visible_layout()
+          end
+        end,
+      })
     end or nil,
     config = function()
       setup_agent(name)

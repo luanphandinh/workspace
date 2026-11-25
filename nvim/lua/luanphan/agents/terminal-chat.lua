@@ -33,14 +33,12 @@ M.running = terminal_window.running
 local BASE_DEFAULTS = {
   cmd = "agent",
   args = {},
-  resize_debounce_ms = 250,
   float_border = "single",
   float_zindex = 45,
   scrollback = nil,
   max_send_chars = 256 * 1024,
   defer_send_ms = 200,
   send_mode = "lines_only",
-  detach_on_quit = false,
 }
 
 local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,WinBarNC:Normal,"
@@ -51,7 +49,6 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
 ---@field shell? boolean forward Ctrl+L to an interactive shell
 ---@field status? table provider status options
 ---@field new_session_id? fun(): string
----@field g_bufnr string vim.g key for buffer reuse after reload
 ---@field notify_prefix string prefix for :vim.notify
 ---@field augroup_prefix string prefix for autocmd groups
 ---@field hint_open string hint when no terminal (e.g. "<leader>a")
@@ -64,7 +61,6 @@ local TERMINAL_WINHIGHLIGHT = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,Win
 ---@field on_float_layout? fun(win: integer, layout: table, opening?: boolean)
 function M.create(profile)
   profile = vim.tbl_extend("force", {
-    g_bufnr = "terminal_agent_bufnr",
     notify_prefix = "terminal_agent",
     augroup_prefix = "TerminalAgent",
     hint_open = "<leader>xx",
@@ -76,14 +72,8 @@ function M.create(profile)
   end
 
 
-local state = {
-  bufnrs = {},        ---@type table<string, integer[]>  cwd -> bufnrs
-  visibility = {},    ---@type table<string, boolean>  cwd -> last-known visibility
-  resize_timer = nil, ---@type userdata|nil
-  float_geometry = nil, ---@type table|nil
-}
-
-local G_BUFNR = profile.g_bufnr
+local visibility = {}
+local provider_name = profile.status_name or profile.notify_prefix
 local status_options = profile.status or {}
 
 local DEFAULTS = vim.tbl_deep_extend("force", vim.deepcopy(BASE_DEFAULTS), profile.defaults or {})
@@ -94,102 +84,18 @@ local function cwd_key()
   return vim.fn.getcwd()
 end
 
-local function normalize_bufnrs(value)
-  if type(value) ~= "table" then
-    return {}
-  end
-  local result = {}
-  for _, nr in ipairs(value) do
-    if type(nr) == "number" then
-      result[#result + 1] = nr
-    end
-  end
-  return result
-end
-
 local function current_bufnr(cwd)
-  local selected = nil
+  local selected
   local selected_sequence = -1
-  for _, nr in ipairs(normalize_bufnrs(state.bufnrs[cwd or cwd_key()])) do
-    if M.running(nr) then
-      if vim.fn.bufwinid(nr) ~= -1 then
-        return nr
-      end
-      local sequence = tonumber(vim.b[nr].luanphan_agent_last_used) or 0
-      if sequence > selected_sequence then
-        selected = nr
-        selected_sequence = sequence
-      end
+  for _, pane in ipairs(backend.panes(provider_name, cwd or cwd_key())) do
+    local buf = pane.bufnr
+    if vim.fn.bufwinid(buf) ~= -1 then return buf end
+    local sequence = tonumber(vim.b[buf].luanphan_agent_last_used) or 0
+    if sequence > selected_sequence then
+      selected, selected_sequence = buf, sequence
     end
   end
   return selected
-end
-
-local function persist_map()
-  -- vim.g accepts Lua tables; they're round-tripped as vim dicts. Only store valid bufnrs.
-  local snap = {}
-  for cwd, stored in pairs(state.bufnrs) do
-    local bufnrs = {}
-    for _, nr in ipairs(normalize_bufnrs(stored)) do
-      if vim.api.nvim_buf_is_valid(nr) then
-        bufnrs[#bufnrs + 1] = nr
-      end
-    end
-    if #bufnrs > 0 then
-      state.bufnrs[cwd] = bufnrs
-      snap[cwd] = bufnrs
-    else
-      state.bufnrs[cwd] = nil
-    end
-  end
-  vim.g[G_BUFNR] = snap
-end
-
-local function set_agent_bufnr(bufnr, cwd)
-  cwd = cwd or cwd_key()
-  if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
-    local bufnrs = normalize_bufnrs(state.bufnrs[cwd])
-    if not vim.tbl_contains(bufnrs, bufnr) then
-      bufnrs[#bufnrs + 1] = bufnr
-    end
-    state.bufnrs[cwd] = bufnrs
-    pcall(function() vim.b[bufnr].luanphan_persist_term = true end)
-    pcall(function() vim.b[bufnr].luanphan_agent_name = profile.status_name end)
-    pcall(function() vim.b[bufnr].luanphan_agent_cwd = cwd end)
-    pcall(function() vim.b[bufnr].luanphan_agent_instance = #bufnrs end)
-    require("luanphan.terminal_references").attach(bufnr, cwd)
-  else
-    state.bufnrs[cwd] = nil
-    state.float_geometry = nil
-  end
-  persist_map()
-end
-
-local function clear_bufnr_for_buf(bufnr)
-  for cwd, stored in pairs(state.bufnrs) do
-    local bufnrs = normalize_bufnrs(stored)
-    for index = #bufnrs, 1, -1 do
-      if bufnrs[index] == bufnr then
-        table.remove(bufnrs, index)
-      end
-    end
-    if #bufnrs ~= #normalize_bufnrs(stored) then
-      state.bufnrs[cwd] = #bufnrs > 0 and bufnrs or nil
-      persist_map()
-      if profile.on_close then
-        pcall(profile.on_close, bufnr, cwd)
-      end
-      return cwd
-    end
-  end
-  return nil
-end
-
-local function merge(dst, src)
-  for k, v in pairs(src) do
-    dst[k] = v
-  end
-  return dst
 end
 
 local function command_for_agent(opts)
@@ -215,23 +121,7 @@ local function buf_shortpath(bufnr)
 end
 
 local function win_for_buf(bufnr)
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    if vim.api.nvim_win_get_buf(win) == bufnr then
-      return win
-    end
-  end
-  return nil
-end
-
-local function owns_buffer(bufnr)
-  for _, stored in pairs(state.bufnrs) do
-    for _, owned in ipairs(normalize_bufnrs(stored)) do
-      if owned == bufnr then
-        return true
-      end
-    end
-  end
-  return false
+  return vim.fn.win_findbuf(bufnr)[1]
 end
 
 local function mark_terminal_used(bufnr)
@@ -240,26 +130,12 @@ local function mark_terminal_used(bufnr)
   vim.b[bufnr].luanphan_agent_last_used = sequence
 end
 
-local function valid_job_id(job)
-  return type(job) == "number" and job > 0
-end
-
 local function save_terminal_view(win)
-  if not win or not vim.api.nvim_win_is_valid(win) then
-    return
+  if not win or not vim.api.nvim_win_is_valid(win) then return end
+  local buf = vim.api.nvim_win_get_buf(win)
+  if backend.running(buf) then
+    terminal_window.save_view(win, buf)
   end
-  local bufnr = vim.api.nvim_win_get_buf(win)
-  if not owns_buffer(bufnr) then
-    return
-  end
-  local ok, view = pcall(vim.api.nvim_win_call, win, vim.fn.winsaveview)
-  if not ok then
-    return
-  end
-  vim.b[bufnr].luanphan_terminal_view = {
-    follow = view.lnum >= vim.api.nvim_buf_line_count(bufnr),
-    view = view,
-  }
 end
 
 local function resume_terminal_view(win, bufnr, opts)
@@ -276,11 +152,7 @@ local function resume_terminal_view(win, bufnr, opts)
         if opts and opts.view_mode and vim.api.nvim_get_current_win() == win then
           vim.cmd("stopinsert")
         end
-        if restore_saved then
-          pcall(vim.api.nvim_win_call, win, function()
-            vim.fn.winrestview(saved.view)
-          end)
-        end
+        terminal_window.restore_view(win, bufnr)
       end
     end)
     return
@@ -313,17 +185,6 @@ local function open_agent_float(bufnr)
   return win
 end
 
-local function save_float_geometry(win)
-  local win_config = vim.api.nvim_win_get_config(win)
-  state.float_geometry = {
-    relative = win_config.relative,
-    row = win_config.row,
-    col = win_config.col,
-    width = win_config.width,
-    height = win_config.height,
-  }
-end
-
 local function apply_agent_scrollback(buf)
   local n = config.scrollback
   if type(n) == "number" and n >= 1 and n <= 100000 and vim.api.nvim_buf_is_valid(buf) then
@@ -332,21 +193,6 @@ local function apply_agent_scrollback(buf)
 end
 
 local function configure_terminal_buffer(buf)
-  if not buf or not vim.api.nvim_buf_is_valid(buf) then
-    return
-  end
-  if vim.bo[buf].buftype ~= "terminal" then
-    local group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Configure_" .. buf, { clear = true })
-    vim.api.nvim_create_autocmd("TermOpen", {
-      group = group,
-      buffer = buf,
-      once = true,
-      callback = function(args)
-        configure_terminal_buffer(args.buf)
-      end,
-    })
-    return
-  end
   pcall(vim.treesitter.stop, buf)
   pcall(vim.api.nvim_buf_call, buf, function()
     vim.bo.syntax = ""
@@ -359,7 +205,8 @@ local function configure_terminal_window(win)
   if not win or not vim.api.nvim_win_is_valid(win) then
     return
   end
-  configure_terminal_buffer(vim.api.nvim_win_get_buf(win))
+  local buf = vim.api.nvim_win_get_buf(win)
+  if vim.bo[buf].buftype == "terminal" then configure_terminal_buffer(buf) end
   local options = {
     breakindent = false,
     colorcolumn = "",
@@ -399,66 +246,16 @@ local function prepare_terminal_window(win)
   end
 end
 
-local function term_buffer_alive(bufnr)
-  return M.running(bufnr)
-end
-
 local function layout_float(win)
+  if not vim.api.nvim_win_is_valid(win) then return end
   if pending_tile_close[vim.w[win].luanphan_view_anchor] then return end
   local layout = get_float_layout()
-  state.float_geometry = layout.body
   if profile.on_float_layout then
     profile.on_float_layout(win, layout)
   else
     vim.api.nvim_win_set_config(win, layout.body)
     sync_terminal_grid(win, vim.api.nvim_win_get_buf(win))
   end
-end
-
-local function sync_float_after_resize()
-  local cur = current_bufnr()
-  if not cur or not term_buffer_alive(cur) then
-    return
-  end
-  local win = win_for_buf(cur)
-  if not win or not vim.api.nvim_win_is_valid(win) then
-    return
-  end
-  layout_float(win)
-end
-
-local function schedule_resize_sync()
-  local ms = config.resize_debounce_ms
-  if state.resize_timer then
-    state.resize_timer:stop()
-    state.resize_timer:close()
-    state.resize_timer = nil
-  end
-  local timer = vim.loop.new_timer()
-  state.resize_timer = timer
-  timer:start(ms, 0, function()
-    timer:stop()
-    timer:close()
-    if state.resize_timer == timer then
-      state.resize_timer = nil
-    end
-    vim.schedule(sync_float_after_resize)
-  end)
-end
-
---- While the outer frame is resized, snap the float back to the last applied size so the PTY does not
---- get a SIGWINCH per drag step; apply the final size once idle.
-local function on_vim_resized()
-  if state.float_geometry then
-    local cur = current_bufnr()
-    if cur then
-      local win = win_for_buf(cur)
-      if win and vim.api.nvim_win_is_valid(win) and not vim.w[win].luanphan_view_anchor then
-        vim.api.nvim_win_set_config(win, state.float_geometry)
-      end
-    end
-  end
-  schedule_resize_sync()
 end
 
 local function set_float_navigation_keymaps(bufnr)
@@ -488,14 +285,19 @@ local function quit_action(buf)
   end
 end
 
+local function notify_close(buf)
+  if profile.on_close then
+    pcall(profile.on_close, buf, vim.b[buf].luanphan_agent_cwd)
+  end
+end
+
 local function terminal_closed(buf)
-  if vim.b[buf].luanphan_agent_quitting then return end
   local win = win_for_buf(buf)
   local tile = win and vim.w[win].luanphan_view_anchor
   local action = win and (not tile or win == vim.api.nvim_get_current_win()) and quit_action(buf)
   -- Let the closing tile select its neighbor before any pending resize reflows the panel.
   if action and tile then pending_tile_close[tile] = true end
-  clear_bufnr_for_buf(buf)
+  notify_close(buf)
   vim.schedule(function()
     if action and tile then pending_tile_close[tile] = nil end
     if action and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == buf then
@@ -514,33 +316,25 @@ local function terminal_closed(buf)
   end)
 end
 
-local function attach_term_close(buf)
-  if backend.on_exit(buf, function() terminal_closed(buf) end) then return end
-  local ag = vim.api.nvim_create_augroup(profile.augroup_prefix .. "TermClose_" .. buf, { clear = true })
-  vim.api.nvim_create_autocmd("TermClose", {
+local function attach_window_events(buf)
+  local ag = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Window_" .. buf, { clear = true })
+  vim.api.nvim_create_autocmd("WinLeave", {
+    group = ag,
+    buffer = buf,
+    callback = function()
+      save_terminal_view(vim.api.nvim_get_current_win())
+    end,
+  })
+  vim.api.nvim_create_autocmd("BufWipeout", {
     group = ag,
     buffer = buf,
     once = true,
-    callback = function() terminal_closed(buf) end,
+    callback = function()
+      if type(vim.v.exiting) == "number" or not backend.running(buf) then return end
+      notify_close(buf)
+      vim.schedule(function() backend.stop(buf) end)
+    end,
   })
-end
-
-local function attach_quit_detach(buf)
-  local managed = vim.b[buf].luanphan_agent_tmux_pane
-  if not managed and not config.detach_on_quit then return end
-  local ag = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Quit_" .. buf, { clear = true })
-  if managed then
-    vim.api.nvim_create_autocmd("BufWipeout", {
-      group = ag,
-      buffer = buf,
-      once = true,
-      callback = function()
-        if type(vim.v.exiting) == "number" or not backend.running(buf) then return end
-        clear_bufnr_for_buf(buf)
-        vim.schedule(function() backend.stop(buf) end)
-      end,
-    })
-  end
   if profile.on_quit then
     vim.api.nvim_create_autocmd("CmdlineLeave", {
       group = ag,
@@ -549,11 +343,11 @@ local function attach_quit_detach(buf)
         if vim.fn.getcmdtype() ~= ":" or vim.v.event.abort then return end
         local command = vim.trim(vim.fn.getcmdline()):gsub("!$", "")
         if command == "" or not vim.startswith("quit", command) then return end
-        if not M.running(buf) then return end
-        -- Let TermClose choose a replacement before the window is closed.
+        if not backend.running(buf) then return end
+        -- Let the pane exit handler choose a replacement before the window closes.
         vim.cmd("let v:event.abort = v:true")
         vim.schedule(function()
-          terminal_window.stop(buf)
+          backend.stop(buf)
         end)
       end,
     })
@@ -563,75 +357,14 @@ local function attach_quit_detach(buf)
     buffer = buf,
     once = true,
     callback = function()
-      if managed then
-        local action = quit_action(buf)
-        vim.schedule(function()
-          if type(vim.v.exiting) == "number" or not M.running(buf) then return end
-          terminal_window.stop(buf)
-          if action then pcall(action) end
-        end)
-        return
-      end
-      vim.b[buf].luanphan_agent_quitting = true
       local action = quit_action(buf)
-      local ok, job = pcall(vim.fn.getbufvar, buf, "terminal_job_id")
-      if ok and valid_job_id(job) then
-        pcall(vim.fn.jobstop, job)
-        pcall(vim.fn.jobwait, { job }, 1000)
-      end
-      clear_bufnr_for_buf(buf)
       vim.schedule(function()
+        if type(vim.v.exiting) == "number" or not backend.running(buf) then return end
+        backend.stop(buf)
         if action then pcall(action) end
-        if vim.api.nvim_buf_is_valid(buf) then
-          pcall(vim.api.nvim_buf_delete, buf, { force = true })
-        end
       end)
     end,
   })
-end
-
---- After <leader>src, reconnect to any surviving agent terminal buffers.
-local function restore_agent_bufnr()
-  local stored = vim.g[G_BUFNR]
-  state.bufnrs = {}
-  if type(stored) == "table" then
-    for cwd, value in pairs(stored) do
-      if type(cwd) == "string" then
-        for index, nr in ipairs(normalize_bufnrs(value)) do
-          if term_buffer_alive(nr) then
-            state.bufnrs[cwd] = state.bufnrs[cwd] or {}
-            state.bufnrs[cwd][#state.bufnrs[cwd] + 1] = nr
-            pcall(function() vim.b[nr].luanphan_persist_term = true end)
-            pcall(function() vim.b[nr].luanphan_agent_name = profile.status_name end)
-            pcall(function() vim.b[nr].luanphan_agent_cwd = cwd end)
-            pcall(function() vim.b[nr].luanphan_agent_instance = index end)
-            attach_term_close(nr)
-            attach_quit_detach(nr)
-            apply_agent_scrollback(nr)
-            set_float_navigation_keymaps(nr)
-            require("luanphan.terminal_references").attach(nr, cwd)
-          end
-        end
-      end
-    end
-  end
-  persist_map()
-  local cur = current_bufnr()
-  if cur then
-    local rwin = win_for_buf(cur)
-    if rwin then
-      prepare_terminal_window(rwin)
-      configure_terminal_window(rwin)
-      if profile.on_show then
-        pcall(profile.on_show, cur, rwin, vim.b[cur].luanphan_agent_cwd or cwd_key())
-      end
-      if profile.on_float_layout then
-        sync_float_after_resize()
-      else
-        sync_terminal_grid(rwin, cur)
-      end
-    end
-  end
 end
 
 local function register_terminal(buf, cwd)
@@ -640,9 +373,9 @@ local function register_terminal(buf, cwd)
     require("luanphan.agents.status").update(buf, status_options.initial)
   end
   apply_agent_scrollback(buf)
-  set_agent_bufnr(buf, cwd)
-  attach_term_close(buf)
-  attach_quit_detach(buf)
+  require("luanphan.terminal_references").attach(buf, cwd)
+  backend.on_exit(buf, function() terminal_closed(buf) end)
+  attach_window_events(buf)
   set_float_navigation_keymaps(buf)
 end
 
@@ -659,9 +392,9 @@ local function start_terminal(buf, cwd, opts)
   local data = {
     cwd = cwd,
     workspace = require("luanphan.plugins.worktree").agent_workspace(cwd),
-    agent = profile.status_name or profile.notify_prefix,
+    agent = provider_name,
     thread_id = thread_id,
-    label = label or profile.status_name or profile.notify_prefix,
+    label = label or provider_name,
   }
   local ok, err = backend.launch(buf, command_for_agent(opts), data, width, math.max(1, height - 1))
   if not ok then
@@ -687,7 +420,6 @@ local function open_terminal(opts, on_start)
   vim.api.nvim_win_set_config(win, { zindex = config.float_zindex })
   prepare_terminal_window(win)
   configure_terminal_window(win)
-  save_float_geometry(win)
   local cwd = cwd_key()
   if not start_terminal(buf, cwd, opts) then return end
   if on_start then on_start(buf) end
@@ -714,7 +446,6 @@ local function show_terminal(bufnr, opts)
   end
   vim.api.nvim_win_set_config(win, { zindex = config.float_zindex })
   configure_terminal_window(win)
-  save_float_geometry(win)
   apply_agent_scrollback(cur)
   set_float_navigation_keymaps(cur)
   resume_terminal_view(win, cur, opts)
@@ -724,7 +455,7 @@ local API = {}
 
 function API.toggle()
   local cur = current_bufnr()
-  if cur and term_buffer_alive(cur) then
+  if cur and M.running(cur) then
     local win = win_for_buf(cur)
     if win then
       M.close_window(win)
@@ -733,8 +464,6 @@ function API.toggle()
     show_terminal()
     return
   end
-  -- Stale or missing entry for this cwd; open a fresh one.
-  set_agent_bufnr(nil)
   open_terminal()
 end
 
@@ -766,7 +495,7 @@ end
 --- Focus an agent terminal, showing its buffer when hidden.
 function API.focus(bufnr, opts)
   local cur = bufnr or current_bufnr()
-  if not cur or not term_buffer_alive(cur) then
+  if not cur or not M.running(cur) then
     nx("no agent terminal — use " .. profile.hint_open .. " to open", vim.log.levels.INFO)
     return false
   end
@@ -794,10 +523,7 @@ function API.prepare_tile(win, opened)
   local buf = vim.api.nvim_win_get_buf(win)
   if opened then
     configure_terminal_window(win)
-    local saved = vim.b[buf].luanphan_terminal_view
-    if saved and saved.follow == false and saved.view then
-      vim.api.nvim_win_call(win, function() vim.fn.winrestview(saved.view) end)
-    end
+    terminal_window.restore_view(win, buf)
   end
   sync_terminal_grid(win, buf)
 end
@@ -866,7 +592,7 @@ function API.send_selection(target_bufnr, opts)
   end
 
   local function target_terminal()
-    if target_bufnr and term_buffer_alive(target_bufnr) then
+    if target_bufnr and M.running(target_bufnr) then
       return target_bufnr
     end
     return current_bufnr()
@@ -885,7 +611,7 @@ function API.send_selection(target_bufnr, opts)
   local function deliver(attempt)
     attempt = attempt or 1
     local cur = target_terminal()
-    if not cur or not term_buffer_alive(cur) then
+    if not cur or not M.running(cur) then
       if attempt < 3 then
         vim.defer_fn(function()
           deliver(attempt + 1)
@@ -910,8 +636,7 @@ function API.send_selection(target_bufnr, opts)
   end
 
   local cur = target_terminal()
-  if not cur or not term_buffer_alive(cur) then
-    set_agent_bufnr(nil)
+  if not cur or not M.running(cur) then
     open_terminal(opts)
     vim.defer_fn(function()
       deliver(1)
@@ -923,34 +648,30 @@ function API.send_selection(target_bufnr, opts)
 end
 
 function API.setup(opts)
-  config = merge(vim.deepcopy(DEFAULTS), opts or {})
-  if not config.resize_debounce_ms or config.resize_debounce_ms <= 0 then
-    config.resize_debounce_ms = 250
+  config = vim.tbl_extend("force", vim.deepcopy(DEFAULTS), opts or {})
+  -- Rebind surviving panes after a config reload.
+  for _, pane in ipairs(backend.panes(provider_name)) do
+    register_terminal(pane.bufnr, pane.data.cwd)
   end
-  restore_agent_bufnr()
+  local cur = current_bufnr()
+  local win = cur and win_for_buf(cur)
+  if win then
+    prepare_terminal_window(win)
+    configure_terminal_window(win)
+    if profile.on_show then
+      pcall(profile.on_show, cur, win, vim.b[cur].luanphan_agent_cwd)
+    else
+      sync_terminal_grid(win, cur)
+    end
+  end
 
-  vim.api.nvim_create_autocmd("WinLeave", {
-    group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "View", { clear = true }),
-    callback = function(args)
-      if owns_buffer(args.buf) then
-        save_terminal_view(win_for_buf(args.buf))
-      end
-    end,
-  })
-
-  vim.api.nvim_create_autocmd("VimResized", {
-    group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Resize", { clear = true }),
-    callback = on_vim_resized,
-  })
-
-  if profile.on_float_layout then
-    vim.api.nvim_create_autocmd("BufWritePost", {
-      group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "FloatSettings", { clear = true }),
-      callback = function(args)
-        local path = vim.uv.fs_realpath(require("luanphan.global_settings").config_path())
-        if path and path == vim.uv.fs_realpath(vim.api.nvim_buf_get_name(args.buf)) then
-          sync_float_after_resize()
-        end
+  if not profile.on_float_layout then
+    vim.api.nvim_create_autocmd("VimResized", {
+      group = vim.api.nvim_create_augroup(profile.augroup_prefix .. "Resize", { clear = true }),
+      callback = function()
+        local buf = current_bufnr()
+        local visible_win = buf and win_for_buf(buf)
+        if visible_win then layout_float(visible_win) end
       end,
     })
   end
@@ -963,16 +684,16 @@ function API.setup(opts)
       if preserve_windows then return end
       local old = cwd_key()
       local cur = current_bufnr(old)
-      if not cur or not term_buffer_alive(cur) then
-        state.visibility[old] = false
+      if not cur or not M.running(cur) then
+        visibility[old] = false
         return
       end
       local win = win_for_buf(cur)
       if win then
-        state.visibility[old] = true
+        visibility[old] = true
         pcall(M.close_window, win)
       else
-        state.visibility[old] = false
+        visibility[old] = false
       end
     end,
   })
@@ -982,9 +703,9 @@ function API.setup(opts)
     callback = function()
       if preserve_windows then return end
       local new = cwd_key()
-      if not state.visibility[new] then return end
+      if not visibility[new] then return end
       local cur = current_bufnr(new)
-      if not cur or not term_buffer_alive(cur) then return end
+      if not cur or not M.running(cur) then return end
       if win_for_buf(cur) then return end
       show_terminal()
     end,

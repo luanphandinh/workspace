@@ -1,7 +1,6 @@
 local M = {
   icon = "\u{ec81}",
   plugin = "luanphan-codex-agent",
-  g_bufnr = "codex_agent_bufnr",
   notify_prefix = "codex_agent",
   augroup_prefix = "CodexAgent",
   status = { initial = "idle" },
@@ -16,7 +15,7 @@ function M.resume(id)
   return args
 end
 
-M.defaults = { cmd = "mcodex", args = M.resume(), detach_on_quit = true }
+M.defaults = { cmd = "mcodex", args = M.resume() }
 
 local function parse_title(title)
   if type(title) ~= "string" then return nil end

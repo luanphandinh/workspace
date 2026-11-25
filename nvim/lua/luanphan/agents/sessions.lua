@@ -1,6 +1,6 @@
 local M = {}
 local uv = vim.uv
-local terminal = require("luanphan.agents.terminal-chat")
+local backend = require("luanphan.agents.tmux")
 local uuid = "^" .. string.rep("%x", 8) .. ("%-" .. string.rep("%x", 4)):rep(3) .. "%-" .. string.rep("%x", 12) .. "$"
 local providers, names = {}, {}
 local order = {}
@@ -84,23 +84,28 @@ end
 function M.instances(include_saved)
   local instances, live = {}, {}
   local tab_label = require("luanphan.view_container").tab_label
+  local paths_by_agent = {}
+  for _, pane in ipairs(backend.panes()) do
+    local agent, cwd = pane.data.agent, pane.data.cwd
+    paths_by_agent[agent] = paths_by_agent[agent] or {}
+    local paths = paths_by_agent[agent]
+    paths[cwd] = paths[cwd] or {}
+    table.insert(paths[cwd], pane.bufnr)
+  end
   for _, agent in ipairs(names) do
-    local buffers = vim.g[providers[agent].g_bufnr]
-    for cwd, bufnrs in pairs(type(buffers) == "table" and buffers or {}) do
-      if type(cwd) == "string" and vim.fn.isdirectory(cwd) == 1 and type(bufnrs) == "table" then
+    for cwd, bufnrs in pairs(paths_by_agent[agent] or {}) do
+      if vim.fn.isdirectory(cwd) == 1 then
         for index, bufnr in ipairs(bufnrs) do
-          if terminal.running(bufnr) then
-            local buf = vim.b[bufnr]
-            local id = buf.luanphan_agent_thread_id
-            instances[#instances + 1] = {
-              agent = agent,
-              agent_label = tab_label(bufnr, #bufnrs > 1 and (agent .. " " .. index) or agent),
-              bufnr = bufnr,
-              path = cwd,
-              last_used = tonumber(buf.luanphan_agent_last_used) or 0,
-            }
-            if id then live[agent .. ":" .. id] = true end
-          end
+          local buf = vim.b[bufnr]
+          local id = buf.luanphan_agent_thread_id
+          instances[#instances + 1] = {
+            agent = agent,
+            agent_label = tab_label(bufnr, #bufnrs > 1 and (agent .. " " .. index) or agent),
+            bufnr = bufnr,
+            path = cwd,
+            last_used = tonumber(buf.luanphan_agent_last_used) or 0,
+          }
+          if id then live[agent .. ":" .. id] = true end
         end
       end
     end

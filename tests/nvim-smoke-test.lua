@@ -20,12 +20,11 @@ local cleanup_fixture_id = 0
 local project_scope_fixture_id = 0
 
 local agent_cli_commands = {
-  { name = "cursor", command = "cursor-agent", g_bufnr = "cursor_agent_bufnr" },
-  { name = "claude", command = "claude", g_bufnr = "claude_agent_bufnr" },
+  { name = "cursor", command = "cursor-agent" },
+  { name = "claude", command = "claude" },
   {
     name = "codex",
     command = "mcodex",
-    g_bufnr = "codex_agent_bufnr",
     optional_in_macos_ci = true,
   },
 }
@@ -1349,10 +1348,6 @@ local function close_agent_terminals()
       pcall(vim.api.nvim_buf_delete, buf, { force = true })
     end
   end
-
-  for _, item in ipairs(agent_cli_commands) do
-    vim.g[item.g_bufnr] = nil
-  end
 end
 
 local function invoke_map(lhs, mode)
@@ -1367,21 +1362,19 @@ local function invoke_map(lhs, mode)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(map.rhs, true, false, true), "xt", false)
 end
 
-local function registered_agent_bufnrs(global_name, cwd)
-  local stored = vim.g[global_name]
-  if type(stored) ~= "table" then return {} end
+local function registered_agent_bufnrs(name, cwd)
   cwd = cwd and realpath(cwd)
   local result = {}
-  for path, bufnrs in pairs(stored) do
-    if not cwd or realpath(path) == cwd then vim.list_extend(result, bufnrs) end
+  for _, pane in ipairs(require("luanphan.agents.tmux").panes(name)) do
+    if not cwd or realpath(pane.data.cwd) == cwd then result[#result + 1] = pane.bufnr end
   end
   return result
 end
 
-local function agent_bufnr(global_name)
-  local candidates = registered_agent_bufnrs(global_name, vim.fn.getcwd())
+local function agent_bufnr(name)
+  local candidates = registered_agent_bufnrs(name, vim.fn.getcwd())
   if #candidates == 0 then
-    candidates = registered_agent_bufnrs(global_name)
+    candidates = registered_agent_bufnrs(name)
   end
 
   local selected = nil
@@ -3645,44 +3638,47 @@ local function test_remove_repository_from_workspace()
   assert_true(ok, tostring(err))
 end
 
+local function start_agent_fixture(buffers, name, cwd, title)
+  local buf = vim.api.nvim_create_buf(false, true)
+  buffers[#buffers + 1] = buf
+  local command = "exec sleep 30"
+  if title then
+    command = "printf '\\033]2;%s\\007' " .. vim.fn.shellescape(title) .. "; " .. command
+  end
+  local ok, err = require("luanphan.agents.tmux").launch(buf, { "sh", "-c", command }, {
+    agent = name,
+    cwd = cwd,
+    workspace = require("luanphan.plugins.worktree").agent_workspace(cwd),
+    label = name,
+  }, 80, 24)
+  assert_true(ok, "failed to start agent fixture: " .. tostring(err))
+  return buf
+end
+
+local function close_agent_fixtures(buffers)
+  for _, buf in ipairs(buffers) do
+    if vim.api.nvim_buf_is_valid(buf) then
+      pcall(terminal_io.stop, buf)
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+end
+
 local function test_active_agent_discovery(repo, worktree)
   local api = worktree_test_api()
   local original_buf = vim.api.nvim_get_current_buf()
   local original_cwd = vim.fn.getcwd()
-  local agent_keys = { "codex_agent_bufnr", "claude_agent_bufnr", "cursor_agent_bufnr" }
-  local saved = {}
-  for _, key in ipairs(agent_keys) do
-    saved[#saved + 1] = { key = key, value = vim.g[key] }
-  end
-
-  local jobs = {}
   local buffers = {}
-  local agents_module = nil
-  local original_focus = nil
-  local function start_terminal(cwd, title)
-    vim.cmd("enew")
-    local buf = vim.api.nvim_get_current_buf()
-    local command = "sleep 30"
-    if title then
-      command = "printf '\\033]2;%s\\007' " .. vim.fn.shellescape(title) .. "; " .. command
-    end
-    local job = vim.fn.termopen({ "sh", "-c", command }, { cwd = cwd })
-    assert_true(type(job) == "number" and job > 0, "failed to start active agent fixture")
-    jobs[#jobs + 1] = job
-    buffers[#buffers + 1] = buf
-    return buf
-  end
+  local agents_module
+  local original_focus
 
   local ok, err = xpcall(function()
-    local repo_codex_buf = start_terminal(repo, "Review example parser")
-    local worktree_codex_buf = start_terminal(worktree, "Fix test failures")
-    local worktree_cursor_buf = start_terminal(worktree)
+    local repo_codex_buf = start_agent_fixture(buffers, "codex", repo, "Review example parser")
+    local worktree_codex_buf = start_agent_fixture(buffers, "codex", worktree, "Fix test failures")
+    local worktree_cursor_buf = start_agent_fixture(buffers, "cursor", worktree)
     vim.b[repo_codex_buf].luanphan_agent_last_used = 3
     vim.b[worktree_codex_buf].luanphan_agent_last_used = 2
     vim.b[worktree_cursor_buf].luanphan_agent_last_used = 1
-    vim.g.codex_agent_bufnr = { [repo] = { repo_codex_buf }, [worktree] = { worktree_codex_buf } }
-    vim.g.cursor_agent_bufnr = { [worktree] = { worktree_cursor_buf } }
-    vim.g.claude_agent_bufnr = { [repo] = { 999999 } }
     wait_until("agent terminal titles", function()
       return vim.b[repo_codex_buf].term_title == "Review example parser"
         and vim.b[worktree_codex_buf].term_title == "Fix test failures"
@@ -3721,17 +3717,7 @@ local function test_active_agent_discovery(repo, worktree)
   if agents_module and original_focus then
     agents_module.focus = original_focus
   end
-  for _, job in ipairs(jobs) do
-    pcall(vim.fn.jobstop, job)
-  end
-  for _, buf in ipairs(buffers) do
-    if vim.api.nvim_buf_is_valid(buf) then
-      pcall(vim.api.nvim_buf_delete, buf, { force = true })
-    end
-  end
-  for _, item in ipairs(saved) do
-    vim.g[item.key] = item.value
-  end
+  close_agent_fixtures(buffers)
   if vim.api.nvim_buf_is_valid(original_buf) then
     pcall(vim.api.nvim_set_current_buf, original_buf)
   end
@@ -3743,25 +3729,9 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
   local api = worktree_test_api()
   local original_cwd = vim.fn.getcwd()
   local original_buf = vim.api.nvim_get_current_buf()
-  local original_codex = vim.g.codex_agent_bufnr
-  local original_cursor = vim.g.cursor_agent_bufnr
   local agents = require("luanphan.agents.main")
   local original_focus = agents.focus
-  local jobs = {}
   local buffers = {}
-
-  local function start_terminal(cwd)
-    local buf = vim.api.nvim_create_buf(false, true)
-    local job
-    vim.api.nvim_buf_call(buf, function()
-      job = vim.fn.termopen({ "sh", "-c", "sleep 30" }, { cwd = cwd })
-    end)
-    assert_true(type(job) == "number" and job > 0, "failed to start agent switch fixture")
-    vim.b[buf].luanphan_persist_term = true
-    jobs[#jobs + 1] = job
-    buffers[#buffers + 1] = buf
-    return buf
-  end
 
   local function window_for_buffer(bufnr)
     for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -3774,15 +3744,9 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
 
   local ok, err = xpcall(function()
     vim.cmd("cd " .. vim.fn.fnameescape(repo))
-    local old_buf = start_terminal(repo)
-    local target_buf = start_terminal(worktree)
-    vim.g.codex_agent_bufnr = { [repo] = { old_buf } }
-    vim.g.cursor_agent_bufnr = { [worktree] = { target_buf } }
-    vim.b[old_buf].luanphan_agent_name = "codex"
-    vim.b[old_buf].luanphan_agent_cwd = repo
+    local old_buf = start_agent_fixture(buffers, "codex", repo)
+    local target_buf = start_agent_fixture(buffers, "cursor", worktree)
     vim.b[old_buf].luanphan_agent_last_used = 1
-    vim.b[target_buf].luanphan_agent_name = "cursor"
-    vim.b[target_buf].luanphan_agent_cwd = worktree
     vim.b[target_buf].luanphan_agent_last_used = 2
 
     vim.api.nvim_open_win(old_buf, true, {
@@ -3826,16 +3790,7 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
   end, debug.traceback)
 
   agents.focus = original_focus
-  vim.g.codex_agent_bufnr = original_codex
-  vim.g.cursor_agent_bufnr = original_cursor
-  for _, job in ipairs(jobs) do
-    pcall(vim.fn.jobstop, job)
-  end
-  for _, buf in ipairs(buffers) do
-    if vim.api.nvim_buf_is_valid(buf) then
-      pcall(vim.api.nvim_buf_delete, buf, { force = true })
-    end
-  end
+  close_agent_fixtures(buffers)
   if vim.api.nvim_buf_is_valid(original_buf) then
     pcall(vim.api.nvim_set_current_buf, original_buf)
   end
@@ -4495,7 +4450,6 @@ local function test_agent_terminal_reference_restores_view(repo)
   vim.cmd("edit " .. vim.fn.fnameescape(target_path))
 
   local agent = require("luanphan.agents.terminal-chat").create({
-    g_bufnr = "terminal_reference_view_agent_bufnr",
     notify_prefix = "terminal_reference_view_agent",
     augroup_prefix = "TerminalReferenceViewAgent",
     hint_open = "<smoke>",
@@ -4555,7 +4509,6 @@ local function test_agent_terminal_reference_restores_view(repo)
   if target_buf >= 0 and vim.api.nvim_buf_is_valid(target_buf) then
     pcall(vim.api.nvim_buf_delete, target_buf, { force = true })
   end
-  vim.g.terminal_reference_view_agent_bufnr = nil
 end
 
 local function test_agent_keys_invoke_cli_commands()
@@ -4685,7 +4638,7 @@ local function test_leader_a_sends_visual_selection_to_active_agent()
     end, 3000)
 
     wait_until("codex selection marker", function()
-      local bufnr = agent_bufnr("codex_agent_bufnr")
+      local bufnr = agent_bufnr("codex")
       if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
         return false
       end
@@ -5253,9 +5206,9 @@ local function test_agent_view_container(repo)
     assert_true(agents.open("codex"), "could not open the first terminal agent")
     wait_until("first agent tab", function()
       return visible_agent_window_count() == 1
-        and agent_bufnr("codex_agent_bufnr") ~= nil
+        and agent_bufnr("codex") ~= nil
     end, 3000)
-    local codex_buf = agent_bufnr("codex_agent_bufnr")
+    local codex_buf = agent_bufnr("codex")
     local agent_win = vim.api.nvim_get_current_win()
     assert_agent_float(agent_win, "first agent container")
     local agent_height = vim.api.nvim_win_get_height(agent_win)
@@ -5265,16 +5218,29 @@ local function test_agent_view_container(repo)
       "single agent did not reserve its tab bar: " .. vim.inspect(winbar)
     )
     assert_terminal_grid_matches(codex_buf, agent_win, "first agent")
+    local width = vim.api.nvim_win_get_width(agent_win)
+    local columns = vim.o.columns
+    vim.o.columns = columns + 20
+    vim.api.nvim_exec_autocmds("VimResized", {})
+    wait_until("agent panel resizes", function()
+      return vim.api.nvim_win_get_width(agent_win) > width
+    end, 3000)
+    assert_terminal_grid_matches(codex_buf, agent_win, "resized agent")
+    vim.o.columns = columns
+    vim.api.nvim_exec_autocmds("VimResized", {})
+    wait_until("agent panel restores its original width", function()
+      return vim.api.nvim_win_get_width(agent_win) == width
+    end, 3000)
     invoke_map("<S-Tab>")
     assert_true(vim.api.nvim_get_current_buf() == codex_buf, "backward cycling changed a single agent tab")
 
     assert_true(agents.open("cursor"), "could not open the second terminal agent")
     wait_until("second agent tab", function()
       return visible_agent_window_count() == 1
-        and agent_bufnr("cursor_agent_bufnr") ~= nil
-        and vim.api.nvim_get_current_buf() == agent_bufnr("cursor_agent_bufnr")
+        and agent_bufnr("cursor") ~= nil
+        and vim.api.nvim_get_current_buf() == agent_bufnr("cursor")
     end, 3000)
-    local cursor_buf = agent_bufnr("cursor_agent_bufnr")
+    local cursor_buf = agent_bufnr("cursor")
     local first_cursor_buf = cursor_buf
     assert_true(vim.api.nvim_buf_is_valid(codex_buf), "opening another tab deleted the first terminal")
     assert_true(vim.api.nvim_get_current_win() == agent_win, "opening another agent replaced the container window")
@@ -5365,10 +5331,10 @@ local function test_agent_view_container(repo)
     require("telescope.actions").select_default(prompt_buf)
     wait_until("second codex tab", function()
       return visible_agent_window_count() == 1
-        and #registered_agent_bufnrs("codex_agent_bufnr", repo) == 2
-        and vim.api.nvim_get_current_buf() == agent_bufnr("codex_agent_bufnr")
+        and #registered_agent_bufnrs("codex", repo) == 2
+        and vim.api.nvim_get_current_buf() == agent_bufnr("codex")
     end, 3000)
-    local second_codex_buf = agent_bufnr("codex_agent_bufnr")
+    local second_codex_buf = agent_bufnr("codex")
     assert_true(second_codex_buf ~= codex_buf, "new-tab picker reused the existing Codex terminal")
     assert_true(vim.api.nvim_get_current_win() == agent_win, "new agent tab replaced the container window")
     assert_true(vim.api.nvim_win_get_height(agent_win) == agent_height, "new agent tab resized the container")
@@ -5412,18 +5378,18 @@ local function test_agent_view_container(repo)
 
     assert_true(agents.new("cursor"), "could not create a second Cursor terminal")
     wait_until("second cursor tab", function()
-      return #registered_agent_bufnrs("cursor_agent_bufnr", repo) == 2
-        and vim.api.nvim_get_current_buf() == agent_bufnr("cursor_agent_bufnr")
+      return #registered_agent_bufnrs("cursor", repo) == 2
+        and vim.api.nvim_get_current_buf() == agent_bufnr("cursor")
     end, 3000)
-    local second_cursor_buf = agent_bufnr("cursor_agent_bufnr")
+    local second_cursor_buf = agent_bufnr("cursor")
     assert_true(second_cursor_buf ~= cursor_buf, "new Cursor tab reused the existing terminal")
     cursor_buf = second_cursor_buf
 
     assert_true(agents.new("claude"), "could not create the first Claude terminal")
     assert_true(agents.new("claude"), "could not create the second Claude terminal")
     wait_until("duplicate agent tabs", function()
-      return #registered_agent_bufnrs("claude_agent_bufnr", repo) == 2
-        and vim.api.nvim_get_current_buf() == agent_bufnr("claude_agent_bufnr")
+      return #registered_agent_bufnrs("claude", repo) == 2
+        and vim.api.nvim_get_current_buf() == agent_bufnr("claude")
     end, 3000)
 
     winbar = rendered_winbar()
@@ -5511,7 +5477,7 @@ local function test_agent_view_container(repo)
 
     do
       local win = vim.api.nvim_get_current_win()
-      local last_claude = registered_agent_bufnrs("claude_agent_bufnr", repo)[2]
+      local last_claude = registered_agent_bufnrs("claude", repo)[2]
       local function assert_tab_order(first, second, third)
         local bar = rendered_winbar(win)
         local a, b, c = bar:find(first, 1, true), bar:find(second, 1, true), bar:find(third, 1, true)
@@ -8042,11 +8008,10 @@ local function test_agent_terminal_lifecycle(repo)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
   local agent = require("luanphan.agents.terminal-chat").create({
     status_name = "example-agent",
-    g_bufnr = "toggleterm_hide_agent_bufnr",
     notify_prefix = "toggleterm_hide_agent",
     augroup_prefix = "ToggletermHideAgent",
     hint_open = "<smoke>",
-    defaults = { cmd = "sh", detach_on_quit = true },
+    defaults = { cmd = "sh" },
   })
   agent.setup()
   agent.toggle()
@@ -8122,7 +8087,6 @@ local function test_worktree_switch_hides_agent_terminal(repo, worktree)
   vim.cmd("cd " .. vim.fn.fnameescape(repo))
 
   local agent = require("luanphan.agents.terminal-chat").create({
-    g_bufnr = "smoke_agent_bufnr",
     notify_prefix = "smoke_agent",
     augroup_prefix = "SmokeAgent",
     hint_open = "<smoke>",
@@ -8169,17 +8133,8 @@ local function test_worktree_switch_hides_agent_terminal(repo, worktree)
     return visible_agent_window_count() == 1
   end, 1000)
 
-  local buffers = vim.g.smoke_agent_bufnr
-  local repo_buf = nil
-  local worktree_buf = nil
-  for path, value in pairs(buffers) do
-    local bufnr = type(value) == "table" and value[1] or value
-    if realpath(path) == realpath(repo) then
-      repo_buf = bufnr
-    elseif realpath(path) == realpath(worktree) then
-      worktree_buf = bufnr
-    end
-  end
+  local repo_buf = registered_agent_bufnrs("smoke_agent", repo)[1]
+  local worktree_buf = registered_agent_bufnrs("smoke_agent", worktree)[1]
   assert_true(repo_buf and worktree_buf, "agent terminal buffers were not persisted per workspace")
   local function window_for_buffer(bufnr)
     for _, win in ipairs(vim.api.nvim_list_wins()) do
