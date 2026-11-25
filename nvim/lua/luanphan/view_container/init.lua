@@ -336,8 +336,8 @@ function Container:navigate(win, direction)
 	end, self.opts.bar())
 end
 
-function Container:bind_terminal(buf, context)
-	self.opts.bar():attach_terminal(buf)
+function Container:bind_terminal(buf, context, bar)
+	(bar or self.opts.bar()):attach_terminal(buf)
 	self:bind(buf, context)
 	self:bind_tile_moves(buf, context)
 	terminal.bind_navigation(buf, function(win, direction) self:navigate(win, direction) end)

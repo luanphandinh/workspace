@@ -145,6 +145,31 @@ function M.create(profile)
     return true
   end
 
+  function API.paste(payload, target, opts)
+    local function destination()
+      return terminal_pane.running(target) and target or profile.current()
+    end
+    local function deliver(attempt)
+      local buf = destination()
+      if not terminal_pane.running(buf) then
+        if attempt == 3 then return nx("terminal not ready", vim.log.levels.ERROR) end
+        return vim.defer_fn(function() deliver(attempt + 1) end, config.defer_send_ms or 200)
+      end
+      if not win_for_buf(buf) then API.focus(buf, opts) end
+      if not terminal_pane.send(buf, "\27[200~" .. payload .. "\27[201~") then
+        return nx("could not send to the terminal", vim.log.levels.ERROR)
+      end
+      local win = win_for_buf(buf)
+      if win then
+        vim.api.nvim_set_current_win(win)
+        vim.cmd.startinsert()
+      end
+    end
+    if terminal_pane.running(destination()) then return deliver(1) end
+    target = API.new(opts)
+    vim.defer_fn(function() deliver(1) end, config.defer_send_ms or 200)
+  end
+
   function API.setup()
     -- Rebind surviving panes after a config reload.
     for _, pane in ipairs(profile.panes()) do

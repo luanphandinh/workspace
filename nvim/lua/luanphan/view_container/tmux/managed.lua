@@ -272,11 +272,6 @@ function M.create(opts)
     pane.client:request({ "select-window", "-t", pane.window })
   end
 
-  function backend.send(buf, bytes)
-    local pane = state.buffers[buf]
-    return pane and pty.input(pane, bytes) or false
-  end
-
   function backend.stop(buf)
     local pane = state.buffers[buf]
     if not pane then return false end

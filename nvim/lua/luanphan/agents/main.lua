@@ -4,13 +4,14 @@ local backend = require("luanphan.agents.tmux")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
 local view_container = require("luanphan.view_container")
+local terminal = require("luanphan.view_container.terminal")
 
 local agent_order = { "codex", "cursor", "claude", "terminal" }
 local agent_key = "<leader>a"
 
-local agent_defs = {}
+local agent_defs = { terminal = require("luanphan.view_container.shell") }
 for _, name in ipairs(agent_order) do
-  local def = require("luanphan.agents.plugins." .. name .. "." .. name)
+  local def = agent_defs[name] or require("luanphan.agents.plugins." .. name .. "." .. name)
   def.status = vim.tbl_extend("force", { decode = status.from_osc }, def.status or {})
   agent_defs[name] = def
 end
@@ -329,15 +330,16 @@ function M.resume(session, opts)
   return M.new(session.agent, vim.tbl_extend("force", opts or {}, resume_options(session)))
 end
 
-local function reopen()
+local function reopen(startup)
   M.restore_running()
-  local active = most_recent_tab(vim.fn.getcwd())
-  local default = M.default_agent()
-  if not active then
-    local saved = sessions.latest(vim.fn.getcwd())
-    if saved then return M.resume(saved) end
-  end
-  M.open(active and active.agent or default, active and active.bufnr or nil)
+  if startup and visible_agent() then return end
+  local cwd = vim.fn.getcwd()
+  local opts = startup and { view_mode = true } or nil
+  local active = most_recent_tab(cwd)
+  if active then return M.open(active.agent, active.bufnr, opts) end
+  local saved = sessions.latest(cwd)
+  if saved then return M.resume(saved, opts) end
+  if not startup then return M.open(M.default_agent()) end
 end
 
 function M.toggle()
@@ -348,13 +350,7 @@ end
 local function restore_on_first_ui()
   if vim.g.luanphan_agent_startup_restored or vim.v.vim_did_enter == 0 or #vim.api.nvim_list_uis() == 0 then return end
   vim.g.luanphan_agent_startup_restored = true
-  local cwd = vim.fn.getcwd()
-  M.restore_running()
-  if visible_agent() then return end
-  local active = most_recent_tab(cwd)
-  if active then return M.open(active.agent, active.bufnr, { view_mode = true }) end
-  local saved = sessions.latest(cwd)
-  if saved then M.resume(saved, { view_mode = true }) end
+  reopen(true)
 end
 
 local function receive_terminal_event(args)
@@ -371,7 +367,7 @@ local function receive_terminal_event(args)
       if vim.api.nvim_buf_is_valid(bufnr) then remember_pane(bufnr) end
     end)
   end
-  local title = sequence:match("^\27%][02];(.*)$")
+  local title = terminal.request_title(sequence)
   -- Decoders defer persistence and redraws until the terminal callback has returned.
   local function emit(event)
     if not vim.api.nvim_buf_is_valid(bufnr) or vim.b[bufnr].luanphan_agent_name ~= name then return end
@@ -508,6 +504,6 @@ local function agent_spec(name)
   }
 end
 
-M.spec = vim.tbl_map(agent_spec, agent_order)
+M.spec = vim.iter(agent_order):filter(function(name) return agent_defs[name].plugin ~= nil end):map(agent_spec):totable()
 
 return M

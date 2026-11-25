@@ -1,7 +1,7 @@
 local uv = vim.uv or vim.loop
 
 local tests = {}
-local terminal_io = require("luanphan.terminal.window")
+local terminal_io = require("luanphan.view_container.terminal")
 local agent_socket_dir = assert(uv.fs_mkdtemp("/tmp/nvim-agent-tmux-XXXXXX"))
 vim.env.LUANPHAN_AGENT_TMUX_SOCKET = agent_socket_dir .. "/main"
 
@@ -3307,7 +3307,7 @@ local function test_workspace_folder_browser()
     "actions.select_default(prompt_bufnr)",
     "assert_true(vim.wait(3000, function() return realpath(vim.fn.getcwd()) == realpath(target) end, 20), 'absolute folder input did not switch workspaces')",
     "assert_true(not vim.api.nvim_win_is_valid(main) and not vim.api.nvim_win_is_valid(sidebar) and not vim.api.nvim_win_is_valid(other_tile), 'folder switch left an agent pane open')",
-    "for _, buf in ipairs({ first_tile, agent_buf }) do assert_true(require('luanphan.terminal.window').running(buf), 'folder switch stopped an agent session') end",
+    "for _, buf in ipairs({ first_tile, agent_buf }) do assert_true(require('luanphan.view_container.terminal').running(buf), 'folder switch stopped an agent session') end",
     "vim.g.luanphan_global_settings_path = global_settings",
     "vim.api.nvim_buf_delete(first_tile, { force = true })",
     "assert_true(vim.fn.exists(':FolderSwitch') == 2, 'FolderSwitch command is missing')",
@@ -4796,7 +4796,7 @@ local function test_agent_sidebar_restore(repo, agent)
     "end), 'missing agent title')",
     "assert(require('luanphan.view_container').tab_label(vim.api.nvim_get_current_buf()) == 'Example 000000000001', 'unexpected agent tab label')",
     "if agent == 'cursor' then",
-    "  local send = require('luanphan.terminal.window').send",
+    "  local send = require('luanphan.view_container.terminal').send",
     "  local buf = vim.api.nvim_get_current_buf()",
     "  assert(vim.wait(3000, function() return vim.b.luanphan_agent_program_status == 'idle' end), 'Cursor has no startup status')",
     "  send(buf, 'submit\\n')",
@@ -5043,7 +5043,7 @@ local function command_click(path, line, col)
   assert(agents.focus('codex', agent, { view_mode = true }))
   local term_win = api.nvim_get_current_win()
   local reference = ('./%s:%d:%d'):format(vim.fs.basename(path), line, col)
-  require('luanphan.terminal.window').send(agent, '\n' .. reference .. '\n')
+  require('luanphan.view_container.terminal').send(agent, '\n' .. reference .. '\n')
   local row
   assert(vim.wait(3000, function()
     for index, text in ipairs(api.nvim_buf_get_lines(agent, 0, -1, false)) do
@@ -5106,7 +5106,7 @@ for _, buf in ipairs({ agent, first, second }) do
 end
 assert(agents.send_selection('terminal') == false, 'shell was accepted as an agent prompt destination')
 local marker = 'PANEL_SHELL_OUTPUT'
-local send = require('luanphan.terminal.window').send
+local send = require('luanphan.view_container.terminal').send
 send(first, [==[stty -icanon min 1 time 0 -echo; printf '\neditor-runtime=%s/%s\n' "${VIM-unset}" "${VIMRUNTIME-unset}"; dd bs=1 count=1 2>/dev/null | od -An -tu1; stty icanon echo]==] .. '\n')
 assert(vim.wait(3000, function()
   return vim.tbl_contains(api.nvim_buf_get_lines(first, 0, -1, false), 'editor-runtime=unset/unset')
@@ -5171,18 +5171,18 @@ for _, id in ipairs(ids) do
       return vim.tbl_contains(lines, text)
     end
     assert(vim.wait(4000, function() return has_line('alternate-view') end), 'reattaching lost the alternate screen')
-    require('luanphan.terminal.window').send(item.bufnr, [[printf '\033[?1049l']] .. '\n')
+    require('luanphan.view_container.terminal').send(item.bufnr, [[printf '\033[?1049l']] .. '\n')
     assert(vim.wait(4000, function() return has_line('primary-line-1') and has_line('primary-line-60') end),
       'reattaching while in the alternate screen lost primary scrollback')
   end
 end
-require('luanphan.terminal.window').send(shells[ids[1]].bufnr, 'exit\n')
+require('luanphan.view_container.terminal').send(shells[ids[1]].bufnr, 'exit\n')
 assert(vim.wait(3000, function() return #sessions.list('terminal') == 1 end, 20),
   'exiting a shell did not remove its saved slot')
 
 vim.g.luanphan_floating_tmux_socket = terminal_socket
 vim.g.luanphan_floating_tmux_config = '/dev/null'
-local floating = require('luanphan.terminal.floating')
+local floating = require('luanphan.view_container.floating')
 floating.toggle()
 assert(vim.wait(3000, function() return vim.b.luanphan_tmux_pane ~= nil end), 'floating terminal did not attach')
 local floating_win = vim.api.nvim_get_current_win()
@@ -6201,7 +6201,7 @@ vim.api.nvim_feedkeys(vim.keycode('<D-9>'), 'xt', false)
 assert(vim.api.nvim_get_current_buf() == home, 'out-of-range window shortcut changed focus')
 
 local home_path = vim.fn.getcwd()
-require('luanphan.terminal.window').stop(away_peer)
+require('luanphan.view_container.terminal').stop(away_peer)
 assert(vim.wait(3000, function() return not vim.api.nvim_buf_is_valid(away_peer) end, 20),
   'could not reduce the destination to one tile')
 
@@ -6502,7 +6502,7 @@ local function test_tmux_floating_terminal()
   local ok, err = xpcall(function()
     run_child([=[
 local api = vim.api
-local panel = require("luanphan.terminal.floating")
+local panel = require("luanphan.view_container.floating")
 local function tmux(...)
   local argv = vim.list_extend({ "tmux", "-S", vim.g.luanphan_floating_tmux_socket }, { ... })
   local result = vim.system(argv, { text = true }):wait(2000)
@@ -6534,6 +6534,9 @@ key("<leader>t")
 wait(function() return active() and vim.bo.buftype == "terminal" end, "create and attach")
 local first = active()
 local first_win = pane_window(first)
+local terminal = require("luanphan.view_container.terminal")
+assert(terminal.send(api.nvim_win_get_buf(first_win), "printf 'SHARED_%s\\n' INPUT\r"), "shared terminal input rejected a tmux pane")
+wait(function() return tmux("capture-pane", "-p", "-t", first):find("SHARED_INPUT", 1, true) end, "shared input reached tmux")
 assert(not vim.wo[first_win].list and not vim.wo[first_win].spell and not vim.wo[first_win].wrap
   and vim.wo[first_win].foldmethod == "manual" and vim.wo[first_win].signcolumn == "no"
   and vim.wo[first_win].scrolloff == 0, "floating terminal inherited editor window options")
@@ -6814,6 +6817,21 @@ assert(api.nvim_get_current_buf() == window_bar_buf and api.nvim_win_get_cursor(
   "rename moved focus away from the window row")
 key("o")
 wait(function() return active() == third end, "window bar selected the second tmux window")
+local session_a = tmux("new-session", "-d", "-s", "example-a", "-P", "-F", "#{pane_id}")
+local session_b = tmux("new-session", "-d", "-s", "example-b", "-P", "-F", "#{pane_id}")
+local function session_sidebar(id)
+  local win = pane_window(id)
+  return win and vim.w[vim.w[win].luanphan_view_anchor or win].luanphan_window_bar == api.nvim_get_current_win()
+end
+key("<leader>e")
+for _, switch in ipairs({ { "<D-S-j>", session_a }, { "<D-S-j>", session_b },
+  { "<D-S-k>", session_a }, { "<D-S-k>", third } }) do
+  key(switch[1])
+  wait(function() return session_sidebar(switch[2]) end, "session switch kept focus in the sidebar")
+end
+assert(terminal.running(api.nvim_win_get_buf(assert(pane_window(third)))), "session switch lost the selected shell")
+tmux("kill-session", "-t", "=example-a")
+tmux("kill-session", "-t", "=example-b")
 panel.hide()
 assert(tmux("display-message", "-p", "-t", first, "#{pane_pid}") == shell_pid, "detach stopped the shell")
 tmux("send-keys", "-l", "-t", first, "printf 'DETACHED_%s\\n' OUTPUT")
@@ -6832,7 +6850,7 @@ vim.fn.writefile({ first, shell_pid, third }, root .. "/panes")
     run_child([=[
 local api = vim.api
 local saved = vim.fn.readfile(root .. "/panes")
-local panel = require("luanphan.terminal.floating")
+local panel = require("luanphan.view_container.floating")
 panel.toggle()
 assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane == saved[3] end), "reopen lost selected pane")
 vim.fn.maparg("<leader>e", "n", false, true).callback()
@@ -6992,7 +7010,7 @@ local bar = vim.iter(pairs(vim.luanphan_window_bars)):find(function(item) return
 local initial = vim.tbl_map(function(group) return group.id end, bar.rows[1].groups)
 local session_id = tmux("display-message", "-p", "-t", focus_pane, "#{session_id}")
 api.nvim_win_set_cursor(bar.win, { 1, 0 })
-api.nvim_feedkeys(vim.keycode("<D-S-j>"), "xt", false)
+api.nvim_feedkeys(vim.keycode("<C-S-j>"), "xt", false)
 assert(bar.rows[1].group.id == initial[2], "native terminal window did not move immediately")
 assert(not pcall(tmux, "show-options", "-v", "-t", session_id, "@luanphan-window-order"),
   "moving a terminal window saved before the debounce")
@@ -8415,7 +8433,7 @@ local function test_git_diff_previews(worktree)
   wait_for_diffview()
   assert_true(find_workspace_diff_bar() == nil, "single-repository diff unexpectedly created a repository bar")
 
-  local floating = require("luanphan.terminal.floating")
+  local floating = require("luanphan.view_container.floating")
   local old_settings, old_shell, old_env = vim.g.luanphan_global_settings_path, vim.o.shell, vim.env.ENV
   local settings = temp_root .. "/diffview-terminal-settings.toml"
   vim.g.luanphan_global_settings_path = settings

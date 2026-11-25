@@ -21,7 +21,7 @@ end
 
 local function open_backend()
   local settings = require("luanphan.global_settings").read().floating_terminal
-  if settings.backend == "shell" then return require("luanphan.terminal.floating_shell") end
+  if settings.backend == "shell" then return require("luanphan.view_container.floating_shell") end
   if vim.fn.executable("tmux") == 1 then return tmux_panel() end
   vim.notify("tmux is unavailable. Set floating_terminal.backend to \"shell\" to use a local shell.", vim.log.levels.ERROR)
 end

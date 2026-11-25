@@ -61,7 +61,8 @@ mkws --name example-b --branch example-branch-b --add repo-b front-end/repo-c@ex
 
 - [`view_container`](nvim/lua/luanphan/view_container) owns panel lifecycle, layout, focus, the sidebar, and the editor tile. The shared tmux backend runs processes and keeps terminal history. Each panel supplies its commands and sidebar data.
 - `<leader>a` opens workspace agents. In visual mode it sends the selection to an agent. The [Codex, Cursor, and Claude plugins](nvim/lua/luanphan/agents/plugins) supply their own launch and session behavior. Codex uses [`mcodex`](bin/mcodex) to connect its TUI to a shared Codex app-server. Each workspace has a session on `luanphan-agents`, with one tmux window per agent tile.
-- `<leader>t` opens the global floating terminal. By default it reuses a session on the default tmux server or creates one if needed. It renders tmux panes as Neovim tabs or tiles. Hiding either floating panel keeps its jobs running.
+- `<leader>t` opens Floating Terminal in `view_container`. It attaches to sessions on the default tmux server and renders their panes as Neovim tabs or tiles. In its sidebar, Cmd+Shift+J/K cycles sessions and Ctrl+Shift+J/K reorders windows. Hiding either floating panel keeps its jobs running.
+- `<leader>nt` in Agents opens a built-in shell in the current workspace on the Agents tmux server.
 - In a terminal tile in either floating panel, `:q` closes that tile and terminates its process. In an editor tile, `:q` closes the editor tile.
 - `<leader>-t` opens the docked terminal for the current working directory. It uses Neovim terminal jobs.
 

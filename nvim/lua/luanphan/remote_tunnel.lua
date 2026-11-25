@@ -309,7 +309,7 @@ function M.paste_clipboard_item(opts)
         vim.notify("Tunnel returned an invalid clipboard item", vim.log.levels.ERROR)
         return
       end
-      if not require("luanphan.terminal.window").send(bufnr, reference) then
+      if not require("luanphan.view_container.terminal").send(bufnr, reference) then
         vim.notify("Could not send the clipboard path to Codex", vim.log.levels.ERROR)
         return
       end
@@ -352,7 +352,7 @@ function M.setup()
     if M.paste_clipboard_item() then
       return
     end
-    require("luanphan.terminal.window").send(vim.api.nvim_get_current_buf(), "\022")
+    require("luanphan.view_container.terminal").send(vim.api.nvim_get_current_buf(), "\022")
   end, { silent = true, desc = "Paste clipboard item" })
 end
 

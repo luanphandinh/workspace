@@ -10,16 +10,15 @@
 local M = {}
 local view_container = require("luanphan.view_container")
 local terminal_session = require("luanphan.view_container.terminal_session")
-local terminal_window = require("luanphan.terminal.window")
+local terminal = require("luanphan.view_container.terminal")
 local backend = require("luanphan.agents.tmux")
-M.running, M.close_window = terminal_window.running, view_container.close_window
+M.running, M.close_window = terminal.running, view_container.close_window
 
 local BASE_DEFAULTS = {
   cmd = "agent",
   args = {},
   scrollback = nil,
   max_send_chars = 256 * 1024,
-  defer_send_ms = 200,
   send_mode = "lines_only",
 }
 
@@ -73,10 +72,6 @@ function M.create(profile)
       return "[No Name]"
     end
     return vim.fn.fnamemodify(name, ":.")
-  end
-
-  local function win_for_buf(bufnr)
-    return vim.fn.win_findbuf(bufnr)[1]
   end
 
   local function mark_terminal_used(bufnr)
@@ -188,64 +183,7 @@ function M.create(profile)
     exit_visual_to_normal()
 
     local payload = format_selection_payload(bufnr, lines, line_start, line_end)
-    if not payload then
-      return
-    end
-
-    local function target_terminal()
-      if target_bufnr and M.running(target_bufnr) then
-        return target_bufnr
-      end
-      return profile.current()
-    end
-
-    local function focus_term_win()
-      local cur = target_terminal()
-      if not cur then return end
-      local w = win_for_buf(cur)
-      if w then
-        vim.api.nvim_set_current_win(w)
-        vim.cmd("startinsert")
-      end
-    end
-
-    local function deliver(attempt)
-      attempt = attempt or 1
-      local cur = target_terminal()
-      if not cur or not M.running(cur) then
-        if attempt < 3 then
-          vim.defer_fn(function()
-            deliver(attempt + 1)
-          end, config.defer_send_ms)
-          return
-        end
-        nx("terminal not ready", vim.log.levels.ERROR)
-        return
-      end
-
-      local win = win_for_buf(cur)
-      if not win then
-        API.focus(cur, opts)
-      end
-
-      if not terminal_window.send(cur, "\27[200~" .. payload .. "\27[201~") then
-        nx("could not send to the terminal", vim.log.levels.ERROR)
-        return
-      end
-
-      focus_term_win()
-    end
-
-    local cur = target_terminal()
-    if not cur or not M.running(cur) then
-      API.new(opts)
-      vim.defer_fn(function()
-        deliver(1)
-      end, config.defer_send_ms)
-      return
-    end
-
-    deliver(1)
+    if payload then API.paste(payload, target_bufnr, opts) end
   end
 
   return API

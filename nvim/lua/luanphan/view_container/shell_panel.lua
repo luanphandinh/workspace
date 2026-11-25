@@ -4,7 +4,6 @@ local views = require("luanphan.view_container")
 local editor = require("luanphan.view_container.editor")
 local bars = require("luanphan.view_container.window_bar")
 local terminal_pane = require("luanphan.view_container.terminal")
-local window = require("luanphan.terminal.window")
 local settings = require("luanphan.global_settings")
 
 function M.create(opts)
@@ -80,7 +79,6 @@ function M.create(opts)
 
   local function prepare_pane(pane)
     local tab, win = pane.tab, pane.win
-    bar:attach(tab.bufnr)
     vim.wo[win].winhighlight = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,WinBarNC:Normal,TabLineFill:Normal"
     if tab.term then tab.term.window = win end
   end
@@ -174,10 +172,10 @@ function M.create(opts)
     if opts.close_on_exit then
       terminal_pane.bind_quit(buf, events, function()
         if quitting == pane then return function() end end
-        if not window.running(buf) then return end
+        if not terminal_pane.running(buf) then return end
         quitting = pane
         return function()
-          if not window.stop(buf) and quitting == pane then quitting = nil end
+          if not terminal_pane.stop(buf) and quitting == pane then quitting = nil end
         end
       end)
       api.nvim_create_autocmd("TermClose", {
@@ -191,9 +189,8 @@ function M.create(opts)
       })
     end
 
-    inner:bind_tile_moves(buf, group)
     local bar = group.scope.bar
-    bar:map_jumps(buf, false)
+    inner:bind_terminal(buf, group, bar)
     local keys = { buffer = buf, silent = true, nowait = true }
     for _, key in ipairs({ "<leader>nt", "<leader>fn", "<leader>nw" }) do
       vim.keymap.set("n", key, function()
@@ -206,13 +203,8 @@ function M.create(opts)
           if #group.scope.windows > 1 then bar:cycle(binding[2]) else inner:cycle(group, binding[2]) end
         end, keys)
       end
-    else
-      inner:bind(buf, group)
-      editor.bind(buf)
+      vim.keymap.set("t", "<C-h>", function() move_from_dock("h") end, keys)
     end
-    local left = opts.docked and function() move_from_dock("h") end or "<C-h>"
-    vim.keymap.set("t", "<C-h>", left, keys)
-    terminal_pane.bind_navigation(buf, navigate)
     return result
   end
 
@@ -342,8 +334,8 @@ function M.create(opts)
   api.nvim_create_autocmd("TermRequest", {
     group = events,
     callback = function(ev)
-      if not bar or not bar:visible() or bar.style ~= "vertical" or not ev.data then return end
-      if ev.data.sequence and ev.data.sequence:match("^\27%][02];") then
+      if not bar or not bar:visible() or bar.style ~= "vertical" then return end
+      if terminal_pane.request_title(ev.data and ev.data.sequence) then
         local visible_bar = bar
         vim.schedule(function()
           if visible_bar:visible() and api.nvim_buf_is_valid(ev.buf) then

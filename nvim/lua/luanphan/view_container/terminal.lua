@@ -3,6 +3,45 @@ local api = vim.api
 local tmux = require("luanphan.view_container.tmux.pane")
 local closing_tiles = {}
 
+local function local_job(buf)
+  if type(buf) ~= "number" or not api.nvim_buf_is_valid(buf) then return end
+  local job = vim.b[buf].terminal_job_id
+  return type(job) == "number" and job > 0 and job or nil
+end
+
+function M.running(buf)
+  if type(buf) ~= "number" or not api.nvim_buf_is_valid(buf) or vim.bo[buf].buftype ~= "terminal" then return false end
+  local pane = tmux.for_buffer(buf)
+  if pane then
+    if pane.process and pane.process.running then return pane.process.running(buf) end
+    return pane.client ~= nil and pane.client.job ~= nil
+  end
+  local job = local_job(buf)
+  if not job then return false end
+  local ok, status = pcall(vim.fn.jobwait, { job }, 0)
+  return ok and status[1] == -1
+end
+
+function M.send(buf, bytes)
+  local pane = tmux.for_buffer(buf)
+  if pane then return tmux.input(pane, bytes) end
+  local job = local_job(buf)
+  if not job then return false end
+  local ok, result = pcall(vim.fn.chansend, job, bytes)
+  return ok and result > 0
+end
+
+function M.stop(buf)
+  local pane = tmux.for_buffer(buf)
+  if pane then return pane.process and pane.process.stop(buf) or false end
+  local job = local_job(buf)
+  return job ~= nil and vim.fn.jobstop(job) == 1
+end
+
+function M.request_title(sequence)
+  return sequence and sequence:match("^\27%][02];(.*)$")
+end
+
 local window_options = {
   breakindent = false,
   colorcolumn = "",

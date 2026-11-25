@@ -57,7 +57,7 @@ M.spec = {
     "luanphan-floating-terminal",
     virtual = true,
     keys = {
-      { "<leader>t", function() require("luanphan.terminal.floating").toggle() end, desc = "Floating terminal" },
+      { "<leader>t", function() require("luanphan.view_container.floating").toggle() end, desc = "Floating terminal" },
     },
   },
   {

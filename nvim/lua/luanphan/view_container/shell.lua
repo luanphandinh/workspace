@@ -1,10 +1,14 @@
+local function command()
+  return { vim.o.shell, "-i" }
+end
+
 local M = {
   icon = "\u{f489}",
-  plugin = "luanphan-panel-terminal",
+  command = command,
   shell = true,
   restore_on_open = true,
   defaults = {
-    cmd = function() return { vim.o.shell, "-i" } end,
+    cmd = command,
   },
 }
 

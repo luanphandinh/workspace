@@ -17,6 +17,7 @@ function M.create(opts)
   local current, bar, tiles
   local rendering, refresh_queued, refresh_pending, refresh_again
   local creating, focus_on_render, selection, closing_pane
+  local focus_sidebar
   local layout_path, layout_stat, layout_options
 
   local refresh, render, open
@@ -146,13 +147,24 @@ function M.create(opts)
     end)
   end
 
+  local function switch_session(target, keep_sidebar)
+    if session and session.id == target.id then return end
+    panel.hide()
+    focus_sidebar = keep_sidebar
+    open(target)
+  end
+
   local function pick_session()
+    views.select("Tmux Sessions", tmux:sessions(), switch_session)
+  end
+
+  local function cycle_session(step)
+    if not session then return end
     local sessions = tmux:sessions()
-    views.select("Tmux Sessions", sessions, function(choice)
-      if session and session.id == choice.id then return end
-      panel.hide()
-      open(choice)
-    end)
+    if #sessions < 2 then return end
+    table.sort(sessions, function(a, b) return tonumber(a.id:sub(2)) < tonumber(b.id:sub(2)) end)
+    local index = vim.iter(sessions):enumerate():find(function(_, item) return item.id == session.id end)
+    if index then switch_session(sessions[(index - 1 + step) % #sessions + 1], true) end
   end
 
   local function can_paint(pane)
@@ -183,7 +195,7 @@ function M.create(opts)
   end
 
   local function prepare_quit(pane)
-    if not client or panes[pane.id] ~= pane then return end
+    if not client or not pane or panes[pane.id] ~= pane then return end
     if closing_pane == pane then return function() end end
     closing_pane = pane
     return function()
@@ -203,20 +215,26 @@ function M.create(opts)
     end
   end
 
+  local process = {
+    stop = function(buf)
+      local close = prepare_quit(pty.for_buffer(buf))
+      if not close then return false end
+      close()
+      return true
+    end,
+  }
+
   local function prepare_buffer(pane)
     local buf = api.nvim_create_buf(false, true)
     vim.bo[buf].bufhidden = "hide"
     vim.b[buf].luanphan_persist_term = true
     vim.b[buf].luanphan_floating_terminal = true
     vim.b[buf].luanphan_tmux_pane = pane.id
-    pane.bufnr, pane.repaint = buf, repaint
+    pane.bufnr, pane.repaint, pane.process = buf, repaint, process
     terminal_pane.set_reference_cwd(buf, pane.cwd)
     tiles:bind_terminal(buf)
     bind_shortcuts(buf)
     terminal_pane.bind_quit(buf, events, function() return prepare_quit(pane) end)
-    local opts = { buffer = buf, silent = true, nowait = true }
-    vim.keymap.set("t", "<C-]>", function() pty.input(pane, "\27") end,
-      vim.tbl_extend("force", opts, { desc = "Send Escape to tmux pane" }))
   end
 
   local function reorder_panes(items)
@@ -262,7 +280,8 @@ function M.create(opts)
   })
 
   bar = bars.create({
-    title = "Tmux Windows",
+    title = function() return session and ("Tmux · " .. session.title) or "Tmux Windows" end,
+    cycle_session = cycle_session,
     groups = function() return windows end,
     load_order = function() if session then return tmux:load_window_order(session.id) end end,
     save_order = function(order) return session and tmux:save_window_order(session.id, order) end,
@@ -296,8 +315,12 @@ function M.create(opts)
     end
     local anchor = tiles:anchor() or tiles:open_float(layout, selected.bufnr, false)
     tiles.active_by_context = {}
-    if tiles:reflow(anchor, current, layout, selected, { focus = focus, record = not selection }) and focus then
-      focus_on_render = false
+    if tiles:reflow(anchor, current, layout, selected, { focus = focus, record = not selection }) then
+      if focus then focus_on_render = false end
+      if focus_sidebar and bar:visible() then
+        focus_sidebar = nil
+        bar:focus()
+      end
     end
   end
 
@@ -410,6 +433,7 @@ function M.create(opts)
     windows, panes = {}, {}
     refresh_queued, refresh_pending, refresh_again = nil, nil, nil
     creating, focus_on_render, selection, closing_pane = nil, nil, nil, nil
+    focus_sidebar = nil
     if connection then connection:detach() end
     tiles:hide(closing)
     vim.schedule(function()
