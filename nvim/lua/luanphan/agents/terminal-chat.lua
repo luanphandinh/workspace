@@ -12,7 +12,6 @@ local view_container = require("luanphan.view_container")
 local terminal_pane = require("luanphan.view_container.terminal")
 local terminal_window = require("luanphan.terminal.window")
 local backend = require("luanphan.agents.tmux")
-local sync_terminal_grid = terminal_window.sync_grid
 local preserve_windows = false
 local pending_tile_close = {}
 
@@ -146,20 +145,13 @@ local function mark_terminal_used(bufnr)
   vim.b[bufnr].luanphan_agent_last_used = sequence
 end
 
-local function save_terminal_view(win)
-  if not win or not vim.api.nvim_win_is_valid(win) then return end
-  local buf = vim.api.nvim_win_get_buf(win)
-  if backend.running(buf) then
-    terminal_window.save_view(win, buf)
-  end
-end
-
 local function resume_terminal_view(win, bufnr, opts)
   mark_terminal_used(bufnr)
   if profile.on_show then
     pcall(profile.on_show, bufnr, win, vim.b[bufnr].luanphan_agent_cwd or cwd_key())
+  else
+    terminal_pane.show_view(win, bufnr)
   end
-  sync_terminal_grid(win, bufnr)
   if opts and opts.view_mode then
     vim.schedule(function()
       if vim.api.nvim_get_current_win() == win and vim.api.nvim_win_get_buf(win) == bufnr then
@@ -168,7 +160,7 @@ local function resume_terminal_view(win, bufnr, opts)
     end)
     return
   end
-  if terminal_window.is_scrolled(bufnr) then return end
+  if terminal_pane.is_scrolled(bufnr) then return end
 
   vim.defer_fn(function()
     if vim.api.nvim_win_is_valid(win)
@@ -216,7 +208,7 @@ local function layout_float(win)
     profile.on_float_layout(win, layout)
   else
     vim.api.nvim_win_set_config(win, layout.body)
-    sync_terminal_grid(win, vim.api.nvim_win_get_buf(win))
+    terminal_pane.show_view(win, vim.api.nvim_win_get_buf(win))
   end
 end
 
@@ -270,13 +262,6 @@ end
 
 local function attach_window_events(buf)
   local ag = vim.api.nvim_create_augroup(augroup_name .. "_Window_" .. buf, { clear = true })
-  vim.api.nvim_create_autocmd("WinLeave", {
-    group = ag,
-    buffer = buf,
-    callback = function()
-      save_terminal_view(vim.api.nvim_get_current_win())
-    end,
-  })
   vim.api.nvim_create_autocmd("BufWipeout", {
     group = ag,
     buffer = buf,
@@ -430,21 +415,12 @@ function API.focus(bufnr, opts)
   return true
 end
 
-function API.save_view(win)
-  save_terminal_view(win)
-end
-
 function API.layout(win)
   layout_float(win)
 end
 
 function API.prepare_tile(win, opened)
-  if not vim.api.nvim_win_is_valid(win) then return end
-  local buf = vim.api.nvim_win_get_buf(win)
-  if opened then
-    terminal_pane.configure_window(win, TERMINAL_WINHIGHLIGHT)
-  end
-  sync_terminal_grid(win, buf)
+  if opened then terminal_pane.configure_window(win, TERMINAL_WINHIGHLIGHT) end
 end
 
 local function format_selection_payload(bufnr, lines, line_start, line_end)

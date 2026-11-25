@@ -3,6 +3,7 @@ local tiles = require("luanphan.view_container.tile_render")
 local tabs = require("luanphan.view_container.tab_render")
 local bars = require("luanphan.view_container.window_bar")
 local editor = require("luanphan.view_container.editor")
+local terminal = require("luanphan.view_container.terminal")
 local M = vim.tbl_extend("force", window, {
 	tab_label = tabs.tab_label,
 })
@@ -214,6 +215,7 @@ end
 function Container:reflow(anchor, context, layout, active)
 	if active then self:select_tab(context, active) end
 	local previous = self.visible_windows or {}
+	for buf, win in pairs(previous) do terminal.save_view(win, buf) end
 	local panes = self:display(anchor, context, layout)
 	if not vim.api.nvim_win_is_valid(anchor) then return end
 	if not panes then
@@ -233,6 +235,7 @@ function Container:reflow(anchor, context, layout, active)
 		pane.opened = pane.opened or previous[pane.tab.bufnr] ~= pane.win
 		self.visible_windows[pane.tab.bufnr] = pane.win
 		self.opts.prepare_pane(pane, context, anchor)
+		terminal.show_view(pane.win, pane.tab.bufnr, pane.opened)
 	end
 	self:refresh_tile_highlights()
 	return anchor

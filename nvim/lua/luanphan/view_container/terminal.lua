@@ -1,5 +1,6 @@
 local M = {}
 local api = vim.api
+local tmux = require("luanphan.view_container.tmux.pane")
 
 local window_options = {
   breakindent = false,
@@ -49,6 +50,49 @@ function M.configure_window(win, highlights)
     pcall(api.nvim_set_option_value, name, value, scope)
   end
   api.nvim_set_option_value("winhighlight", highlights, scope)
+end
+
+function M.save_view(win, buf)
+  if not api.nvim_win_is_valid(win) or api.nvim_win_get_buf(win) ~= buf or vim.bo[buf].buftype ~= "terminal" then return end
+  local pane = tmux.for_buffer(buf)
+  if pane then return tmux.save_view(pane, win) end
+  local ok, view = pcall(api.nvim_win_call, win, vim.fn.winsaveview)
+  if ok then
+    vim.b[buf].luanphan_terminal_view = { follow = view.lnum >= api.nvim_buf_line_count(buf), view = view }
+  end
+end
+
+function M.track_view(buf, group)
+  api.nvim_create_autocmd({ "WinLeave", "BufWinLeave" }, {
+    buffer = buf,
+    group = group,
+    callback = function() M.save_view(api.nvim_get_current_win(), buf) end,
+  })
+end
+
+function M.is_scrolled(buf)
+  local pane = tmux.for_buffer(buf)
+  if pane then return pane.follow_live == false end
+  local saved = vim.b[buf].luanphan_terminal_view
+  return type(saved) == "table" and saved.follow == false
+end
+
+function M.show_view(win, buf, opened)
+  if not api.nvim_win_is_valid(win) or api.nvim_win_get_buf(win) ~= buf then return end
+  local pane = tmux.for_buffer(buf)
+  if pane then return tmux.show_view(pane, win) end
+  local job = vim.b[buf].terminal_job_id
+  if type(job) ~= "number" or job <= 0 then return end
+  local saved = vim.b[buf].luanphan_terminal_view
+  if opened and type(saved) == "table" and saved.follow == false and type(saved.view) == "table" then
+    pcall(api.nvim_win_call, win, function() vim.fn.winrestview(saved.view) end)
+  end
+  local width, height = tmux.grid_size(win)
+  local previous = vim.b[buf].luanphan_terminal_grid
+  if type(previous) == "table" and previous.width == width and previous.height == height then return end
+  if pcall(vim.fn.jobresize, job, width, height) then
+    vim.b[buf].luanphan_terminal_grid = { width = width, height = height }
+  end
 end
 
 function M.set_reference_cwd(buf, cwd)

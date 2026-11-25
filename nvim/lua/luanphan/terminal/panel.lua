@@ -62,19 +62,10 @@ function M.create(opts)
     if not bar:focus_towards(direction, true) and opts.docked then move_from_dock(direction) end
   end
 
-  local function save_views()
-    if not is_open() then return end
-    for _, win in ipairs(views.group_windows(anchor)) do
-      local buf = api.nvim_win_get_buf(win)
-      if vim.bo[buf].buftype == "terminal" then window.save_view(win, buf) end
-    end
-  end
-
   function panel.hide()
     if not is_open() then return false end
     quitting = nil
     current.scope.open = false
-    save_views()
     return views.close_group(anchor)
   end
 
@@ -96,9 +87,7 @@ function M.create(opts)
     local tab, win = pane.tab, pane.win
     bar:attach(tab.bufnr)
     vim.wo[win].winhighlight = "NormalFloat:Normal,EndOfBuffer:,WinBar:Normal,WinBarNC:Normal,TabLineFill:Normal"
-    if pane.opened then window.restore_view(win, tab.bufnr) end
     if tab.term then tab.term.window = win end
-    window.sync_grid(win, tab.bufnr)
   end
 
   local function render_body(group, enter)
@@ -124,7 +113,6 @@ function M.create(opts)
     if is_open() and current.scope ~= group.scope then panel.hide() end
     rendering = true
     bar = group.scope.bar
-    save_views()
     local ok, err = pcall(render_body, group, enter)
     rendering = false
     if not ok then
@@ -179,6 +167,7 @@ function M.create(opts)
     local result = opts.spawn(group.cwd, command)
     if not result then return end
     local buf = result.bufnr
+    terminal_pane.track_view(buf, events)
     local pane = { bufnr = buf, id = "shell:" .. buf, label = result.label or "shell", group = group, term = result.term }
     group.panes[#group.panes + 1] = pane
     group.bufnr = buf
@@ -332,14 +321,6 @@ function M.create(opts)
     })
   end
 
-  api.nvim_create_autocmd("WinLeave", {
-    group = events,
-    callback = function(ev)
-      if is_open() and views.group_anchor(api.nvim_get_current_win()) == anchor then
-        window.save_view(api.nvim_get_current_win(), ev.buf)
-      end
-    end,
-  })
   api.nvim_create_autocmd("WinEnter", {
     group = events,
     callback = function()

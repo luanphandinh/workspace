@@ -1,4 +1,5 @@
 local M = {}
+local terminal = require("luanphan.view_container.terminal")
 local closing_groups = {}
 
 function M.group_anchor(win)
@@ -45,6 +46,9 @@ function M.close_group(anchor, closing)
 	if closing_groups[anchor] then return false end
 	local windows = M.group_windows(anchor)
 	local closed, failure
+	for _, win in ipairs(windows) do
+		if win ~= closing then terminal.save_view(win, vim.api.nvim_win_get_buf(win)) end
+	end
 	if vim.tbl_contains(windows, vim.api.nvim_get_current_win()) then vim.cmd.stopinsert() end
 	closing_groups[anchor] = true
 	-- WinClosed can be suppressed when the group is closed inside another autocmd.

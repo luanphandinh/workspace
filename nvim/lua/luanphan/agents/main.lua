@@ -196,7 +196,6 @@ local function panel_options(visible, target, opts)
     close_visible_agents(target)
     return opts
   end
-  setup_agent(visible.name).save_view(visible.win)
   close_visible_agents(visible.bufnr)
   return vim.tbl_extend("force", opts or {}, { reuse_win = view_container.group_anchor(visible.win) })
 end

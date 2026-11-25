@@ -166,7 +166,11 @@ local function pick_session()
 end
 
 local function can_paint(pane)
-  return client ~= nil and pane.client == client and panes[pane.id] == pane and pane.visible and not pane.resizing
+  return client ~= nil and pane.client == client and panes[pane.id] == pane and pty.is_visible(pane) and not pane.resizing
+end
+
+local function repaint(pane)
+  if not pane.ready then pty.paint(pane, can_paint) end
 end
 
 local function bind_shortcuts(buf)
@@ -216,7 +220,7 @@ local function prepare_buffer(pane)
   vim.b[buf].luanphan_persist_term = true
   vim.b[buf].luanphan_floating_terminal = true
   vim.b[buf].luanphan_tmux_pane = pane.id
-  pane.bufnr = buf
+  pane.bufnr, pane.repaint = buf, repaint
   terminal_pane.set_reference_cwd(buf, pane.cwd)
   bar:attach_terminal(buf)
   bind_shortcuts(buf)
@@ -244,18 +248,12 @@ local function prepare_pane(item)
   if pane.view_win ~= win then
     terminal_pane.configure_window(win, "NormalFloat:Normal,WinBar:Normal,WinBarNC:Comment,TabLineFill:Normal")
   end
-  pane.visible = true
   if not pane.term then
     pane.client = client
     pane.restore_primary = true
     pty.open(pane)
     terminal_pane.configure_buffer(pane.bufnr)
   end
-  pty.sync_grid(pane, win, function()
-    if not pane.ready then pty.paint(pane, can_paint) end
-  end)
-  pty.show_view(pane, win)
-  if not pane.ready then pty.paint(pane, can_paint) end
 end
 
 tiles = views.create({
@@ -307,23 +305,11 @@ local function render_panel()
       prepare_buffer(pane)
     end
   end
-  if valid(anchor) then
-    for _, win in ipairs(views.group_windows(anchor)) do
-      local pane = panes[vim.b[api.nvim_win_get_buf(win)].luanphan_tmux_pane]
-      if pane and pane.visible then pty.save_view(pane, win) end
-    end
-  end
   if not valid(anchor) then
     anchor = views.open_float(layout, selected.bufnr, false)
   end
   tiles.active_by_context = {}
   if not tiles:reflow(anchor, current, layout, selected) then return end
-  for _, pane in pairs(panes) do
-    if pane.visible and not tiles:visible_window(current, pane.bufnr) then
-      pane.visible = false
-      pty.hide_view(pane)
-    end
-  end
   if tiles:focus_visible(current, selected, focus) and focus then focus_on_render = false end
   if not selection then bar.history.record(selected.bufnr) end
   bar:refresh(api.nvim_get_current_win() == bar.win)

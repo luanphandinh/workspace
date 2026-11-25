@@ -17,6 +17,10 @@ local function showing(pane, win)
   return win and api.nvim_win_is_valid(win) and api.nvim_win_get_buf(win) == pane.bufnr
 end
 
+function M.is_visible(pane)
+  return showing(pane, pane.view_win)
+end
+
 local function restore_pending_view(pane)
   if not pane.pending_view or pane.view_pending then return end
   pane.view_pending = true
@@ -74,9 +78,15 @@ function M.open(pane, on_input)
   })
   panes_by_buffer[pane.bufnr] = pane
   api.nvim_buf_attach(pane.bufnr, false, { on_lines = function() restore_pending_view(pane) end })
-  api.nvim_create_autocmd("BufWinLeave", {
+  api.nvim_create_autocmd({ "WinLeave", "BufWinLeave" }, {
     buffer = pane.bufnr,
-    callback = function() M.hide_view(pane) end,
+    callback = function(event)
+      if event.event == "BufWinLeave" then
+        M.hide_view(pane)
+      elseif api.nvim_get_current_win() == pane.view_win then
+        M.save_view(pane, pane.view_win)
+      end
+    end,
   })
 end
 
@@ -98,7 +108,7 @@ function M.grid_size(win)
   return math.max(1, api.nvim_win_get_width(win)), math.max(1, height)
 end
 
-function M.sync_grid(pane, win, callback)
+local function sync_grid(pane, win)
   local width, height = M.grid_size(win)
   pane.view_width, pane.view_height = width, height
   local client, pending = pane.client, pane.resizing
@@ -116,7 +126,7 @@ function M.sync_grid(pane, win, callback)
     if ok then pane.width, pane.height = width, height end
     if pane.resizing ~= request then return end
     pane.resizing = nil
-    if callback then callback() end
+    if pane.repaint then pane.repaint(pane) end
   end)
 end
 
@@ -125,7 +135,7 @@ function M.live_topline(pane)
 end
 
 function M.save_view(pane, win)
-  if pane.pending_view or not showing(pane, win) then return end
+  if not pane.view_height or pane.pending_view or not showing(pane, win) then return end
   pane.last_view = api.nvim_win_call(win, vim.fn.winsaveview)
   pane.follow_live = pane.last_view.topline >= M.live_topline(pane)
 end
@@ -135,7 +145,7 @@ function M.hide_view(pane)
   pane.view_win, pane.pending_view, pane.cursor_request = nil, nil, nil
 end
 
-function M.show_view(pane, win)
+local function restore_view(pane, win)
   if pane.view_win == win then return end
   pane.view_win = win
   local follow = pane.hidden_output and pane.follow_live ~= false
@@ -154,6 +164,12 @@ function M.show_view(pane, win)
       if row then queue_cursor(pane, { row = tonumber(row), col = tonumber(col) }) end
     end)
   end
+end
+
+function M.show_view(pane, win)
+  sync_grid(pane, win)
+  restore_view(pane, win)
+  if pane.repaint then pane.repaint(pane) end
 end
 
 function M.resolve_hyperlink(buf, row, column, callback)
