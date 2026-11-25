@@ -299,7 +299,7 @@ end
 
 local function handle_mouse_click(key)
   local mouse = vim.fn.getmousepos()
-  if not mouse or not mouse.winid or not vim.api.nvim_win_is_valid(mouse.winid) then
+  if not enabled() or not mouse or not mouse.winid or not vim.api.nvim_win_is_valid(mouse.winid) then
     return key
   end
   local bufnr = vim.api.nvim_win_get_buf(mouse.winid)
@@ -307,13 +307,12 @@ local function handle_mouse_click(key)
 
   local window_info = vim.fn.getwininfo(mouse.winid)[1]
   local text_width = vim.api.nvim_win_get_width(mouse.winid) - (window_info and window_info.textoff or 0)
-  local target = target_at(bufnr, (mouse.line or 0) - 1, (mouse.column or 0) - 1, math.max(1, text_width))
-  if not target then
-    return key
-  end
-
-  vim.schedule(function()
-    if vim.api.nvim_win_is_valid(mouse.winid) and vim.api.nvim_win_get_buf(mouse.winid) == bufnr then
+  local row, column = mouse.line or 0, mouse.column or 0
+  local target = target_at(bufnr, row - 1, column - 1, math.max(1, text_width))
+  local current_win = vim.api.nvim_get_current_win()
+  local function open(target)
+    if vim.api.nvim_get_current_win() == current_win
+      and vim.api.nvim_win_is_valid(mouse.winid) and vim.api.nvim_win_get_buf(mouse.winid) == bufnr then
       vim.api.nvim_set_current_win(mouse.winid)
       if target.url then
         M.open_url(target.url)
@@ -321,8 +320,19 @@ local function handle_mouse_click(key)
         M.open(target.path, target.line, target.column)
       end
     end
-  end)
-  return "<Ignore>"
+  end
+
+  if target then
+    vim.schedule(function() open(target) end)
+    return "<Ignore>"
+  end
+  local pane = require("luanphan.view_container.tmux.pane")
+  if pane.resolve_hyperlink(bufnr, row, column, function(url)
+    if enabled() and is_web_url(url) and not url:find("[%c%s]") then open({ url = url }) end
+  end) then
+    return "<Ignore>"
+  end
+  return key
 end
 
 local function set_click_keymaps()

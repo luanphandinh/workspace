@@ -6668,6 +6668,12 @@ tmux("send-keys", "-t", first, "Enter")
 wait(function()
   return tmux("capture-pane", "-p", "-t", first):find("DETACHED_OUTPUT", 1, true)
 end, "tmux accepted output while the panel was hidden")
+tmux("send-keys", "-l", "-t", first,
+  [==[printf '資料 \033]8;;https://example.com/first\033\\%s\033]8;;\033\\ and \033]8;;https://example.com/second?q=1\033\\%s\033]8;;\033\\ end\n' 'Guide' 'Guide'; seq 1 60]==])
+tmux("send-keys", "-t", first, "Enter")
+wait(function()
+  return tmux("capture-pane", "-p", "-t", first, "-S", "-80"):find("資料 Guide and Guide end", 1, true)
+end, "hyperlink fixture appeared in tmux")
 vim.fn.writefile({ first, shell_pid, third }, root .. "/panes")
 ]=])
     run_child([=[
@@ -6683,7 +6689,26 @@ assert(vim.wait(4000, function()
   if vim.b.luanphan_tmux_pane ~= saved[1] then return false end
   local output = table.concat(api.nvim_buf_get_lines(0, 0, -1, false), "\n")
   return output:find("RESULT_PROBE_TEXT", 1, true) and output:find("DETACHED_OUTPUT", 1, true)
+    and output:find("資料 Guide and Guide end", 1, true)
 end), "reattach lost scrollback or output produced while hidden")
+local references = require("luanphan.terminal_references")
+local open_url, getmousepos = references.open_url, vim.fn.getmousepos
+local clicked
+references.open_url = function(url) clicked = url end
+for lnum, line in ipairs(api.nvim_buf_get_lines(0, 0, -1, false)) do
+  if vim.trim(line) == "資料 Guide and Guide end" then
+    assert(lnum <= api.nvim_buf_line_count(0) - api.nvim_win_get_height(0), "fixture is outside scrollback")
+    local column = assert(line:find("Guide end", 1, true))
+    vim.fn.getmousepos = function()
+      return { winid = api.nvim_get_current_win(), line = lnum, column = column }
+    end
+    assert(vim.fn.maparg("<D-LeftMouse>", "n", false, true).callback() == "<Ignore>")
+    break
+  end
+end
+assert(vim.wait(4000, function() return clicked ~= nil end), "Cmd+click missed a restored terminal hyperlink")
+assert(clicked == "https://example.com/second?q=1", "Cmd+click opened the wrong terminal hyperlink")
+references.open_url, vim.fn.getmousepos = open_url, getmousepos
 local result = vim.system({ "tmux", "-S", vim.g.luanphan_floating_tmux_socket,
   "display-message", "-p", "-t", saved[1], "#{pane_pid}" }, { text = true }):wait()
 assert(result.code == 0 and vim.trim(result.stdout) == saved[2], "reattach replaced the shell")

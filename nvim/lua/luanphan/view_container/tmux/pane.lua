@@ -1,6 +1,7 @@
 local M = {}
 local api = vim.api
 local screen = require("luanphan.view_container.tmux.screen")
+local panes_by_buffer = setmetatable({}, { __mode = "v" })
 local history_position = "#{?#{!=:#{history_added},},#{history_added},#{history_size}}"
 local cursor_format = "#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{cursor_flag}"
   .. "\t#{keypad_cursor_flag}\t#{bracket_paste_flag}\t" .. history_position
@@ -37,6 +38,7 @@ function M.open(pane, on_input)
       M.input(pane, data)
     end,
   })
+  panes_by_buffer[pane.bufnr] = pane
 end
 
 function M.output(pane, bytes)
@@ -60,6 +62,27 @@ end
 
 function M.live_topline(pane)
   return math.max(1, api.nvim_buf_line_count(pane.bufnr) - pane.view_height + 1)
+end
+
+function M.resolve_hyperlink(buf, row, column, callback)
+  local pane = panes_by_buffer[buf]
+  local client = pane and pane.client
+  if not client or not client.ready or not client.job or row < 1 or column < 1 then return false end
+  local visible = api.nvim_buf_get_lines(buf, row - 1, row, false)[1]
+  if not visible or column > #visible then return false end
+
+  local frame, width = pane.frame, pane.view_width
+  local topline = M.live_topline(pane)
+  local tmux_row = tostring(row - topline + (frame and frame.top or 0))
+  client:request({ "capture-pane", "-epN", "-t", pane.id, "-S", tmux_row, "-E", tmux_row }, function(ok, lines)
+    if not ok or not lines[1] or pane.client ~= client or pane.frame ~= frame or pane.view_width ~= width
+      or not api.nvim_buf_is_valid(buf) or topline ~= M.live_topline(pane)
+      or api.nvim_buf_get_lines(buf, row - 1, row, false)[1] ~= visible then
+      return callback()
+    end
+    callback(screen.hyperlink_at(lines[1], frame and frame.left or 0, width, visible, column))
+  end)
+  return true
 end
 
 local function capture_start(pane)

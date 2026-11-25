@@ -1,4 +1,7 @@
 local M = {}
+local sgr = "\27%[[%d;:]*m"
+local osc8 = "\27]8;[^;\7\27]*;([^\7\27]*)"
+local close_link = "\27]8;;\27\\"
 
 local function fit_text(text, cells)
   if vim.fn.strdisplaywidth(text) <= cells then return text end
@@ -11,10 +14,27 @@ local function fit_text(text, cells)
   return vim.fn.strcharpart(text, 0, low, true)
 end
 
+local function find_link(line, index)
+  local start, last, url, terminator = line:find(osc8 .. "([\7\27])", index)
+  if terminator == "\7" then return start, last, url end
+  if terminator == "\27" and line:sub(last + 1, last + 1) == "\\" then
+    return start, last + 1, url
+  end
+end
+
 local function clip_row(line, left, width)
   local result, index = {}, 1
+  local linked = line:find("\27]8;", 1, true)
+  local link_open = false
   while index <= #line do
-    local start, finish = line:find("\27%[[%d;:]*m", index)
+    local start, finish = line:find(sgr, index)
+    if linked then
+      local link_start, link_end, url = find_link(line, index)
+      if link_start and (not start or link_start < start) then
+        start, finish = link_start, link_end
+        link_open = url ~= ""
+      end
+    end
     local text = line:sub(index, start and start - 1 or #line)
     if left > 0 then
       local skipped = fit_text(text, left)
@@ -33,7 +53,25 @@ local function clip_row(line, left, width)
     result[#result + 1] = line:sub(start, finish)
     index = finish + 1
   end
+  if link_open then result[#result + 1] = close_link end
   return table.concat(result)
+end
+
+function M.hyperlink_at(line, left, width, visible, column)
+  if not line:find("\27]8;", 1, true) then return end
+  local clipped = clip_row(line, left, width):gsub(sgr, "")
+  local text, index, bytes = {}, 1, 0
+  local active, target
+  while true do
+    local start, finish, url = find_link(clipped, index)
+    local part = clipped:sub(index, start and start - 1 or #clipped)
+    text[#text + 1] = part
+    local last = bytes + #part
+    if active and column > bytes and column <= last then target = active end
+    if not start then break end
+    index, bytes, active = finish + 1, last, url ~= "" and url or nil
+  end
+  if target and table.concat(text):gsub(" +$", "") == visible:gsub(" +$", "") then return target end
 end
 
 local function position(row, col)
