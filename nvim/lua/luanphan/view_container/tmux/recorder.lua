@@ -4,6 +4,8 @@
 local M = {}
 
 local SETTINGS_TTL_MS = 5000
+-- Lua memory for one event table, measured; counted so max_mb also covers many tiny chunks.
+local EVENT_BYTES = 256
 local events, first, last, size = {}, 1, 0, 0
 local enabled, limit, checked_at = false, 0, nil
 
@@ -40,7 +42,7 @@ end
 function M.add(pane, kind, data, bytes)
   if not active() then return end
   last = last + 1
-  bytes = bytes or #data
+  bytes = (bytes or #data) + EVENT_BYTES
   events[last] = { time = vim.uv.hrtime(), pane = pane.id or "?", kind = kind, data = data, size = bytes }
   size = size + bytes
   if size > limit then drop_oldest() end
