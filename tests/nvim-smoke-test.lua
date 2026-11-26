@@ -7151,7 +7151,7 @@ local function check(label, socket, open)
     assert(result.code == 0, result.stderr)
     return result.stdout
   end
-  vim.o.columns = 160
+  vim.o.columns, vim.o.lines = 160, 48
   open()
   assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane and vim.bo.buftype == "terminal" end), label .. " did not attach")
   local id, buf = vim.b.luanphan_tmux_pane, api.nvim_get_current_buf()
@@ -7168,6 +7168,23 @@ local function check(label, socket, open)
     vim.o.columns = columns
     assert(vim.wait(4000, function() return pane_width() ~= previous end, 50), label .. " did not follow " .. columns .. " columns")
     assert(vim.wait(4000, matches_tmux, 100), label .. " scrollback differs from tmux after resizing to " .. columns .. " columns")
+  end
+  -- A height change moves rows between screen and scrollback differently in Neovim and tmux.
+  local pane = require("luanphan.view_container.tmux.pane").for_buffer(buf)
+  local function screen_matches()
+    local lines = api.nvim_buf_get_lines(buf, 0, -1, false)
+    local want = vim.split(tmux("capture-pane", "-p", "-t", id), "\n")
+    for row = 1, pane.view_height do
+      if (lines[#lines - pane.view_height + row] or ""):gsub("%s+$", "") ~= (want[row] or ""):gsub("%s+$", "") then return false end
+    end
+    return true
+  end
+  local function pane_height() return tmux("display-message", "-p", "-t", id, "#{pane_height}") end
+  for _, rows in ipairs({ 36, 48, 26, 48 }) do
+    local previous = pane_height()
+    vim.o.lines = rows
+    assert(vim.wait(4000, function() return pane_height() ~= previous end, 50), label .. " did not follow " .. rows .. " lines")
+    assert(vim.wait(4000, screen_matches, 100), label .. " screen differs from tmux after resizing to " .. rows .. " lines")
   end
   vim.cmd("stopinsert")
   for _, win in ipairs(api.nvim_list_wins()) do
@@ -7223,6 +7240,72 @@ assert(not text():find("1mSPLIT_OK", 1, true), "a repaint broke an escape sequen
 ]=], "\n", { plain = true })))
   local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
   vim.system({ "tmux", "-S", socket, "kill-server" }):wait()
+  vim.fn.delete(root, "rf")
+  assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+end
+
+local function test_tmux_split_window_keeps_cursor()
+  if vim.fn.executable("tmux") == 0 or vim.fn.executable("python3") == 0 then return end
+  local root = uv.fs_mkdtemp("/tmp/nvim-tmux-splitwin-XXXXXX")
+  local script = root .. "/test.lua"
+  -- An inline prompt that parks the cursor between two full-width rules and redraws relative to it.
+  write(root .. "/prompt.py", {
+    "import os, sys, time",
+    "def w(s): sys.stdout.write(s); sys.stdout.flush()",
+    "cols = os.get_terminal_size(1).columns",
+    "def frame(tick):",
+    [[    return "\x1b[J" + "-" * cols + "\r\n> \r\n" + "-" * cols + f"\r\nstatus {tick}\x1b[2A\r\x1b[2C"]],
+    "for i in range(30):",
+    [[    w(f"history line {i:02d}\r\n")]],
+    "w(frame(0))",
+    "tick = 0",
+    "while True:",
+    "    time.sleep(0.2)",
+    "    tick += 1",
+    [[    w("\r\x1b[1A" + frame(tick))]],
+  })
+  write(script, vim.list_extend({
+    "local root = " .. string.format("%q", root),
+    "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
+    "vim.g.luanphan_recent_paths_file = root .. '/recent.json'",
+    "vim.g.luanphan_terminal_sessions_dir = root .. '/sessions'",
+    "vim.o.columns, vim.o.lines = 160, 48",
+  }, vim.split([=[
+local api = vim.api
+local function tmux(...)
+  local result = vim.system(vim.list_extend({ "tmux", "-S", vim.env.LUANPHAN_AGENT_TMUX_SOCKET }, { ... }), { text = true }):wait(2000)
+  assert(result.code == 0, result.stderr)
+  return result.stdout
+end
+local function trimmed(lines)
+  lines = vim.tbl_map(function(line) return (line:gsub("%s+$", "")) end, lines)
+  while lines[#lines] == "" do lines[#lines] = nil end
+  return lines
+end
+require("luanphan.agents.main").new("terminal")
+assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane and vim.bo.buftype == "terminal" end), "agent terminal did not attach")
+local id, buf = vim.b.luanphan_tmux_pane, api.nvim_get_current_buf()
+tmux("send-keys", "-t", id, "exec python3 " .. root .. "/prompt.py", "Enter")
+local function matches_tmux()
+  return vim.deep_equal(trimmed(api.nvim_buf_get_lines(buf, 0, -1, false)),
+    trimmed(vim.split(tmux("capture-pane", "-p", "-t", id, "-S", "-"), "\n")))
+end
+assert(vim.wait(4000, function() return tmux("capture-pane", "-p", "-t", id):find("status", 1, true) and matches_tmux() end, 50),
+  "prompt did not reach the panel")
+vim.cmd("stopinsert")
+-- Commands like Diffview split the current window, so the terminal briefly shows in narrow windows.
+api.nvim_set_current_win(vim.fn.bufwinid(buf))
+vim.cmd("tab split")
+for _ = 1, 3 do vim.cmd("vsplit") end
+vim.cmd("redraw")
+vim.wait(300, function() return false end)
+vim.cmd("tabclose")
+local ok = vim.wait(3000, function() return matches_tmux() end, 50)
+vim.wait(600, function() return false end)
+assert(ok and matches_tmux(), "panel drifted from tmux after the terminal was shown in split windows")
+]=], "\n", { plain = true })))
+  local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
+  vim.system({ "tmux", "-S", agent_socket(script), "kill-server" }):wait()
   vim.fn.delete(root, "rf")
   assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
 end
@@ -9405,6 +9488,7 @@ local agent_tests = {
   tmux_terminal = test_tmux_floating_terminal,
   tmux_resize = test_tmux_resize_rebuilds_inline_output,
   tmux_split_sequence = test_tmux_paint_keeps_split_escape_sequence,
+  tmux_split_window = test_tmux_split_window_keeps_cursor,
 }
 
 local lsp_lifecycle_tests = {
@@ -9669,6 +9753,7 @@ local setup_ok, setup_err = xpcall(function()
   test("tmux terminal restores native panes across Neovim restarts", agent_tests.tmux_terminal)
   test("tmux terminal rebuilds inline output after resize", agent_tests.tmux_resize)
   test("tmux terminal keeps escape sequences split across a repaint", agent_tests.tmux_split_sequence)
+  test("tmux terminal stays in sync after showing in split windows", agent_tests.tmux_split_window)
   test("agent window picker keeps the tiled panel together", function()
     agent_tests.tiled_workspace_picker(repo, worktree)
   end)

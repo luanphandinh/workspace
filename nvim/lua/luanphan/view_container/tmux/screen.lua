@@ -79,6 +79,8 @@ local function position(row, col)
 end
 
 local function paint_row(row, line)
+  -- Plain trailing spaces only pad the row; streamed output leaves them out of the buffer.
+  if not line:find("\27", 1, true) then line = line:gsub(" +$", "") end
   return position(row, 0) .. "\27[0m\27[2K" .. line .. "\27[0m"
 end
 

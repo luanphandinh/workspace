@@ -157,6 +157,8 @@ function M.mount(buf, win, open, prepare, highlights)
     win = open(placeholder or buf)
   end
   prepare(win)
+  -- Drop editor columns first: a narrower window would make Neovim rewrap the terminal and move its cursor.
+  M.configure_window(win, highlights)
   if api.nvim_win_get_buf(win) ~= buf then api.nvim_win_set_buf(win, buf) end
   if placeholder then pcall(api.nvim_buf_delete, placeholder, { force = true }) end
   api.nvim_set_current_win(win)

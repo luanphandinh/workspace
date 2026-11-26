@@ -13,6 +13,45 @@ function M.for_buffer(buf)
   return panes_by_buffer[buf]
 end
 
+-- Neovim sizes a terminal to the smallest window showing it. A new width rewraps lines,
+-- and a new height moves lines between the screen and scrollback differently from tmux.
+local function terminal_size(buf)
+  local width, height
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    local info = vim.fn.getwininfo(win)[1]
+    width = math.min(width or math.huge, info.width - info.textoff)
+    height = math.min(height or math.huge, info.height)
+  end
+  return width, height
+end
+
+local function mark_resized(pane, width, height)
+  if pane.width and width ~= pane.width then
+    pane.rebuild = true
+  elseif pane.height and height ~= pane.height then
+    pane.resync = true
+  end
+end
+
+-- A split or another window showing the buffer rewraps Neovim's copy, so rebuild it from tmux.
+api.nvim_create_autocmd({ "WinNew", "WinResized", "BufWinEnter", "WinClosed" }, {
+  group = api.nvim_create_augroup("LuanphanTmuxTerminalSize", { clear = true }),
+  callback = function()
+    -- Check right away: a split can be replaced before a scheduled check would see it.
+    for buf, pane in pairs(panes_by_buffer) do
+      if api.nvim_buf_is_valid(buf) then
+        local width, height = terminal_size(buf)
+        if width and (width ~= pane.term_width or height ~= pane.term_height) then
+          if pane.term_width then
+            if width ~= pane.term_width then pane.rebuild = true else pane.resync = true end
+          end
+          pane.term_width, pane.term_height = width, height
+        end
+      end
+    end
+  end,
+})
+
 local function showing(pane, win)
   return win and api.nvim_win_is_valid(win) and api.nvim_win_get_buf(win) == pane.bufnr
 end
@@ -152,7 +191,7 @@ function M.receive(pane, bytes)
   if not pane then return end
   pane.tail = unfinished_tail((pane.tail or "") .. bytes)
   -- Retry a rebuild that could not paint right after the resize.
-  if pane.ready and pane.rebuild then
+  if pane.ready and (pane.rebuild or pane.resync) then
     if pane.repaint then pane.repaint(pane) else M.paint(pane) end
   end
   if pane.ready then return M.stream(pane, bytes) end
@@ -181,13 +220,13 @@ local function sync_grid(pane, win)
   client:request({ "resize-window", "-t", pane.window, "-x", tostring(width), "-y", tostring(height) }, function(ok)
     if pane.client ~= client then return end
     if ok then
-      -- Neovim and tmux rewrap differently, so rebuild the copy from tmux.
-      if pane.width ~= width then pane.rebuild = true end
+      -- Neovim and tmux resize their screens differently, so refresh the copy from tmux.
+      mark_resized(pane, width, height)
       pane.width, pane.height = width, height
     end
     if pane.resizing ~= request then return end
     pane.resizing = nil
-    if pane.repaint then pane.repaint(pane) elseif pane.rebuild then M.paint(pane) end
+    if pane.repaint then pane.repaint(pane) elseif pane.rebuild or pane.resync then M.paint(pane) end
   end)
 end
 
@@ -228,9 +267,10 @@ local function restore_view(pane, win)
 end
 
 function M.show_view(pane, win)
+  if not pane.term_width then pane.term_width, pane.term_height = terminal_size(pane.bufnr) end
   sync_grid(pane, win)
   restore_view(pane, win)
-  if pane.repaint then pane.repaint(pane) end
+  if pane.repaint then pane.repaint(pane) elseif (pane.rebuild or pane.resync) and not pane.resizing then M.paint(pane) end
 end
 
 function M.resolve_hyperlink(buf, row, column, callback)
@@ -321,12 +361,12 @@ function M.paint(pane, visible)
   if pane.ready and (pane.tail or "") ~= "" then M.output(pane, "\24") end
   local win, view = pane.view_win, nil
   if pane.rebuild then
-    if M.is_visible(pane) and api.nvim_win_call(win, function() return vim.fn.line("w0") end) < M.live_topline(pane) then
-      view, pane.follow_live = api.nvim_win_call(win, vim.fn.winsaveview), false
-    end
+    if pane.follow_live == false and M.is_visible(pane) then view = api.nvim_win_call(win, vim.fn.winsaveview) end
     pane.rebuild, pane.painted, pane.frame = nil, false, nil
     M.output(pane, "\27[3J")
   end
+  -- Without a previous frame, the paint rewrites every visible row and the cursor.
+  if pane.resync then pane.resync, pane.frame = nil, nil end
   pane.capturing, pane.ready, pane.dirty = true, false, false
   M.capture(pane, function(lines, flags, primary)
     if pane.client ~= connection then return end
@@ -334,7 +374,7 @@ function M.paint(pane, visible)
     if not lines or (visible and not visible(pane)) then return end
     M.paint_frame(pane, lines, flags, primary)
     if view and showing(pane, win) then M.apply_view(pane, win, view) end
-    if pane.dirty or pane.rebuild then
+    if pane.dirty or pane.rebuild or pane.resync then
       M.paint(pane, visible)
       return
     end
