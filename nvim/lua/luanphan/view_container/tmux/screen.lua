@@ -177,7 +177,15 @@ function M.frame(pane, lines, flags)
   elseif frame.region == full_region and previous and previous.region ~= full_region and not reset then
     output[#output + 1] = "\27[r"
   end
-  if #output > 0 or frame.row ~= previous.row or frame.col ~= previous.col then
+  -- After a full row tmux reports the cursor one past the last column, so the next character
+  -- starts a new row. Neovim only gets that state by writing the row up to its last cell.
+  frame.wrap = col - left >= width
+  if frame.wrap then
+    local row_text = frame.rows[frame.row + 1] or ""
+    local cells = cell_width((row_text:gsub(sgr, ""):gsub("\27%]8;[^\7\27]*;[^\7\27]*\27?\\?\7?", "")))
+    output[#output + 1] = position(frame.row, 0) .. "\27[0m" .. row_text .. "\27[0m"
+      .. string.rep(" ", width - cells)
+  elseif #output > 0 or frame.row ~= previous.row or frame.col ~= previous.col or previous.wrap then
     output[#output + 1] = position(frame.row, frame.col)
   end
   return frame, table.concat(output)

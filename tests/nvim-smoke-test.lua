@@ -7417,6 +7417,32 @@ local function test_tmux_frame_restores_scroll_region()
   assert_true(ok, tostring(err))
 end
 
+local function test_tmux_frame_keeps_pending_wrap()
+  -- After a full row tmux reports the cursor one past the last column: the next character
+  -- starts a new row. A repaint that parks the cursor on the last column would overwrite it.
+  local screen = require("luanphan.view_container.tmux.screen")
+  local buf = vim.api.nvim_create_buf(false, true)
+  local win = vim.api.nvim_open_win(buf, false, { relative = "editor", row = 0, col = 0, width = 10, height = 4, style = "minimal" })
+  local ok, err = pcall(function()
+    local term = vim.api.nvim_open_term(buf, {})
+    for _, case in ipairs({ { "\27[44m0123456789\27[0m", "0123456789" }, { "wide 日本", "wide 日本" } }) do
+      local pane = { view_width = 10, view_height = 4, width = 10, height = 4 }
+      local flags = { "10", "1", "0", "1", "0", "0", "0", "10", "4", "1" }
+      local _, output = screen.frame(pane, { "top", case[1], "", "" }, flags)
+      vim.api.nvim_chan_send(term, output .. "X")
+      local rows
+      assert_true(vim.wait(2000, function()
+        rows = vim.tbl_map(vim.trim, vim.api.nvim_buf_get_lines(buf, -5, -1, false))
+        return rows[2] == case[2] and rows[3] ~= ""
+      end), "the character after a full row did not start a new row: " .. vim.inspect(rows))
+      assert_true(vim.deep_equal(rows, { "top", case[2], "X", "" }), "a repaint lost the pending wrap: " .. vim.inspect(rows))
+    end
+  end)
+  pcall(vim.api.nvim_win_close, win, true)
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+  assert_true(ok, tostring(err))
+end
+
 local function test_claude_title_reports_status()
   if vim.fn.executable("tmux") == 0 or vim.fn.executable("python3") == 0 then return end
   local root = uv.fs_mkdtemp("/tmp/nvim-claude-title-XXXXXX")
@@ -9634,6 +9660,7 @@ local agent_tests = {
   tmux_split_window = test_tmux_split_window_keeps_cursor,
   tmux_steady_output = test_tmux_repaint_recovers_under_output,
   tmux_scroll_region = test_tmux_frame_restores_scroll_region,
+  tmux_pending_wrap = test_tmux_frame_keeps_pending_wrap,
   claude_title_status = test_claude_title_reports_status,
 }
 
@@ -9902,6 +9929,7 @@ local setup_ok, setup_err = xpcall(function()
   test("tmux terminal stays in sync after showing in split windows", agent_tests.tmux_split_window)
   test("tmux terminal recovers from steady output and failed captures", agent_tests.tmux_steady_output)
   test("tmux terminal repaint keeps the scroll region", agent_tests.tmux_scroll_region)
+  test("tmux terminal repaint keeps a pending wrap", agent_tests.tmux_pending_wrap)
   test("claude title reports working and done", agent_tests.claude_title_status)
   test("agent window picker keeps the tiled panel together", function()
     agent_tests.tiled_workspace_picker(repo, worktree)
