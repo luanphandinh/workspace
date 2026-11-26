@@ -963,7 +963,7 @@ local function test_terminal_record_dump()
   local root = uv.fs_mkdtemp("/tmp/nvim-tmux-record-XXXXXX")
   local script, socket = root .. "/test.lua", root .. "/socket"
   write(root .. "/tmux.conf", { "set -g default-shell /bin/sh", "set -g default-command 'exec /bin/sh'" })
-  write(root .. "/settings.toml", { "[terminal_record]", "record_session = true", "max_record_session_mb = 4" })
+  write(root .. "/settings.toml", { "[terminal_record]", "enabled = true", "max_mb = 4" })
   write(script, vim.list_extend({
     "local root = " .. string.format("%q", root),
     "vim.g.luanphan_floating_tmux_socket = root .. '/socket'",
@@ -1022,7 +1022,7 @@ local function test_terminal_record_limits()
   local root = uv.fs_mkdtemp("/tmp/nvim-record-limit-XXXXXX")
   local ok, err = pcall(function()
     vim.g.luanphan_global_settings_path = root .. "/settings.toml"
-    write(root .. "/settings.toml", { "[terminal_record]", "record_session = true", "max_record_session_mb = 1" })
+    write(root .. "/settings.toml", { "[terminal_record]", "enabled = true", "max_mb = 1" })
     recorder.reload()
     local pane, chunk = { id = "%limit" }, string.rep("x", 400 * 1024)
     for _ = 1, 5 do recorder.add(pane, "recv", chunk) end
@@ -1031,7 +1031,7 @@ local function test_terminal_record_limits()
       "the recorder kept more than its limit: " .. vim.inspect(stats))
     -- Settings are files with a modification stamp; give the rewrite a new one.
     vim.uv.sleep(10)
-    write(root .. "/settings.toml", { "[terminal_record]", "record_session = false", "max_record_session_mb = 1" })
+    write(root .. "/settings.toml", { "[terminal_record]", "enabled = false", "max_mb = 1" })
     recorder.reload()
     recorder.add(pane, "recv", chunk)
     stats = recorder.stats()

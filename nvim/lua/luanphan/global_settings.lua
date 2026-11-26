@@ -22,7 +22,7 @@ local TERMINAL_DEFAULTS = {
   terminal_split = { display_style = "tabs", window_bar_style = "horizontal" },
 }
 local TERMINAL_RECORD_SECTION = "terminal_record"
-local DEFAULT_TERMINAL_RECORD = { record_session = true, max_record_session_mb = 64 }
+local DEFAULT_TERMINAL_RECORD = { enabled = true, max_mb = 64 }
 local DISPLAY_STYLE_SETTING = 'display_style = "' .. DEFAULT_AGENT_FLOAT.display_style .. '"'
 
 local function floating_width_lines(configured)
@@ -95,8 +95,8 @@ function M.ensure_config(path)
   sections[#sections + 1] = {
     "[" .. TERMINAL_RECORD_SECTION .. "]",
     "# Keep recent tmux terminal output in memory; :TerminalRecordDump writes it to a file.",
-    "record_session = " .. tostring(DEFAULT_TERMINAL_RECORD.record_session),
-    "max_record_session_mb = " .. DEFAULT_TERMINAL_RECORD.max_record_session_mb,
+    "enabled = " .. tostring(DEFAULT_TERMINAL_RECORD.enabled),
+    "max_mb = " .. DEFAULT_TERMINAL_RECORD.max_mb,
   }
   for _, name in ipairs({ "floating_terminal", "terminal_split" }) do
     local defaults = TERMINAL_DEFAULTS[name]
@@ -162,10 +162,10 @@ function M.read(path)
         max_cache_entry = math.floor(configured)
       end
     elseif section == TERMINAL_RECORD_SECTION then
-      local enabled = value:match("^record_session%s*=%s*(%a+)$")
-      if enabled == "true" or enabled == "false" then terminal_record.record_session = enabled == "true" end
-      local megabytes = tonumber(value:match("^max_record_session_mb%s*=%s*([%d.]+)$"))
-      if megabytes and megabytes > 0 then terminal_record.max_record_session_mb = megabytes end
+      local enabled = value:match("^enabled%s*=%s*(%a+)$")
+      if enabled == "true" or enabled == "false" then terminal_record.enabled = enabled == "true" end
+      local megabytes = tonumber(value:match("^max_mb%s*=%s*([%d.]+)$"))
+      if megabytes and megabytes > 0 then terminal_record.max_mb = megabytes end
     elseif layout[section] then
       local settings = layout[section]
       local key, raw = value:match("^([%w_]+)%s*=%s*([%d.]+)$")

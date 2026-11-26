@@ -14,7 +14,7 @@ end
 -- Settings are read at most every few seconds, never once per output chunk.
 function M.reload()
   local settings = require("luanphan.global_settings").read().terminal_record
-  enabled, limit = settings.record_session, settings.max_record_session_mb * 1024 * 1024
+  enabled, limit = settings.enabled, settings.max_mb * 1024 * 1024
   checked_at = vim.uv.now()
   if not enabled then clear() end
 end
