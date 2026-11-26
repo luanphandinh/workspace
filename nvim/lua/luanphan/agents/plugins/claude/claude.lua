@@ -1,5 +1,5 @@
 return {
   icon = "\u{ec82}",
   plugin = "luanphan-claude-agent",
-  defaults = { cmd = "claude" },
+  defaults = { cmd = "mclaude" },
 }

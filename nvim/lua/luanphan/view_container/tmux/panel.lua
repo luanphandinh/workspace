@@ -172,7 +172,7 @@ function M.create(opts)
   end
 
   local function repaint(pane)
-    if not pane.ready then pty.paint(pane, can_paint) end
+    if not pane.ready or pane.rebuild then pty.paint(pane, can_paint) end
   end
 
   local function bind_shortcuts(buf)

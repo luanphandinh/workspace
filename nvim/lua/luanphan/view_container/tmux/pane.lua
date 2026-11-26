@@ -101,6 +101,38 @@ function M.stream(pane, bytes)
   if not pane.view_win then pane.hidden_output = true end
   pane.frame = nil
   M.output(pane, bytes)
+  -- Neovim can drift from tmux on some redraws; resync visible rows once output settles.
+  local token = (pane.settle or 0) + 1
+  pane.settle = token
+  vim.defer_fn(function()
+    if pane.settle == token and pane.ready and not pane.resizing and M.is_visible(pane) then
+      M.paint(pane, M.is_visible)
+    end
+  end, 100)
+end
+
+-- Returns the start of an escape sequence or UTF-8 character that the next output chunk completes.
+local function unfinished_tail(data)
+  local start = data:match(".*()\27")
+  if start then
+    local kind = data:sub(start + 1, start + 1)
+    local rest = data:sub(start + 1)
+    if kind == "" or (kind == "[" and rest:find("^%[[\48-\63]*[\32-\47]*$"))
+      or (kind:find("^[%]P_%^X]") and not rest:find("\7", 2, true))
+      or (kind:find("^[\32-\47]") and rest:find("^[\32-\47]*$")) then
+      return #data - start < 65536 and data:sub(start) or ""
+    end
+  end
+  for back = 1, math.min(3, #data) do
+    local byte = data:byte(#data - back + 1)
+    if byte >= 0xC0 then
+      local size = byte >= 0xF0 and 4 or byte >= 0xE0 and 3 or 2
+      return size > back and data:sub(-back) or ""
+    elseif byte < 0x80 then
+      break
+    end
+  end
+  return ""
 end
 
 -- A snapshot restores the screen, but tmux does not include OSC events in it.
@@ -126,6 +158,11 @@ end
 
 function M.receive(pane, bytes)
   if not pane then return end
+  pane.tail = unfinished_tail((pane.tail or "") .. bytes)
+  -- Retry a rebuild that could not paint right after the resize.
+  if pane.ready and pane.rebuild then
+    if pane.repaint then pane.repaint(pane) else M.paint(pane) end
+  end
   if pane.ready then return M.stream(pane, bytes) end
   if pane.capturing or pane.replay_osc then pane.dirty = true end
   if pane.replay_osc then replay_osc(pane, bytes) end
@@ -151,10 +188,14 @@ local function sync_grid(pane, win)
   pane.resizing = request
   client:request({ "resize-window", "-t", pane.window, "-x", tostring(width), "-y", tostring(height) }, function(ok)
     if pane.client ~= client then return end
-    if ok then pane.width, pane.height = width, height end
+    if ok then
+      -- Neovim and tmux rewrap differently, so rebuild the copy from tmux.
+      if pane.width ~= width then pane.rebuild = true end
+      pane.width, pane.height = width, height
+    end
     if pane.resizing ~= request then return end
     pane.resizing = nil
-    if pane.repaint then pane.repaint(pane) end
+    if pane.repaint then pane.repaint(pane) elseif pane.rebuild then M.paint(pane) end
   end)
 end
 
@@ -284,20 +325,31 @@ end
 function M.paint(pane, visible)
   if not pane.term or not pane.client or pane.capturing or (visible and not visible(pane)) then return end
   local connection = pane.client
+  -- Cancel a sequence Neovim is still parsing before painting over it.
+  if pane.ready and (pane.tail or "") ~= "" then M.output(pane, "\24") end
+  local win, view = pane.view_win, nil
+  if pane.rebuild then
+    if M.is_visible(pane) and api.nvim_win_call(win, function() return vim.fn.line("w0") end) < M.live_topline(pane) then
+      view, pane.follow_live = api.nvim_win_call(win, vim.fn.winsaveview), false
+    end
+    pane.rebuild, pane.painted, pane.frame = nil, false, nil
+    M.output(pane, "\27[3J")
+  end
   pane.capturing, pane.ready, pane.dirty = true, false, false
   M.capture(pane, function(lines, flags, primary)
     if pane.client ~= connection then return end
     pane.capturing = false
     if not lines or (visible and not visible(pane)) then return end
     M.paint_frame(pane, lines, flags, primary)
-    if pane.dirty then
+    if view and showing(pane, win) then M.apply_view(pane, win, view) end
+    if pane.dirty or pane.rebuild then
       M.paint(pane, visible)
       return
     end
     pane.ready = true
-    local pending = pane.pending_osc
     pane.pending_osc = nil
-    if pending and vim.startswith(pending, "\27]") then M.output(pane, pending) end
+    -- tmux is still waiting for the rest of this sequence, so Neovim must wait for it too.
+    if (pane.tail or "") ~= "" then M.output(pane, pane.tail) end
   end)
 end
 

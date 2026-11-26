@@ -21,7 +21,7 @@ local project_scope_fixture_id = 0
 
 local agent_cli_commands = {
   { name = "cursor", command = "cursor-agent" },
-  { name = "claude", command = "claude" },
+  { name = "claude", command = "mclaude" },
   {
     name = "codex",
     command = "mcodex",
@@ -7110,6 +7110,126 @@ end), "tmux did not restore the editor tile after reopening")
   assert_true(ok, tostring(err))
 end
 
+local function test_tmux_resize_rebuilds_inline_output()
+  if vim.fn.executable("tmux") == 0 or vim.fn.executable("python3") == 0 then return end
+  local root = uv.fs_mkdtemp("/tmp/nvim-tmux-resize-XXXXXX")
+  local script, socket = root .. "/test.lua", root .. "/socket"
+  write(root .. "/tmux.conf", { "set -g default-shell /bin/sh", "set -g default-command 'exec /bin/sh'" })
+  -- An inline TUI that repaints its bottom rows with relative cursor moves.
+  write(root .. "/inline.py", {
+    "import os, signal, sys, time",
+    "def w(s): sys.stdout.write(s); sys.stdout.flush()",
+    "def live():",
+    "    cols = os.get_terminal_size(1).columns",
+    [[    return "\r\x1b[J" + "-" * cols + "\r\n> prompt\r\n" + "status " * (cols // 8)]],
+    "for i in range(40):",
+    [[    w(f"history line {i:02d} " + "word " * 26 + "\r\n")]],
+    "w(live())",
+    [[signal.signal(signal.SIGWINCH, lambda *_: w("\x1b[2A" + live()))]],
+    "while True:",
+    "    time.sleep(0.2)",
+    [[    w("\x1b[2A" + live())]],
+  })
+  write(script, vim.list_extend({
+    "local root = " .. string.format("%q", root),
+    "vim.g.luanphan_floating_tmux_socket = root .. '/socket'",
+    "vim.g.luanphan_floating_tmux_config = root .. '/tmux.conf'",
+    "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
+    "vim.g.luanphan_recent_paths_file = root .. '/recent.json'",
+    "vim.g.luanphan_terminal_sessions_dir = root .. '/sessions'",
+    "vim.o.columns, vim.o.lines = 160, 48",
+  }, vim.split([=[
+local api = vim.api
+local function trimmed(lines)
+  lines = vim.tbl_map(function(line) return (line:gsub("%s+$", "")) end, lines)
+  while lines[#lines] == "" do lines[#lines] = nil end
+  return lines
+end
+local function check(label, socket, open)
+  local function tmux(...)
+    local result = vim.system(vim.list_extend({ "tmux", "-S", socket }, { ... }), { text = true }):wait(2000)
+    assert(result.code == 0, result.stderr)
+    return result.stdout
+  end
+  vim.o.columns = 160
+  open()
+  assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane and vim.bo.buftype == "terminal" end), label .. " did not attach")
+  local id, buf = vim.b.luanphan_tmux_pane, api.nvim_get_current_buf()
+  tmux("send-keys", "-t", id, "exec python3 " .. root .. "/inline.py", "Enter")
+  local function matches_tmux()
+    local panel = trimmed(api.nvim_buf_get_lines(buf, 0, -1, false))
+    return vim.deep_equal(panel, trimmed(vim.split(tmux("capture-pane", "-p", "-t", id, "-S", "-"), "\n")))
+  end
+  assert(vim.wait(4000, function() return tmux("capture-pane", "-p", "-t", id):find("status", 1, true) and matches_tmux() end, 100),
+    label .. " inline output did not reach the panel")
+  local function pane_width() return tmux("display-message", "-p", "-t", id, "#{pane_width}") end
+  for _, columns in ipairs({ 110, 180, 90 }) do
+    local previous = pane_width()
+    vim.o.columns = columns
+    assert(vim.wait(4000, function() return pane_width() ~= previous end, 50), label .. " did not follow " .. columns .. " columns")
+    assert(vim.wait(4000, matches_tmux, 100), label .. " scrollback differs from tmux after resizing to " .. columns .. " columns")
+  end
+  -- Simulate a redraw that Neovim applied differently from tmux.
+  local pane = require("luanphan.view_container.tmux.pane").for_buffer(buf)
+  pane.client:request({ "display-message", "-p", "" }, function()
+    require("luanphan.view_container.tmux.pane").output(pane, "\27[3;1HDRIFTED_ROW\27[K")
+  end)
+  assert(vim.wait(4000, matches_tmux, 100), label .. " visible rows did not resync from tmux")
+  vim.cmd("stopinsert")
+  for _, win in ipairs(api.nvim_list_wins()) do
+    if api.nvim_win_is_valid(win) and api.nvim_win_get_config(win).relative ~= "" then api.nvim_win_close(win, true) end
+  end
+end
+check("floating terminal", vim.g.luanphan_floating_tmux_socket, function()
+  api.nvim_feedkeys(vim.keycode(vim.g.mapleader .. "t"), "xt", false)
+end)
+check("agent terminal", vim.env.LUANPHAN_AGENT_TMUX_SOCKET, function()
+  require("luanphan.agents.main").new("terminal")
+end)
+]=], "\n", { plain = true })))
+  local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
+  vim.system({ "tmux", "-S", socket, "kill-server" }):wait()
+  vim.system({ "tmux", "-S", agent_socket(script), "kill-server" }):wait()
+  vim.fn.delete(root, "rf")
+  assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+end
+
+local function test_tmux_paint_keeps_split_escape_sequence()
+  if vim.fn.executable("tmux") == 0 or vim.fn.executable("python3") == 0 then return end
+  local root = uv.fs_mkdtemp("/tmp/nvim-tmux-split-XXXXXX")
+  local script, socket = root .. "/test.lua", root .. "/socket"
+  write(root .. "/tmux.conf", { "set -g default-shell /bin/sh", "set -g default-command 'exec /bin/sh'" })
+  -- The pause lets a repaint run while tmux still waits for the end of the color sequence.
+  write(root .. "/split.py", {
+    "import os, time",
+    [[os.write(1, b"\x1b[2J\x1b[HBEFORE\r\n\x1b[3")]],
+    "time.sleep(0.8)",
+    [[os.write(1, b"1mSPLIT_OK\x1b[0m\r\n")]],
+    "time.sleep(60)",
+  })
+  write(script, vim.list_extend({
+    "local root = " .. string.format("%q", root),
+    "vim.g.luanphan_floating_tmux_socket = root .. '/socket'",
+    "vim.g.luanphan_floating_tmux_config = root .. '/tmux.conf'",
+    "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
+    "vim.g.luanphan_recent_paths_file = root .. '/recent.json'",
+    "vim.g.luanphan_terminal_sessions_dir = root .. '/sessions'",
+  }, vim.split([=[
+local api = vim.api
+api.nvim_feedkeys(vim.keycode(vim.g.mapleader .. "t"), "xt", false)
+assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane and vim.bo.buftype == "terminal" end), "tmux terminal did not attach")
+local id, buf = vim.b.luanphan_tmux_pane, api.nvim_get_current_buf()
+vim.system({ "tmux", "-S", root .. "/socket", "send-keys", "-t", id, "exec python3 " .. root .. "/split.py", "Enter" }):wait()
+local function text() return table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), "\n") end
+assert(vim.wait(5000, function() return text():find("SPLIT_OK", 1, true) end, 5), "split sequence output did not arrive")
+assert(not text():find("1mSPLIT_OK", 1, true), "a repaint broke an escape sequence split across output chunks")
+]=], "\n", { plain = true })))
+  local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
+  vim.system({ "tmux", "-S", socket, "kill-server" }):wait()
+  vim.fn.delete(root, "rf")
+  assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+end
+
 local function test_terminal_view_container(repo)
   local old_cwd = vim.fn.getcwd()
   close_toggleterm_terminals()
@@ -9286,6 +9406,8 @@ local agent_tests = {
   view_container = test_agent_view_container,
   floating_terminal = test_floating_terminal_windows,
   tmux_terminal = test_tmux_floating_terminal,
+  tmux_resize = test_tmux_resize_rebuilds_inline_output,
+  tmux_split_sequence = test_tmux_paint_keeps_split_escape_sequence,
 }
 
 local lsp_lifecycle_tests = {
@@ -9548,6 +9670,8 @@ local setup_ok, setup_err = xpcall(function()
   end)
   test("floating terminal nests tabs inside global windows", agent_tests.floating_terminal)
   test("tmux terminal restores native panes across Neovim restarts", agent_tests.tmux_terminal)
+  test("tmux terminal rebuilds inline output after resize", agent_tests.tmux_resize)
+  test("tmux terminal keeps escape sequences split across a repaint", agent_tests.tmux_split_sequence)
   test("agent window picker keeps the tiled panel together", function()
     agent_tests.tiled_workspace_picker(repo, worktree)
   end)

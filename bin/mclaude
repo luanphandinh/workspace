@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+
+# Start Claude Code with Remote Control. A bare launch opens the resume picker,
+# and closing the picker starts a new session instead of exiting.
+
+case "${1:-}" in
+	--version|-v|-h|--help|agents|attach|auth|auto-mode|doctor|gateway|import|install|logs|mcp|plugin|plugins|purge|remote-control|respawn|rm|setup-token|stop|kill|ultrareview|update|upgrade)
+		exec claude "$@"
+		;;
+	resume)
+		shift
+		set -- --resume "$@"
+		;;
+esac
+
+if [ "$#" -eq 0 ]; then
+	status=0
+	claude --resume --remote-control || status="$?"
+	# The picker exits with 1 when it is closed without choosing a session.
+	[ "$status" -eq 1 ] || exit "$status"
+	exec claude --remote-control
+fi
+
+for arg in "$@"; do
+	case "$arg" in
+		--|-p|--print|--remote-control|--remote-control=*)
+			exec claude "$@"
+			;;
+	esac
+done
+
+exec claude "$@" --remote-control

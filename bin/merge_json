@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+def die(message: str, code: int = 1) -> None:
+    print(f"error: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+def read_object(path: Path, label: str) -> dict:
+    try:
+        value = json.loads(path.read_text() or "{}")
+    except json.JSONDecodeError as error:
+        die(f"{label} is not valid JSON: {path}: {error}")
+    if not isinstance(value, dict):
+        die(f"{label} must contain a JSON object: {path}")
+    return value
+
+
+def merge_json(base: dict, overlay: dict) -> dict:
+    merged = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge_json(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def main() -> int:
+    if len(sys.argv) != 3 or sys.argv[1] in ("-h", "--help"):
+        print("usage: merge_json <original_file> <new_config_file>", file=sys.stderr)
+        return 2
+
+    original_file = Path(sys.argv[1]).expanduser()
+    new_config_file = Path(sys.argv[2]).expanduser()
+    if not new_config_file.is_file():
+        die(f"new config file does not exist: {new_config_file}")
+
+    original = read_object(original_file, "original file") if original_file.exists() else {}
+    merged = merge_json(original, read_object(new_config_file, "new config file"))
+    if original_file.exists() and merged == original:
+        return 0
+
+    original_file.parent.mkdir(parents=True, exist_ok=True)
+    if original_file.exists():
+        subprocess.run([str(Path(__file__).with_name("backup")), str(original_file)], check=True)
+    original_file.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
