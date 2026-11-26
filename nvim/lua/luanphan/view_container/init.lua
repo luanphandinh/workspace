@@ -287,6 +287,24 @@ function Container:anchor()
 	return anchor and vim.api.nvim_win_is_valid(anchor) and anchor or nil
 end
 
+-- True while a layout is open, even if its anchor window is being closed.
+function Container:is_open()
+	return self.layout_anchor ~= nil
+end
+
+function Container:current_context()
+	return self.layout_context
+end
+
+function Container:is_tile(win)
+	return vim.tbl_contains(self.tile_windows or {}, win)
+end
+
+-- Forget the remembered active tab of every context.
+function Container:clear_selection()
+	self.active_by_context = {}
+end
+
 function Container:content_window()
 	local anchor = self:anchor()
 	if not anchor then return end
@@ -590,7 +608,7 @@ end
 
 function Container:pick(context)
 	context = context or self:context()
-	local choices = self.opts.choices(context) or {}
+	local choices = self.opts.choices and self.opts.choices(context) or {}
 	if #choices == 0 then
 		vim.notify(self.opts.empty_message or "no views available", vim.log.levels.WARN)
 		return
@@ -598,15 +616,6 @@ function Container:pick(context)
 	select_item(self.opts.picker_title or "Views", choices, function(choice)
 		(self.opts.create or self.opts.activate)(choice)
 	end, self.opts.picker_opts)
-end
-
-function Container:create(context)
-	context = context or self:context()
-	if self.opts.new then
-		self.opts.new(context)
-		return
-	end
-	self:pick(context)
 end
 
 function Container:bind(bufnr, context)
@@ -618,21 +627,6 @@ function Container:bind(bufnr, context)
 			self:cycle(context, step)
 		end, vim.tbl_extend("force", opts, { desc = desc }))
 	end
-	if self.opts.create_key ~= false then
-		vim.keymap.set("n", self.opts.create_key or "<leader>fn", function()
-			self:create(context)
-		end, vim.tbl_extend("force", opts, { desc = self.opts.new_desc or "New view" }))
-	end
-end
-
-function Container:attach(win, bufnr, id, context)
-	if not win or not vim.api.nvim_win_is_valid(win) or not vim.api.nvim_buf_is_valid(bufnr) then
-		return
-	end
-	context = context or self:context()
-	self.active_by_context[context] = { id = id, bufnr = bufnr }
-	self:bind(bufnr, context)
-	if not vim.w[win].luanphan_view_anchor then self:render(win, context) end
 end
 
 function Container:remove_tab(bufnr, context, on_close)
@@ -668,7 +662,6 @@ function M.create(opts)
 	assert(type(opts) == "table", "view container options are required")
 	assert(type(opts.context) == "function", "view container context callback is required")
 	assert(type(opts.tabs) == "function" or opts.panes, "view container pane source is required")
-	assert(type(opts.choices) == "function" or type(opts.new) == "function", "view container picker or new callback is required")
 	assert(type(opts.activate) == "function", "view container activate callback is required")
 	local container = setmetatable({
 		opts = opts,

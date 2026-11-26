@@ -2,6 +2,7 @@ local M = {}
 local api = vim.api
 local tmux_client = require("luanphan.view_container.tmux.client")
 local pty = require("luanphan.view_container.tmux.pane")
+local connection = require("luanphan.view_container.tmux.connection")
 local pane_order = require("luanphan.view_container.pane_order")
 local terminal_pane = require("luanphan.view_container.terminal")
 local model = require("luanphan.view_container.tmux.windows")
@@ -276,8 +277,6 @@ function M.create(opts)
     },
     reorder = reorder_panes,
     activate = activate,
-    new = new_tab,
-    create_key = false,
     cycle_desc = "Next tmux pane",
   })
 
@@ -312,7 +311,7 @@ function M.create(opts)
       end
     end
     local anchor = tiles:anchor() or tiles:open_float(layout, selected.bufnr, false)
-    tiles.active_by_context = {}
+    tiles:clear_selection()
     if tiles:reflow(anchor, current, layout, selected, { focus = focus, record = not selection }) then
       if focus then focus_on_render = false end
       if focus_sidebar and bar:visible() then
@@ -424,7 +423,7 @@ function M.create(opts)
   end
 
   function panel.hide(closing)
-    if not client and not tiles.layout_anchor then return false end
+    if not client and not tiles:is_open() then return false end
     bar:reset_order()
     local connection, old = client, panes
     client, session, current = nil, nil, nil
@@ -450,30 +449,21 @@ function M.create(opts)
   open = function(target)
     views.show_panel(panel)
     session = target
-    client = tmux:attach(target, {
+    client = connection.attach(tmux, target, {
       flags = "ignore-size,pause-after=5",
       ready = function()
         previous_session = target.id
         refresh()
       end,
-      output = function(id, bytes)
-        pty.receive(panes[id], bytes)
-      end,
+      pane = function(id) return panes[id] end,
+      can_paint = can_paint,
       event = function(event, payload)
         if event == "session-window-changed" and current then
           local window = payload:match("^%$%d+ (@%d+)")
           if (selection and selection.visible and window == selection.window)
             or (not selection and current.active and window == current.active.window) then return end
         end
-        if topology_events[event] then
-          refresh()
-        elseif event == "pause" then
-          local pane = panes[payload]
-          if pane then pane.ready = false end
-          client:request({ "refresh-client", "-A", payload .. ":continue" }, function(ok)
-            if ok and pane then pty.paint(pane, can_paint) end
-          end)
-        end
+        if topology_events[event] then refresh() end
       end,
       exit = function(code, message)
         panel.hide()
@@ -500,7 +490,7 @@ function M.create(opts)
     end,
     companion = function(win)
       return not (valid(win) and vim.w[win].luanphan_view_independent_tile)
-        and vim.tbl_contains(tiles.tile_windows or {}, win)
+        and tiles:is_tile(win)
     end,
   })
   api.nvim_create_autocmd("DirChangedPre", { group = events, callback = function() panel.hide() end })

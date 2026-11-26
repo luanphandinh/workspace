@@ -573,7 +573,6 @@ function Bar:layout(anchor, layout)
   self:attach(buf)
   self:map_jumps(buf, true)
   if self.opts.container then self.opts.container:bind_panel_buffer(buf, true) end
-  if self.opts.bind then self.opts.bind(buf) end
 
   local opts = { buffer = buf, silent = true, nowait = true }
   if self.opts.rename_window then
@@ -621,7 +620,7 @@ end
 function M.create(opts)
   local bar = setmetatable({
     opts = opts, rows = {}, folded = {}, frame = 1, selected = 1,
-    history = opts.history or jump_lists.create(),
+    history = jump_lists.create(),
   }, Bar)
   bars[bar] = true
   return bar

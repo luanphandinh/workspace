@@ -55,7 +55,7 @@ function M.create(opts)
   end
 
   function panel.hide(closing)
-    if not inner.layout_anchor then return false end
+    if not inner:is_open() then return false end
     quitting, dock = nil, nil
     current.scope.open = false
     return inner:hide(closing)
@@ -269,8 +269,6 @@ function M.create(opts)
       render(group, false)
     end,
     activate = activate,
-    new = panel.new_tab,
-    create_key = false,
     cycle_desc = "Next terminal pane",
   })
 

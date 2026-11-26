@@ -1,6 +1,7 @@
 local api, uv = vim.api, vim.uv
 local pty = require("luanphan.view_container.tmux.pane")
 local client = require("luanphan.view_container.tmux.client")
+local connection = require("luanphan.view_container.tmux.connection")
 
 local M = {}
 
@@ -149,16 +150,14 @@ function M.create(opts)
 
   local connect
   connect = function(group)
-    local client = server:attach({ id = group.id }, {
+    local client = connection.attach(server, { id = group.id }, {
       flags = "ignore-size",
       ready = function()
         for _, pane in pairs(group.panes) do
           if pane.data.gate then start(pane) else pty.paint(pane) end
         end
       end,
-      output = function(id, bytes)
-        pty.receive(group.panes[id], bytes)
-      end,
+      pane = function(id) return group.panes[id] end,
       event = function(name, payload)
         if name ~= "window-close" and name ~= "unlinked-window-close" then return end
         for _, pane in pairs(group.panes) do

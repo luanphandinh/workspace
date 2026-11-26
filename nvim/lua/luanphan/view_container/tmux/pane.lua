@@ -1,6 +1,10 @@
+-- Mirrors a tmux pane into a Neovim terminal buffer: live output is streamed as it arrives,
+-- and the pane is repainted from a tmux capture on attach, resize, or when the copies drift.
+-- Window scroll and cursor state lives in tmux/view.lua.
 local M = {}
 local api = vim.api
 local screen = require("luanphan.view_container.tmux.screen")
+local view = require("luanphan.view_container.tmux.view")
 -- Agent buffers can outlive a config reload.
 local panes_by_buffer = vim.luanphan_tmux_panes_by_buffer or setmetatable({}, { __mode = "v" })
 vim.luanphan_tmux_panes_by_buffer = panes_by_buffer
@@ -11,6 +15,9 @@ local cursor_format = "#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{cursor_flag}
   .. "\t#{mouse_standard_flag}\t#{mouse_button_flag}\t#{mouse_any_flag}\t#{mouse_sgr_flag}"
   .. "\t#{scroll_region_upper}\t#{scroll_region_lower}"
 local saved_cursor_field = 17
+
+M.is_visible, M.live_topline, M.save_view, M.hide_view, M.apply_view =
+  view.is_visible, view.live_topline, view.save_view, view.hide_view, view.apply_view
 
 function M.for_buffer(buf)
   return panes_by_buffer[buf]
@@ -59,7 +66,7 @@ api.nvim_create_autocmd({ "WinNew", "WinResized", "BufWinEnter", "WinClosed" }, 
           if pane.term_width then
             if width ~= pane.term_width then pane.rebuild = true else pane.resync = true end
             -- Hidden panes refresh when they are shown again.
-            if M.is_visible(pane) then request_refresh(pane) end
+            if view.is_visible(pane) then request_refresh(pane) end
           end
           pane.term_width, pane.term_height = width, height
         end
@@ -67,38 +74,6 @@ api.nvim_create_autocmd({ "WinNew", "WinResized", "BufWinEnter", "WinClosed" }, 
     end
   end,
 })
-
-local function showing(pane, win)
-  return win and api.nvim_win_is_valid(win) and api.nvim_win_get_buf(win) == pane.bufnr
-end
-
-function M.is_visible(pane)
-  return showing(pane, pane.view_win)
-end
-
-local function restore_pending_view(pane)
-  if not pane.pending_view or pane.view_pending then return end
-  pane.view_pending = true
-  vim.schedule(function()
-    local pending = pane.pending_view
-    pane.pending_view, pane.view_pending = nil, false
-    if pending and pane.view_win == pending.win and pane.client == pending.client
-      and (not pending.frame or pane.frame == pending.frame)
-      and showing(pane, pending.win) then
-      M.apply_view(pane, pending.win, pending.cursor)
-    end
-  end)
-end
-
-local function queue_cursor(pane, cursor, frame)
-  if not pane.view_win then return end
-  local pending = { cursor = cursor, frame = frame, win = pane.view_win, client = pane.client }
-  pane.pending_view = pending
-  -- A cursor-only frame can leave the terminal buffer text untouched.
-  vim.defer_fn(function()
-    if pane.pending_view == pending then restore_pending_view(pane) end
-  end, 20)
-end
 
 function M.input(pane, data)
   local client = pane.client
@@ -132,14 +107,14 @@ function M.open(pane, on_input)
     end,
   })
   panes_by_buffer[pane.bufnr] = pane
-  api.nvim_buf_attach(pane.bufnr, false, { on_lines = function() restore_pending_view(pane) end })
+  api.nvim_buf_attach(pane.bufnr, false, { on_lines = function() view.restore_pending(pane) end })
   api.nvim_create_autocmd({ "WinLeave", "BufWinLeave" }, {
     buffer = pane.bufnr,
     callback = function(event)
       if event.event == "BufWinLeave" then
-        M.hide_view(pane)
+        view.hide_view(pane)
       elseif api.nvim_get_current_win() == pane.view_win then
-        M.save_view(pane, pane.view_win)
+        view.save_view(pane, pane.view_win)
       end
     end,
   })
@@ -248,46 +223,10 @@ local function sync_grid(pane, win)
   end)
 end
 
-function M.live_topline(pane)
-  return math.max(1, api.nvim_buf_line_count(pane.bufnr) - pane.view_height + 1)
-end
-
-function M.save_view(pane, win)
-  if not pane.view_height or pane.pending_view or not showing(pane, win) then return end
-  pane.last_view = api.nvim_win_call(win, vim.fn.winsaveview)
-  pane.follow_live = pane.last_view.topline >= M.live_topline(pane)
-end
-
-function M.hide_view(pane)
-  M.save_view(pane, pane.view_win)
-  pane.view_win, pane.pending_view, pane.cursor_request = nil, nil, nil
-end
-
-local function restore_view(pane, win)
-  if pane.view_win == win then return end
-  pane.view_win = win
-  local follow = pane.hidden_output and pane.follow_live ~= false
-  pane.hidden_output = nil
-  if pane.last_view and not follow then
-    M.apply_view(pane, win, pane.last_view)
-  elseif pane.ready and pane.frame and pane.frame.width == pane.view_width and pane.frame.height == pane.view_height then
-    queue_cursor(pane, pane.frame, pane.frame)
-  elseif pane.ready and follow and pane.client then
-    local client, request = pane.client, {}
-    pane.cursor_request = request
-    client:request({ "display-message", "-p", "-t", pane.id, "#{cursor_y}\t#{cursor_x}" }, function(ok, lines)
-      if not ok or pane.client ~= client or pane.cursor_request ~= request or not showing(pane, win) then return end
-      pane.cursor_request = nil
-      local row, col = (lines[1] or ""):match("^(%d+)\t(%d+)$")
-      if row then queue_cursor(pane, { row = tonumber(row), col = tonumber(col) }) end
-    end)
-  end
-end
-
 function M.show_view(pane, win)
   if not pane.term_width then pane.term_width, pane.term_height = terminal_size(pane.bufnr) end
   sync_grid(pane, win)
-  restore_view(pane, win)
+  view.restore(pane, win)
   if pane.repaint then pane.repaint(pane) elseif (pane.rebuild or pane.resync) and not pane.resizing then M.paint(pane) end
 end
 
@@ -299,11 +238,11 @@ function M.resolve_hyperlink(buf, row, column, callback)
   if not visible or column > #visible then return false end
 
   local frame, width = pane.frame, pane.view_width
-  local topline = M.live_topline(pane)
+  local topline = view.live_topline(pane)
   local tmux_row = tostring(row - topline + (frame and frame.top or 0))
   client:request({ "capture-pane", "-epN", "-t", pane.id, "-S", tmux_row, "-E", tmux_row }, function(ok, lines)
     if not ok or not lines[1] or pane.client ~= client or pane.frame ~= frame or pane.view_width ~= width
-      or not api.nvim_buf_is_valid(buf) or topline ~= M.live_topline(pane)
+      or not api.nvim_buf_is_valid(buf) or topline ~= view.live_topline(pane)
       or api.nvim_buf_get_lines(buf, row - 1, row, false)[1] ~= visible then
       return callback()
     end
@@ -335,17 +274,6 @@ function M.capture(pane, callback)
   end)
 end
 
-function M.apply_view(pane, win, view)
-  api.nvim_win_call(win, function()
-    if view.topline then return vim.fn.winrestview(view) end
-    local line_count = api.nvim_buf_line_count(pane.bufnr)
-    local top = M.live_topline(pane)
-    local line = math.min(line_count, top + view.row)
-    local col = math.max(0, vim.fn.virtcol2col(win, line, view.col + 1) - 1)
-    vim.fn.winrestview({ topline = top, lnum = line, col = col, leftcol = 0 })
-  end)
-end
-
 function M.frame(pane, lines, flags, primary)
   local saved_screen = ""
   if flags[3] == "1" and primary and #primary > 0 then
@@ -368,7 +296,7 @@ function M.paint_frame(pane, lines, flags, primary)
   local in_input = api.nvim_get_current_buf() == pane.bufnr and api.nvim_get_mode().mode == "t"
   pane.frame, pane.painted = frame, true
   if (first and pane.follow_live ~= false) or (in_input and output ~= "") then
-    queue_cursor(pane, frame, frame)
+    view.queue_cursor(pane, frame, frame)
   end
   -- Neovim applies a scrollback clear on its next refresh, so a clear sent before the capture
   -- could also wipe history written after it.
@@ -383,9 +311,9 @@ function M.paint(pane, visible)
   local connection = pane.client
   -- Cancel a sequence Neovim is still parsing before painting over it.
   if pane.ready and (pane.tail or "") ~= "" then M.output(pane, "\24") end
-  local win, view = pane.view_win, nil
+  local win, scrolled = pane.view_win, nil
   if pane.rebuild then
-    if pane.follow_live == false and M.is_visible(pane) then view = api.nvim_win_call(win, vim.fn.winsaveview) end
+    if pane.follow_live == false and view.is_visible(pane) then scrolled = api.nvim_win_call(win, vim.fn.winsaveview) end
     -- The scrollback is cleared in the same write as the new history (see paint_frame).
     pane.rebuild, pane.painted, pane.frame, pane.clear_scrollback = nil, false, nil, true
   end
@@ -404,7 +332,7 @@ function M.paint(pane, visible)
     if visible and not visible(pane) then return end
     M.paint_frame(pane, lines, flags, primary)
     -- Restore the scrolled view once Neovim has refreshed the rebuilt buffer.
-    if view and showing(pane, win) then queue_cursor(pane, view, pane.frame) end
+    if scrolled and view.showing(pane, win) then view.queue_cursor(pane, scrolled, pane.frame) end
     pane.ready = true
     if pane.rebuild or pane.resync then request_refresh(pane) end
     pane.pending_osc = nil

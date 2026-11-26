@@ -110,7 +110,6 @@ function M.create(owner, opts)
     snapshot = sessions.snapshot,
     activate = function(tab, options) return owner.open(tab.kind, tab.bufnr, options) end,
     create = function(choice) return owner.new(choice.id) end,
-    create_key = false,
   }, opts.view))
 
   function panel.remember(buf)
@@ -185,7 +184,7 @@ function M.create(owner, opts)
     vim.api.nvim_create_autocmd("TermRequest", { group = group, callback = term_request })
     window.track_directory(group, function(cwd)
       local pane = panel.visible()
-      if pane and container.layout_context == cwd then return pane end
+      if pane and container:current_context() == cwd then return pane end
     end, function() container:hide() end, function(cwd, pane)
       if panel.visible() then return end
       local buf = backend.running(pane.bufnr) and pane.bufnr or container:recent_pane(cwd, pane.kind)
@@ -381,7 +380,7 @@ function M.create(owner, opts)
   end
 
   function owner.hide(except)
-    if except and container:visible_window(container.layout_context, except) then return false end
+    if except and container:visible_window(container:current_context(), except) then return false end
     return container:hide()
   end
 
