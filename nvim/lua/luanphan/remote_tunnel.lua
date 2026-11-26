@@ -207,7 +207,7 @@ end
 
 local function current_codex_terminal()
   local bufnr = vim.api.nvim_get_current_buf()
-  if vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t" or vim.b[bufnr].luanphan_agent_name ~= "codex" then
+  if vim.api.nvim_get_mode().mode:sub(1, 1) ~= "t" or vim.b[bufnr].luanphan_view_kind ~= "codex" then
     return nil
   end
   return bufnr

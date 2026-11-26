@@ -5,7 +5,7 @@ local live_status = {
 }
 
 function M.update(bufnr, status)
-  if live_status[status] then vim.b[bufnr].luanphan_agent_program_status = status end
+  if live_status[status] then vim.b[bufnr].luanphan_view_status = status end
 end
 
 function M.from_osc(sequence)
@@ -13,7 +13,7 @@ function M.from_osc(sequence)
 end
 
 function M.current(bufnr)
-  return vim.b[bufnr].luanphan_agent_program_status
+  return vim.b[bufnr].luanphan_view_status
 end
 
 return M

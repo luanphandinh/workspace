@@ -178,13 +178,26 @@ function Container:panes(context, kind)
 	return self.opts.panes.backend.panes(kind, context)
 end
 
-function Container:recent_pane(context, kind, prefer_visible)
-	local selected, last_used = nil, -1
+function Container:recent_pane(context, kind, prefer_visible, accept)
+	local source = self.opts.panes
+	local selected, last_used, tied = nil, -1, false
 	for _, pane in ipairs(self:panes(context, kind)) do
 		local buf = pane.bufnr
-		if prefer_visible and vim.fn.bufwinid(buf) ~= -1 then return buf end
-		local used = self.opts.panes.last_used(buf)
-		if used > last_used then selected, last_used = buf, used end
+		if not accept or accept(source.kind(buf)) then
+			if prefer_visible and vim.fn.bufwinid(buf) ~= -1 then return buf end
+			local used = source.last_used(buf)
+			if used > last_used then
+				selected, last_used, tied = buf, used, false
+			elseif used == last_used then
+				tied = true
+			end
+		end
+	end
+	-- When reopening across providers, older panes with equal ranks follow display order.
+	if tied and not kind then
+		for _, tab in ipairs(self:pane_tabs(context)) do
+			if tab.last_used == last_used and (not accept or accept(tab.kind)) then return tab.bufnr end
+		end
 	end
 	return selected
 end
@@ -343,6 +356,17 @@ function Container:reuse(target, opts)
 	return vim.tbl_extend("force", opts or {}, { reuse_win = self.layout_anchor })
 end
 
+function Container:create_bar(opts)
+	local source = self.opts.panes
+	if source then
+		opts.order_panes = true
+		opts.load_order = source.backend.load_window_order
+		opts.save_order = source.backend.save_window_order
+	end
+	opts.container = self
+	return bars.create(opts)
+end
+
 function Container:layout_sidebar(anchor, layout)
 	self.opts.bar():layout(anchor, layout)
 end
@@ -393,12 +417,17 @@ function Container:navigate(win, direction)
 	end, self.opts.bar())
 end
 
+function Container:bind_panel_buffer(buf, sidebar)
+	if self.opts.editor then editor.bind(buf) end
+	if self.opts.bind_actions then self.opts.bind_actions(buf, sidebar) end
+end
+
 function Container:bind_terminal(buf, context, bar)
 	(bar or self.opts.bar()):attach_terminal(buf)
 	self:bind(buf, context)
 	self:bind_tile_moves(buf, context)
 	terminal.bind_navigation(buf, function(win, direction) self:navigate(win, direction) end)
-	if self.opts.editor then editor.bind(buf) end
+	self:bind_panel_buffer(buf, false)
 end
 
 function Container:reflow(anchor, context, layout, active, opts)

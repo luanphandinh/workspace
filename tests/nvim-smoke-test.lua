@@ -1296,7 +1296,7 @@ local function assert_agent_float(win, label)
 end
 
 local function terminal_grid_size(bufnr)
-  local pane = vim.b[bufnr].luanphan_agent_tmux_pane
+  local pane = vim.b[bufnr].luanphan_tmux_pane
   local tty
   if pane then
     local result = vim.system({ "tmux", "-S", vim.env.LUANPHAN_AGENT_TMUX_SOCKET,
@@ -1381,7 +1381,7 @@ local function agent_bufnr(name)
   local selected_sequence = -1
   for _, bufnr in ipairs(candidates) do
     if vim.api.nvim_buf_is_valid(bufnr) then
-      local sequence = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0
+      local sequence = tonumber(vim.b[bufnr].luanphan_view_last_used) or 0
       if sequence > selected_sequence then
         selected = bufnr
         selected_sequence = sequence
@@ -3334,7 +3334,7 @@ local function test_workspace_folder_browser()
     "expect_jump('<C-o>', second)",
     "expect_jump('<C-i>', first)",
     "expect_jump('<C-i>', third)",
-    "vim.b[third].luanphan_agent_name = nil",
+    "vim.b[third].luanphan_view_kind = nil",
     "vim.fn.maparg('<leader>p', 'n', false, true).callback()",
     "prompt_bufnr = vim.api.nvim_get_current_buf()",
     "picker = action_state.get_current_picker(prompt_bufnr)",
@@ -3646,7 +3646,7 @@ local function start_agent_fixture(buffers, name, cwd, title)
     command = "printf '\\033]2;%s\\007' " .. vim.fn.shellescape(title) .. "; " .. command
   end
   local ok, err = require("luanphan.agents.tmux").launch(buf, { "sh", "-c", command }, {
-    agent = name,
+    kind = name,
     cwd = cwd,
     workspace = require("luanphan.plugins.worktree").agent_workspace(cwd),
     label = name,
@@ -3676,9 +3676,9 @@ local function test_active_agent_discovery(repo, worktree)
     local repo_codex_buf = start_agent_fixture(buffers, "codex", repo, "Review example parser")
     local worktree_codex_buf = start_agent_fixture(buffers, "codex", worktree, "Fix test failures")
     local worktree_cursor_buf = start_agent_fixture(buffers, "cursor", worktree)
-    vim.b[repo_codex_buf].luanphan_agent_last_used = 3
-    vim.b[worktree_codex_buf].luanphan_agent_last_used = 2
-    vim.b[worktree_cursor_buf].luanphan_agent_last_used = 1
+    vim.b[repo_codex_buf].luanphan_view_last_used = 3
+    vim.b[worktree_codex_buf].luanphan_view_last_used = 2
+    vim.b[worktree_cursor_buf].luanphan_view_last_used = 1
     wait_until("agent terminal titles", function()
       return vim.b[repo_codex_buf].term_title == "Review example parser"
         and vim.b[worktree_codex_buf].term_title == "Fix test failures"
@@ -3698,10 +3698,10 @@ local function test_active_agent_discovery(repo, worktree)
     local codex, peer, cursor = instances[repo_codex_buf], instances[worktree_codex_buf], instances[worktree_cursor_buf]
     assert_true(codex and codex.workspace == realpath(repo), "Codex session has the wrong workspace")
     assert_true(peer and peer.workspace == realpath(worktree), "worktree session has the wrong workspace")
-    assert_true(codex.agent_label == "Review example parser", "agent sessions ignored the terminal title")
-    assert_true(cursor and cursor.agent_label == "cursor", "untitled agent did not retain its fallback label")
+    assert_true(codex.label == "Review example parser", "agent sessions ignored the terminal title")
+    assert_true(cursor and cursor.label == "cursor", "untitled agent did not retain its fallback label")
     vim.b[repo_codex_buf].term_title = "Renamed parser review"
-    assert_true(live_agents()[repo_codex_buf].agent_label == "Renamed parser review", "agent session kept a stale title")
+    assert_true(live_agents()[repo_codex_buf].label == "Renamed parser review", "agent session kept a stale title")
 
     agents_module = require("luanphan.agents.main")
     original_focus = agents_module.focus
@@ -3710,7 +3710,7 @@ local function test_active_agent_discovery(repo, worktree)
       focused = name
       return true
     end
-    api.activate_agent({ agent = "codex", path = original_cwd })
+    api.activate_agent({ kind = "codex", path = original_cwd })
     assert_true(focused == "codex", "agent selection did not focus its terminal")
   end, debug.traceback)
 
@@ -3747,8 +3747,8 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
     vim.cmd("cd " .. vim.fn.fnameescape(repo))
     local old_buf = start_agent_fixture(buffers, "codex", repo)
     local target_buf = start_agent_fixture(buffers, "cursor", worktree)
-    vim.b[old_buf].luanphan_agent_last_used = 1
-    vim.b[target_buf].luanphan_agent_last_used = 2
+    vim.b[old_buf].luanphan_view_last_used = 1
+    vim.b[target_buf].luanphan_view_last_used = 2
 
     panel:open_float(panel.opts.layout(), old_buf, true)
     assert_true(window_for_buffer(old_buf) ~= nil, "old repository agent fixture is not visible")
@@ -3762,7 +3762,7 @@ local function test_agent_switch_replaces_visible_repo_buffer(repo, worktree)
       return true
     end
 
-    api.activate_agent({ agent = "cursor", path = worktree, bufnr = target_buf })
+    api.activate_agent({ kind = "cursor", path = worktree, bufnr = target_buf })
     assert_true(realpath(vim.fn.getcwd()) == realpath(worktree), "agent switch did not change repositories")
     assert_true(window_for_buffer(old_buf) == nil, "old repository agent window remained visible")
     assert_true(window_for_buffer(target_buf) ~= nil, "selected repository agent window was not focused")
@@ -4756,7 +4756,7 @@ local function test_agent_sidebar_restore(repo, agent)
     "for _, id in ipairs({ first, second }) do",
     "  vim.env.TEST_AGENT_THREAD = id",
     "  local buf = assert(agents.new(agent))",
-    "  assert(vim.wait(3000, function() return vim.b[buf].luanphan_agent_thread_id == id end), 'missing exact thread ID')",
+    "  assert(vim.wait(3000, function() return vim.b[buf].luanphan_view_thread_id == id end), 'missing exact thread ID')",
     "end",
     "assert(#sessions.list() == 2, 'both same-directory threads should be saved')",
     "local socket = vim.env.LUANPHAN_AGENT_TMUX_SOCKET",
@@ -4768,7 +4768,7 @@ local function test_agent_sidebar_restore(repo, agent)
   })
   run({
     "agents.toggle()",
-    "assert(vim.b.luanphan_agent_thread_id == second, 'reattach did not select the most recent running thread')",
+    "assert(vim.b.luanphan_view_thread_id == second, 'reattach did not select the most recent running thread')",
     "assert(#require('luanphan.agents.sessions').instances(false) == 2, 'reattach lost a running pane')",
     "assert(#vim.fn.readfile(root .. '/invocations') == 2, 'reattach relaunched an existing thread')",
   })
@@ -4779,7 +4779,7 @@ local function test_agent_sidebar_restore(repo, agent)
     "local main = vim.api.nvim_get_current_win()",
     "local sidebar = assert(vim.w[main].luanphan_window_bar)",
     "local second_buf = vim.api.nvim_get_current_buf()",
-    "assert(vim.b.luanphan_agent_thread_id == second, 'did not resume the most recent thread')",
+    "assert(vim.b.luanphan_view_thread_id == second, 'did not resume the most recent thread')",
     "local rows = vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(sidebar), 0, -1, false)",
     "local selected",
     "for i, line in ipairs(rows) do",
@@ -4790,7 +4790,7 @@ local function test_agent_sidebar_restore(repo, agent)
     "vim.api.nvim_set_current_win(sidebar)",
     "vim.api.nvim_win_set_cursor(sidebar, { selected, 0 })",
     "vim.fn.maparg('o', 'n', false, true).callback()",
-    "assert(vim.api.nvim_get_current_win() == main and vim.b.luanphan_agent_thread_id == first, 'wrong sidebar thread resumed')",
+    "assert(vim.api.nvim_get_current_win() == main and vim.b.luanphan_view_thread_id == first, 'wrong sidebar thread resumed')",
     "assert(vim.wait(3000, function()",
     "  return (vim.b.term_title or ''):find('Example', 1, true)",
     "end), 'missing agent title')",
@@ -4798,12 +4798,12 @@ local function test_agent_sidebar_restore(repo, agent)
     "if agent == 'cursor' then",
     "  local send = require('luanphan.view_container.terminal').send",
     "  local buf = vim.api.nvim_get_current_buf()",
-    "  assert(vim.wait(3000, function() return vim.b.luanphan_agent_program_status == 'idle' end), 'Cursor has no startup status')",
+    "  assert(vim.wait(3000, function() return vim.b.luanphan_view_status == 'idle' end), 'Cursor has no startup status')",
     "  send(buf, 'submit\\n')",
-    "  assert(vim.wait(3000, function() return vim.b.luanphan_agent_program_status == 'working' end), 'Cursor has no working status')",
-    "  assert(vim.b[second_buf].luanphan_agent_program_status == 'idle', 'another Cursor terminal was marked working')",
+    "  assert(vim.wait(3000, function() return vim.b.luanphan_view_status == 'working' end), 'Cursor has no working status')",
+    "  assert(vim.b[second_buf].luanphan_view_status == 'idle', 'another Cursor terminal was marked working')",
     "  send(buf, 'stop\\n')",
-    "  assert(vim.wait(3000, function() return vim.b.luanphan_agent_program_status == 'done' end), 'Cursor kept its working status')",
+    "  assert(vim.wait(3000, function() return vim.b.luanphan_view_status == 'done' end), 'Cursor kept its working status')",
     "end",
     "local cwd = vim.uv.fs_realpath(vim.fn.getcwd())",
     "assert(vim.wait(3000, function()",
@@ -4847,7 +4847,7 @@ local function test_agent_sidebar_restore(repo, agent)
       local rpc = vim.fn.sockconnect("pipe", socket, { rpc = true })
       assert_true(rpc > 0, "could not connect to embedded Neovim")
       wait_until("the first UI restores the saved Cursor terminal", function()
-        return vim.rpcrequest(rpc, "nvim_eval", "get(b:, 'luanphan_agent_thread_id', '')") == second
+        return vim.rpcrequest(rpc, "nvim_eval", "get(b:, 'luanphan_view_thread_id', '')") == second
       end, 4000)
       assert_true(vim.rpcrequest(rpc, "nvim_eval", "get(g:, 'smoke_shared_agent_open', 0)") == 1,
         "the first UI restored the pane through a second agent controller")
@@ -5092,12 +5092,12 @@ vim.cmd.quit()
 assert(vim.wait(1000, function() return not current_editor_tile() end))
 press('<leader>nt')
 local first = vim.api.nvim_get_current_buf()
-assert(vim.b[first].luanphan_agent_name == 'terminal', 'new terminal did not create a shell')
+assert(vim.b[first].luanphan_view_kind == 'terminal', 'new terminal did not create a shell')
 press('<leader>e')
 assert(vim.bo.filetype == 'agent-window-bar', 'could not focus the sidebar from the shell')
 press('<leader>nt')
 local second = vim.api.nvim_get_current_buf()
-assert(first ~= second and vim.b[second].luanphan_agent_name == 'terminal', 'sidebar reused the first shell')
+assert(first ~= second and vim.b[second].luanphan_view_kind == 'terminal', 'sidebar reused the first shell')
 for _, buf in ipairs({ agent, first, second }) do
   local win = vim.fn.bufwinid(buf)
   assert(win ~= -1 and vim.w[win].luanphan_view_anchor, 'shell and agent do not share the tiled panel')
@@ -5126,7 +5126,7 @@ send(second, [[seq 1 60 | sed 's/^/primary-line-/'; printf '\033[?1049h\033[2J\0
 assert(vim.wait(3000, function()
   return vim.tbl_contains(vim.api.nvim_buf_get_lines(second, 0, -1, false), 'alternate-view')
 end, 20), 'shell did not switch to its alternate screen')
-local ids = { vim.b[first].luanphan_agent_thread_id, vim.b[second].luanphan_agent_thread_id }
+local ids = { vim.b[first].luanphan_view_thread_id, vim.b[second].luanphan_view_thread_id }
 assert(#sessions.list('terminal') == 2 and ids[1] ~= ids[2], 'shell slots were not saved independently')
 local session_file = vim.g.luanphan_terminal_sessions_dir .. '/' .. ids[1] .. '.json'
 local function saved_use()
@@ -5136,12 +5136,12 @@ local initial_use = saved_use()
 assert(agents.focus('terminal', first, { view_mode = true }))
 assert(agents.focus('terminal', second, { view_mode = true }))
 assert(agents.focus('terminal', first, { view_mode = true }))
-local last_focus = vim.b[first].luanphan_agent_saved_use
+local last_focus = vim.b[first].luanphan_view_used_at
 assert(saved_use() == initial_use, 'moving tile focus wrote the session file inline')
 assert(vim.wait(2000, function() return saved_use() == last_focus end), 'last tile focus was not persisted')
-local previous_use = vim.b[second].luanphan_agent_last_used
+local previous_use = vim.b[second].luanphan_view_last_used
 api.nvim_set_current_win(vim.fn.bufwinid(second))
-assert(vim.wait(1000, function() return vim.b[second].luanphan_agent_last_used > previous_use end),
+assert(vim.wait(1000, function() return vim.b[second].luanphan_view_last_used > previous_use end),
   'native window focus did not record the selected tile')
 local second_file = vim.g.luanphan_terminal_sessions_dir .. '/' .. ids[2] .. '.json'
 local function saved_position()
@@ -5163,10 +5163,10 @@ vim.cmd('qa!')
     "quitting before the debounce did not save all three pane positions to tmux")
   run([=[
 agents.toggle()
-assert(vim.b.luanphan_agent_thread_id == agent_id, 'restored shells took focus from the agent')
+assert(vim.b.luanphan_view_thread_id == agent_id, 'restored shells took focus from the agent')
 local shells = {}
 for _, item in ipairs(sessions.instances(false)) do
-  if item.agent == 'terminal' then shells[vim.b[item.bufnr].luanphan_agent_thread_id] = item end
+  if item.kind == 'terminal' then shells[vim.b[item.bufnr].luanphan_view_thread_id] = item end
 end
 local ids = vim.fn.readfile(root .. '/ids')
 assert(vim.tbl_count(shells) == 2, 'panel did not recreate both shell slots')
@@ -5216,7 +5216,7 @@ end
 local terminal_pid = tmux(terminal_socket, 'list-panes', '-a', '-F', '#{pane_pid}')
 assert(terminal_pid:match('^%d+$'), 'agent processes appeared in the floating terminal server')
 agents.toggle()
-assert(vim.b.luanphan_agent_thread_id == agent_id, 'could not reopen the agent panel')
+assert(vim.b.luanphan_view_thread_id == agent_id, 'could not reopen the agent panel')
 assert(not vim.api.nvim_win_is_valid(floating_win), 'opening Agents left a Floating Terminal window visible')
 tmux(vim.env.LUANPHAN_AGENT_TMUX_SOCKET, 'kill-server')
 assert(vim.wait(3000, function() return #sessions.instances(false) == 0 end), 'server loss left stale agent panes')
@@ -5224,9 +5224,9 @@ assert(#sessions.list('codex') == 1 and #sessions.list('terminal') == 1, 'server
 assert(tmux(terminal_socket, 'list-panes', '-a', '-F', '#{pane_pid}') == terminal_pid, 'server loss affected the floating terminal')
 agents.toggle()
 assert(vim.wait(3000, function()
-  return #sessions.instances(false) == 2 and vim.b.luanphan_agent_thread_id == agent_id
+  return #sessions.instances(false) == 2 and vim.b.luanphan_view_thread_id == agent_id
 end), 'same editor could not recover the original agent and shell slots')
-local shell = assert(vim.iter(sessions.instances(false)):find(function(item) return item.agent == 'terminal' end))
+local shell = assert(vim.iter(sessions.instances(false)):find(function(item) return item.kind == 'terminal' end))
 assert(is_left_of_agent(shell.bufnr), 'recovering the server lost the shell tile position')
 ]=])
 end
@@ -5420,8 +5420,8 @@ local function test_agent_view_container(repo)
     terminal_io.send(codex_buf, "\27]7501;state=done:app=codex\27\\")
     terminal_io.send(second_codex_buf, "\27]7501;state=working:app=codex\27\\")
     wait_until("separate terminal status for sessions in the same folder", function()
-      return vim.b[codex_buf].luanphan_agent_program_status == "done"
-        and vim.b[second_codex_buf].luanphan_agent_program_status == "working"
+      return vim.b[codex_buf].luanphan_view_status == "done"
+        and vim.b[second_codex_buf].luanphan_view_status == "working"
     end, 3000)
 
     vim.cmd("stopinsert")
@@ -5643,7 +5643,7 @@ local function test_agent_view_container(repo)
     end, 3000)
     terminal_io.send(first_cursor_buf, "\27]0;cursor - 🔄 working\7")
     wait_until("sidebar reads working status from the Cursor terminal title", function()
-      return vim.b[first_cursor_buf].luanphan_agent_program_status == "working"
+      return vim.b[first_cursor_buf].luanphan_view_status == "working"
     end, 3000)
     terminal_io.send(first_cursor_buf, "\27]0;cursor - ✅ ready\7")
     wait_until("Cursor terminal title completion becomes a checkmark", function()
@@ -5953,6 +5953,12 @@ local function test_agent_view_container(repo)
     assert_true(moved, tostring(move_error))
     assert_true(vim.api.nvim_get_current_win() == tile_window(tile_buffers[2]), "focus did not move to the visible agent tile")
     assert_true(scans == 0, "agent tile focus scanned the session list")
+    local bar = require("luanphan.agents.window_bar").bar
+    local sidebar_buf = vim.api.nvim_win_get_buf(bar.win)
+    local function sidebar_lines() return vim.api.nvim_buf_get_lines(sidebar_buf, 0, -1, false) end
+    local incremental = sidebar_lines()
+    bar:redraw()
+    assert_true(vim.deep_equal(sidebar_lines(), incremental), "tile focus left stale sidebar history numbers")
     invoke_map("<C-h>")
     for _, move in ipairs({ { "l", 2 }, { "j", 3 }, { "l", 4 }, { "k", 2 }, { "h", 1 } }) do
       local key, index = "<C-" .. move[1] .. ">", move[2]
@@ -6145,7 +6151,7 @@ choose_workspace(away_peer)
 assert(vim.fn.bufwinid(home) == -1 and vim.fn.bufwinid(home_peer) == -1,
   'agent window picker left tiles on the return switch')
 local window_bar = require('luanphan.agents.window_bar')
-assert(window_bar.select_session({ agent = 'codex', bufnr = home, path = vim.b[home].luanphan_agent_cwd }, { view_mode = true }),
+assert(window_bar.select_session({ kind = 'codex', bufnr = home, path = vim.b[home].luanphan_view_cwd }, { view_mode = true }),
   'sidebar could not select an individual agent session')
 
 local reference = vim.fn.getcwd() .. '/example-reference.txt'
@@ -6197,7 +6203,6 @@ vim.fn.systemlist = function(args, ...)
   return systemlist(args, ...)
 end
 bar:refresh()
-vim.fn.systemlist = systemlist
 assert(git_calls == 0, 'rendering the agent groups spawned Git')
 local worktree_api = require('luanphan.plugins.worktree')
 local groups, activate, rebuilds = bar.opts.groups, worktree_api.activate_agent, 0
@@ -6216,6 +6221,8 @@ vim.api.nvim_set_current_win(sidebar)
 vim.api.nvim_feedkeys(vim.keycode('<D-1>'), 'xt', false)
 assert(vim.api.nvim_get_current_buf() == home and vim.w[anchor].luanphan_window_bar == sidebar,
   'Cmd+1 did not restore the first workspace from the sidebar')
+vim.fn.systemlist = systemlist
+assert(git_calls == 0, 'switching between live checkouts spawned Git')
 assert(rebuilds == 0, 'switching between live workspaces rebuilt the sidebar groups')
 bar.opts.groups, worktree_api.activate_agent = groups, activate
 vim.api.nvim_feedkeys(vim.keycode('<D-9>'), 'xt', false)
@@ -6230,14 +6237,14 @@ assert(vim.wait(3000, function() return not vim.api.nvim_buf_is_valid(away_peer)
 local peer_win = vim.fn.bufwinid(home_peer)
 local extra = vim.api.nvim_open_win(home_peer, false, vim.api.nvim_win_get_config(peer_win))
 vim.w[extra].luanphan_view_anchor = anchor
-assert(window_bar.select_session({ agent = 'codex', bufnr = away, path = destination }, { view_mode = true }),
+assert(window_bar.select_session({ kind = 'codex', bufnr = away, path = destination }, { view_mode = true }),
   'sidebar could not switch to the single-tile workspace')
 assert(vim.api.nvim_get_current_win() == anchor and vim.api.nvim_win_get_buf(anchor) == away,
   'single tile did not reuse the panel anchor')
 assert(#view.group_windows(anchor) == 2 and vim.w[anchor].luanphan_window_bar == sidebar,
   'single-tile workspace left a tile from the previous workspace on screen')
 local single_width = vim.api.nvim_win_get_width(anchor)
-assert(window_bar.select_session({ agent = 'codex', bufnr = home, path = home_path }, { view_mode = true }),
+assert(window_bar.select_session({ kind = 'codex', bufnr = home, path = home_path }, { view_mode = true }),
   'sidebar could not return to the multi-tile workspace')
 assert(#view.group_windows(anchor) == 3 and vim.w[anchor].luanphan_window_bar == sidebar,
   'returning to the multi-tile workspace did not restore its panes in place')
@@ -8215,7 +8222,7 @@ local function test_agent_terminal_lifecycle(repo)
     return visible_agent_window_count() == 1
   end, 1000)
   local first_buf = vim.api.nvim_get_current_buf()
-  local first_used = tonumber(vim.b[first_buf].luanphan_agent_last_used) or 0
+  local first_used = tonumber(vim.b[first_buf].luanphan_view_last_used) or 0
   assert_true(first_used > 0, "new agent terminal did not record its use order")
   local quit_ok, quit_err = pcall(vim.cmd, "quit")
   assert_true(quit_ok, "agent terminal :q failed: " .. tostring(quit_err))
@@ -8228,7 +8235,7 @@ local function test_agent_terminal_lifecycle(repo)
     return visible_agent_window_count() == 1 and vim.api.nvim_get_current_buf() ~= first_buf
   end, 1000)
   local second_buf = vim.api.nvim_get_current_buf()
-  local second_used = tonumber(vim.b[second_buf].luanphan_agent_last_used) or 0
+  local second_used = tonumber(vim.b[second_buf].luanphan_view_last_used) or 0
   assert_true(second_used > first_used, "replacement agent terminal did not advance its use order")
   for _, lhs in ipairs({ "<C-h>", "<C-j>", "<C-k>", "<C-l>" }) do
     assert_nonrecursive_map(lhs, "n", second_buf)
@@ -8250,7 +8257,7 @@ local function test_agent_terminal_lifecycle(repo)
     return visible_agent_window_count() == 1
   end, 1000)
   assert_true(
-    (tonumber(vim.b[second_buf].luanphan_agent_last_used) or 0) > second_used,
+    (tonumber(vim.b[second_buf].luanphan_view_last_used) or 0) > second_used,
     "refocused agent terminal did not advance its use order"
   )
 

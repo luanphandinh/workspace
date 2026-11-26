@@ -90,6 +90,13 @@ function M.create(opts)
     return (title:gsub("[%c]", " "):gsub("#", "##"))
   end
 
+  -- Keep the tmux option readable by editor instances using the previous config.
+  local function encode_metadata(data)
+    local record = vim.tbl_extend("force", data, { agent = data.kind })
+    record.kind = nil
+    return vim.json.encode(record)
+  end
+
   local function records(session)
     local args = { "list-panes", session and "-s" or "-a", "-F", pane_format }
     if session then vim.list_extend(args, { "-t", session }) end
@@ -97,13 +104,14 @@ function M.create(opts)
     if not output then return nil end
     local result = {}
     for line in output:gmatch("[^\n]+") do
-      local fields = vim.split(line, "\t", { plain = true })
-      local ok, data = pcall(vim.json.decode, fields[7] or "")
+      local columns = vim.split(line, "\t", { plain = true })
+      local ok, data = pcall(vim.json.decode, columns[7] or "")
       if ok and type(data) == "table" and type(data.cwd) == "string" and type(data.workspace) == "string"
-        and opts.valid(data) then
+        and type(data.agent) == "string" then
+        data.kind, data.agent = data.agent, nil
         result[#result + 1] = {
-          session = fields[1], session_name = fields[2], window = fields[3], id = fields[4],
-          width = tonumber(fields[5]), height = tonumber(fields[6]), data = data, pane_order = tonumber(fields[8]),
+          session = columns[1], session_name = columns[2], window = columns[3], id = columns[4],
+          width = tonumber(columns[5]), height = tonumber(columns[6]), data = data, pane_order = tonumber(columns[8]),
         }
       end
     end
@@ -116,7 +124,7 @@ function M.create(opts)
     pane.group.panes[pane.id], state.buffers[buf], pane.client = nil, nil, nil
     state.pane_index = nil
     if api.nvim_buf_is_valid(buf) and not state.leaving then
-      opts.on_exit(buf, lost)
+      vim.b[buf].luanphan_view_backend_lost = lost
       if pane.on_exit then pane.on_exit() end
     end
   end
@@ -132,7 +140,7 @@ function M.create(opts)
       if not ok then return end
       pane.data.gate = nil
       if pane.client and pane.client.job then
-        pane.client:request({ "set-option", "-p", "-t", pane.id, metadata, vim.json.encode(pane.data) })
+        pane.client:request({ "set-option", "-p", "-t", pane.id, metadata, encode_metadata(pane.data) })
       end
     end)
   end
@@ -189,7 +197,8 @@ function M.create(opts)
     group.panes[record.id], state.buffers[buf] = record, record
     state.pane_index = nil
     vim.b[buf].luanphan_persist_term = true
-    opts.on_attach(buf, record)
+    local vars = vim.b[buf]
+    vars.luanphan_tmux_pane, vars.luanphan_view_kind, vars.luanphan_view_cwd = record.id, record.data.kind, record.data.cwd
     local win
     if vim.fn.bufwinid(buf) == -1 then
       win = api.nvim_open_win(buf, false, {
@@ -239,7 +248,7 @@ function M.create(opts)
     local target = name .. ":" .. gate
     vim.list_extend(args, {
       ";", "resize-window", "-t", target, "-x", tostring(width), "-y", tostring(height),
-      ";", "set-option", "-p", "-t", target, metadata, vim.json.encode(data),
+      ";", "set-option", "-p", "-t", target, metadata, encode_metadata(data),
     })
     if position then
       vim.list_extend(args, { ";", "set-option", "-p", "-t", target, pane_order, tostring(position) })
@@ -295,7 +304,8 @@ function M.create(opts)
     local panes = {}
     for _, pane in ipairs(candidates) do
       local buf = pane.bufnr
-      if (not kind or pane.data[opts.kind] == kind) and api.nvim_buf_is_valid(buf) and vim.bo[buf].buftype == "terminal" then
+      if (not kind or pane.data.kind == kind) and api.nvim_buf_is_valid(buf)
+        and api.nvim_get_option_value("buftype", { buf = buf }) == "terminal" then
         panes[#panes + 1] = pane
       end
     end
@@ -333,7 +343,7 @@ function M.create(opts)
     if vim.deep_equal(updated, pane.data) then return end
     if updated.cwd ~= pane.data.cwd then state.pane_index = nil end
     pane.data = updated
-    local commands = { { "set-option", "-p", "-t", pane.id, metadata, vim.json.encode(updated) } }
+    local commands = { { "set-option", "-p", "-t", pane.id, metadata, encode_metadata(updated) } }
     if old_label ~= updated.label then
       commands[#commands + 1] = { "rename-window", "-t", pane.window, "--", window_title(updated.label) }
     end

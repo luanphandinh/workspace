@@ -31,7 +31,7 @@ end
 function M.saved_title(bufnr)
   local buf = vim.b[bufnr]
   local prefix, label = parse_title(buf.term_title)
-  if not prefix or vim.startswith(buf.luanphan_agent_thread_id or "", prefix) then
+  if not prefix or vim.startswith(buf.luanphan_view_thread_id or "", prefix) then
     return label
   end
   return false
@@ -79,12 +79,12 @@ local function resolve(prefix, callback)
 end
 
 local function observe(bufnr, emit, attempt)
-  if not vim.api.nvim_buf_is_valid(bufnr) or vim.b[bufnr].luanphan_agent_name ~= "codex" then return end
+  if not vim.api.nvim_buf_is_valid(bufnr) or vim.b[bufnr].luanphan_view_kind ~= "codex" then return end
   local buf = vim.b[bufnr]
   local prefix = parse_title(buf.term_title)
   if not prefix then return end
-  if vim.startswith(buf.luanphan_agent_thread_id or "", prefix) then
-    emit({ thread_id = buf.luanphan_agent_thread_id })
+  if vim.startswith(buf.luanphan_view_thread_id or "", prefix) then
+    emit({ thread_id = buf.luanphan_view_thread_id })
     return
   end
   if pending[bufnr] == prefix then return end

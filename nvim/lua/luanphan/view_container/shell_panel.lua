@@ -1,8 +1,6 @@
 local M = {}
 local api = vim.api
 local views = require("luanphan.view_container")
-local editor = require("luanphan.view_container.editor")
-local bars = require("luanphan.view_container.window_bar")
 local terminal_pane = require("luanphan.view_container.terminal")
 local settings = require("luanphan.global_settings")
 
@@ -192,11 +190,6 @@ function M.create(opts)
     local bar = group.scope.bar
     inner:bind_terminal(buf, group, bar)
     local keys = { buffer = buf, silent = true, nowait = true }
-    for _, key in ipairs({ "<leader>nt", "<leader>fn", "<leader>nw" }) do
-      vim.keymap.set("n", key, function()
-        if key == "<leader>nw" then panel.new_window() else panel.new_tab() end
-      end, vim.tbl_extend("force", keys, { desc = key == "<leader>nw" and "New terminal window" or "New terminal tab" }))
-    end
     if opts.docked then
       for _, binding in ipairs({ { "<Tab>", 1 }, { "<S-Tab>", -1 } }) do
         vim.keymap.set("n", binding[1], function()
@@ -247,6 +240,13 @@ function M.create(opts)
     relayout = function() render(current, false) end,
     navigate = navigate,
     prepare_pane = prepare_pane,
+    bind_actions = function(buf, sidebar)
+      local keys = { buffer = buf, silent = true, nowait = true }
+      vim.keymap.set("n", "<leader>nw", panel.new_window, vim.tbl_extend("force", keys, { desc = "New terminal window" }))
+      local tab_keys = vim.tbl_extend("force", keys, { desc = "New terminal tab" })
+      vim.keymap.set("n", "<leader>nt", panel.new_tab, tab_keys)
+      if not sidebar then vim.keymap.set("n", "<leader>fn", panel.new_tab, tab_keys) end
+    end,
     bar = function() return bar end,
     editor = not opts.docked and {
       key = function(group) return group end,
@@ -275,7 +275,7 @@ function M.create(opts)
   })
 
   function create_bar(owner)
-    return bars.create({
+    return inner:create_bar({
       title = "Windows",
       groups = function()
         local groups = {}
@@ -297,11 +297,6 @@ function M.create(opts)
         owner.bar:refresh(true)
       end,
       reorder = function(group, items) inner.opts.reorder(items, group.source) end,
-      bind = function(buf)
-        if not opts.docked then editor.bind(buf) end
-        vim.keymap.set("n", "<leader>nw", panel.new_window, { buffer = buf, desc = "New terminal window" })
-        vim.keymap.set("n", "<leader>nt", panel.new_tab, { buffer = buf, desc = "New terminal tab" })
-      end,
     })
   end
 

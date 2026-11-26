@@ -61,20 +61,49 @@ local function mark_active(bar, row)
   bar.active_row = row
 end
 
-function M.follow(bar, bufnr)
+function M.follow(bar, bufnr, keep_cursor)
   local row = bar.rows_by_buffer and bar.rows_by_buffer[bufnr]
   if not row then return end
   if row ~= bar.active_row then mark_active(bar, row) end
-  if api.nvim_win_get_cursor(bar.win)[1] ~= row then api.nvim_win_set_cursor(bar.win, { row, 0 }) end
+  if not keep_cursor and api.nvim_win_get_cursor(bar.win)[1] ~= row then api.nvim_win_set_cursor(bar.win, { row, 0 }) end
+end
+
+local function history_width(offsets)
+  local width = 2
+  for _, offset in pairs(offsets) do width = math.max(width, #tostring(offset)) end
+  return width
+end
+
+-- Focus changes only the digits between the two spaces in each row's prefix.
+-- Keeping both spaces also keeps the label and highlight extmark boundaries intact.
+function M.update_history(bar, offsets)
+  local digits = history_width(offsets)
+  if digits ~= bar.history_width then return false end
+  local buf
+  for id in pairs(bar.live_items) do
+    local index = bar.rows_by_buffer[id]
+    local row = index and bar.rows[index]
+    if row and row.item and row.item.bufnr == id and row.offset ~= offsets[id] then
+      if not buf then
+        buf = api.nvim_win_get_buf(bar.win)
+        vim.bo[buf].modifiable = true
+      end
+      row.offset = offsets[id]
+      api.nvim_buf_set_text(buf, index - 1, 1, index - 1, 1 + digits,
+        { string.format("%" .. digits .. "s", row.offset or "") })
+    end
+  end
+  if buf then vim.bo[buf].modifiable = false end
+  return true
 end
 
 function M.render(bar, groups, active, offsets)
   local lines, rows, rows_by_buffer = {}, {}, {}
   local editors = editor.sidebar_items(bar.anchor, groups)
   local width = api.nvim_win_get_width(bar.win) - 1
-  local number_width = 2
-  for _, offset in pairs(offsets) do number_width = math.max(number_width, #tostring(offset)) end
-  local number = " %" .. number_width .. "s "
+  local digits = history_width(offsets)
+  bar.history_width = digits
+  local number = " %" .. digits .. "s "
   for index, group in ipairs(groups) do
     local folded = bar.folded[group.id]
     local prefix = (folded and "▸ " or " ") .. ("[%d] "):format(index)
@@ -99,7 +128,7 @@ function M.render(bar, groups, active, offsets)
         local label_width = bar.opts.status and status_col - #offset - 1 or icon_col - #offset
         local row = {
           group = group, item = item, index = not item.separate_window and item_index or nil,
-          prefix_width = #offset, icon_col = icon_col, label_width = label_width,
+          offset = offsets[item.bufnr], prefix_width = #offset, icon_col = icon_col, label_width = label_width,
         }
         if bar.opts.status and label_width >= 0 and item.bufnr and not item.separate_window then
           row.status_col = status_col

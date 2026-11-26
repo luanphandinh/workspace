@@ -203,6 +203,25 @@ function Bar:map_jumps(buf, keep_focus)
   end
 end
 
+function Bar:sidebar_active(active)
+  local editor_win = editor.window(self.anchor)
+  local current = api.nvim_get_current_win()
+  if editor_win and (current == editor_win or (current == self.win and self.editor_focused)) then
+    return api.nvim_win_get_buf(editor_win)
+  end
+  return active
+end
+
+local function live_items(groups)
+  local live = {}
+  for _, group in ipairs(groups) do
+    for _, item in ipairs(group.items) do
+      if item.bufnr then live[item.bufnr] = item end
+    end
+  end
+  return live
+end
+
 function Bar:refresh(keep_cursor, groups)
   if not valid(self.win) or not valid(self.anchor) then return end
   local active = self:active()
@@ -223,17 +242,9 @@ function Bar:refresh(keep_cursor, groups)
     self:animate()
     return
   end
-  local editor_win = editor.window(self.anchor)
-  local current = api.nvim_get_current_win()
-  if editor_win and (current == editor_win or (current == self.win and self.editor_focused)) then
-    active = api.nvim_win_get_buf(editor_win)
-  end
-  local live = {}
-  for _, group in ipairs(groups) do
-    for _, item in ipairs(group.items) do
-      if item.bufnr then live[item.bufnr] = true end
-    end
-  end
+  active = self:sidebar_active(active)
+  local live = live_items(groups)
+  self.live_items = live
   local selected = sidebar.render(self, groups, active, self.history.offsets(live))
   if selected and (not keep_cursor or api.nvim_get_current_win() ~= self.win) then
     api.nvim_win_set_cursor(self.win, { selected, 0 })
@@ -260,8 +271,15 @@ function Bar:follow(buf, refresh_history)
     local row = self.rows[(self.rows_by_buffer or {})[buf]]
     if not row then return end
     local keep_cursor = api.nvim_get_current_win() == self.win
-    if not keep_cursor then sidebar.follow(self, buf) end
-    if refresh_history then self:redraw(keep_cursor) end
+    if refresh_history then
+      if not sidebar.update_history(self, self.history.offsets(self.live_items)) then return self:redraw(keep_cursor) end
+      buf = self:sidebar_active(self:active())
+      row = self.rows[self.rows_by_buffer[buf]]
+      if not row then return self:redraw(keep_cursor) end
+      local item = self.live_items[buf]
+      if item then row.group.active = item end
+    end
+    sidebar.follow(self, buf, keep_cursor)
   elseif not self.editor_focused then
     for index, row in ipairs(self.rows) do
       local item = vim.iter(row.group.items):find(function(candidate) return candidate.bufnr == buf end)
@@ -369,13 +387,8 @@ function Bar:cycle(step)
 end
 
 function Bar:pick_window()
-  local groups, active, live = self:groups(), self:active(), {}
-  for _, group in ipairs(groups) do
-    for _, item in ipairs(group.items) do
-      if item.bufnr then live[item.bufnr] = true end
-    end
-  end
-  local recency = self.history.offsets(live)
+  local groups, active = self:groups(), self:active()
+  local recency = self.history.offsets(live_items(groups))
   local choices, current = {}, nil
   for index, group in ipairs(groups) do
     local rank, focused = -math.huge, false
@@ -494,7 +507,7 @@ function Bar:reset()
   if valid(self.anchor) then vim.w[self.anchor].luanphan_window_bar = nil end
   self.win, self.anchor, self.rows = nil, nil, {}
   self.cached_groups = nil
-  self.rows_by_buffer, self.active_row = nil, nil
+  self.rows_by_buffer, self.active_row, self.live_items = nil, nil, nil
   self.editor_focused, self.focused_window = nil, nil
   self:stop_timer()
 end
@@ -547,6 +560,7 @@ function Bar:layout(anchor, layout)
   end
   self:attach(buf)
   self:map_jumps(buf, true)
+  if self.opts.container then self.opts.container:bind_panel_buffer(buf, true) end
   if self.opts.bind then self.opts.bind(buf) end
 
   local opts = { buffer = buf, silent = true, nowait = true }

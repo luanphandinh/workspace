@@ -1247,8 +1247,12 @@ local function setup()
     end
   end
 
+  local function checkout_folder(cwd)
+    return vim.fs.root(vim.uv.fs_realpath(cwd) or cwd, ".git")
+  end
+
   local function agent_workspace(cwd)
-    return workspace_root_for_path(cwd) or vim.fs.root(vim.uv.fs_realpath(cwd) or cwd, ".git") or cwd
+    return workspace_root_for_path(cwd) or checkout_folder(cwd) or cwd
   end
 
   local function list_agent_sessions(include_saved)
@@ -1275,7 +1279,9 @@ local function setup()
     if old_cwd ~= "" then
       snapshot_buffers(old_cwd)
       snapshot_jumplist(old_cwd)
-      recent_paths.touch(git_root(old_cwd) or workspace_root_for_path(old_cwd) or old_cwd)
+      -- Folder history only needs the checkout directory. Worktrees use a .git file here.
+      local folder = agent_windows and checkout_folder(old_cwd)
+      recent_paths.touch(folder or git_root(old_cwd) or workspace_root_for_path(old_cwd) or old_cwd)
     end
 
     if not agent_windows then agents.hide() end
@@ -1965,13 +1971,13 @@ local function setup()
     end
     local focused
     if agent_windows then
-      focused = agents.open(instance.agent, instance.bufnr, opts)
+      focused = agents.open(instance.kind, instance.bufnr, opts)
     else
       agents.hide(instance.bufnr)
-      focused = agents.focus(instance.agent, instance.bufnr, opts)
+      focused = agents.focus(instance.kind, instance.bufnr, opts)
     end
     if not focused then
-      vim.notify("could not focus " .. instance.agent .. " agent", vim.log.levels.ERROR)
+      vim.notify("could not focus " .. instance.kind .. " agent", vim.log.levels.ERROR)
     end
     return focused
   end

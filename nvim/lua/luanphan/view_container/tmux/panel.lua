@@ -7,7 +7,6 @@ local terminal_pane = require("luanphan.view_container.terminal")
 local model = require("luanphan.view_container.tmux.windows")
 local views = require("luanphan.view_container")
 local editor = require("luanphan.view_container.editor")
-local bars = require("luanphan.view_container.window_bar")
 local settings = require("luanphan.global_settings")
 
 function M.create(opts)
@@ -234,7 +233,6 @@ function M.create(opts)
     pane.bufnr, pane.repaint, pane.process = buf, repaint, process
     terminal_pane.set_reference_cwd(buf, pane.cwd)
     tiles:bind_terminal(buf)
-    bind_shortcuts(buf)
     terminal_pane.bind_quit(buf, events, function() return prepare_quit(pane) end)
   end
 
@@ -271,6 +269,7 @@ function M.create(opts)
     navigate = navigate,
     bar = function() return bar end,
     prepare_pane = prepare_pane,
+    bind_actions = bind_shortcuts,
     editor = {
       key = function(group) return "tmux:" .. session.id .. ":" .. group.id end,
       active = function(group) return group.active.bufnr end,
@@ -282,7 +281,7 @@ function M.create(opts)
     cycle_desc = "Next tmux pane",
   })
 
-  bar = bars.create({
+  bar = tiles:create_bar({
     title = function() return session and ("Tmux · " .. session.title) or "Tmux Windows" end,
     cycle_session = cycle_session,
     groups = function() return windows end,
@@ -299,10 +298,6 @@ function M.create(opts)
       batch(commands, refresh)
     end,
     reorder = function(_, items) reorder_panes(items) end,
-    bind = function(buf)
-      editor.bind(buf)
-      bind_shortcuts(buf)
-    end,
   })
 
   local function render_panel()

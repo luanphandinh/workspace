@@ -50,7 +50,7 @@ function M.create(profile)
   local function register_terminal(buf, cwd, launched)
     terminal_pane.configure_buffer(buf)
     container:bind_title(buf)
-    profile.on_register(buf, launched)
+    if profile.on_register then profile.on_register(buf, launched) end
     if launched and container.opts.snapshot then pane_state.save({ bufnr = buf }, container.opts.snapshot) end
     container:invalidate_sidebar()
     apply_scrollback(buf)

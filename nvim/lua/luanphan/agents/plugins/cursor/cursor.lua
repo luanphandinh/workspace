@@ -43,7 +43,7 @@ function M.decode_event(bufnr, event, emit)
   elseif event.title then
     local buf = vim.b[bufnr]
     local name, status = M.display_title(event.title)
-    local previous = buf.luanphan_agent_program_status
+    local previous = buf.luanphan_view_status
     if status == "idle" and (previous == "working" or previous == "blocked" or previous == "done") then
       status = "done"
     end

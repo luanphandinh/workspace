@@ -1,10 +1,8 @@
 local M = {}
 local agents = require("luanphan.agents.main")
-local tmux = require("luanphan.agents.tmux")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
 local views = require("luanphan.view_container")
-local editor = require("luanphan.view_container.editor")
 
 local bar
 
@@ -20,8 +18,8 @@ local function groups()
   local threads = require("luanphan.plugins.worktree").list_agent_sessions(true)
   return views.workspace_groups(threads, function(thread)
     return {
-      id = sessions.key(thread), sort_id = thread.thread_id, bufnr = thread.bufnr, label = thread.agent_label,
-      icon = agents.agent_icon(thread.agent), thread = thread, pane_order = thread.pane_order,
+      id = sessions.key(thread), sort_id = thread.thread_id, bufnr = thread.bufnr, label = thread.label,
+      icon = agents.agent_icon(thread.kind), thread = thread, pane_order = thread.pane_order,
     }
   end)
 end
@@ -32,13 +30,10 @@ function M.select_session(session, opts)
   return agents.container:with_panel_windows(function(windows) return activate(session, windows, opts) end)
 end
 
-bar = require("luanphan.view_container.window_bar").create({
+bar = agents.container:create_bar({
   title = "Workspaces",
   filetype = "agent-window-bar",
   groups = groups,
-  order_panes = true,
-  load_order = tmux.load_window_order,
-  save_order = tmux.save_window_order,
   activate = function(item, view_mode)
     return M.select_session(item.thread, view_mode and { view_mode = true } or nil)
   end,
@@ -54,14 +49,9 @@ bar = require("luanphan.view_container.window_bar").create({
   dismiss = function(item)
     local session = item and item.thread
     if session and session.thread_id and not session.bufnr then
-      sessions.forget(session.agent, session.thread_id)
+      sessions.forget(session.kind, session.thread_id)
       bar:refresh(true)
     end
-  end,
-  bind = function(buf)
-    editor.bind(buf)
-    agents.map_create_shortcuts(buf)
-    vim.keymap.set("n", "<leader>a", agents.toggle, { buffer = buf })
   end,
 })
 

@@ -11,28 +11,15 @@ local M = {}
 local view_container = require("luanphan.view_container")
 local terminal_session = require("luanphan.view_container.terminal_session")
 local terminal = require("luanphan.view_container.terminal")
-local backend = require("luanphan.agents.tmux")
 M.running, M.close_window = terminal.running, view_container.close_window
 
 local BASE_DEFAULTS = {
   cmd = "agent",
   args = {},
-  scrollback = nil,
   max_send_chars = 256 * 1024,
   send_mode = "lines_only",
 }
 
----@param profile table
----@field name? string stable provider name
----@field shell? boolean forward Ctrl+L to an interactive shell
----@field status? table provider status options
----@field new_session_id? fun(): string
----@field hint_open string hint when no terminal (e.g. "<leader>a")
----@field defaults? table merged into BASE_DEFAULTS (cmd, args, …)
----@field panel? table owning view
----@field container table owning view container
----@field on_show? fun(bufnr: integer, cwd: string)
----@field on_close fun(bufnr: integer, cwd: string): function?
 function M.create(profile)
   profile = vim.tbl_extend("force", {
     name = "terminal_agent",
@@ -57,37 +44,13 @@ function M.create(profile)
   end
 
   local API = terminal_session.create(vim.tbl_extend("force", profile, {
-    backend = backend,
     defaults = vim.tbl_deep_extend("force", vim.deepcopy(BASE_DEFAULTS), profile.defaults or {}),
     notify = nx,
     augroup = augroup_name,
-    cwd = function(buf) return vim.b[buf].luanphan_agent_cwd end,
-    metadata = function(buf, cwd, opts)
-      local thread_id = opts and opts.thread_id
-      if not thread_id and profile.new_session_id then thread_id = profile.new_session_id() end
-      local label = opts and opts.agent_label
-      vim.b[buf].luanphan_agent_thread_id = thread_id
-      vim.b[buf].luanphan_agent_saved_label = label
-      return {
-        cwd = cwd,
-        workspace = require("luanphan.plugins.worktree").agent_workspace(cwd),
-        agent = provider_name,
-        thread_id = thread_id,
-        label = label or provider_name,
-      }
-    end,
-    on_register = function(buf, launched)
-      if status_options.initial and not vim.b[buf].luanphan_agent_program_status then
+    on_register = function(buf)
+      if status_options.initial and not vim.b[buf].luanphan_view_status then
         require("luanphan.agents.status").update(buf, status_options.initial)
       end
-      if profile.on_register then profile.on_register(buf, launched) end
-    end,
-    on_adopt = function(buf, data)
-      vim.b[buf].luanphan_agent_thread_id = data.thread_id
-      vim.b[buf].luanphan_agent_saved_label = data.label
-      vim.b[buf].luanphan_agent_program_status = data.status
-      vim.b[buf].luanphan_agent_last_used = data.used
-      vim.b[buf].luanphan_agent_saved_use = data.used_at
     end,
   }))
 
