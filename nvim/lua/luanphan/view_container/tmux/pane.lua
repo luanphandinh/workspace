@@ -295,7 +295,10 @@ function M.paint_frame(pane, lines, flags, primary)
   local frame, output = M.frame(pane, lines, flags, primary)
   local in_input = api.nvim_get_current_buf() == pane.bufnr and api.nvim_get_mode().mode == "t"
   pane.frame, pane.painted = frame, true
-  if (first and pane.follow_live ~= false) or (in_input and output ~= "") then
+  if first and pane.follow_live ~= false then
+    -- Jump to the live screen even if more output arrives before Neovim shows the repaint.
+    view.queue_cursor(pane, frame)
+  elseif in_input and output ~= "" then
     view.queue_cursor(pane, frame, frame)
   end
   -- Neovim applies a scrollback clear on its next refresh, so a clear sent before the capture
