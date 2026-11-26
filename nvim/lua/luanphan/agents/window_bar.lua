@@ -2,7 +2,6 @@ local M = {}
 local agents = require("luanphan.agents.main")
 local tmux = require("luanphan.agents.tmux")
 local sessions = require("luanphan.agents.sessions")
-local pane_order = require("luanphan.view_container.pane_order")
 local status = require("luanphan.agents.status")
 local views = require("luanphan.view_container")
 local editor = require("luanphan.view_container.editor")
@@ -40,11 +39,10 @@ local function groups()
     for _, thread in ipairs(entries) do
       if thread.bufnr and thread.last_used > recent.last_used then recent = thread end
     end
-    pane_order.sort(entries)
     for _, thread in ipairs(entries) do
       local item = {
         id = sessions.key(thread), bufnr = thread.bufnr, label = thread.agent_label,
-        icon = agents.agent_icon(thread.agent), thread = thread,
+        icon = agents.agent_icon(thread.agent), thread = thread, pane_order = thread.pane_order,
       }
       group.items[#group.items + 1] = item
       if thread == recent then group.active = item end
@@ -64,14 +62,14 @@ bar = require("luanphan.view_container.window_bar").create({
   title = "Workspaces",
   filetype = "agent-window-bar",
   groups = groups,
+  order_panes = true,
   load_order = tmux.load_window_order,
   save_order = tmux.save_window_order,
   activate = function(item, view_mode)
     return M.select_session(item.thread, view_mode and { view_mode = true } or nil)
   end,
   reorder = function(_, items)
-    agents.container:save_pane_order(vim.tbl_map(function(item) return item.thread end, items))
-    agents.container:refresh()
+    agents.container:reorder_panes(vim.tbl_map(function(item) return item.thread end, items))
   end,
   status = function(item, frame)
     local current = status.current(item.bufnr)

@@ -4,7 +4,6 @@ local backend = require("luanphan.agents.tmux")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
 local view_container = require("luanphan.view_container")
-local pane_order = require("luanphan.view_container.pane_order")
 local terminal = require("luanphan.view_container.terminal")
 
 local agent_order = { "codex", "cursor", "claude", "terminal" }
@@ -16,7 +15,6 @@ for _, name in ipairs(agent_order) do
   def.status = vim.tbl_extend("force", { decode = status.from_osc }, def.status or {})
   agent_defs[name] = def
 end
-sessions.setup(agent_defs, agent_order)
 
 local apis = {}
 local configured = {}
@@ -53,35 +51,11 @@ function M.set_default_agent(name)
   return true
 end
 
-local function agent_buffer(name, cwd, prefer_visible)
-  local selected = nil
-  local selected_sequence = -1
-  for _, pane in ipairs(backend.panes(name, cwd)) do
-    local bufnr = pane.bufnr
-    if prefer_visible and vim.fn.bufwinid(bufnr) ~= -1 then return bufnr end
-    local sequence = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0
-    if sequence > selected_sequence then
-      selected = bufnr
-      selected_sequence = sequence
-    end
-  end
-  return selected
-end
-
-local function open_tabs(cwd, closing_bufnr)
-  local tabs = sessions.live(cwd, closing_bufnr)
-  if agent_container.display_style == "tile" then
-    table.sort(tabs, function(a, b) return a.bufnr < b.bufnr end)
-  end
-  pane_order.sort(tabs)
-  return tabs
-end
-
 local function most_recent_tab(cwd, agents_only)
   local selected = nil
   local selected_sequence = -1
-  for _, tab in ipairs(open_tabs(cwd)) do
-    if (not agents_only or is_agent(tab.agent)) and tab.last_used > selected_sequence then
+  for _, tab in ipairs(agent_container:pane_tabs(cwd)) do
+    if (not agents_only or is_agent(tab.kind)) and tab.last_used > selected_sequence then
       selected = tab
       selected_sequence = tab.last_used
     end
@@ -158,7 +132,7 @@ local function resume_options(session)
     args = provider.resume(session.thread_id),
     thread_id = session.thread_id,
     agent_label = not provider.restore_on_open and session.agent_label or nil,
-    pane_order = pane_order.get(session),
+    saved_pane = session,
   }
 end
 
@@ -182,7 +156,7 @@ local function restore_panel_sessions(cwd)
   for _, name in ipairs(agent_order) do
     if agent_defs[name].restore_on_open then
       local live = {}
-      for _, pane in ipairs(backend.panes(name, cwd)) do
+      for _, pane in ipairs(agent_container:panes(cwd, name)) do
         local id = vim.b[pane.bufnr].luanphan_agent_thread_id
         if id then live[id] = true end
       end
@@ -215,7 +189,7 @@ local function get_agent(name)
     defaults = def.defaults,
     panel = M,
     container = agent_container,
-    current = function() return agent_buffer(name, vim.fn.getcwd(), true) end,
+    current = function() return agent_container:recent_pane(vim.fn.getcwd(), name, true) end,
     on_register = M.map_create_shortcuts,
     on_show = function(bufnr, cwd)
       backend.focus(bufnr)
@@ -264,7 +238,6 @@ function M.restore_running()
     local data = record.data
     local session = data.thread_id and saved[sessions.key(data)]
     data.used_at = math.max(data.used_at or 0, session and session.last_used or 0)
-    record.pane_order = record.pane_order or (session and pane_order.get(session))
   end
   table.sort(running, function(a, b)
     if a.data.used_at ~= b.data.used_at then return a.data.used_at < b.data.used_at end
@@ -276,9 +249,9 @@ function M.restore_running()
       data.used = (vim.g.luanphan_agent_use_sequence or 0) + 1
       vim.g.luanphan_agent_use_sequence = data.used
     end
-    local buf = setup_agent(data.agent).adopt(record)
+    local session = data.thread_id and saved[sessions.key(data)]
+    local buf = setup_agent(data.agent).adopt(record, session)
     if buf then
-      local session = data.thread_id and saved[sessions.key(data)]
       vim.b[buf].luanphan_agent_saved_label = session and session.agent_label or M.display_title(data.agent, data.label)
     end
   end
@@ -289,15 +262,11 @@ function M.focus(name, bufnr, opts)
   if not agent_defs[name] then
     return false
   end
-  return setup_agent(name).focus(bufnr or agent_buffer(name, vim.fn.getcwd()), opts, true)
+  return setup_agent(name).focus(bufnr or agent_container:recent_pane(vim.fn.getcwd(), name), opts, true)
 end
 
 local function new_tile(name, opts)
-  return agent_container:open_tile(vim.fn.getcwd(), function(place)
-    return setup_agent(name).new(opts, place and function(bufnr)
-      agent_container:save_pane_order(place({ bufnr = bufnr }))
-    end)
-  end, opts and opts.thread_id)
+  return setup_agent(name).new(opts, opts and opts.thread_id ~= nil)
 end
 
 function M.open(name, bufnr, opts)
@@ -305,7 +274,7 @@ function M.open(name, bufnr, opts)
   if not agent_defs[name] then
     return false
   end
-  local target = bufnr or agent_buffer(name, vim.fn.getcwd())
+  local target = bufnr or agent_container:recent_pane(vim.fn.getcwd(), name)
   if not target then return new_tile(name, opts) end
   return setup_agent(name).focus(target, opts)
 end
@@ -321,7 +290,7 @@ end
 function M.resume(session, opts)
   if not sessions.supported(session.agent) or not sessions.valid_id(session.thread_id) then return false end
   M.restore_running()
-  for _, pane in ipairs(backend.panes(session.agent, session.path)) do
+  for _, pane in ipairs(agent_container:panes(session.path, session.agent)) do
     if vim.b[pane.bufnr].luanphan_agent_thread_id == session.thread_id then
       return M.open(session.agent, pane.bufnr, opts)
     end
@@ -335,7 +304,7 @@ local function reopen(startup)
   local cwd = vim.fn.getcwd()
   local opts = startup and { view_mode = true } or nil
   local active = most_recent_tab(cwd)
-  if active then return M.open(active.agent, active.bufnr, opts) end
+  if active then return M.open(active.kind, active.bufnr, opts) end
   local saved = sessions.latest(cwd)
   if saved then return M.resume(saved, opts) end
   if not startup then return M.open(M.default_agent()) end
@@ -395,18 +364,23 @@ end
 function M.send_selection(name)
   local visible = visible_agent()
   local active = most_recent_tab(vim.fn.getcwd(), true)
-  name = name or (visible and is_agent(visible.name) and visible.name) or (active and active.agent) or M.default_agent()
+  name = name or (visible and is_agent(visible.name) and visible.name) or (active and active.kind) or M.default_agent()
   if not is_agent(name) then
     return false
   end
-  local target = agent_buffer(name, vim.fn.getcwd())
+  local target = agent_container:recent_pane(vim.fn.getcwd(), name)
   setup_agent(name).send_selection(target)
   return true
 end
 
 agent_container = view_container.create({
   context = vim.fn.getcwd,
-  tabs = open_tabs,
+  panes = {
+    backend = backend,
+    kinds = agent_order,
+    kind = function(buf) return vim.b[buf].luanphan_agent_name end,
+    last_used = function(buf) return tonumber(vim.b[buf].luanphan_agent_last_used) or 0 end,
+  },
   layout = function()
     return view_container.layout(require("luanphan.global_settings").read().agent_float,
       { border = "single", zindex = 45, min_height = 12 })
@@ -424,13 +398,9 @@ agent_container = view_container.create({
     return title
   end,
   snapshot = sessions.snapshot,
-  reorder = function(tabs)
-    agent_container:save_pane_order(tabs)
-    agent_container:refresh()
-  end,
   choices = agent_choices,
   activate = function(tab, opts)
-    return M.open(tab.agent, tab.bufnr, opts)
+    return M.open(tab.kind, tab.bufnr, opts)
   end,
   create = function(choice)
     M.new(choice.id)
@@ -445,6 +415,7 @@ agent_container = view_container.create({
   cycle_desc = "Next agent session",
 })
 M.container = agent_container
+sessions.setup(agent_defs, agent_order, agent_container)
 agent_container:watch(vim.api.nvim_create_augroup("LuanphanAgentPanel", { clear = true }))
 
 local function agent_spec(name)
@@ -494,7 +465,7 @@ local function agent_spec(name)
         agent_container:hide()
       end, function(cwd, pane)
         if visible_agent() then return end
-        local buf = terminal_agent.running(pane.bufnr) and pane.bufnr or agent_buffer(pane.name, cwd)
+        local buf = terminal_agent.running(pane.bufnr) and pane.bufnr or agent_container:recent_pane(cwd, pane.name)
         if buf then M.open(pane.name, buf) end
       end)
     end or nil,

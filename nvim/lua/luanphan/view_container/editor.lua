@@ -235,7 +235,7 @@ local function reopen(panel, source_buf)
   if panel_for(api.nvim_get_current_win()) or not api.nvim_buf_is_valid(source_buf) then return end
   local context = container:context()
   if context ~= nil and context ~= panel.context then return end
-  local source_tab = vim.iter(container.opts.tabs(panel.context) or {}):find(function(tab)
+  local source_tab = vim.iter(container:pane_tabs(panel.context)):find(function(tab)
     return tab.bufnr == source_buf
   end)
   if not source_tab then return end

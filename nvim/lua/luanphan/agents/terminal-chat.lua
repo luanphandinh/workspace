@@ -85,7 +85,6 @@ function M.create(profile)
     config = config,
     notify = nx,
     augroup = augroup_name,
-    panes = function() return backend.panes(provider_name) end,
     cwd = function(buf) return vim.b[buf].luanphan_agent_cwd end,
     mark_used = mark_terminal_used,
     command = function(buf, cwd, opts)

@@ -1,16 +1,16 @@
 local M = {}
 local uv = vim.uv
-local backend = require("luanphan.agents.tmux")
+local tab_label = require("luanphan.view_container").tab_label
 local pane_state = require("luanphan.view_container.pane_state")
 local uuid = "^" .. string.rep("%x", 8) .. ("%-" .. string.rep("%x", 4)):rep(3) .. "%-" .. string.rep("%x", 12) .. "$"
-local providers, names = {}, {}
+local providers, names, container = {}, {}, nil
 
 function M.key(session)
   return session.bufnr or session.agent .. ":" .. session.thread_id
 end
 
-function M.setup(definitions, order)
-  providers, names = definitions, order
+function M.setup(definitions, order, view)
+  providers, names, container = definitions, order, view
 end
 
 function M.supported(agent)
@@ -67,46 +67,10 @@ function M.list(agent)
   return result
 end
 
-function M.live(cwd, closing_bufnr)
-  local paths_by_agent = {}
-  local function add(agent, path, buf)
-    paths_by_agent[agent] = paths_by_agent[agent] or {}
-    local paths = paths_by_agent[agent]
-    paths[path] = paths[path] or {}
-    table.insert(paths[path], buf)
-    return paths[path]
-  end
-  for _, pane in ipairs(backend.panes(nil, cwd)) do
-    add(pane.data.agent, pane.data.cwd, pane.bufnr)
-  end
-  -- A process may exit before the container selects its neighbor.
-  if closing_bufnr and not backend.running(closing_bufnr) then
-    table.sort(add(vim.b[closing_bufnr].luanphan_agent_name, cwd, closing_bufnr))
-  end
-  local records = {}
-  for _, agent in ipairs(names) do
-    for path, bufnrs in pairs(paths_by_agent[agent] or {}) do
-      if cwd or vim.fn.isdirectory(path) == 1 then
-        for index, bufnr in ipairs(bufnrs) do
-          records[#records + 1] = {
-            id = bufnr,
-            agent = agent,
-            label = #bufnrs > 1 and (agent .. " " .. index) or agent,
-            bufnr = bufnr,
-            path = path,
-            last_used = tonumber(vim.b[bufnr].luanphan_agent_last_used) or 0,
-          }
-        end
-      end
-    end
-  end
-  return records
-end
-
 function M.instances(include_saved)
-  local instances, live = M.live(), {}
-  local tab_label = require("luanphan.view_container").tab_label
+  local instances, live = container and container:live_tabs() or {}, {}
   for _, record in ipairs(instances) do
+    record.agent = record.kind
     record.agent_label = tab_label(record.bufnr, record.label)
     local id = vim.b[record.bufnr].luanphan_agent_thread_id
     if id then live[record.agent .. ":" .. id] = true end

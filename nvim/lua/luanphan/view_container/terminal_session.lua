@@ -68,7 +68,7 @@ function M.create(profile)
     local width = win and vim.api.nvim_win_get_width(win) or geometry.width
     local height = win and vim.api.nvim_win_get_height(win) or geometry.height
     local command, data = profile.command(buf, cwd, opts)
-    local position = opts and opts.pane_order
+    local position = opts and pane_order.get(opts.saved_pane or opts)
     pane_order.set(buf, position)
     local ok, err = backend.launch(buf, command, data, width, math.max(1, height - 1), position)
     if not ok then
@@ -110,8 +110,12 @@ function M.create(profile)
 
   local API = {}
 
-  function API.new(opts, on_start)
-    return open_terminal(opts, on_start)
+  function API.new(opts, keep_order)
+    return container:open_tile(container:context(), function(place)
+      return open_terminal(opts, place and function(buf)
+        container:save_pane_order(place({ bufnr = buf }))
+      end)
+    end, keep_order)
   end
 
   function API.start_hidden(cwd, opts)
@@ -119,10 +123,10 @@ function M.create(profile)
     return start_terminal(buf, cwd, opts) and buf
   end
 
-  function API.adopt(record)
+  function API.adopt(record, saved_pane)
     local data = record.data
     local buf = vim.api.nvim_create_buf(false, true)
-    pane_order.set(buf, record.pane_order)
+    pane_order.set(buf, record.pane_order or (saved_pane and pane_order.get(saved_pane)))
     profile.on_adopt(buf, data)
     if not backend.adopt(buf, record) then
       vim.api.nvim_buf_delete(buf, { force = true })
@@ -173,13 +177,13 @@ function M.create(profile)
       end
     end
     if terminal_pane.running(destination()) then return deliver(1) end
-    target = API.new(opts)
+    target = open_terminal(opts)
     vim.defer_fn(function() deliver(1) end, config.defer_send_ms or 200)
   end
 
   function API.setup()
     -- Rebind surviving panes after a config reload.
-    for _, pane in ipairs(profile.panes()) do
+    for _, pane in ipairs(container:panes(nil, profile.name)) do
       register_terminal(pane.bufnr, pane.data.cwd)
     end
     local cur = profile.current()

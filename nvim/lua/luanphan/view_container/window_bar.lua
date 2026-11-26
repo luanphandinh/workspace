@@ -7,6 +7,7 @@ local windows = require("luanphan.view_container.window")
 local editor = require("luanphan.view_container.editor")
 local sidebar = require("luanphan.view_container.sidebar")
 local tabs = require("luanphan.view_container.tab_render")
+local pane_order = require("luanphan.view_container.pane_order")
 local jump_lists = require("luanphan.view_container.jumplist")
 local bars = vim.luanphan_window_bars or setmetatable({}, { __mode = "k" })
 vim.luanphan_window_bars = bars
@@ -81,6 +82,9 @@ end
 
 function Bar:groups()
   local groups = self.opts.groups()
+  if self.opts.order_panes then
+    for _, group in ipairs(groups) do pane_order.sort(group.items) end
+  end
   if self.opts.load_order and not self.order_loaded then
     self.order_loaded = true
     self.order = self.opts.load_order()

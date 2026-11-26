@@ -274,10 +274,11 @@ function M.create(opts)
     return pane ~= nil and pane.group.panes[pane.id] == pane
   end
 
-  function backend.panes(matches)
+  function backend.panes(kind, cwd)
     local panes = {}
     for buf, pane in pairs(state.buffers) do
-      if matches(pane.data) and api.nvim_buf_is_valid(buf) and vim.bo[buf].buftype == "terminal" then
+      if (not kind or pane.data[opts.kind] == kind) and (not cwd or pane.data.cwd == cwd)
+        and api.nvim_buf_is_valid(buf) and vim.bo[buf].buftype == "terminal" then
         panes[#panes + 1] = pane
       end
     end

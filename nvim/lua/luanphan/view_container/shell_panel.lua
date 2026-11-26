@@ -280,7 +280,7 @@ function M.create(opts)
       groups = function()
         local groups = {}
         for _, group in ipairs(owner.windows) do
-          local items = inner.opts.tabs(group)
+          local items = inner:pane_tabs(group)
           local active
           for _, pane in ipairs(items) do
             pane.label = views.tab_label(pane.bufnr, pane.label)

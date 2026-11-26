@@ -174,9 +174,64 @@ function Container:context()
 	return self.opts.context()
 end
 
+function Container:panes(context, kind)
+	return self.opts.panes.backend.panes(kind, context)
+end
+
+function Container:recent_pane(context, kind, prefer_visible)
+	local selected, last_used = nil, -1
+	for _, pane in ipairs(self:panes(context, kind)) do
+		local buf = pane.bufnr
+		if prefer_visible and vim.fn.bufwinid(buf) ~= -1 then return buf end
+		local used = self.opts.panes.last_used(buf)
+		if used > last_used then selected, last_used = buf, used end
+	end
+	return selected
+end
+
+function Container:live_tabs(context, closing_buf)
+	local source = self.opts.panes
+	local grouped = {}
+	local function add(buf, path)
+		local kind = source.kind(buf)
+		grouped[kind] = grouped[kind] or {}
+		local paths = grouped[kind]
+		paths[path] = paths[path] or {}
+		local buffers = paths[path]
+		buffers[#buffers + 1] = buf
+		return buffers
+	end
+	for _, pane in ipairs(self:panes(context)) do add(pane.bufnr, pane.data.cwd) end
+	-- Keep the closing pane in position while choosing its replacement.
+	if closing_buf and not source.backend.running(closing_buf) then table.sort(add(closing_buf, context)) end
+
+	local items = {}
+	for _, kind in ipairs(source.kinds) do
+		for path, buffers in pairs(grouped[kind] or {}) do
+			if context or vim.fn.isdirectory(path) == 1 then
+				for index, buf in ipairs(buffers) do
+					items[#items + 1] = {
+						id = buf, bufnr = buf, kind = kind, path = path, last_used = source.last_used(buf),
+						label = #buffers > 1 and (kind .. " " .. index) or kind,
+					}
+				end
+			end
+		end
+	end
+	return items
+end
+
+function Container:pane_tabs(context, closing_buf)
+	if self.opts.tabs then return self.opts.tabs(context, closing_buf) or {} end
+	local items = self:live_tabs(context, closing_buf)
+	if self.display_style == "tile" then table.sort(items, function(a, b) return a.bufnr < b.bufnr end) end
+	pane_order.sort(items)
+	return items
+end
+
 function Container:tabs(context)
 	context = context or self:context()
-	local items = self.opts.tabs(context) or {}
+	local items = self:pane_tabs(context)
 	if self.opts.editor then return editor.add_tab(self.opts.editor.key(context), items) end
 	return items
 end
@@ -415,7 +470,7 @@ function Container:open_tile(context, spawn, keep_order)
 		and self:visible_window(context, vim.api.nvim_get_current_buf()) == vim.api.nvim_get_current_win()
 	if keep_order or not (focused or self.opts.insert_after_active) then return spawn() end
 
-	local tabs = vim.list_slice(self.opts.tabs(context))
+	local tabs = vim.list_slice(self:pane_tabs(context))
 	local active = self:active(context, tabs)
 	local index = vim.iter(tabs):enumerate():find(function(_, tab) return tab == active end)
 	if not index then return spawn() end
@@ -433,6 +488,12 @@ function Container:save_pane_order(items)
 		end
 		if self.opts.snapshot then pane_state.defer(item, self.opts.snapshot, position) end
 	end, pane_order.get)
+end
+
+function Container:reorder_panes(items, context, win)
+	if self.opts.reorder then return self.opts.reorder(items, context, win) end
+	self:save_pane_order(items)
+	return self:refresh()
 end
 
 function Container:move_tile(direction, context)
@@ -454,7 +515,7 @@ function Container:move_tile(direction, context)
 
 	table.insert(tabs, target, table.remove(tabs, source))
 	if self.opts.editor then editor.remove_tab(self.opts.editor.key(context), tabs) end
-	self.opts.reorder(tabs, context, win)
+	self:reorder_panes(tabs, context, win)
 end
 
 function Container:bind_tile_moves(bufnr, context)
@@ -565,7 +626,7 @@ function Container:remove_tab(bufnr, context, on_close)
 end
 
 function Container:replacement(context, buf)
-	return M.replacement_tab(self.opts.tabs(context, buf), buf)
+	return M.replacement_tab(self:pane_tabs(context, buf), buf)
 end
 
 function Container:focus_replacement(tab)
@@ -577,7 +638,7 @@ end
 function M.create(opts)
 	assert(type(opts) == "table", "view container options are required")
 	assert(type(opts.context) == "function", "view container context callback is required")
-	assert(type(opts.tabs) == "function", "view container tabs callback is required")
+	assert(type(opts.tabs) == "function" or opts.panes, "view container pane source is required")
 	assert(type(opts.choices) == "function" or type(opts.new) == "function", "view container picker or new callback is required")
 	assert(type(opts.activate) == "function", "view container activate callback is required")
 	local container = setmetatable({
