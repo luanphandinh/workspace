@@ -24,7 +24,7 @@ function M.current(bufnr)
   return vim.b[bufnr].luanphan_view_status
 end
 
--- Programs report their state with `OSC 7501 ; state=<status>`.
+-- Programs report their state with `OSC 7501 ; state=<status>:app=<name>...`.
 function M.from_osc(sequence)
   return sequence:match("^\27%]7501;state=(%a+)")
 end

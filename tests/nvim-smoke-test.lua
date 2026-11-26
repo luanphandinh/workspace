@@ -7417,6 +7417,42 @@ local function test_tmux_frame_restores_scroll_region()
   assert_true(ok, tostring(err))
 end
 
+local function test_claude_title_reports_status()
+  if vim.fn.executable("tmux") == 0 or vim.fn.executable("python3") == 0 then return end
+  local root = uv.fs_mkdtemp("/tmp/nvim-claude-title-XXXXXX")
+  local script = root .. "/test.lua"
+  -- Claude prefixes its terminal title with a spinner while working and "✳" when it rests.
+  write(root .. "/titles.py", {
+    "import sys, time",
+    "def title(text): sys.stdout.write(f'\x1b]0;{text}\x07'); sys.stdout.flush()",
+    "title('✳ Claude Code'); time.sleep(1.2)",
+    "for frame in ['◐', '◑', '◐']: title(f'{frame} Fix the parser'); time.sleep(0.4)",
+    "title('✳ Fix the parser'); time.sleep(60)",
+  })
+  write(script, vim.list_extend({
+    "local root = " .. string.format("%q", root),
+    "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
+    "vim.g.luanphan_recent_paths_file = root .. '/recent.json'",
+    "vim.g.luanphan_claude_sessions_dir = root .. '/sessions'",
+  }, vim.split([=[
+require("luanphan.agents.plugins.claude.claude").defaults.cmd = { "python3", root .. "/titles.py" }
+local buf = require("luanphan.agents.main").new("claude")
+local view = require("luanphan.view_container")
+local seen = {}
+assert(vim.wait(8000, function()
+  local status = vim.b[buf].luanphan_view_status
+  if status ~= seen[#seen] then seen[#seen + 1] = status end
+  return status == "done"
+end, 20), "claude title never reported done: " .. table.concat(seen, ","))
+assert(vim.tbl_contains(seen, "working"), "claude title never reported working: " .. table.concat(seen, ","))
+assert(view.tab_label(buf) == "Fix the parser", "claude title kept its status prefix: " .. view.tab_label(buf))
+]=], "\n", { plain = true })))
+  local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
+  vim.system({ "tmux", "-S", agent_socket(script), "kill-server" }):wait()
+  vim.fn.delete(root, "rf")
+  assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+end
+
 local function test_terminal_view_container(repo)
   local old_cwd = vim.fn.getcwd()
   close_toggleterm_terminals()
@@ -9598,6 +9634,7 @@ local agent_tests = {
   tmux_split_window = test_tmux_split_window_keeps_cursor,
   tmux_steady_output = test_tmux_repaint_recovers_under_output,
   tmux_scroll_region = test_tmux_frame_restores_scroll_region,
+  claude_title_status = test_claude_title_reports_status,
 }
 
 local lsp_lifecycle_tests = {
@@ -9865,6 +9902,7 @@ local setup_ok, setup_err = xpcall(function()
   test("tmux terminal stays in sync after showing in split windows", agent_tests.tmux_split_window)
   test("tmux terminal recovers from steady output and failed captures", agent_tests.tmux_steady_output)
   test("tmux terminal repaint keeps the scroll region", agent_tests.tmux_scroll_region)
+  test("claude title reports working and done", agent_tests.claude_title_status)
   test("agent window picker keeps the tiled panel together", function()
     agent_tests.tiled_workspace_picker(repo, worktree)
   end)
