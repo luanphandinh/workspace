@@ -101,14 +101,6 @@ function M.stream(pane, bytes)
   if not pane.view_win then pane.hidden_output = true end
   pane.frame = nil
   M.output(pane, bytes)
-  -- Neovim can drift from tmux on some redraws; resync visible rows once output settles.
-  local token = (pane.settle or 0) + 1
-  pane.settle = token
-  vim.defer_fn(function()
-    if pane.settle == token and pane.ready and not pane.resizing and M.is_visible(pane) then
-      M.paint(pane, M.is_visible)
-    end
-  end, 100)
 end
 
 -- Returns the start of an escape sequence or UTF-8 character that the next output chunk completes.

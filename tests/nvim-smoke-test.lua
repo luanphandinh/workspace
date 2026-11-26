@@ -7169,12 +7169,6 @@ local function check(label, socket, open)
     assert(vim.wait(4000, function() return pane_width() ~= previous end, 50), label .. " did not follow " .. columns .. " columns")
     assert(vim.wait(4000, matches_tmux, 100), label .. " scrollback differs from tmux after resizing to " .. columns .. " columns")
   end
-  -- Simulate a redraw that Neovim applied differently from tmux.
-  local pane = require("luanphan.view_container.tmux.pane").for_buffer(buf)
-  pane.client:request({ "display-message", "-p", "" }, function()
-    require("luanphan.view_container.tmux.pane").output(pane, "\27[3;1HDRIFTED_ROW\27[K")
-  end)
-  assert(vim.wait(4000, matches_tmux, 100), label .. " visible rows did not resync from tmux")
   vim.cmd("stopinsert")
   for _, win in ipairs(api.nvim_list_wins()) do
     if api.nvim_win_is_valid(win) and api.nvim_win_get_config(win).relative ~= "" then api.nvim_win_close(win, true) end
@@ -7199,11 +7193,11 @@ local function test_tmux_paint_keeps_split_escape_sequence()
   local root = uv.fs_mkdtemp("/tmp/nvim-tmux-split-XXXXXX")
   local script, socket = root .. "/test.lua", root .. "/socket"
   write(root .. "/tmux.conf", { "set -g default-shell /bin/sh", "set -g default-command 'exec /bin/sh'" })
-  -- The pause lets a repaint run while tmux still waits for the end of the color sequence.
+  -- The pause lets a resize repaint run while tmux still waits for the end of the color sequence.
   write(root .. "/split.py", {
     "import os, time",
     [[os.write(1, b"\x1b[2J\x1b[HBEFORE\r\n\x1b[3")]],
-    "time.sleep(0.8)",
+    "time.sleep(1.5)",
     [[os.write(1, b"1mSPLIT_OK\x1b[0m\r\n")]],
     "time.sleep(60)",
   })
@@ -7221,6 +7215,9 @@ assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane and vim.bo.buft
 local id, buf = vim.b.luanphan_tmux_pane, api.nvim_get_current_buf()
 vim.system({ "tmux", "-S", root .. "/socket", "send-keys", "-t", id, "exec python3 " .. root .. "/split.py", "Enter" }):wait()
 local function text() return table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), "\n") end
+assert(vim.wait(4000, function() return text():find("BEFORE", 1, true) end, 5), "output before the split did not arrive")
+-- A width change rebuilds the panel from tmux while the sequence is still open.
+vim.o.columns = vim.o.columns - 20
 assert(vim.wait(5000, function() return text():find("SPLIT_OK", 1, true) end, 5), "split sequence output did not arrive")
 assert(not text():find("1mSPLIT_OK", 1, true), "a repaint broke an escape sequence split across output chunks")
 ]=], "\n", { plain = true })))
