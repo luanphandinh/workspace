@@ -7310,6 +7310,113 @@ assert(ok and matches_tmux(), "panel drifted from tmux after the terminal was sh
   assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
 end
 
+local function test_tmux_repaint_recovers_under_output()
+  if vim.fn.executable("tmux") == 0 or vim.fn.executable("python3") == 0 then return end
+  local root = uv.fs_mkdtemp("/tmp/nvim-tmux-steady-XXXXXX")
+  local script = root .. "/test.lua"
+  write(root .. "/steady.py", {
+    "import sys, time",
+    "tick = 0",
+    "while True:",
+    "    tick += 1",
+    [[    sys.stdout.write(f"tick {tick}\r\n"); sys.stdout.flush()]],
+    "    time.sleep(0.005)",
+  })
+  write(script, vim.list_extend({
+    "local root = " .. string.format("%q", root),
+    "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
+    "vim.g.luanphan_recent_paths_file = root .. '/recent.json'",
+    "vim.g.luanphan_terminal_sessions_dir = root .. '/sessions'",
+    "vim.o.columns, vim.o.lines = 160, 48",
+  }, vim.split([=[
+local api = vim.api
+local pty = require("luanphan.view_container.tmux.pane")
+local function tmux(...)
+  local result = vim.system(vim.list_extend({ "tmux", "-S", vim.env.LUANPHAN_AGENT_TMUX_SOCKET }, { ... }), { text = true }):wait(2000)
+  assert(result.code == 0, result.stderr)
+  return result.stdout
+end
+require("luanphan.agents.main").new("terminal")
+assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane and vim.bo.buftype == "terminal" end), "agent terminal did not attach")
+local id, buf = vim.b.luanphan_tmux_pane, api.nvim_get_current_buf()
+local pane = pty.for_buffer(buf)
+tmux("send-keys", "-t", id, "exec python3 " .. root .. "/steady.py", "Enter")
+assert(vim.wait(4000, function() return tmux("capture-pane", "-p", "-t", id):find("tick 50", 1, true) end, 50), "output did not start")
+local function pane_width() return tmux("display-message", "-p", "-t", id, "#{pane_width}") end
+local function resize(columns)
+  local previous = pane_width()
+  vim.o.columns = columns
+  assert(vim.wait(4000, function() return pane_width() ~= previous end, 20), "tmux pane did not follow " .. columns .. " columns")
+end
+local function last_tick()
+  local lines = api.nvim_buf_get_lines(buf, 0, -1, false)
+  for index = #lines, 1, -1 do
+    local tick = lines[index]:match("^tick (%d+)")
+    if tick then return tonumber(tick) end
+  end
+  return 0
+end
+
+-- Output that keeps coming during a capture must not keep the pane capturing forever.
+local paints, paint = 0, pty.paint
+pty.paint = function(...) paints = paints + 1; return paint(...) end
+resize(120)
+vim.wait(1500, function() return false end)
+pty.paint = paint
+assert(paints <= 6, "steady output kept the pane repainting: " .. paints .. " paints in 1.5s")
+local before = last_tick()
+assert(vim.wait(2000, function() return pane.ready and last_tick() > before + 20 end, 20), "the pane did not go back to live output")
+
+-- A failed capture must not freeze the pane.
+local client = pane.client
+local request_batch = client.request_batch
+client.request_batch = function(self, commands, callback)
+  if commands[1][1] == "capture-pane" then
+    client.request_batch = request_batch
+    local replies = {}
+    for index = 1, #commands do replies[index] = { ok = false, lines = {} } end
+    return vim.schedule(function() callback(replies) end)
+  end
+  return request_batch(self, commands, callback)
+end
+resize(140)
+assert(vim.wait(3000, function() return client.request_batch == request_batch end, 20), "no capture ran after the resize")
+before = last_tick()
+assert(vim.wait(3000, function() return pane.ready and last_tick() > before + 20 end, 20), "a failed capture froze the pane")
+]=], "\n", { plain = true })))
+  local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
+  vim.system({ "tmux", "-S", agent_socket(script), "kill-server" }):wait()
+  vim.fn.delete(root, "rf")
+  assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+end
+
+local function test_tmux_frame_restores_scroll_region()
+  -- tmux keeps an app's scroll region, but a fresh or repainted Neovim terminal starts without it.
+  local screen = require("luanphan.view_container.tmux.screen")
+  local buf = vim.api.nvim_create_buf(false, true)
+  local win = vim.api.nvim_open_win(buf, false, { relative = "editor", row = 0, col = 0, width = 20, height = 6, style = "minimal" })
+  local ok, err = pcall(function()
+    local term = vim.api.nvim_open_term(buf, {})
+    local pane = { view_width = 20, view_height = 6, width = 20, height = 6, painted = true }
+    local lines = { "TOP", "region 1", "region 2", "region 3", "BOTTOM 1", "BOTTOM 2" }
+    -- cursor at the last region row, rows 1-3 (0-based) form the region
+    local flags = { "0", "3", "0", "1", "0", "0", "0", "20", "6", "1", "0", "0", "0", "0", "1", "3" }
+    local _, output = screen.frame(pane, lines, flags)
+    vim.api.nvim_chan_send(term, output .. "\nNEW")
+    local rows
+    assert_true(vim.wait(2000, function()
+      local lines_now = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+      rows = vim.tbl_map(function(line) return vim.trim(line) end, vim.list_slice(lines_now, #lines_now - 5))
+      return table.concat(rows, "\n"):find("NEW", 1, true) ~= nil
+    end), "scroll region frame output did not render")
+    assert_true(vim.deep_equal(rows, { "TOP", "region 2", "region 3", "NEW", "BOTTOM 1", "BOTTOM 2" }),
+      "a repaint lost the scroll region: " .. vim.inspect(rows))
+  end)
+  pcall(vim.api.nvim_win_close, win, true)
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
+  assert_true(ok, tostring(err))
+end
+
 local function test_terminal_view_container(repo)
   local old_cwd = vim.fn.getcwd()
   close_toggleterm_terminals()
@@ -9489,6 +9596,8 @@ local agent_tests = {
   tmux_resize = test_tmux_resize_rebuilds_inline_output,
   tmux_split_sequence = test_tmux_paint_keeps_split_escape_sequence,
   tmux_split_window = test_tmux_split_window_keeps_cursor,
+  tmux_steady_output = test_tmux_repaint_recovers_under_output,
+  tmux_scroll_region = test_tmux_frame_restores_scroll_region,
 }
 
 local lsp_lifecycle_tests = {
@@ -9754,6 +9863,8 @@ local setup_ok, setup_err = xpcall(function()
   test("tmux terminal rebuilds inline output after resize", agent_tests.tmux_resize)
   test("tmux terminal keeps escape sequences split across a repaint", agent_tests.tmux_split_sequence)
   test("tmux terminal stays in sync after showing in split windows", agent_tests.tmux_split_window)
+  test("tmux terminal recovers from steady output and failed captures", agent_tests.tmux_steady_output)
+  test("tmux terminal repaint keeps the scroll region", agent_tests.tmux_scroll_region)
   test("agent window picker keeps the tiled panel together", function()
     agent_tests.tiled_workspace_picker(repo, worktree)
   end)

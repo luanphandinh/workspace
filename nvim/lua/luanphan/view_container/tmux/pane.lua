@@ -8,6 +8,9 @@ local history_position = "#{?#{!=:#{history_added},},#{history_added},#{history_
 local cursor_format = "#{cursor_x}\t#{cursor_y}\t#{alternate_on}\t#{cursor_flag}"
   .. "\t#{keypad_cursor_flag}\t#{bracket_paste_flag}\t" .. history_position
   .. "\t#{pane_width}\t#{pane_height}\t#{history_generation}"
+  .. "\t#{mouse_standard_flag}\t#{mouse_button_flag}\t#{mouse_any_flag}\t#{mouse_sgr_flag}"
+  .. "\t#{scroll_region_upper}\t#{scroll_region_lower}"
+local saved_cursor_field = 17
 
 function M.for_buffer(buf)
   return panes_by_buffer[buf]
@@ -33,6 +36,17 @@ local function mark_resized(pane, width, height)
   end
 end
 
+-- Coalesces refresh requests, so a window drag or an output burst paints once.
+local function request_refresh(pane)
+  if pane.refresh_queued then return end
+  pane.refresh_queued = true
+  vim.defer_fn(function()
+    pane.refresh_queued = nil
+    if not pane.ready or not (pane.rebuild or pane.resync) then return end
+    if pane.repaint then pane.repaint(pane) else M.paint(pane) end
+  end, 50)
+end
+
 -- A split or another window showing the buffer rewraps Neovim's copy, so rebuild it from tmux.
 api.nvim_create_autocmd({ "WinNew", "WinResized", "BufWinEnter", "WinClosed" }, {
   group = api.nvim_create_augroup("LuanphanTmuxTerminalSize", { clear = true }),
@@ -44,6 +58,8 @@ api.nvim_create_autocmd({ "WinNew", "WinResized", "BufWinEnter", "WinClosed" }, 
         if width and (width ~= pane.term_width or height ~= pane.term_height) then
           if pane.term_width then
             if width ~= pane.term_width then pane.rebuild = true else pane.resync = true end
+            -- Hidden panes refresh when they are shown again.
+            if M.is_visible(pane) then request_refresh(pane) end
           end
           pane.term_width, pane.term_height = width, height
         end
@@ -190,12 +206,14 @@ end
 function M.receive(pane, bytes)
   if not pane then return end
   pane.tail = unfinished_tail((pane.tail or "") .. bytes)
-  -- Retry a rebuild that could not paint right after the resize.
-  if pane.ready and (pane.rebuild or pane.resync) then
-    if pane.repaint then pane.repaint(pane) else M.paint(pane) end
+  if pane.ready then
+    M.stream(pane, bytes)
+    -- Retry a refresh that could not paint right after the resize.
+    if pane.rebuild or pane.resync then request_refresh(pane) end
+    return
   end
-  if pane.ready then return M.stream(pane, bytes) end
-  if pane.capturing or pane.replay_osc then pane.dirty = true end
+  -- tmux sends output that came before a capture ahead of the capture's reply, so the capture
+  -- already includes these bytes.
   if pane.replay_osc then replay_osc(pane, bytes) end
 end
 
@@ -226,7 +244,7 @@ local function sync_grid(pane, win)
     end
     if pane.resizing ~= request then return end
     pane.resizing = nil
-    if pane.repaint then pane.repaint(pane) elseif pane.rebuild or pane.resync then M.paint(pane) end
+    if pane.rebuild or pane.resync then request_refresh(pane) elseif pane.repaint then pane.repaint(pane) end
   end)
 end
 
@@ -334,8 +352,9 @@ function M.frame(pane, lines, flags, primary)
     -- tmux captures primary history with the live alternate grid and saves the primary grid separately.
     local history_end = math.max(0, #lines - (tonumber(flags[9]) or pane.height))
     local saved_lines = vim.list_extend(vim.list_slice(lines, 1, history_end), primary)
-    local saved_flags = vim.list_slice(flags, 1, 10)
-    saved_flags[1], saved_flags[2], saved_flags[3], saved_flags[9] = flags[11], flags[12], "0", tostring(#primary)
+    local saved_flags = vim.list_slice(flags, 1, saved_cursor_field - 1)
+    saved_flags[1], saved_flags[2], saved_flags[3], saved_flags[9] =
+      flags[saved_cursor_field], flags[saved_cursor_field + 1], "0", tostring(#primary)
     pane.frame, saved_screen = screen.frame(pane, saved_lines, saved_flags)
     pane.painted = true
   end
@@ -351,34 +370,43 @@ function M.paint_frame(pane, lines, flags, primary)
   if (first and pane.follow_live ~= false) or (in_input and output ~= "") then
     queue_cursor(pane, frame, frame)
   end
+  -- Neovim applies a scrollback clear on its next refresh, so a clear sent before the capture
+  -- could also wipe history written after it.
+  if pane.clear_scrollback then output, pane.clear_scrollback = "\27[3J" .. output, nil end
   if output ~= "" then M.output(pane, output) end
 end
 
 function M.paint(pane, visible)
   if not pane.term or not pane.client or pane.capturing or (visible and not visible(pane)) then return end
+  -- The resize callback refreshes the pane once tmux has the new size.
+  if pane.resizing and pane.resizing.client == pane.client then return end
   local connection = pane.client
   -- Cancel a sequence Neovim is still parsing before painting over it.
   if pane.ready and (pane.tail or "") ~= "" then M.output(pane, "\24") end
   local win, view = pane.view_win, nil
   if pane.rebuild then
     if pane.follow_live == false and M.is_visible(pane) then view = api.nvim_win_call(win, vim.fn.winsaveview) end
-    pane.rebuild, pane.painted, pane.frame = nil, false, nil
-    M.output(pane, "\27[3J")
+    -- The scrollback is cleared in the same write as the new history (see paint_frame).
+    pane.rebuild, pane.painted, pane.frame, pane.clear_scrollback = nil, false, nil, true
   end
   -- Without a previous frame, the paint rewrites every visible row and the cursor.
   if pane.resync then pane.resync, pane.frame = nil, nil end
-  pane.capturing, pane.ready, pane.dirty = true, false, false
+  pane.capturing, pane.ready = true, false
   M.capture(pane, function(lines, flags, primary)
     if pane.client ~= connection then return end
     pane.capturing = false
-    if not lines or (visible and not visible(pane)) then return end
-    M.paint_frame(pane, lines, flags, primary)
-    if view and showing(pane, win) then M.apply_view(pane, win, view) end
-    if pane.dirty or pane.rebuild or pane.resync then
-      M.paint(pane, visible)
+    if not lines then
+      -- Keep streaming and retry on the next output instead of freezing the pane.
+      if pane.painted then pane.resync = true else pane.rebuild = true end
+      pane.ready = true
       return
     end
+    if visible and not visible(pane) then return end
+    M.paint_frame(pane, lines, flags, primary)
+    -- Restore the scrolled view once Neovim has refreshed the rebuilt buffer.
+    if view and showing(pane, win) then queue_cursor(pane, view, pane.frame) end
     pane.ready = true
+    if pane.rebuild or pane.resync then request_refresh(pane) end
     pane.pending_osc = nil
     -- tmux is still waiting for the rest of this sequence, so Neovim must wait for it too.
     if (pane.tail or "") ~= "" then M.output(pane, pane.tail) end

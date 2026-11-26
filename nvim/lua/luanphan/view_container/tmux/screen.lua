@@ -3,7 +3,14 @@ local sgr = "\27%[[%d;:]*m"
 local osc8 = "\27]8;[^;\7\27]*;([^\7\27]*)"
 local close_link = "\27]8;;\27\\"
 
+-- ASCII text is one cell per byte, which avoids Vimscript width calls on long histories.
+local function cell_width(text)
+  if not text:find("[\128-\255]") then return #text end
+  return vim.fn.strdisplaywidth(text)
+end
+
 local function fit_text(text, cells)
+  if not text:find("[\128-\255]") then return text:sub(1, cells) end
   if vim.fn.strdisplaywidth(text) <= cells then return text end
   local low, high = 0, math.min(cells, vim.fn.strchars(text, true))
   while low < high do
@@ -38,7 +45,7 @@ local function clip_row(line, left, width)
     local text = line:sub(index, start and start - 1 or #line)
     if left > 0 then
       local skipped = fit_text(text, left)
-      left = left - vim.fn.strdisplaywidth(skipped)
+      left = left - cell_width(skipped)
       text = text:sub(#skipped + 1)
       if left > 0 and text ~= "" then
         local wide = vim.fn.strcharpart(text, 0, 1, true)
@@ -48,7 +55,7 @@ local function clip_row(line, left, width)
     end
     local fitted = fit_text(text, width)
     result[#result + 1] = fitted
-    width = fitted == text and (width - vim.fn.strdisplaywidth(fitted)) or 0
+    width = fitted == text and (width - cell_width(fitted)) or 0
     if not start then break end
     result[#result + 1] = line:sub(start, finish)
     index = finish + 1
@@ -110,8 +117,12 @@ function M.frame(pane, lines, flags)
     rows = {}, source_rows = {}, top = top, left = left, width = width, height = height, alternate = flags[3] == "1",
     row = math.min(row - top, height - 1), col = math.min(col - left, width - 1),
     history = tonumber(flags[7]) or 0, generation = flags[10],
-    modes = { flags[4], flags[5], flags[6] },
+    modes = { flags[4], flags[5], flags[6], flags[14] },
+    -- tmux reports one mouse tracking level; Neovim turns tracking off on any "l" of the three.
+    mouse = flags[13] == "1" and 1003 or flags[12] == "1" and 1002 or flags[11] == "1" and 1000 or 0,
+    region = flags[15] and ("%s;%s"):format(flags[15], flags[16]),
   }
+  local full_region = ("0;%d"):format(source_height - 1)
   local output = {}
   local reset = not previous or previous.alternate ~= frame.alternate
     or previous.width ~= width or previous.height ~= height
@@ -129,6 +140,8 @@ function M.frame(pane, lines, flags)
       scrolled = frame.history - previous.history + top - previous.top
     end
     if scrolled > 0 and screen_start > 0 then
+      -- History scrolls off the full screen, so drop any scroll region first.
+      if not reset and previous.region and previous.region ~= full_region then output[#output + 1] = "\27[r" end
       append_history(output, frame, lines, math.max(1, screen_start - scrolled + 1), screen_start)
       reset = true
     end
@@ -144,13 +157,25 @@ function M.frame(pane, lines, flags)
       output[#output + 1] = paint_row(index - 1, line)
     end
   end
-  for index, code in ipairs({ 25, 1, 2004 }) do
+  for index, code in ipairs({ 25, 1, 2004, 1006 }) do
     local flag = frame.modes[index]
     if flag == "0" or flag == "1" then
       if reset or flag ~= previous.modes[index] then
         output[#output + 1] = ("\27[?%d%s"):format(code, flag == "1" and "h" or "l")
       end
     end
+  end
+  if flags[11] and (reset or frame.mouse ~= previous.mouse) then
+    output[#output + 1] = frame.mouse == 0 and "\27[?1000l" or ("\27[?%dh"):format(frame.mouse)
+  end
+  if frame.region and frame.region ~= full_region and (reset or frame.region ~= previous.region) then
+    -- Setting a scroll region homes the cursor, so the cursor position below must follow it.
+    local upper, lower = frame.region:match("^(%d+);(%d+)$")
+    upper = math.max(1, math.min(height, tonumber(upper) - top + 1))
+    lower = math.max(upper, math.min(height, tonumber(lower) - top + 1))
+    output[#output + 1] = ("\27[%d;%dr"):format(upper, lower)
+  elseif frame.region == full_region and previous and previous.region ~= full_region and not reset then
+    output[#output + 1] = "\27[r"
   end
   if #output > 0 or frame.row ~= previous.row or frame.col ~= previous.col then
     output[#output + 1] = position(frame.row, frame.col)
