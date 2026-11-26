@@ -16,7 +16,7 @@ local function integrated()
       vim.b[term.bufnr].luanphan_persist_term = true
       vim.b[term.bufnr].luanphan_toggleterm = true
       vim.b[term.bufnr].luanphan_toggleterm_cwd = cwd
-      require("luanphan.terminal_references").attach(term.bufnr, opts.dir or cwd)
+      require("luanphan.view_container.terminal").set_reference_cwd(term.bufnr, opts.dir or cwd)
       return { bufnr = term.bufnr, label = opts.label or "terminal", term = term }
     end,
   })

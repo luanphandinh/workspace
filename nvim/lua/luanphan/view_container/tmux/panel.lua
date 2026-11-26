@@ -176,14 +176,13 @@ function M.create(opts)
     if not pane.ready or pane.rebuild or pane.resync then pty.paint(pane, can_paint) end
   end
 
-  local function bind_shortcuts(buf)
-    local opts = { buffer = buf, silent = true, nowait = true }
-    vim.keymap.set("n", "<leader>nw", new_window, vim.tbl_extend("force", opts, { desc = "New tmux window" }))
-    for _, key in ipairs({ "<leader>nt", "<leader>fn" }) do
-      vim.keymap.set("n", key, function() new_tab() end,
-        vim.tbl_extend("force", opts, { desc = "New terminal pane" }))
-    end
-    vim.keymap.set("n", "<leader>ns", pick_session, vim.tbl_extend("force", opts, { desc = "Select tmux session" }))
+  local function new_keys()
+    return {
+      { "<leader>nw", new_window, "New tmux window" },
+      { "<leader>nt", function() new_tab() end, "New terminal pane" },
+      { "<leader>fn", function() new_tab() end, "New terminal pane" },
+      { "<leader>ns", pick_session, "Select tmux session" },
+    }
   end
 
   local function navigate(win, direction)
@@ -270,7 +269,7 @@ function M.create(opts)
     navigate = navigate,
     bar = function() return bar end,
     prepare_pane = prepare_pane,
-    bind_actions = bind_shortcuts,
+    new_keys = new_keys,
     editor = {
       key = function(group) return "tmux:" .. session.id .. ":" .. group.id end,
       active = function(group) return group.active.bufnr end,

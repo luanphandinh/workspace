@@ -17,7 +17,7 @@ return require("luanphan.view_container.shell_panel").create({
       vim.notify("Could not start the floating terminal shell", vim.log.levels.ERROR)
       return
     end
-    require("luanphan.terminal_references").attach(buf, cwd)
+    require("luanphan.view_container.terminal").set_reference_cwd(buf, cwd)
     return { bufnr = buf }
   end,
 })

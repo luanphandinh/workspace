@@ -102,11 +102,11 @@ function M.create(opts)
     if is_open() and current.scope ~= group.scope then panel.hide() end
     rendering = true
     bar = group.scope.bar
-    local ok, err = pcall(render_body, group, enter)
+    local ok, err = xpcall(render_body, debug.traceback, group, enter)
     rendering = false
     if not ok then
       panel.hide()
-      error(err)
+      error(err, 0)
     end
     group.scope.open = true
   end
@@ -240,12 +240,13 @@ function M.create(opts)
     relayout = function() render(current, false) end,
     navigate = navigate,
     prepare_pane = prepare_pane,
-    bind_actions = function(buf, sidebar)
-      local keys = { buffer = buf, silent = true, nowait = true }
-      vim.keymap.set("n", "<leader>nw", panel.new_window, vim.tbl_extend("force", keys, { desc = "New terminal window" }))
-      local tab_keys = vim.tbl_extend("force", keys, { desc = "New terminal tab" })
-      vim.keymap.set("n", "<leader>nt", panel.new_tab, tab_keys)
-      if not sidebar then vim.keymap.set("n", "<leader>fn", panel.new_tab, tab_keys) end
+    new_keys = function(sidebar)
+      local keys = {
+        { "<leader>nw", panel.new_window, "New terminal window" },
+        { "<leader>nt", panel.new_tab, "New terminal tab" },
+      }
+      if not sidebar then keys[#keys + 1] = { "<leader>fn", panel.new_tab, "New terminal tab" } end
+      return keys
     end,
     bar = function() return bar end,
     editor = not opts.docked and {

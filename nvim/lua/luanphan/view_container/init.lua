@@ -6,8 +6,11 @@ local editor = require("luanphan.view_container.editor")
 local terminal = require("luanphan.view_container.terminal")
 local pane_order = require("luanphan.view_container.pane_order")
 local pane_state = require("luanphan.view_container.pane_state")
+local picker = require("luanphan.view_container.picker")
+local geometry = require("luanphan.view_container.geometry")
 local M = vim.tbl_extend("force", window, {
 	tab_label = tabs.tab_label, workspace_groups = bars.workspace_groups,
+	select = picker.select, compact_picker_opts = picker.compact_opts, layout = geometry.layout,
 })
 local Container = { reserve = tabs.reserve, render = tabs.render,
 	refresh_tile_highlights = tiles.refresh_tile_highlights }
@@ -53,56 +56,6 @@ vim.api.nvim_create_autocmd("BufWritePost", {
 	end,
 })
 
-local function select_item(title, items, on_select, picker_opts)
-	local ok_pickers, pickers = pcall(require, "telescope.pickers")
-	local ok_finders, finders = pcall(require, "telescope.finders")
-	local ok_config, telescope_config = pcall(require, "telescope.config")
-	local ok_actions, actions = pcall(require, "telescope.actions")
-	local ok_state, action_state = pcall(require, "telescope.actions.state")
-	if not (ok_pickers and ok_finders and ok_config and ok_actions and ok_state) then
-		vim.ui.select(items, {
-			prompt = title,
-			format_item = function(item)
-				return item.display or item.label or item.id
-			end,
-		}, on_select)
-		return
-	end
-
-	pickers
-		.new({}, vim.tbl_extend("force", {
-			prompt_title = title,
-			finder = finders.new_table({
-				results = items,
-				entry_maker = function(item)
-					local display = item.display or item.label or item.id
-					return {
-						value = item,
-						display = display,
-						ordinal = item.ordinal or display,
-					}
-				end,
-			}),
-			sorter = telescope_config.values.generic_sorter({}),
-			attach_mappings = function(prompt_bufnr)
-				actions.select_default:replace(function()
-					local selection = action_state.get_selected_entry()
-					actions.close(prompt_bufnr)
-					if selection and selection.value then
-						vim.schedule(function()
-							on_select(selection.value)
-						end)
-					end
-				end)
-				return true
-			end,
-		}, picker_opts or {}))
-		:find()
-end
-
-function M.select(title, items, on_select, picker_opts)
-	select_item(title, items, on_select, picker_opts)
-end
 
 function M.focus_neighbor(win, direction, activate)
 	local neighbor = window.tile_neighbor(win, direction)
@@ -128,47 +81,11 @@ function M.replacement_tab(items, buf)
 	end
 end
 
-function M.layout(settings, opts)
-	opts = opts or {}
-	local border = opts.border or (settings.display_style == "tile" and "single" or "none")
-	local inset = border == "none" and 0 or 2
-	local frame = {
-		relative = "editor", row = 0, col = 0, width = vim.o.columns - inset,
-		height = math.max(opts.min_height or 4, vim.o.lines - vim.o.cmdheight) - inset,
-		border = border, zindex = opts.zindex or 40,
-	}
-	local body, bar
-	if opts.docked then
-		if opts.win and vim.api.nvim_win_is_valid(opts.win) then
-			frame.row, frame.col = unpack(vim.api.nvim_win_get_position(opts.win))
-			frame.width = vim.api.nvim_win_get_width(opts.win)
-			frame.height = vim.api.nvim_win_get_height(opts.win)
-		end
-		local sidebar = math.min(42, math.max(3, math.floor(frame.width * 0.3)))
-		body, bar = bars.divide(frame, settings.window_bar_style, sidebar)
-	else
-		body, bar = bars.float_geometry(frame, settings)
-	end
-	return { body = body, bar = bar, display_style = settings.display_style, bar_style = settings.window_bar_style }
-end
 
 function M.has_room(layout, count)
 	return layout.display_style ~= "tile" or tiles.can_tile(layout.body, count)
 end
 
-function M.compact_picker_opts()
-	return {
-		layout_strategy = "center",
-		layout_config = {
-			width = function(_, columns) return math.min(96, math.floor(columns * 0.55)) end,
-			height = function(_, _, lines) return math.min(16, math.floor(lines * 0.35)) end,
-			prompt_position = "top",
-		},
-		results_title = false,
-		previewer = false,
-		sorting_strategy = "ascending",
-	}
-end
 
 function Container:context()
 	return self.opts.context()
@@ -435,8 +352,24 @@ function Container:navigate(win, direction)
 	end, self.opts.bar())
 end
 
+-- `new_keys(sidebar)` returns the panel's { lhs, callback, desc } mappings for creating panes;
+-- they share one <leader>n which-key menu.
+local function bind_new_keys(buf, keys)
+	local base = { buffer = buf, silent = true, nowait = true }
+	for _, key in ipairs(keys) do
+		vim.keymap.set("n", key[1], key[2], vim.tbl_extend("force", base, { desc = key[3] }))
+	end
+	if vim.b[buf].luanphan_view_new_menu then return end
+	local ok, which_key = pcall(require, "which-key")
+	if ok then
+		which_key.add({ { "<leader>n", group = "New", buffer = buf } })
+		vim.b[buf].luanphan_view_new_menu = true
+	end
+end
+
 function Container:bind_panel_buffer(buf, sidebar)
 	if self.opts.editor then editor.bind(buf) end
+	if self.opts.new_keys then bind_new_keys(buf, self.opts.new_keys(sidebar)) end
 	if self.opts.bind_actions then self.opts.bind_actions(buf, sidebar) end
 end
 
@@ -613,7 +546,7 @@ function Container:pick(context)
 		vim.notify(self.opts.empty_message or "no views available", vim.log.levels.WARN)
 		return
 	end
-	select_item(self.opts.picker_title or "Views", choices, function(choice)
+	picker.select(self.opts.picker_title or "Views", choices, function(choice)
 		(self.opts.create or self.opts.activate)(choice)
 	end, self.opts.picker_opts)
 end

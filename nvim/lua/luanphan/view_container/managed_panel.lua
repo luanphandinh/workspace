@@ -78,28 +78,26 @@ function M.create(owner, opts)
       opts.view.picker_opts)
   end
 
+  local function new_keys()
+    local keys = {
+      { "<leader>na", function() owner.new(opts.default_kind()) end, "New default " .. opts.noun },
+      { "<leader>nA", function() owner.container:pick() end, "Select " .. opts.noun },
+    }
+    local shell = vim.iter(opts.kinds):find(function(kind) return providers[kind].shell end)
+    if shell then table.insert(keys, 1, { "<leader>nt", function() owner.new(shell) end, "New terminal" }) end
+    return keys
+  end
+
   local function bind_actions(bufnr, sidebar)
-    local keys = { buffer = bufnr, silent = true, nowait = true }
-    local function desc(text) return vim.tbl_extend("force", keys, { desc = text }) end
     if sidebar and opts.toggle then vim.keymap.set("n", opts.hint_open, opts.toggle, { buffer = bufnr }) end
     -- Keep the editor's New buffer mapping from replacing a panel buffer.
-    vim.keymap.set("n", "<leader>fn", "<Nop>", keys)
-    local shell = vim.iter(opts.kinds):find(function(kind) return providers[kind].shell end)
-    if shell then vim.keymap.set("n", "<leader>nt", function() owner.new(shell) end, desc("New terminal")) end
-    vim.keymap.set("n", "<leader>na", function() owner.new(opts.default_kind()) end, desc("New default " .. opts.noun))
-    vim.keymap.set("n", "<leader>nA", function() owner.container:pick() end, desc("Select " .. opts.noun))
-    if not vim.b[bufnr].luanphan_view_new_menu then
-      local ok, which_key = pcall(require, "which-key")
-      if ok then
-        which_key.add({ { "<leader>n", group = "New", buffer = bufnr } })
-        vim.b[bufnr].luanphan_view_new_menu = true
-      end
-    end
+    vim.keymap.set("n", "<leader>fn", "<Nop>", { buffer = bufnr, silent = true, nowait = true })
   end
 
   local container = views.create(vim.tbl_extend("force", {
     title = function(buf, title) return pane_title(buf, title) end,
     choices = default_choices,
+    new_keys = new_keys,
     bind_actions = bind_actions,
     context = vim.fn.getcwd,
     panes = {

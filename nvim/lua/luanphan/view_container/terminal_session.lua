@@ -56,6 +56,10 @@ function M.create(profile)
     apply_scrollback(buf)
     terminal_pane.set_reference_cwd(buf, cwd)
     local group = vim.api.nvim_create_augroup(augroup_name .. "_Window_" .. buf, { clear = true })
+    vim.api.nvim_create_autocmd("BufWipeout", {
+      group = group, buffer = buf, once = true,
+      callback = function() vim.schedule(function() pcall(vim.api.nvim_del_augroup_by_id, group) end) end,
+    })
     terminal_pane.bind_process(buf, group, backend, notify_close, quit_action)
     container:bind_terminal(buf, cwd)
     if not profile.shell then

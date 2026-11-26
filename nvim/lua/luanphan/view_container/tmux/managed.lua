@@ -262,8 +262,11 @@ function M.create(opts)
       uv.fs_unlink(path)
       return false, error_message or output
     end
-    return attach(buf, { session = session_id, session_name = name, window = window,
+    local attached = attach(buf, { session = session_id, session_name = name, window = window,
       id = id, width = width, height = height, data = data }, true)
+    -- Without a connection nothing opens the start gate, so the window would wait forever.
+    if not attached then run({ "kill-window", "-t", window }) end
+    return attached
   end
 
   function backend.restore(callback)
