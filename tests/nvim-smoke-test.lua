@@ -5143,10 +5143,24 @@ local previous_use = vim.b[second].luanphan_agent_last_used
 api.nvim_set_current_win(vim.fn.bufwinid(second))
 assert(vim.wait(1000, function() return vim.b[second].luanphan_agent_last_used > previous_use end),
   'native window focus did not record the selected tile')
+local second_file = vim.g.luanphan_terminal_sessions_dir .. '/' .. ids[2] .. '.json'
+local function saved_position()
+  return vim.json.decode(vim.fn.readfile(second_file)[1]).pane_order
+end
+local initial_position = saved_position()
+press('<C-S-k>')
+press('<C-S-h>')
+assert(api.nvim_win_get_config(vim.fn.bufwinid(second)).col < api.nvim_win_get_config(vim.fn.bufwinid(agent)).col,
+  'reordering did not move the shell to the left tile')
+assert(saved_position() == initial_position, 'moving tiles saved their positions inline')
 vim.fn.writefile(ids, root .. '/ids')
 assert(agents.open('codex', agent, { view_mode = true }))
 vim.cmd('qa!')
 ]=])
+  local positions = vim.system({ "tmux", "-S", agent_socket(script), "list-panes", "-a", "-F", "#{@luanphan-pane-order}" },
+    { text = true }):wait()
+  assert_true(positions.code == 0 and vim.deep_equal(vim.fn.sort(vim.split(vim.trim(positions.stdout), "\n")), { "1", "2", "3" }),
+    "quitting before the debounce did not save all three pane positions to tmux")
   run([=[
 agents.toggle()
 assert(vim.b.luanphan_agent_thread_id == agent_id, 'restored shells took focus from the agent')
@@ -5156,6 +5170,11 @@ for _, item in ipairs(sessions.instances(false)) do
 end
 local ids = vim.fn.readfile(root .. '/ids')
 assert(vim.tbl_count(shells) == 2, 'panel did not recreate both shell slots')
+local function is_left_of_agent(buf)
+  local shell = vim.api.nvim_win_get_config(vim.fn.bufwinid(buf))
+  return shell.col < vim.api.nvim_win_get_config(0).col
+end
+assert(is_left_of_agent(assert(shells[ids[2]]).bufnr), 'reattach lost the shell tile position')
 for _, id in ipairs(ids) do
   local item = assert(shells[id], 'restored shell lost its saved ID')
   assert(item.path == vim.fn.getcwd() and terminal.running(item.bufnr), 'restored shell has the wrong working directory')
@@ -5207,6 +5226,8 @@ agents.toggle()
 assert(vim.wait(3000, function()
   return #sessions.instances(false) == 2 and vim.b.luanphan_agent_thread_id == agent_id
 end), 'same editor could not recover the original agent and shell slots')
+local shell = assert(vim.iter(sessions.instances(false)):find(function(item) return item.agent == 'terminal' end))
+assert(is_left_of_agent(shell.bufnr), 'recovering the server lost the shell tile position')
 ]=])
 end
 
@@ -6845,7 +6866,7 @@ tmux("send-keys", "-t", first, "Enter")
 wait(function()
   return tmux("capture-pane", "-p", "-t", first, "-S", "-80"):find("資料 Guide and Guide end", 1, true)
 end, "hyperlink fixture appeared in tmux")
-vim.fn.writefile({ first, shell_pid, third }, root .. "/panes")
+vim.fn.writefile({ first, shell_pid, third, second }, root .. "/panes")
 ]=])
     run_child([=[
 local api = vim.api
@@ -6862,6 +6883,11 @@ assert(vim.wait(4000, function()
   return output:find("RESULT_PROBE_TEXT", 1, true) and output:find("DETACHED_OUTPUT", 1, true)
     and output:find("資料 Guide and Guide end", 1, true)
 end), "reattach lost scrollback or output produced while hidden")
+local peer = assert(vim.iter(api.nvim_list_wins()):find(function(win)
+  return vim.b[api.nvim_win_get_buf(win)].luanphan_tmux_pane == saved[4]
+end))
+assert(api.nvim_win_get_config(peer).col < api.nvim_win_get_config(0).col,
+  "reattach lost the reordered tmux pane position")
 local references = require("luanphan.terminal_references")
 local open_url, getmousepos = references.open_url, vim.fn.getmousepos
 local clicked

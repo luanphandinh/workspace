@@ -2,6 +2,7 @@ local M = {}
 local agents = require("luanphan.agents.main")
 local tmux = require("luanphan.agents.tmux")
 local sessions = require("luanphan.agents.sessions")
+local pane_order = require("luanphan.view_container.pane_order")
 local status = require("luanphan.agents.status")
 local views = require("luanphan.view_container")
 local editor = require("luanphan.view_container.editor")
@@ -39,7 +40,7 @@ local function groups()
     for _, thread in ipairs(entries) do
       if thread.bufnr and thread.last_used > recent.last_used then recent = thread end
     end
-    sessions.sort_by_order(entries)
+    pane_order.sort(entries)
     for _, thread in ipairs(entries) do
       local item = {
         id = sessions.key(thread), bufnr = thread.bufnr, label = thread.agent_label,
@@ -69,7 +70,7 @@ bar = require("luanphan.view_container.window_bar").create({
     return M.select_session(item.thread, view_mode and { view_mode = true } or nil)
   end,
   reorder = function(_, items)
-    sessions.set_order(vim.tbl_map(function(item) return item.thread end, items))
+    agents.container:save_pane_order(vim.tbl_map(function(item) return item.thread end, items))
     agents.container:refresh()
   end,
   status = function(item, frame)

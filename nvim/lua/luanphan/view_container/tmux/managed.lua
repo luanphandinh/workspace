@@ -9,8 +9,11 @@ function M.create(opts)
   local state = opts.state or { groups = {}, buffers = {} }
   local backend = { state = state }
   local metadata = opts.metadata
+  local pane_order = "@luanphan-pane-order"
+  local pending_order, order_timer = {}, nil
   local history_limit = 10000
   local pane_format = "#{session_id}\t#{session_name}\t#{window_id}\t#{pane_id}\t#{pane_width}\t#{pane_height}\t#{" .. metadata .. "}"
+    .. "\t#{" .. pane_order .. "}"
   local launch = [[
   trap 'rm -- "$2"' EXIT
   tmux wait-for "$1" || exit
@@ -33,6 +36,27 @@ function M.create(opts)
 
   function backend.save_window_order(order)
     return server:save_window_order(nil, order)
+  end
+
+  local function flush_pane_order()
+    if order_timer then vim.fn.timer_stop(order_timer) end
+    order_timer = nil
+    local args = {}
+    for buf, position in pairs(pending_order) do
+      local pane = state.buffers[buf]
+      if pane then
+        if #args > 0 then args[#args + 1] = ";" end
+        vim.list_extend(args, { "set-option", "-p", "-t", pane.id, pane_order, tostring(position) })
+      end
+    end
+    pending_order = {}
+    if #args > 0 then run(args) end
+  end
+
+  function backend.queue_pane_order(buf, position)
+    pending_order[buf] = position
+    if order_timer then vim.fn.timer_stop(order_timer) end
+    order_timer = vim.fn.timer_start(250, flush_pane_order)
   end
 
   local function launch_file()
@@ -79,7 +103,7 @@ function M.create(opts)
         and opts.valid(data) then
         result[#result + 1] = {
           session = fields[1], session_name = fields[2], window = fields[3], id = fields[4],
-          width = tonumber(fields[5]), height = tonumber(fields[6]), data = data,
+          width = tonumber(fields[5]), height = tonumber(fields[6]), data = data, pane_order = tonumber(fields[8]),
         }
       end
     end
@@ -185,7 +209,7 @@ function M.create(opts)
     return true
   end
 
-  function backend.launch(buf, command, data, width, height)
+  function backend.launch(buf, command, data, width, height, position)
     local path, err = launch_file()
     if not path then return false, err end
     local gate = "pane-" .. vim.fn.sha256(path):sub(1, 16)
@@ -214,8 +238,11 @@ function M.create(opts)
     vim.list_extend(args, {
       ";", "resize-window", "-t", target, "-x", tostring(width), "-y", tostring(height),
       ";", "set-option", "-p", "-t", target, metadata, vim.json.encode(data),
-      ";", "rename-window", "-t", target, "--", window_title(data.label),
     })
+    if position then
+      vim.list_extend(args, { ";", "set-option", "-p", "-t", target, pane_order, tostring(position) })
+    end
+    vim.list_extend(args, { ";", "rename-window", "-t", target, "--", window_title(data.label) })
     local output, error_message = run(args)
     local session_id, window, id = (output or ""):match("^(%$%d+)\t(@%d+)\t(%%%d+)$")
     if not id then
@@ -299,6 +326,7 @@ function M.create(opts)
     group = api.nvim_create_augroup(opts.augroup, { clear = true }),
     callback = function()
       state.leaving = true
+      flush_pane_order()
       for _, group in pairs(state.groups) do
         if group.client then group.client:detach() end
       end

@@ -1,6 +1,8 @@
 local M = {}
 local view_container = require("luanphan.view_container")
 local terminal_pane = require("luanphan.view_container.terminal")
+local pane_order = require("luanphan.view_container.pane_order")
+local pane_state = require("luanphan.view_container.pane_state")
 
 function M.create(profile)
   local backend, config, nx = profile.backend, profile.config, profile.notify
@@ -14,6 +16,7 @@ function M.create(profile)
   local function show(buf, win)
     local cwd = profile.cwd(buf) or container:context()
     profile.on_show(buf, cwd)
+    if container.opts.snapshot then pane_state.defer({ bufnr = buf }, container.opts.snapshot) end
     container:present_tile(cwd, { id = buf, bufnr = buf }, win)
   end
 
@@ -47,6 +50,7 @@ function M.create(profile)
     terminal_pane.configure_buffer(buf)
     container:bind_title(buf)
     profile.on_register(buf, launched)
+    if launched and container.opts.snapshot then pane_state.save({ bufnr = buf }, container.opts.snapshot) end
     container:invalidate_sidebar()
     apply_scrollback(buf)
     terminal_pane.set_reference_cwd(buf, cwd)
@@ -64,7 +68,9 @@ function M.create(profile)
     local width = win and vim.api.nvim_win_get_width(win) or geometry.width
     local height = win and vim.api.nvim_win_get_height(win) or geometry.height
     local command, data = profile.command(buf, cwd, opts)
-    local ok, err = backend.launch(buf, command, data, width, math.max(1, height - 1))
+    local position = opts and opts.pane_order
+    pane_order.set(buf, position)
+    local ok, err = backend.launch(buf, command, data, width, math.max(1, height - 1), position)
     if not ok then
       nx("could not launch tmux pane: " .. (err or "attach failed"), vim.log.levels.ERROR)
       vim.api.nvim_buf_delete(buf, { force = true })
@@ -116,6 +122,7 @@ function M.create(profile)
   function API.adopt(record)
     local data = record.data
     local buf = vim.api.nvim_create_buf(false, true)
+    pane_order.set(buf, record.pane_order)
     profile.on_adopt(buf, data)
     if not backend.adopt(buf, record) then
       vim.api.nvim_buf_delete(buf, { force = true })

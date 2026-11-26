@@ -4,6 +4,8 @@ local tabs = require("luanphan.view_container.tab_render")
 local bars = require("luanphan.view_container.window_bar")
 local editor = require("luanphan.view_container.editor")
 local terminal = require("luanphan.view_container.terminal")
+local pane_order = require("luanphan.view_container.pane_order")
+local pane_state = require("luanphan.view_container.pane_state")
 local M = vim.tbl_extend("force", window, {
 	tab_label = tabs.tab_label,
 })
@@ -421,6 +423,16 @@ function Container:open_tile(context, spawn, keep_order)
 		table.insert(tabs, index + 1, tab)
 		return tabs
 	end)
+end
+
+function Container:save_pane_order(items)
+	pane_order.assign(items, function(item, position)
+		if item.bufnr then
+			if not vim.api.nvim_buf_is_valid(item.bufnr) then return end
+			pane_order.persist(item.bufnr, position)
+		end
+		if self.opts.snapshot then pane_state.defer(item, self.opts.snapshot, position) end
+	end, pane_order.get)
 end
 
 function Container:move_tile(direction, context)

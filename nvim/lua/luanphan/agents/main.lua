@@ -4,6 +4,7 @@ local backend = require("luanphan.agents.tmux")
 local sessions = require("luanphan.agents.sessions")
 local status = require("luanphan.agents.status")
 local view_container = require("luanphan.view_container")
+local pane_order = require("luanphan.view_container.pane_order")
 local terminal = require("luanphan.view_container.terminal")
 
 local agent_order = { "codex", "cursor", "claude", "terminal" }
@@ -72,7 +73,7 @@ local function open_tabs(cwd, closing_bufnr)
   if agent_container.display_style == "tile" then
     table.sort(tabs, function(a, b) return a.bufnr < b.bufnr end)
   end
-  sessions.sort_by_order(tabs)
+  pane_order.sort(tabs)
   return tabs
 end
 
@@ -157,6 +158,7 @@ local function resume_options(session)
     args = provider.resume(session.thread_id),
     thread_id = session.thread_id,
     agent_label = not provider.restore_on_open and session.agent_label or nil,
+    pane_order = pane_order.get(session),
   }
 end
 
@@ -214,16 +216,12 @@ local function get_agent(name)
     panel = M,
     container = agent_container,
     current = function() return agent_buffer(name, vim.fn.getcwd(), true) end,
-    on_register = function(buf, launched)
-      M.map_create_shortcuts(buf)
-      if launched then sessions.save(buf) end
-    end,
+    on_register = M.map_create_shortcuts,
     on_show = function(bufnr, cwd)
       backend.focus(bufnr)
       local seconds, microseconds = vim.uv.gettimeofday()
       vim.b[bufnr].luanphan_agent_saved_use = seconds + microseconds / 1000000
       remember_pane(bufnr)
-      sessions.defer_save(bufnr)
       restore_panel_sessions(cwd)
     end,
     on_close = function(bufnr, cwd)
@@ -266,6 +264,7 @@ function M.restore_running()
     local data = record.data
     local session = data.thread_id and saved[sessions.key(data)]
     data.used_at = math.max(data.used_at or 0, session and session.last_used or 0)
+    record.pane_order = record.pane_order or (session and pane_order.get(session))
   end
   table.sort(running, function(a, b)
     if a.data.used_at ~= b.data.used_at then return a.data.used_at < b.data.used_at end
@@ -296,7 +295,7 @@ end
 local function new_tile(name, opts)
   return agent_container:open_tile(vim.fn.getcwd(), function(place)
     return setup_agent(name).new(opts, place and function(bufnr)
-      sessions.set_order(place({ bufnr = bufnr }))
+      agent_container:save_pane_order(place({ bufnr = bufnr }))
     end)
   end, opts and opts.thread_id)
 end
@@ -424,8 +423,9 @@ agent_container = view_container.create({
     end
     return title
   end,
+  snapshot = sessions.snapshot,
   reorder = function(tabs)
-    sessions.set_order(tabs)
+    agent_container:save_pane_order(tabs)
     agent_container:refresh()
   end,
   choices = agent_choices,

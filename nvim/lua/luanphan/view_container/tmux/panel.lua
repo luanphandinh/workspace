@@ -2,6 +2,7 @@ local M = {}
 local api = vim.api
 local tmux_client = require("luanphan.view_container.tmux.client")
 local pty = require("luanphan.view_container.tmux.pane")
+local pane_order = require("luanphan.view_container.pane_order")
 local terminal_pane = require("luanphan.view_container.terminal")
 local model = require("luanphan.view_container.tmux.windows")
 local views = require("luanphan.view_container")
@@ -139,9 +140,9 @@ function M.create(opts)
         "-n", group.title }, function(lines)
         local pane = { id = lines[1], data = active.data }
         local commands = {}
-        for index, item in ipairs(place(pane)) do
+        pane_order.assign(place(pane), function(item, index)
           commands[#commands + 1] = model.write(item, { pane_order = index, active = item == pane })
-        end
+        end)
         batch(commands, done)
       end, done)
     end)
@@ -237,13 +238,15 @@ function M.create(opts)
     terminal_pane.bind_quit(buf, events, function() return prepare_quit(pane) end)
   end
 
+  local function pane_position(item)
+    return item.data.pane_order
+  end
+
   local function reorder_panes(items)
     local commands = {}
-    for index, item in ipairs(items) do
-      if item.data.pane_order ~= index then
-        commands[#commands + 1] = model.write(item, { pane_order = index })
-      end
-    end
+    pane_order.assign(items, function(item, index)
+      commands[#commands + 1] = model.write(item, { pane_order = index })
+    end, pane_position)
     if #commands == 0 then render() else batch(commands, refresh) end
   end
 
@@ -363,7 +366,7 @@ function M.create(opts)
       return tonumber(a.id:sub(2)) < tonumber(b.id:sub(2))
     end)
     for _, group in ipairs(next_windows) do
-      table.sort(group.items, function(a, b) return a.data.pane_order < b.data.pane_order end)
+      pane_order.sort(group.items, pane_position)
       group.active = group.active or group.items[1]
     end
     local old = panes
