@@ -7,6 +7,7 @@ return {
     },
     dependencies = { "nvim-tree/nvim-web-devicons" },
     opts = {
+      enabled = false,
       anti_conceal = { enabled = false },
       indent = {
         enabled = true,
