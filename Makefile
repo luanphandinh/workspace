@@ -179,11 +179,11 @@ nvim-config: ## Install neovim configuration, theme + exentsion + plugins, ...
 nvim-lock: ## Refresh nvim/lazy-lock.json from the installed Neovim config.
 	cp ~/.config/nvim/lazy-lock.json ./nvim/lazy-lock.json
 
-nvim-test: verify-agent-clis ## Run headless Neovim smoke tests
+nvim-test: verify-agent-clis ## Run headless Neovim smoke tests (ONLY="<part of a test name>" runs a subset)
 	nvim --headless -u NONE "+luafile tests/nvim-agent-send-test.lua"
 	recent_paths_dir=$$(mktemp -d); \
 	trap 'rm -rf "$$recent_paths_dir"' EXIT; \
-	NVIM_RECENT_PATHS_FILE="$$recent_paths_dir/recent-paths.json" GOWORK=off \
+	NVIM_RECENT_PATHS_FILE="$$recent_paths_dir/recent-paths.json" GOWORK=off ONLY="$(ONLY)" \
 		nvim --headless "+luafile tests/nvim-smoke-test.lua" +qa
 
 agent-clis: ## Install terminal agent CLIs used by Neovim
