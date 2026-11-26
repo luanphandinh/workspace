@@ -118,7 +118,18 @@ function M.ensure_config(path)
   return path
 end
 
+-- Layout code reads settings on every relayout, so parse the file only when it changes.
+local cache = {}
+
+local function file_stamp(path)
+  local stat = vim.uv.fs_stat(path)
+  return stat and ("%d.%d:%d:%d"):format(stat.mtime.sec, stat.mtime.nsec, stat.size, stat.ino)
+end
+
 function M.read(path)
+  path = path or M.config_path()
+  local cached = cache[path]
+  if cached and cached.stamp == file_stamp(path) then return vim.deepcopy(cached.layout) end
   path = M.ensure_config(path)
   local layout = vim.deepcopy(TERMINAL_DEFAULTS)
   layout[AGENT_FLOAT_SECTION] = vim.deepcopy(DEFAULT_AGENT_FLOAT)
@@ -170,7 +181,8 @@ function M.read(path)
 
   layout.recent_folder = { max_cache_entry = max_cache_entry }
   layout.diff_repo_ignore = { repositories = ignored_repositories }
-  return layout
+  cache[path] = { stamp = file_stamp(path), layout = layout }
+  return vim.deepcopy(layout)
 end
 
 function M.max_recent_folders(path)

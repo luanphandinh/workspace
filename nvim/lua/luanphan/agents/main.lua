@@ -113,23 +113,26 @@ local function receive_terminal_event(args)
   local status_options = def and def.status
   local osc_status = status_options and status_options.decode and status_options.decode(sequence)
   if osc_status then
-    status.update(bufnr, osc_status)
+    local changed = status.update(bufnr, osc_status)
     vim.schedule(function()
-      if vim.api.nvim_buf_is_valid(bufnr) then lifecycle.remember(bufnr) end
+      if not vim.api.nvim_buf_is_valid(bufnr) then return end
+      lifecycle.remember(bufnr)
+      if changed then M.container.opts.bar():status_changed() end
     end)
   end
   local title = terminal.request_title(sequence)
   -- Decoders defer persistence and redraws until the terminal callback has returned.
   local function emit(event)
     if not vim.api.nvim_buf_is_valid(bufnr) or vim.b[bufnr].luanphan_view_kind ~= name then return end
-    status.update(bufnr, event.status)
+    local status_changed = status.update(bufnr, event.status)
     local changed_id = sessions.update(bufnr, event)
     lifecycle.remember(bufnr)
     local bar = M.container.opts.bar()
     if changed_id then
       bar:refresh(true)
-    elseif event.refresh_title then
-      bar:update_title(bufnr, view_container.tab_label(bufnr))
+    else
+      if event.refresh_title then bar:update_title(bufnr, view_container.tab_label(bufnr)) end
+      if status_changed then bar:status_changed() end
     end
   end
   if def and def.decode_event then

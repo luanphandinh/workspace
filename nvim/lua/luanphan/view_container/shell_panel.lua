@@ -319,11 +319,18 @@ function M.create(opts)
     end,
     hide = panel.hide,
   })
+  -- Dragging the dock fires WinResized for every step; lay out once the drag settles.
+  local resize_token = 0
   api.nvim_create_autocmd("WinResized", {
     group = events,
     callback = function()
       if not is_open() or rendering then return end
-      if dock and vim.tbl_contains(vim.v.event.windows, dock) then inner:relayout() end
+      if not dock or not vim.tbl_contains(vim.v.event.windows, dock) then return end
+      resize_token = resize_token + 1
+      local token = resize_token
+      vim.defer_fn(function()
+        if token == resize_token and is_open() and not rendering then inner:relayout() end
+      end, 30)
     end,
   })
   api.nvim_create_autocmd("TermRequest", {

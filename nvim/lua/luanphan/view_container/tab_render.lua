@@ -57,18 +57,20 @@ function M.render(self, win, context, single_tab)
 	if not win or not vim.api.nvim_win_is_valid(win) then return end
 	context = context or self:context()
 	local tabs = single_tab and { single_tab } or self:tabs(context)
-	vim.wo[win].winbar = M.format(tabs, single_tab or self:active(context), self.opts.title)
+	vim.wo[win].winbar = M.format(tabs, single_tab or self:active(context, tabs), self.opts.title)
 end
 
 function M.render_windows(bar)
 	local labels, highlights, columns = {}, {}, {}
 	local focused = vim.api.nvim_get_current_win() == bar.win
 	local col = 0
+	bar.animating = false
 	for index, row in ipairs(bar.rows) do
 		local label = row.group.title
 		local item = row.active or row.group.active
 		if item and item.bufnr and bar.opts.status then
-			local glyph = bar.opts.status(item, bar.frame)
+			local glyph, _, animated = bar.opts.status(item, bar.frame)
+			if animated then bar.animating = true end
 			if glyph then label = label .. " " .. glyph end
 		end
 		if item and item.icon and item.icon ~= "" then label = label .. " " .. item.icon end

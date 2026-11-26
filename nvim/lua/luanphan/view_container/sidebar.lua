@@ -33,9 +33,11 @@ end
 function M.statuses(bar)
   if not bar:visible() then return end
   local buf = api.nvim_win_get_buf(bar.win)
+  bar.animating = false
   for index, row in ipairs(bar.rows) do
     if row.status_col then
-      local glyph, highlight = bar.opts.status(row.item, bar.frame)
+      local glyph, highlight, animated = bar.opts.status(row.item, bar.frame)
+      if animated then bar.animating = true end
       if glyph ~= row.glyph or highlight ~= row.highlight then
         if glyph then
           api.nvim_buf_set_extmark(buf, status_ns, index - 1, 0, {

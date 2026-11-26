@@ -295,13 +295,25 @@ function Bar:follow(buf, refresh_history)
   end
 end
 
+local function render_statuses(bar)
+  if bar.style == "horizontal" then tabs.render_windows(bar) else sidebar.statuses(bar) end
+end
+
+-- The timer only runs while a status glyph is animated (the status callback's third value).
 function Bar:animate()
-  if not self.opts.status or not self:visible() or self.timer then return end
+  if not self.opts.status or not self:visible() or self.timer or not self.animating then return end
   self.timer = vim.fn.timer_start(130, function()
     if not self:visible() then self:stop_timer() return end
     self.frame = self.frame + 1
-    if self.style == "horizontal" then tabs.render_windows(self) else sidebar.statuses(self) end
+    render_statuses(self)
+    if not self.animating then self:stop_timer() end
   end, { ["repeat"] = -1 })
+end
+
+function Bar:status_changed()
+  if not self.opts.status or not self:visible() then return end
+  render_statuses(self)
+  self:animate()
 end
 
 function Bar:update_title(buf, label)
@@ -387,7 +399,7 @@ function Bar:cycle(step)
 end
 
 function Bar:pick_window()
-  local groups, active = self:groups(), self:active()
+  local groups, active = self.cached_groups or self:groups(), self:active()
   local recency = self.history.offsets(live_items(groups))
   local choices, current = {}, nil
   for index, group in ipairs(groups) do

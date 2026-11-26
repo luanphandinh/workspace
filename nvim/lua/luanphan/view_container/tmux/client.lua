@@ -83,12 +83,16 @@ function Server:ensure_session(previous, width, height)
   vim.notify(vim.trim(result.stderr or "Could not create tmux session"), vim.log.levels.ERROR)
 end
 
+-- tmux answers commands in the order it receives them, so requests are sent right away and
+-- replies are matched to the oldest request still waiting. Keystrokes don't wait behind captures.
 function Client:flush()
-  if not self.ready or self.pending or not self.job then return end
-  local request = table.remove(self.queue, 1)
-  if not request then return end
-  self.pending = request
-  vim.api.nvim_chan_send(self.job, request.command .. "\n")
+  if not self.ready or not self.job then return end
+  while #self.queue > 0 do
+    local request = table.remove(self.queue, 1)
+    self.waiting[#self.waiting + 1] = request
+    self.pending = self.waiting[1]
+    vim.api.nvim_chan_send(self.job, request.command .. "\n")
+  end
 end
 
 function Client:request_batch(commands, callback)
@@ -114,16 +118,16 @@ function Client:line(line)
     local failure = line:match("^%%error (%d+ %d+ %d+)$")
     if ending == self.block or failure == self.block then
       local lines = self.lines
-      local request = tonumber(self.block:match("%d+$")) % 2 == 1 and self.pending
+      local request = tonumber(self.block:match("%d+$")) % 2 == 1 and self.waiting[1]
       self.block, self.lines = nil, nil
       if request then
         request.replies[#request.replies + 1] = { ok = ending ~= nil, lines = lines }
         if #request.replies == request.count then
-          self.pending = nil
+          table.remove(self.waiting, 1)
+          self.pending = self.waiting[1]
           if request.callback then request.callback(request.replies) end
         end
       end
-      self:flush()
     else
       self.lines[#self.lines + 1] = line
     end
@@ -149,7 +153,7 @@ end
 
 function Client:detach()
   local job = self.job
-  self.job, self.queue, self.ready = nil, {}, false
+  self.job, self.queue, self.waiting, self.pending, self.ready = nil, {}, {}, nil, false
   if job then
     pcall(vim.api.nvim_chan_send, job, "\n")
     local closed = pcall(vim.fn.chanclose, job, "stdin")
@@ -158,7 +162,7 @@ function Client:detach()
 end
 
 function Server:attach(session, handlers)
-  local client = setmetatable({ queue = {}, handlers = handlers }, Client)
+  local client = setmetatable({ queue = {}, waiting = {}, handlers = handlers }, Client)
   local flags = handlers.flags or (session.attached > 0 and "ignore-size,pause-after=5" or "pause-after=5")
   local fragment = ""
   local job = vim.fn.jobstart(self:argv({ "-C", "attach-session", "-f", flags, "-t", session.id }), {

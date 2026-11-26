@@ -4,8 +4,11 @@ local live_status = {
   idle = true, working = true, done = true, blocked = true, error = true, clear = true,
 }
 
+-- Returns true when the status changed, so callers redraw only then.
 function M.update(bufnr, status)
-  if live_status[status] then vim.b[bufnr].luanphan_view_status = status end
+  if not live_status[status] or vim.b[bufnr].luanphan_view_status == status then return false end
+  vim.b[bufnr].luanphan_view_status = status
+  return true
 end
 
 function M.from_osc(sequence)

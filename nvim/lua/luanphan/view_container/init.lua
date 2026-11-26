@@ -561,7 +561,7 @@ function Container:cycle(context, step)
 		return
 	end
 
-	local active = self:active(context)
+	local active = self:active(context, tabs)
 	local index = 1
 	for current, tab in ipairs(tabs) do
 		if active and tab.id == active.id and tab.bufnr == active.bufnr then

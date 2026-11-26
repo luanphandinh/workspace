@@ -42,7 +42,7 @@ bar = agents.container:create_bar({
   end,
   status = function(item, frame)
     local current = status.current(item.bufnr)
-    if current == "working" then return spinner[(frame - 1) % #spinner + 1], "DiagnosticInfo" end
+    if current == "working" then return spinner[(frame - 1) % #spinner + 1], "DiagnosticInfo", true end
     local icon = status_icons[current]
     if icon then return unpack(icon) end
   end,
