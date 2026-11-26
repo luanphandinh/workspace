@@ -4752,7 +4752,7 @@ local function test_agent_sidebar_restore(repo, agent)
     assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
   end
   run({
-    "local sessions = require('luanphan.agents.sessions')",
+    "local sessions = require('luanphan.agents.main').sessions",
     "for _, id in ipairs({ first, second }) do",
     "  vim.env.TEST_AGENT_THREAD = id",
     "  local buf = assert(agents.new(agent))",
@@ -4769,7 +4769,7 @@ local function test_agent_sidebar_restore(repo, agent)
   run({
     "agents.toggle()",
     "assert(vim.b.luanphan_view_thread_id == second, 'reattach did not select the most recent running thread')",
-    "assert(#require('luanphan.agents.sessions').instances(false) == 2, 'reattach lost a running pane')",
+    "assert(#require('luanphan.agents.main').sessions.instances(false) == 2, 'reattach lost a running pane')",
     "assert(#vim.fn.readfile(root .. '/invocations') == 2, 'reattach relaunched an existing thread')",
   })
   assert_true(vim.system({ "tmux", "-S", agent_socket(script), "kill-server" }):wait().code == 0,
@@ -4812,14 +4812,14 @@ local function test_agent_sidebar_restore(repo, agent)
     "    and vim.tbl_contains(lines, resume .. '|' .. cwd .. '|' .. second)",
     "end), 'agent did not receive the exact IDs and original directory')",
     "vim.cmd('quit')",
-    "local sessions = require('luanphan.agents.sessions')",
+    "local sessions = require('luanphan.agents.main').sessions",
     "assert(vim.wait(3000, function()",
     "  local saved = sessions.list()",
     "  return #saved == 1 and saved[1].thread_id == second",
     "end), 'closing one agent should remove only its saved record')",
   })
   run({
-    "local saved = require('luanphan.agents.sessions').list()",
+    "local saved = require('luanphan.agents.main').sessions.list()",
     "assert(#saved == 1 and saved[1].thread_id == second, 'editor exit should preserve the remaining agent')",
   })
   if agent == "cursor" then
@@ -4909,8 +4909,8 @@ local function test_panel_shell_sessions(repo)
     "vim.o.lines = 48",
     "vim.cmd.cd(root)",
     "local agents = require('luanphan.agents.main')",
-    "local sessions = require('luanphan.agents.sessions')",
-    "local terminal = require('luanphan.agents.terminal-chat')",
+    "local sessions = require('luanphan.agents.main').sessions",
+    "local terminal = require('luanphan.view_container.terminal')",
     "local agent_id = '00000000-0000-4000-8000-000000000001'",
     "local function press(key) vim.fn.maparg(key, 'n', false, true).callback() end",
   }
@@ -5707,7 +5707,7 @@ local function test_agent_view_container(repo)
     assert_true(repo_row > 0, "sidebar fixture missing repository workspace")
     focus_sidebar_row(repo_row + 1)
     invoke_map("<C-S-j>")
-    require("luanphan.agents.window_bar").refresh(true)
+    require("luanphan.agents.window_bar").bar:refresh(true)
     local swapped = vim.deepcopy(original_rows)
     swapped[repo_row + 1], swapped[repo_row + 2] = swapped[repo_row + 2], swapped[repo_row + 1]
     assert_true(vim.deep_equal(read_sidebar(), swapped), "session order did not survive sidebar refresh")
@@ -6111,7 +6111,7 @@ vim.o.columns = 160
 vim.o.lines = 48
 require('lazy').load({ plugins = { 'luanphan-worktree' } })
 local agents = require('luanphan.agents.main')
-local terminal = require('luanphan.agents.terminal-chat')
+local terminal = require('luanphan.view_container.terminal')
 local view = require('luanphan.view_container')
 local actions = require('telescope.actions')
 local action_state = require('telescope.actions.state')
@@ -6279,7 +6279,7 @@ local windows = view.group_windows(anchor)
 vim.api.nvim_create_autocmd('User', {
   pattern = 'SmokeHideAgentPanel',
   once = true,
-  callback = function() terminal.close_window(sidebar) end,
+  callback = function() require('luanphan.view_container').close_window(sidebar) end,
 })
 vim.api.nvim_exec_autocmds('User', { pattern = 'SmokeHideAgentPanel' })
 for _, win in ipairs(windows) do
@@ -6297,7 +6297,7 @@ vim.fn.writefile({ 'reference' }, interrupted)
 vim.api.nvim_create_autocmd('BufReadPost', {
   buffer = vim.fn.bufadd(interrupted),
   once = true,
-  callback = function() terminal.close_window(reopened_anchor) end,
+  callback = function() require('luanphan.view_container').close_window(reopened_anchor) end,
 })
 assert(require('luanphan.terminal_references').open(interrupted), 'a panel close during the first file read lost the reference')
 local restored_anchor = view.group_anchor(vim.api.nvim_get_current_win())

@@ -57,7 +57,11 @@ local function run_case(index)
     vim.cmd.normal({ args = { "ggVj" .. vim.keycode("<Esc>") }, bang = true })
     vim.cmd.normal({ args = { "ggVj" .. (case.select and vim.keycode("<C-g>") or "") }, bang = true })
     assert(vim.fn.mode() == (case.select and "S" or "V"), "selection mode not entered: " .. vim.fn.mode())
-    local agent = require("luanphan.agents.terminal-chat").create({ defaults = { send_mode = case.mode } })
+    local selection = require("luanphan.agents.selection")
+    local agent = selection.attach(require("luanphan.view_container.terminal_session").create({
+      name = "agent", notify = function() end,
+      defaults = vim.tbl_extend("force", selection.defaults, { send_mode = case.mode }),
+    }))
     agent.send_selection(terminal)
     local payload = "@example.txt:1-2"
     if case.mode == "full" then

@@ -12,13 +12,7 @@ local M = {
   },
 }
 
-function M.new_session_id()
-  local hex = vim.uv.random(16):gsub(".", function(byte)
-    return string.format("%02x", byte:byte())
-  end)
-  return table.concat({ hex:sub(1, 8), hex:sub(9, 12), "4" .. hex:sub(14, 16),
-    "8" .. hex:sub(18, 20), hex:sub(21, 32) }, "-")
-end
+M.new_session_id = require("luanphan.view_container.uuid").new
 
 function M.resume()
   return {}

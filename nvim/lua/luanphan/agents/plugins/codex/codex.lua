@@ -5,7 +5,7 @@ local M = {
 }
 local pending = {}
 local uuid_prefix = string.rep("%x", 8) .. ("%-" .. string.rep("%x", 4)):rep(3) .. "%-" .. string.rep("%x", 5)
-local uuid = "^" .. uuid_prefix .. string.rep("%x", 7) .. "$"
+local uuid = require("luanphan.view_container.uuid").pattern
 
 function M.resume(id)
   local args = { "resume", "-c", 'tui.terminal_title=["session-id","thread-name"]' }

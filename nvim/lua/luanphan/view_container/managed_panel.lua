@@ -1,12 +1,106 @@
 -- Live panes survive UI restarts. Saved records can also reopen a pane after its server exits.
+--
+-- Providers describe one kind of pane: command, resume args, title parsing, and an optional
+-- `decode_event(bufnr, event, emit)` for terminal requests. The panel owns everything else:
+-- sessions, status, titles, the window bar data, keymaps, and the remembered default kind.
 local window = require("luanphan.view_container.window")
 local views = require("luanphan.view_container")
+local terminal_session = require("luanphan.view_container.terminal_session")
+local terminal = require("luanphan.view_container.terminal")
+local pane_status = require("luanphan.view_container.pane_status")
 local M = {}
 
 function M.create(owner, opts)
-  local backend, providers, sessions = opts.backend, opts.providers, opts.sessions
-  local panel, apis, restored = {}, {}, {}
+  local backend, providers = opts.backend, opts.providers
+  local sessions = opts.sessions or require("luanphan.view_container.session_store").create({
+    valid_id = require("luanphan.view_container.uuid").is_valid, directory = opts.session_dir,
+  })
+  local panel, apis, restored = { sessions = sessions }, {}, {}
+  -- Owners may override the default kind lookup; it is read on every use.
+  opts.default_kind = opts.default_kind or function() return panel.default_kind() end
+
+  function panel.display_title(kind, title)
+    local provider = providers[kind]
+    if provider and provider.display_title then return provider.display_title(title) end
+    return title
+  end
+
+  local function pane_title(buf, title)
+    local vars = vim.b[buf]
+    title = panel.display_title(vars.luanphan_view_kind, title)
+    if type(title) ~= "string" or title == "" or title == vim.api.nvim_buf_get_name(buf) then
+      return vars.luanphan_view_saved_label
+    end
+    return title
+  end
+
+  -- Kinds a user can pick as the default: every provider except plain shells.
+  local function default_choices()
+    local choices = {}
+    for _, kind in ipairs(opts.kinds) do
+      if not providers[kind].shell then
+        choices[#choices + 1] = { id = kind, label = kind, display = kind, ordinal = kind }
+      end
+    end
+    return choices
+  end
+
+  local function choosable(kind)
+    return providers[kind] ~= nil and not providers[kind].shell
+  end
+
+  function panel.default_kind()
+    local ok, lines = pcall(vim.fn.readfile, opts.default_kind_file(), "", 1)
+    local kind = ok and vim.trim(lines[1] or "") or ""
+    return choosable(kind) and kind or default_choices()[1].id
+  end
+
+  function panel.set_default_kind(kind)
+    if not choosable(kind) then return false end
+    local path = opts.default_kind_file()
+    local ok = pcall(vim.fn.mkdir, vim.fn.fnamemodify(path, ":h"), "p")
+    local wrote, result = pcall(vim.fn.writefile, { kind }, path)
+    if not ok or not wrote or result ~= 0 then
+      vim.notify("Could not save the default " .. opts.noun, vim.log.levels.ERROR)
+      return false
+    end
+    vim.notify("Default " .. opts.noun .. ": " .. kind)
+    return true
+  end
+
+  function panel.pick_default_kind()
+    local current = panel.default_kind()
+    local choices = default_choices()
+    for _, choice in ipairs(choices) do
+      if choice.id == current then choice.display = choice.label .. " (current)" end
+    end
+    views.select(opts.default_title or ("Default " .. opts.noun), choices, function(choice) panel.set_default_kind(choice.id) end,
+      opts.view.picker_opts)
+  end
+
+  local function bind_actions(bufnr, sidebar)
+    local keys = { buffer = bufnr, silent = true, nowait = true }
+    local function desc(text) return vim.tbl_extend("force", keys, { desc = text }) end
+    if sidebar and opts.toggle then vim.keymap.set("n", opts.hint_open, opts.toggle, { buffer = bufnr }) end
+    -- Keep the editor's New buffer mapping from replacing a panel buffer.
+    vim.keymap.set("n", "<leader>fn", "<Nop>", keys)
+    local shell = vim.iter(opts.kinds):find(function(kind) return providers[kind].shell end)
+    if shell then vim.keymap.set("n", "<leader>nt", function() owner.new(shell) end, desc("New terminal")) end
+    vim.keymap.set("n", "<leader>na", function() owner.new(opts.default_kind()) end, desc("New default " .. opts.noun))
+    vim.keymap.set("n", "<leader>nA", function() owner.container:pick() end, desc("Select " .. opts.noun))
+    if not vim.b[bufnr].luanphan_view_new_menu then
+      local ok, which_key = pcall(require, "which-key")
+      if ok then
+        which_key.add({ { "<leader>n", group = "New", buffer = bufnr } })
+        vim.b[bufnr].luanphan_view_new_menu = true
+      end
+    end
+  end
+
   local container = views.create(vim.tbl_extend("force", {
+    title = function(buf, title) return pane_title(buf, title) end,
+    choices = default_choices,
+    bind_actions = bind_actions,
     context = vim.fn.getcwd,
     panes = {
       backend = backend, kinds = opts.kinds,
@@ -51,7 +145,40 @@ function M.create(owner, opts)
     panel.reopen(true)
   end
 
-  local function watch(group, term_request)
+  -- Applies what a terminal request said about its pane. Runs outside the TermRequest callback.
+  local function apply_event(bufnr, kind, event)
+    if not vim.api.nvim_buf_is_valid(bufnr) or vim.b[bufnr].luanphan_view_kind ~= kind then return end
+    local status_changed = event.status and pane_status.update(bufnr, event.status)
+    local changed_id = sessions.update(bufnr, event)
+    panel.remember(bufnr)
+    local bar = container.opts.bar()
+    if changed_id then
+      bar:refresh(true)
+    else
+      if event.refresh_title then bar:update_title(bufnr, views.tab_label(bufnr)) end
+      if status_changed then bar:status_changed() end
+    end
+  end
+
+  local function term_request(args)
+    local bufnr, sequence = args.buf, args.data and args.data.sequence
+    local kind = vim.b[bufnr].luanphan_view_kind
+    local provider = providers[kind]
+    if not provider or not sequence then return end
+    local decode = provider.status and provider.status.decode or pane_status.from_osc
+    local status = decode(sequence)
+    local title = terminal.request_title(sequence)
+    -- Decoders may call emit from inside the terminal callback; the work always runs later.
+    local function emit(event) vim.schedule(function() apply_event(bufnr, kind, event) end) end
+    if status then emit({ status = status }) end
+    if provider.decode_event then
+      provider.decode_event(bufnr, { sequence = sequence, title = title, status = status }, emit)
+    elseif title then
+      emit({ refresh_title = true })
+    end
+  end
+
+  local function watch(group)
     vim.api.nvim_create_autocmd({ "VimEnter", "UIEnter" }, {
       group = group, callback = function() vim.schedule(function() restore_ui(opts.startup_flag) end) end,
     })
@@ -86,14 +213,23 @@ function M.create(owner, opts)
 
   function panel.provider(kind)
     if not apis[kind] then
-      local api = opts.create(vim.tbl_extend("force", providers[kind], {
+      local provider = providers[kind]
+      local initial = provider.status and provider.status.initial
+      local api = terminal_session.create(vim.tbl_extend("force", provider, {
         name = kind, panel = owner, backend = backend, container = container, hint_open = opts.hint_open,
+        defaults = vim.tbl_deep_extend("force", { args = {} }, opts.defaults or {}, provider.defaults or {}),
+        augroup = opts.group .. "_" .. kind,
+        notify = function(message, level) vim.notify(kind .. ": " .. message, level or vim.log.levels.INFO) end,
+        on_register = function(buf)
+          if initial and not pane_status.current(buf) then pane_status.update(buf, initial) end
+        end,
         current = function() return container:recent_pane(container:context(), kind, true) end,
         cwd = function(buf) return vim.b[buf].luanphan_view_cwd end,
         on_show = panel.show, mark_used = panel.mark_used, on_close = panel.close,
         metadata = function(buf, cwd, options) return metadata(kind, buf, cwd, options) end,
         on_adopt = adopt,
       }))
+      if opts.extend_api then opts.extend_api(api, kind) end
       apis[kind] = api
       local ok, err = xpcall(api.setup, debug.traceback)
       if not ok then
@@ -178,7 +314,7 @@ function M.create(owner, opts)
       local buf = panel.provider(data.kind).adopt(record, saved_pane)
       if buf then
         local kind = data.kind
-        vim.b[buf].luanphan_view_saved_label = saved_pane and saved_pane.label or opts.display_title(kind, data.label)
+        vim.b[buf].luanphan_view_saved_label = saved_pane and saved_pane.label or panel.display_title(kind, data.label)
       end
     end
   end
@@ -228,9 +364,9 @@ function M.create(owner, opts)
     if not startup then return owner.open(opts.default_kind()) end
   end
 
-  function panel.plugin_specs(keys, term_request)
+  function panel.plugin_specs(keys)
     local specs = {}
-    local function init() watch(vim.api.nvim_create_augroup(opts.startup_group, { clear = true }), term_request) end
+    local function init() watch(vim.api.nvim_create_augroup(opts.startup_group, { clear = true })) end
     for _, kind in ipairs(opts.kinds) do
       local plugin = providers[kind].plugin
       if plugin then
@@ -247,6 +383,46 @@ function M.create(owner, opts)
   function owner.hide(except)
     if except and container:visible_window(container.layout_context, except) then return false end
     return container:hide()
+  end
+
+  -- Live and saved panes, each tagged with the workspace it is grouped under.
+  function panel.instances(include_saved)
+    owner.restore_running()
+    local instances, workspaces = sessions.instances(include_saved), {}
+    for _, instance in ipairs(instances) do
+      local cwd = instance.path
+      if workspaces[cwd] == nil then workspaces[cwd] = opts.workspace(cwd) end
+      instance.workspace = workspaces[cwd]
+    end
+    return instances
+  end
+
+  -- A window bar listing every pane by workspace, with status glyphs and saved-session dismissal.
+  function panel.create_bar(bar_opts)
+    local bar
+    bar = container:create_bar(vim.tbl_extend("force", {
+      groups = function()
+        return views.workspace_groups(panel.instances(true), function(instance)
+          return {
+            id = sessions.key(instance), sort_id = instance.thread_id, bufnr = instance.bufnr,
+            label = instance.label, icon = providers[instance.kind].icon, thread = instance,
+            pane_order = instance.pane_order,
+          }
+        end)
+      end,
+      reorder = function(_, items)
+        container:reorder_panes(vim.tbl_map(function(item) return item.thread end, items))
+      end,
+      status = function(item, frame) return pane_status.glyph(item.bufnr, frame) end,
+      dismiss = function(item)
+        local session = item and item.thread
+        if session and session.thread_id and not session.bufnr then
+          sessions.forget(session.kind, session.thread_id)
+          bar:refresh(true)
+        end
+      end,
+    }, bar_opts))
+    return bar
   end
 
   owner.container = container

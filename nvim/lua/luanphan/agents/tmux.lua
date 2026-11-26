@@ -6,12 +6,11 @@ local backend = require("luanphan.view_container.tmux.managed").create({
       config = "/dev/null",
     }
   end,
-  state = vim.luanphan_agent_tmux,
+  state_key = "luanphan_agent_tmux",
   augroup = "LuanphanAgentTmux",
   metadata = "@luanphan-agent",
   replay_osc = true,
 })
 
-vim.luanphan_agent_tmux = backend.state
 
 return backend

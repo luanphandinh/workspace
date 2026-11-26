@@ -33,8 +33,7 @@ local function setup()
   local BUFSTORE_KEY = "luanphan_workspace_buffers"
   local WS_CONTAINER = "local_workspaces"
   local agents = require("luanphan.agents.main")
-  local terminal_agent = require("luanphan.agents.terminal-chat")
-  local agent_sessions = require("luanphan.agents.sessions")
+  local terminal = require("luanphan.view_container.terminal")
   local recent_paths = require("luanphan.recent_paths")
   local views = require("luanphan.view_container")
   local compact_picker_opts = views.compact_picker_opts
@@ -1256,15 +1255,7 @@ local function setup()
   end
 
   local function list_agent_sessions(include_saved)
-    agents.restore_running()
-    local instances = agent_sessions.instances(include_saved)
-    local workspaces = {}
-    for _, instance in ipairs(instances) do
-      local cwd = instance.path
-      if not workspaces[cwd] then workspaces[cwd] = agent_workspace(cwd) end
-      instance.workspace = workspaces[cwd]
-    end
-    return instances
+    return agents.instances(include_saved)
   end
 
   switch_to = function(path, kind, visit_path, agent_windows)
@@ -1956,7 +1947,7 @@ local function setup()
   end
 
   local function activate_agent(instance, agent_windows, opts)
-    if instance.bufnr and not terminal_agent.running(instance.bufnr) then
+    if instance.bufnr and not terminal.running(instance.bufnr) then
       return false
     end
     if instance.path ~= safe_getcwd() then

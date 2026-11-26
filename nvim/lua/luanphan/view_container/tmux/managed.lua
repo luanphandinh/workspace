@@ -6,7 +6,9 @@ local M = {}
 
 function M.create(opts)
   local server = client.new(opts.server)
-  local state = opts.state or { groups = {}, buffers = {} }
+  -- `state_key` keeps the live state on `vim` so attached panes survive a config reload.
+  local state = (opts.state_key and vim[opts.state_key]) or opts.state or { groups = {}, buffers = {} }
+  if opts.state_key then vim[opts.state_key] = state end
   local backend = { state = state }
   local metadata = opts.metadata
   local pane_order = "@luanphan-pane-order"
