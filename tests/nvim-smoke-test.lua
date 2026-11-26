@@ -9587,6 +9587,22 @@ local setup_ok, setup_err = xpcall(function()
     safe_cleanup_tests.repository_remove()
   end)
 
+  test("saved pane discovery observes external edits and deletions", function()
+    local dir = vim.fn.tempname()
+    vim.fn.mkdir(dir, "p")
+    local store = require("luanphan.view_container.pane_state")
+    local function list() return store.list(dir, function() return true end) end
+    local path = dir .. "/pane.json"
+    vim.fn.writefile({ '{"label":"first"}' }, path)
+    list().pane.label = "local edit"
+    assert(list().pane.label == "first")
+    vim.fn.writefile({ '{"label":"other"}' }, path .. ".tmp")
+    assert(vim.uv.fs_rename(path .. ".tmp", path))
+    assert(list().pane.label == "other")
+    vim.fn.delete(path)
+    assert(next(list()) == nil)
+    vim.fn.delete(dir, "d")
+  end)
   test("agent sessions discover running project terminals", function()
     test_active_agent_discovery(repo, worktree)
   end)

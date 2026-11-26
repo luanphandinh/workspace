@@ -18,38 +18,12 @@ local status_icons = {
 
 local function groups()
   local threads = require("luanphan.plugins.worktree").list_agent_sessions(true)
-  local by_workspace = {}
-  for _, thread in ipairs(threads) do
-    local workspace = thread.workspace
-    by_workspace[workspace] = by_workspace[workspace] or {}
-    table.insert(by_workspace[workspace], thread)
-  end
-  local workspaces = vim.tbl_keys(by_workspace)
-  table.sort(workspaces)
-  local result = {}
-  for _, workspace in ipairs(workspaces) do
-    local group = { id = workspace, title = vim.fn.fnamemodify(workspace, ":t"), items = {} }
-    local entries = by_workspace[workspace]
-    table.sort(entries, function(a, b)
-      if a.bufnr or b.bufnr then return (a.bufnr or math.huge) < (b.bufnr or math.huge) end
-      if a.last_used ~= b.last_used then return a.last_used > b.last_used end
-      return a.thread_id < b.thread_id
-    end)
-    local recent = entries[1]
-    for _, thread in ipairs(entries) do
-      if thread.bufnr and thread.last_used > recent.last_used then recent = thread end
-    end
-    for _, thread in ipairs(entries) do
-      local item = {
-        id = sessions.key(thread), bufnr = thread.bufnr, label = thread.agent_label,
-        icon = agents.agent_icon(thread.agent), thread = thread, pane_order = thread.pane_order,
-      }
-      group.items[#group.items + 1] = item
-      if thread == recent then group.active = item end
-    end
-    result[#result + 1] = group
-  end
-  return result
+  return views.workspace_groups(threads, function(thread)
+    return {
+      id = sessions.key(thread), sort_id = thread.thread_id, bufnr = thread.bufnr, label = thread.agent_label,
+      icon = agents.agent_icon(thread.agent), thread = thread, pane_order = thread.pane_order,
+    }
+  end)
 end
 
 function M.select_session(session, opts)

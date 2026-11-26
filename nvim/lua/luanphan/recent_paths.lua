@@ -45,7 +45,7 @@ local function read_entries()
       end
     end
   end
-  return entries
+  return entries, decoded
 end
 
 local function write_entries(entries)
@@ -72,12 +72,13 @@ function M.touch(path)
 
   local updated = { key }
   local max_entries = require("luanphan.global_settings").max_recent_folders()
-  for _, value in ipairs(read_entries()) do
+  local entries, stored = read_entries()
+  for _, value in ipairs(entries) do
     if value ~= key and #updated < max_entries then
       updated[#updated + 1] = value
     end
   end
-  return write_entries(updated)
+  return vim.deep_equal(updated, stored) or write_entries(updated)
 end
 
 function M.remove(path)
@@ -99,7 +100,8 @@ function M.remove(path)
 end
 
 function M.entries()
-  return vim.deepcopy(read_entries())
+  local entries = read_entries()
+  return entries
 end
 
 function M.sort(items, path_of, fallback)

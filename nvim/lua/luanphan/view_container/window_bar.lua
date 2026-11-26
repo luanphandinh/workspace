@@ -80,6 +80,34 @@ function Bar:active()
   return valid(win) and api.nvim_win_get_buf(win)
 end
 
+function M.workspace_groups(records, item_for)
+  local groups, by_path = {}, {}
+  for _, record in ipairs(records) do
+    local path = record.workspace
+    local group = by_path[path]
+    if not group then
+      group = { id = path, title = vim.fn.fnamemodify(path, ":t"), items = {} }
+      groups[#groups + 1], by_path[path] = group, group
+    end
+    local item = item_for(record)
+    item.last_used = record.last_used
+    group.items[#group.items + 1] = item
+  end
+  table.sort(groups, function(a, b) return a.id < b.id end)
+  for _, group in ipairs(groups) do
+    table.sort(group.items, function(a, b)
+      if a.bufnr or b.bufnr then return (a.bufnr or math.huge) < (b.bufnr or math.huge) end
+      if a.last_used ~= b.last_used then return a.last_used > b.last_used end
+      return a.sort_id < b.sort_id
+    end)
+    group.active = group.items[1]
+    for _, item in ipairs(group.items) do
+      if item.bufnr and item.last_used > group.active.last_used then group.active = item end
+    end
+  end
+  return groups
+end
+
 function Bar:groups()
   local groups = self.opts.groups()
   if self.opts.order_panes then

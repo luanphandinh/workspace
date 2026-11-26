@@ -114,6 +114,7 @@ function M.create(opts)
     local buf = pane.bufnr
     if pane.group.panes[pane.id] ~= pane then return end
     pane.group.panes[pane.id], state.buffers[buf], pane.client = nil, nil, nil
+    state.pane_index = nil
     if api.nvim_buf_is_valid(buf) and not state.leaving then
       opts.on_exit(buf, lost)
       if pane.on_exit then pane.on_exit() end
@@ -186,6 +187,7 @@ function M.create(opts)
     record.client, record.ready = group.client, new or record.data.gate ~= nil
     record.view_width, record.view_height = record.width, record.height
     group.panes[record.id], state.buffers[buf] = record, record
+    state.pane_index = nil
     vim.b[buf].luanphan_persist_term = true
     opts.on_attach(buf, record)
     local win
@@ -275,14 +277,28 @@ function M.create(opts)
   end
 
   function backend.panes(kind, cwd)
+    local index = state.pane_index
+    if not index then
+      index = { all = {}, by_cwd = {} }
+      for _, pane in pairs(state.buffers) do index.all[#index.all + 1] = pane end
+      table.sort(index.all, function(a, b) return a.bufnr < b.bufnr end)
+      for _, pane in ipairs(index.all) do
+        local path = pane.data.cwd
+        local group = index.by_cwd[path] or {}
+        index.by_cwd[path] = group
+        group[#group + 1] = pane
+      end
+      state.pane_index = index
+    end
+    local candidates = index.all
+    if cwd then candidates = index.by_cwd[cwd] or {} end
     local panes = {}
-    for buf, pane in pairs(state.buffers) do
-      if (not kind or pane.data[opts.kind] == kind) and (not cwd or pane.data.cwd == cwd)
-        and api.nvim_buf_is_valid(buf) and vim.bo[buf].buftype == "terminal" then
+    for _, pane in ipairs(candidates) do
+      local buf = pane.bufnr
+      if (not kind or pane.data[opts.kind] == kind) and api.nvim_buf_is_valid(buf) and vim.bo[buf].buftype == "terminal" then
         panes[#panes + 1] = pane
       end
     end
-    table.sort(panes, function(a, b) return a.bufnr < b.bufnr end)
     return panes
   end
 
@@ -315,6 +331,7 @@ function M.create(opts)
     local old_label = pane.data.label
     local updated = vim.tbl_extend("force", pane.data, changes)
     if vim.deep_equal(updated, pane.data) then return end
+    if updated.cwd ~= pane.data.cwd then state.pane_index = nil end
     pane.data = updated
     local commands = { { "set-option", "-p", "-t", pane.id, metadata, vim.json.encode(updated) } }
     if old_label ~= updated.label then

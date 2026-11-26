@@ -48,24 +48,6 @@ function M.create(profile)
 
   local status_options = profile.status or {}
 
-  local DEFAULTS = vim.tbl_deep_extend("force", vim.deepcopy(BASE_DEFAULTS), profile.defaults or {})
-
-  local config = vim.deepcopy(DEFAULTS)
-
-  local function command_for_agent(opts)
-    local cmd = config.cmd
-    if type(cmd) == "function" then cmd = cmd() end
-    local args = (opts and opts.args) or config.args or {}
-    if type(cmd) == "table" then
-      local out = vim.deepcopy(cmd)
-      vim.list_extend(out, args)
-      return out
-    end
-    local out = { cmd }
-    vim.list_extend(out, args)
-    return out
-  end
-
   local function buf_shortpath(bufnr)
     local name = vim.api.nvim_buf_get_name(bufnr)
     if name == "" then
@@ -74,26 +56,19 @@ function M.create(profile)
     return vim.fn.fnamemodify(name, ":.")
   end
 
-  local function mark_terminal_used(bufnr)
-    local sequence = (tonumber(vim.g.luanphan_agent_use_sequence) or 0) + 1
-    vim.g.luanphan_agent_use_sequence = sequence
-    vim.b[bufnr].luanphan_agent_last_used = sequence
-  end
-
   local API = terminal_session.create(vim.tbl_extend("force", profile, {
     backend = backend,
-    config = config,
+    defaults = vim.tbl_deep_extend("force", vim.deepcopy(BASE_DEFAULTS), profile.defaults or {}),
     notify = nx,
     augroup = augroup_name,
     cwd = function(buf) return vim.b[buf].luanphan_agent_cwd end,
-    mark_used = mark_terminal_used,
-    command = function(buf, cwd, opts)
+    metadata = function(buf, cwd, opts)
       local thread_id = opts and opts.thread_id
       if not thread_id and profile.new_session_id then thread_id = profile.new_session_id() end
       local label = opts and opts.agent_label
       vim.b[buf].luanphan_agent_thread_id = thread_id
       vim.b[buf].luanphan_agent_saved_label = label
-      return command_for_agent(opts), {
+      return {
         cwd = cwd,
         workspace = require("luanphan.plugins.worktree").agent_workspace(cwd),
         agent = provider_name,
@@ -116,12 +91,7 @@ function M.create(profile)
     end,
   }))
 
-  local setup_panel = API.setup
-  function API.setup(opts)
-    for key in pairs(config) do config[key] = nil end
-    for key, value in pairs(vim.tbl_extend("force", vim.deepcopy(DEFAULTS), opts or {})) do config[key] = value end
-    setup_panel()
-  end
+  local config = API.config
 
   local function format_selection_payload(bufnr, lines, line_start, line_end)
     local path = buf_shortpath(bufnr)

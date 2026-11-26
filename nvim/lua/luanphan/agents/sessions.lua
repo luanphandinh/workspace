@@ -30,29 +30,13 @@ local function session_path(agent, id)
   return state_dir(agent) .. "/" .. id .. ".json"
 end
 
-local function read(path, id)
-  local record = pane_state.read(path)
-  if not record or record.thread_id ~= id
-    or type(record.path) ~= "string" or record.path:sub(1, 1) ~= "/"
-    or type(record.agent_label) ~= "string" or type(record.last_used) ~= "number" then
-    return nil
-  end
-  return record
-end
-
 local function list(agent)
-  local dir = state_dir(agent)
   local records = {}
-  if vim.fn.isdirectory(dir) ~= 1 then return records end
-  for name, kind in vim.fs.dir(dir) do
-    local id = name:match("^(.*)%.json$")
-    if kind == "file" and id and id:match(uuid) then
-      local path = dir .. "/" .. name
-      local record = read(path, id)
-      if record then
-        record.agent = agent
-        records[#records + 1] = record
-      end
+  for id, record in pairs(pane_state.list(state_dir(agent), M.valid_id)) do
+    if record.thread_id == id and type(record.path) == "string" and record.path:sub(1, 1) == "/"
+      and type(record.agent_label) == "string" and type(record.last_used) == "number" then
+      record.agent = agent
+      records[#records + 1] = record
     end
   end
   return records

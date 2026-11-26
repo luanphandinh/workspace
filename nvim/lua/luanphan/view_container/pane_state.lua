@@ -10,10 +10,37 @@ local function read(path)
   if decoded and type(record) == "table" then return record end
 end
 
-function M.read(path)
-  local record = read(path)
-  if record and pending[path] then record.pane_order = pending[path].pane_order end
-  return record
+-- Other editor instances may replace or edit these files. Stat before reusing a decode.
+local directories = {}
+
+function M.list(dir, accept_id)
+  if vim.fn.isdirectory(dir) ~= 1 then
+    directories[dir] = nil
+    return {}
+  end
+  local previous, current, records = directories[dir] or {}, {}, {}
+  for name, kind in vim.fs.dir(dir) do
+    local id = name:match("^(.*)%.json$")
+    if kind == "file" and id and accept_id(id) then
+      local path = dir .. "/" .. name
+      local stat = uv.fs_stat(path)
+      if stat then
+        local entry = previous[id]
+        if not entry or entry.ino ~= stat.ino or entry.size ~= stat.size
+          or entry.sec ~= stat.ctime.sec or entry.nsec ~= stat.ctime.nsec then
+          entry = { ino = stat.ino, size = stat.size, sec = stat.ctime.sec, nsec = stat.ctime.nsec, record = read(path) }
+        end
+        if entry.record then
+          current[id] = entry
+          local record = vim.deepcopy(entry.record)
+          if pending[path] then record.pane_order = pending[path].pane_order end
+          records[id] = record
+        end
+      end
+    end
+  end
+  directories[dir] = current
+  return records
 end
 
 local function write(path, record, delayed)

@@ -7,7 +7,7 @@ local terminal = require("luanphan.view_container.terminal")
 local pane_order = require("luanphan.view_container.pane_order")
 local pane_state = require("luanphan.view_container.pane_state")
 local M = vim.tbl_extend("force", window, {
-	tab_label = tabs.tab_label,
+	tab_label = tabs.tab_label, workspace_groups = bars.workspace_groups,
 })
 local Container = { reserve = tabs.reserve, render = tabs.render,
 	refresh_tile_highlights = tiles.refresh_tile_highlights }

@@ -5,7 +5,8 @@ local pane_order = require("luanphan.view_container.pane_order")
 local pane_state = require("luanphan.view_container.pane_state")
 
 function M.create(profile)
-  local backend, config, nx = profile.backend, profile.config, profile.notify
+  local backend, nx = profile.backend, profile.notify
+  local config = vim.deepcopy(profile.defaults)
   local augroup_name = profile.augroup
   local container = profile.container
 
@@ -67,7 +68,11 @@ function M.create(profile)
     local geometry = not win and container.opts.layout().body
     local width = win and vim.api.nvim_win_get_width(win) or geometry.width
     local height = win and vim.api.nvim_win_get_height(win) or geometry.height
-    local command, data = profile.command(buf, cwd, opts)
+    local data = profile.metadata(buf, cwd, opts)
+    local cmd = config.cmd
+    if type(cmd) == "function" then cmd = cmd() end
+    local command = type(cmd) == "table" and vim.deepcopy(cmd) or { cmd }
+    vim.list_extend(command, (opts and opts.args) or config.args or {})
     local position = opts and pane_order.get(opts.saved_pane or opts)
     pane_order.set(buf, position)
     local ok, err = backend.launch(buf, command, data, width, math.max(1, height - 1), position)
@@ -108,7 +113,7 @@ function M.create(profile)
     resume_terminal_view(win, bufnr, opts)
   end
 
-  local API = {}
+  local API = { config = config }
 
   function API.new(opts, keep_order)
     return container:open_tile(container:context(), function(place)
@@ -181,7 +186,11 @@ function M.create(profile)
     vim.defer_fn(function() deliver(1) end, config.defer_send_ms or 200)
   end
 
-  function API.setup()
+  function API.setup(options)
+    for key in pairs(config) do config[key] = nil end
+    for key, value in pairs(vim.tbl_extend("force", vim.deepcopy(profile.defaults), options or {})) do
+      config[key] = value
+    end
     -- Rebind surviving panes after a config reload.
     for _, pane in ipairs(container:panes(nil, profile.name)) do
       register_terminal(pane.bufnr, pane.data.cwd)
