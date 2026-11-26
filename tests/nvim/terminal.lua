@@ -958,6 +958,92 @@ local function test_tmux_frame_restores_scroll_region()
   assert_true(ok, tostring(err))
 end
 
+local function test_terminal_record_dump()
+  if vim.fn.executable("tmux") == 0 then return end
+  local root = uv.fs_mkdtemp("/tmp/nvim-tmux-record-XXXXXX")
+  local script, socket = root .. "/test.lua", root .. "/socket"
+  write(root .. "/tmux.conf", { "set -g default-shell /bin/sh", "set -g default-command 'exec /bin/sh'" })
+  write(root .. "/settings.toml", { "[terminal_record]", "record_session = true", "max_record_session_mb = 4" })
+  write(script, vim.list_extend({
+    "local root = " .. string.format("%q", root),
+    "vim.g.luanphan_floating_tmux_socket = root .. '/socket'",
+    "vim.g.luanphan_floating_tmux_config = root .. '/tmux.conf'",
+    "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
+    "vim.g.luanphan_recent_paths_file = root .. '/recent.json'",
+    "vim.g.luanphan_terminal_sessions_dir = root .. '/sessions'",
+  }, vim.split([=[
+local api = vim.api
+api.nvim_feedkeys(vim.keycode(vim.g.mapleader .. "t"), "xt", false)
+assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane and vim.bo.buftype == "terminal" end), "tmux terminal did not attach")
+local id, buf = vim.b.luanphan_tmux_pane, api.nvim_get_current_buf()
+vim.system({ "tmux", "-S", root .. "/socket", "send-keys", "-t", id, "printf 'RECORD_%s\\n' MARK", "Enter" }):wait()
+local function text() return table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), "\n") end
+assert(vim.wait(4000, function() return text():find("RECORD_MARK", 1, true) end, 5), "output did not arrive")
+-- A width change repaints the pane from a tmux capture.
+vim.o.columns = vim.o.columns - 20
+-- Reads the dump back: a header `<ms>\t<pane>\t<kind>\t<bytes>`, then exactly that many bytes.
+local function events()
+  vim.cmd("silent TerminalRecordDump " .. root .. "/dump.log")
+  local data = assert(io.open(root .. "/dump.log", "rb")):read("*a")
+  local parsed, index = {}, 1
+  while index <= #data do
+    local header_end = assert(data:find("\n", index, true), "dump header is not terminated")
+    local ms, pane, kind, size = data:sub(index, header_end - 1):match("^([%d.]+)\t(%S+)\t(%a+)\t(%d+)$")
+    assert(kind, "bad dump header: " .. data:sub(index, header_end - 1))
+    local body = data:sub(header_end + 1, header_end + tonumber(size))
+    assert(data:sub(header_end + tonumber(size) + 1, header_end + tonumber(size) + 1) == "\n", "dump body has the wrong length")
+    parsed[#parsed + 1] = { pane = pane, kind = kind, body = body }
+    index = header_end + tonumber(size) + 2
+  end
+  return parsed
+end
+local function has(list, kind, needle)
+  return vim.iter(list):any(function(event)
+    return event.kind == kind and event.pane == id and (not needle or event.body:find(needle, 1, true) ~= nil)
+  end)
+end
+local dump
+assert(vim.wait(5000, function()
+  dump = events()
+  return has(dump, "paint") and has(dump, "capture", "RECORD_MARK") and has(dump, "out", "RECORD_MARK")
+end, 50), "the dump has no repaint of the recorded output")
+assert(has(dump, "recv", "RECORD_MARK"), "the dump has no tmux output")
+assert(has(dump, "resize") or has(dump, "size"), "the dump has no size change")
+]=], "\n", { plain = true })))
+  local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
+  vim.system({ "tmux", "-S", socket, "kill-server" }):wait()
+  vim.fn.delete(root, "rf")
+  assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+end
+
+local function test_terminal_record_limits()
+  local recorder = require("luanphan.view_container.tmux.recorder")
+  local original = vim.g.luanphan_global_settings_path
+  local root = uv.fs_mkdtemp("/tmp/nvim-record-limit-XXXXXX")
+  local ok, err = pcall(function()
+    vim.g.luanphan_global_settings_path = root .. "/settings.toml"
+    write(root .. "/settings.toml", { "[terminal_record]", "record_session = true", "max_record_session_mb = 1" })
+    recorder.reload()
+    local pane, chunk = { id = "%limit" }, string.rep("x", 400 * 1024)
+    for _ = 1, 5 do recorder.add(pane, "recv", chunk) end
+    local stats = recorder.stats()
+    assert_true(stats.bytes <= 1024 * 1024 and stats.events == 2,
+      "the recorder kept more than its limit: " .. vim.inspect(stats))
+    -- Settings are files with a modification stamp; give the rewrite a new one.
+    vim.uv.sleep(10)
+    write(root .. "/settings.toml", { "[terminal_record]", "record_session = false", "max_record_session_mb = 1" })
+    recorder.reload()
+    recorder.add(pane, "recv", chunk)
+    stats = recorder.stats()
+    assert_true(not stats.enabled and stats.events == 0 and stats.bytes == 0,
+      "a disabled recorder kept output: " .. vim.inspect(stats))
+  end)
+  vim.g.luanphan_global_settings_path = original
+  recorder.reload()
+  vim.fn.delete(root, "rf")
+  assert_true(ok, tostring(err))
+end
+
 local function test_tmux_frame_keeps_pending_wrap()
   -- After a full row tmux reports the cursor one past the last column: the next character
   -- starts a new row. A repaint that parks the cursor on the last column would overwrite it.
@@ -1285,6 +1371,8 @@ return {
   test_tmux_repaint_recovers_under_output = test_tmux_repaint_recovers_under_output,
   test_tmux_frame_restores_scroll_region = test_tmux_frame_restores_scroll_region,
   test_tmux_frame_keeps_pending_wrap = test_tmux_frame_keeps_pending_wrap,
+  test_terminal_record_dump = test_terminal_record_dump,
+  test_terminal_record_limits = test_terminal_record_limits,
   test_claude_title_reports_status = test_claude_title_reports_status,
   test_terminal_view_container = test_terminal_view_container,
   test_worktree_switch_hides_toggleterm = test_worktree_switch_hides_toggleterm,

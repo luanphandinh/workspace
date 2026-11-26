@@ -21,6 +21,8 @@ local TERMINAL_DEFAULTS = {
   },
   terminal_split = { display_style = "tabs", window_bar_style = "horizontal" },
 }
+local TERMINAL_RECORD_SECTION = "terminal_record"
+local DEFAULT_TERMINAL_RECORD = { record_session = true, max_record_session_mb = 64 }
 local DISPLAY_STYLE_SETTING = 'display_style = "' .. DEFAULT_AGENT_FLOAT.display_style .. '"'
 
 local function floating_width_lines(configured)
@@ -90,6 +92,12 @@ function M.ensure_config(path)
       "terminal_width_percent = " .. DEFAULT_AGENT_FLOAT.terminal_width_percent,
     },
   }
+  sections[#sections + 1] = {
+    "[" .. TERMINAL_RECORD_SECTION .. "]",
+    "# Keep recent tmux terminal output in memory; :TerminalRecordDump writes it to a file.",
+    "record_session = " .. tostring(DEFAULT_TERMINAL_RECORD.record_session),
+    "max_record_session_mb = " .. DEFAULT_TERMINAL_RECORD.max_record_session_mb,
+  }
   for _, name in ipairs({ "floating_terminal", "terminal_split" }) do
     local defaults = TERMINAL_DEFAULTS[name]
     local block = {
@@ -138,6 +146,7 @@ function M.read(path)
 
   local section
   local max_cache_entry = DEFAULT_MAX_CACHE_ENTRY
+  local terminal_record = vim.deepcopy(DEFAULT_TERMINAL_RECORD)
   local ignored_repositories = {}
   local reading_ignored_repositories = false
   for _, line in ipairs(lines) do
@@ -152,6 +161,11 @@ function M.read(path)
       if configured and configured >= 1 then
         max_cache_entry = math.floor(configured)
       end
+    elseif section == TERMINAL_RECORD_SECTION then
+      local enabled = value:match("^record_session%s*=%s*(%a+)$")
+      if enabled == "true" or enabled == "false" then terminal_record.record_session = enabled == "true" end
+      local megabytes = tonumber(value:match("^max_record_session_mb%s*=%s*([%d.]+)$"))
+      if megabytes and megabytes > 0 then terminal_record.max_record_session_mb = megabytes end
     elseif layout[section] then
       local settings = layout[section]
       local key, raw = value:match("^([%w_]+)%s*=%s*([%d.]+)$")
@@ -180,6 +194,7 @@ function M.read(path)
   end
 
   layout.recent_folder = { max_cache_entry = max_cache_entry }
+  layout.terminal_record = terminal_record
   layout.diff_repo_ignore = { repositories = ignored_repositories }
   cache[path] = { stamp = file_stamp(path), layout = layout }
   return vim.deepcopy(layout)

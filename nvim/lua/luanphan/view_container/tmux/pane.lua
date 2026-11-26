@@ -5,6 +5,7 @@ local M = {}
 local api = vim.api
 local screen = require("luanphan.view_container.tmux.screen")
 local view = require("luanphan.view_container.tmux.view")
+local recorder = require("luanphan.view_container.tmux.recorder")
 -- Agent buffers can outlive a config reload.
 local panes_by_buffer = vim.luanphan_tmux_panes_by_buffer or setmetatable({}, { __mode = "v" })
 vim.luanphan_tmux_panes_by_buffer = panes_by_buffer
@@ -69,6 +70,7 @@ api.nvim_create_autocmd({ "WinNew", "WinResized", "BufWinEnter", "WinClosed" }, 
             if view.is_visible(pane) then request_refresh(pane) end
           end
           pane.term_width, pane.term_height = width, height
+          recorder.add(pane, "size", width .. "x" .. height)
         end
       end
     end
@@ -120,17 +122,23 @@ function M.open(pane, on_input)
   })
 end
 
-function M.output(pane, bytes)
+local function send(pane, bytes)
   if not pane.term or not api.nvim_buf_is_valid(pane.bufnr) then return end
   pane.receiving = true
   api.nvim_chan_send(pane.term, bytes)
   pane.receiving = false
 end
 
+-- Bytes written to Neovim that did not come straight from tmux: repaints and replays.
+function M.output(pane, bytes)
+  recorder.add(pane, "out", bytes)
+  send(pane, bytes)
+end
+
 function M.stream(pane, bytes)
   if not pane.view_win then pane.hidden_output = true end
   pane.frame = nil
-  M.output(pane, bytes)
+  send(pane, bytes)
 end
 
 -- Returns the start of an escape sequence or UTF-8 character that the next output chunk completes.
@@ -180,6 +188,8 @@ end
 
 function M.receive(pane, bytes)
   if not pane then return end
+  -- "drop": a capture is running and already includes these bytes.
+  recorder.add(pane, pane.ready and "recv" or "drop", bytes)
   pane.tail = unfinished_tail((pane.tail or "") .. bytes)
   if pane.ready then
     M.stream(pane, bytes)
@@ -210,6 +220,7 @@ local function sync_grid(pane, win)
   end
   local request = { client = client, width = width, height = height }
   pane.resizing = request
+  recorder.add(pane, "resize", width .. "x" .. height)
   client:request({ "resize-window", "-t", pane.window, "-x", tostring(width), "-y", tostring(height) }, function(ok)
     if pane.client ~= client then return end
     if ok then
@@ -270,6 +281,7 @@ function M.capture(pane, callback)
     local content, cursor, primary = unpack(replies)
     if not content.ok or not cursor.ok then return callback() end
     local flags = vim.split(cursor.lines[1] or "", "\t", { plain = true })
+    recorder.add_capture(pane, content.lines, flags)
     callback(content.lines, flags, primary and primary.ok and primary.lines or nil)
   end)
 end
@@ -312,6 +324,7 @@ function M.paint(pane, visible)
   -- The resize callback refreshes the pane once tmux has the new size.
   if pane.resizing and pane.resizing.client == pane.client then return end
   local connection = pane.client
+  recorder.add(pane, "paint", ("rebuild=%s resync=%s"):format(pane.rebuild and 1 or 0, pane.resync and 1 or 0))
   -- Cancel a sequence Neovim is still parsing before painting over it.
   if pane.ready and (pane.tail or "") ~= "" then M.output(pane, "\24") end
   local win, scrolled = pane.view_win, nil
