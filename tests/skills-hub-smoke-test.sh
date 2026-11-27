@@ -137,6 +137,8 @@ assert_line_count "$LOG" 3
 
 mkdir -p "$HUB/.claude/skills/other-skill" "$PROJECT" "$FAKEBIN"
 printf '# other\n' > "$HUB/.claude/skills/other-skill/SKILL.md"
+ln -s ../../.agents/skills/second-skill "$HUB/.claude/skills/linked-hub-skill"
+ln -s ../../.agents/skills/missing-skill "$HUB/.claude/skills/dangling-hub-skill"
 mkdir -p "$HUB/.claude/skills/available-claude-skill"
 printf '# available claude\n' > "$HUB/.claude/skills/available-claude-skill/SKILL.md"
 mkdir -p "$HOME/.claude/skills/global-claude-skill"
@@ -197,9 +199,13 @@ test "$(sed -n '2p' "$LOG")" = "$HUB_REAL second-skill"
 	PATH="$FAKEBIN:$PATH" SKILLS_HUB_HOME="$HUB" SKILLS_HUB_FZF_INPUT="$FZF_INPUT" \
 		SKILLS_HUB_FZF_ARGS="$FZF_ARGS" \
 		SKILLS_HUB_FZF_OUTPUT=".agents/skills/example-skill
-.claude/skills/other-skill" \
+.claude/skills/other-skill
+.claude/skills/linked-hub-skill" \
 		python3 "$ROOT/bin/skills-hub" pick >/dev/null
 )
+assert_contains "$FZF_INPUT" ".claude/skills/linked-hub-skill"
+assert_not_contains "$FZF_INPUT" ".claude/skills/dangling-hub-skill"
+assert_contains "$PROJECT/.claude/skills/linked-hub-skill/SKILL.md" "second"
 
 assert_contains "$FZF_INPUT" ".agents/skills/example-skill"
 assert_contains "$FZF_INPUT" ".claude/skills/other-skill"

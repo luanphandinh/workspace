@@ -258,6 +258,14 @@ def discover_skill_dirs(home: Path) -> dict[str, Path]:
         if not rel.parts[0].startswith(".") or rel.parts[1] != "skills":
             continue
         skills[str(rel)] = skill_dir
+
+    # rglob does not descend into symlinked skill folders, such as agent folders linked to .agents/skills.
+    for skills_root in home.glob(".*/skills"):
+        if not skills_root.is_dir():
+            continue
+        for child in skills_root.iterdir():
+            if child.is_symlink() and (child / "SKILL.md").is_file():
+                skills[str(child.relative_to(home))] = child
     return dict(sorted(skills.items()))
 
 
