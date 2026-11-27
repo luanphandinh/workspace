@@ -1057,6 +1057,57 @@ assert(data:find("flip_winbar", 1, true), "the trace does not name the caller")
   assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
 end
 
+local function test_agent_tab_switch_keeps_terminal_grid()
+  if vim.fn.executable("tmux") == 0 then return end
+  local root = uv.fs_mkdtemp("/tmp/nvim-agent-switch-XXXXXX")
+  local script = root .. "/test.lua"
+  write(root .. "/settings.toml", {
+    "[agent_float]", 'display_style = "tabs"', 'window_bar_style = "vertical"',
+    "[terminal_record]", "enabled = true", "max_mb = 4",
+  })
+  write(script, vim.list_extend({
+    "local root = " .. string.format("%q", root),
+    "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
+    "vim.g.luanphan_recent_paths_file = root .. '/recent.json'",
+    "vim.g.luanphan_terminal_sessions_dir = root .. '/sessions'",
+  }, vim.split([=[
+local api = vim.api
+local agents = require("luanphan.agents.main")
+local tmux_pane = require("luanphan.view_container.tmux.pane")
+local function open()
+  assert(agents.new("terminal", { view_mode = true }), "could not open an agent shell")
+  local buf = api.nvim_get_current_buf()
+  assert(vim.wait(5000, function() local pane = tmux_pane.for_buffer(buf); return pane and pane.ready end, 20),
+    "agent shell did not attach to tmux")
+  return buf
+end
+local first = open()
+local second = open()
+-- Size changes Neovim saw for the shells; a tab switch keeps the layout, so it must add none.
+local function sizes()
+  vim.cmd("silent TerminalRecordDump " .. root .. "/dump.log")
+  local data = assert(io.open(root .. "/dump.log", "rb")):read("*a")
+  local found = {}
+  for pane, size in data:gmatch("\t(%%%d+)\tsize\t%d+\n([^\n]*)") do found[#found + 1] = pane .. " " .. size end
+  for pane, line in data:gmatch("\t(%%%d+)\ttrace\t%d+\n([^\n]*)") do found[#found + 1] = pane .. " " .. line end
+  return found
+end
+local before = #sizes()
+-- Each switch puts the other shell on screen. Its grid must not change on the way in.
+for _, buf in ipairs({ first, second, first }) do
+  assert(agents.focus("terminal", buf, { view_mode = true }), "could not switch agent tabs")
+  assert(vim.wait(3000, function() return api.nvim_get_current_buf() == buf end, 20), "agent tab did not switch")
+  vim.wait(200)
+end
+local after = sizes()
+assert(#after == before, "switching agent tabs resized a terminal:\n" .. table.concat(after, "\n", before + 1))
+]=], "\n", { plain = true })))
+  local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
+  vim.system({ "tmux", "-S", agent_socket(script), "kill-server" }):wait()
+  vim.fn.delete(root, "rf")
+  assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+end
+
 local function test_terminal_record_limits()
   local recorder = require("luanphan.view_container.tmux.recorder")
   local original = vim.g.luanphan_global_settings_path
@@ -1415,6 +1466,7 @@ return {
   test_terminal_record_dump = test_terminal_record_dump,
   test_terminal_record_limits = test_terminal_record_limits,
   test_terminal_record_traces_grid_change = test_terminal_record_traces_grid_change,
+  test_agent_tab_switch_keeps_terminal_grid = test_agent_tab_switch_keeps_terminal_grid,
   test_claude_title_reports_status = test_claude_title_reports_status,
   test_terminal_view_container = test_terminal_view_container,
   test_worktree_switch_hides_toggleterm = test_worktree_switch_hides_toggleterm,

@@ -192,7 +192,7 @@ local function tile(self, anchor, context, geometry, tabs)
 			})
 		end
 		if opened then
-			win = vim.api.nvim_open_win(tab.bufnr, false, vim.tbl_extend("force", frame, { style = "minimal" }))
+			win = require("luanphan.view_container.terminal").open_window(tab.bufnr, false, frame)
 		else
 			if is_anchor and anchor_buf ~= old_anchor_buf and vim.bo[old_anchor_buf].buftype == "terminal"
 				and (vim.api.nvim_win_get_width(win) ~= frame.width or vim.api.nvim_win_get_height(win) ~= frame.height) then

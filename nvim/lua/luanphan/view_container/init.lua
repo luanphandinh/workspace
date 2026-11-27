@@ -248,8 +248,7 @@ function Container:use_anchor(win)
 end
 
 function Container:open_float(layout, buf, enter)
-	return self:use_anchor(vim.api.nvim_open_win(buf, enter,
-		vim.tbl_extend("force", layout.body, { style = "minimal" })))
+	return self:use_anchor(terminal.open_window(buf, enter, layout.body))
 end
 
 function Container:watch(group, opts)

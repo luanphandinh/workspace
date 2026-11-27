@@ -81,15 +81,35 @@ function M.configure_buffer(buf)
   end)
 end
 
+-- Window-local options also become the window's default, so a buffer entering it for the first
+-- time gets no editor columns either. Global-local ones stay local: their default is every window's.
+local function apply_window_options(win)
+  for name, value in pairs(window_options) do
+    local global_local = api.nvim_get_option_info2(name, {}).global_local
+    pcall(api.nvim_set_option_value, name, value, { win = win, scope = global_local and "local" or nil })
+  end
+end
+
 function M.configure_window(win, highlights)
   if not win or not api.nvim_win_is_valid(win) then return end
   local buf = api.nvim_win_get_buf(win)
   if vim.bo[buf].buftype == "terminal" then M.configure_buffer(buf) end
-  local scope = { win = win, scope = "local" }
-  for name, value in pairs(window_options) do
-    pcall(api.nvim_set_option_value, name, value, scope)
-  end
-  api.nvim_set_option_value("winhighlight", highlights, scope)
+  apply_window_options(win)
+  api.nvim_set_option_value("winhighlight", highlights, { win = win, scope = "local" })
+end
+
+-- Panel floats are plain windows, not style "minimal": Neovim saves a buffer's window options when
+-- it leaves a plain window and restores them when it comes back, but never for a minimal one. A
+-- terminal that comes back without its winbar gets one more row for a moment, and Neovim pulls a
+-- scrollback line onto its screen that tmux does not have. The buffer enters only after the
+-- window has the options that "minimal" would set.
+function M.open_window(buf, enter, config)
+  local placeholder = api.nvim_create_buf(false, true)
+  vim.bo[placeholder].bufhidden = "wipe"
+  local win = api.nvim_open_win(placeholder, enter, config)
+  apply_window_options(win)
+  if buf then api.nvim_win_set_buf(win, buf) end
+  return win
 end
 
 function M.save_view(win, buf)
