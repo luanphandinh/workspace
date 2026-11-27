@@ -1,3 +1,7 @@
 {
-  "remoteControlAtStartup": true
+  "remoteControlAtStartup": true,
+  "statusLine": {
+    "type": "command",
+    "command": "~/bin/claude-code-statusline"
+  }
 }
