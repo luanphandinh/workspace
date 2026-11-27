@@ -1,5 +1,6 @@
 -- One tmux control-mode connection, with pane output routed to mirrored panes.
 local pty = require("luanphan.view_container.tmux.pane")
+local recorder = require("luanphan.view_container.tmux.recorder")
 
 local M = {}
 
@@ -15,6 +16,8 @@ function M.attach(server, session, opts)
       if name == "pause" then
         -- tmux stopped this pane because Neovim fell behind; resume it and repaint from tmux.
         local pane = opts.pane(payload)
+        -- tmux drops this pane's output until it continues, so a dump needs to show the gap.
+        recorder.add(pane or { id = payload }, "pause", "")
         if pane then pane.ready = false end
         client:request({ "refresh-client", "-A", payload .. ":continue" }, function(ok)
           if ok and pane then pty.paint(pane, opts.can_paint) end
