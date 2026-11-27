@@ -81,6 +81,66 @@ function M.dump(path)
   return last - first + 1
 end
 
+-- Neovim resizes a terminal as soon as its window's grid changes, even when the change is undone
+-- in the same tick (a winbar cleared and set again), and no autocmd reports it. A brief extra row
+-- pulls a scrollback line onto the screen and shifts it away from tmux. To find the caller, the
+-- window and option API calls are wrapped: each call compares the grid size of the few windows
+-- showing a tmux pane before and after, and records a "trace" event with a traceback on a change.
+local api = vim.api
+local pane_windows = {}
+
+local function grid(win)
+  if not api.nvim_win_is_valid(win) then return nil end
+  local bar = api.nvim_get_option_value("winbar", { win = win }) ~= "" and 1 or 0
+  return api.nvim_win_get_width(win) .. "x" .. (api.nvim_win_get_height(win) - bar)
+end
+
+local function refresh_pane_windows()
+  pane_windows = {}
+  for buf, pane in pairs(vim.luanphan_tmux_panes_by_buffer or {}) do
+    if api.nvim_buf_is_valid(buf) then
+      for _, win in ipairs(vim.fn.win_findbuf(buf)) do pane_windows[win] = pane end
+    end
+  end
+end
+
+api.nvim_create_autocmd({ "WinNew", "WinClosed", "BufWinEnter", "BufWinLeave", "TabEnter" }, {
+  group = api.nvim_create_augroup("LuanphanTerminalRecordWindows", { clear = true }),
+  callback = function() vim.schedule(refresh_pane_windows) end,
+})
+
+local tracing = false
+-- A config reload loads this file again; wrap the original functions, not the previous wrappers.
+local originals = vim.luanphan_record_api_originals or {}
+vim.luanphan_record_api_originals = originals
+local function wrap(name)
+  originals[name] = originals[name] or api[name]
+  local original = originals[name]
+  api[name] = function(...)
+    if tracing or next(pane_windows) == nil or not active() then return original(...) end
+    tracing = true
+    local before = {}
+    for win in pairs(pane_windows) do before[win] = grid(win) end
+    local result = { pcall(original, ...) }
+    for win, pane in pairs(pane_windows) do
+      local now = grid(win)
+      if before[win] and now and now ~= before[win] then
+        M.add(pane, "trace", ("%s win=%d %s->%s args=%s%s"):format(name, win, before[win], now,
+          vim.inspect({ ... }, { newline = " ", indent = "" }):sub(1, 300), debug.traceback("", 2)))
+      end
+    end
+    tracing = false
+    if not result[1] then error(result[2], 0) end
+    return unpack(result, 2, table.maxn(result))
+  end
+end
+
+for _, name in ipairs({ "nvim_set_option_value", "nvim_win_set_buf", "nvim_win_set_config", "nvim_win_set_height",
+  "nvim_win_set_width", "nvim_open_win", "nvim_win_close", "nvim_win_hide", "nvim_set_current_win",
+  "nvim_command", "nvim_cmd", "nvim_exec2" }) do
+  wrap(name)
+end
+
 vim.api.nvim_create_user_command("TerminalRecordDump", function(command)
   local path = command.args ~= "" and vim.fn.expand(command.args)
     or (vim.fn.stdpath("state") .. "/terminal-record-" .. os.date("%Y%m%d-%H%M%S") .. ".log")

@@ -1016,6 +1016,47 @@ assert(has(dump, "resize") or has(dump, "size"), "the dump has no size change")
   assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
 end
 
+local function test_terminal_record_traces_grid_change()
+  if vim.fn.executable("tmux") == 0 then return end
+  local root = uv.fs_mkdtemp("/tmp/nvim-tmux-trace-XXXXXX")
+  local script, socket = root .. "/test.lua", root .. "/socket"
+  write(root .. "/tmux.conf", { "set -g default-shell /bin/sh", "set -g default-command 'exec /bin/sh'" })
+  write(root .. "/settings.toml", { "[terminal_record]", "enabled = true", "max_mb = 4" })
+  write(script, vim.list_extend({
+    "local root = " .. string.format("%q", root),
+    "vim.g.luanphan_floating_tmux_socket = root .. '/socket'",
+    "vim.g.luanphan_floating_tmux_config = root .. '/tmux.conf'",
+    "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
+    "vim.g.luanphan_recent_paths_file = root .. '/recent.json'",
+    "vim.g.luanphan_terminal_sessions_dir = root .. '/sessions'",
+  }, vim.split([=[
+local api = vim.api
+api.nvim_feedkeys(vim.keycode(vim.g.mapleader .. "t"), "xt", false)
+assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane and vim.bo.buftype == "terminal" end), "tmux terminal did not attach")
+local id, win = vim.b.luanphan_tmux_pane, api.nvim_get_current_win()
+vim.wait(100)
+-- Remove and restore the bar in one tick, the change that shifts a terminal unnoticed.
+local function flip_winbar()
+  local bar = vim.wo[win].winbar
+  vim.wo[win].winbar = bar == "" and "bar" or ""
+  vim.wo[win].winbar = bar
+end
+flip_winbar()
+vim.cmd("silent TerminalRecordDump " .. root .. "/dump.log")
+local data = assert(io.open(root .. "/dump.log", "rb")):read("*a")
+local traces = {}
+for line in data:gmatch("\t" .. vim.pesc(id) .. "\ttrace\t%d+\n(nvim_set_option_value[^\n]*)") do
+  traces[#traces + 1] = line
+end
+assert(#traces == 2, "the dump does not trace both winbar changes:\n" .. table.concat(traces, "\n"))
+assert(data:find("flip_winbar", 1, true), "the trace does not name the caller")
+]=], "\n", { plain = true })))
+  local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
+  vim.system({ "tmux", "-S", socket, "kill-server" }):wait()
+  vim.fn.delete(root, "rf")
+  assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+end
+
 local function test_terminal_record_limits()
   local recorder = require("luanphan.view_container.tmux.recorder")
   local original = vim.g.luanphan_global_settings_path
@@ -1373,6 +1414,7 @@ return {
   test_tmux_frame_keeps_pending_wrap = test_tmux_frame_keeps_pending_wrap,
   test_terminal_record_dump = test_terminal_record_dump,
   test_terminal_record_limits = test_terminal_record_limits,
+  test_terminal_record_traces_grid_change = test_terminal_record_traces_grid_change,
   test_claude_title_reports_status = test_claude_title_reports_status,
   test_terminal_view_container = test_terminal_view_container,
   test_worktree_switch_hides_toggleterm = test_worktree_switch_hides_toggleterm,

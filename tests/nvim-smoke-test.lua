@@ -54,6 +54,7 @@ local agent_tests = {
   tmux_pending_wrap = T.test_tmux_frame_keeps_pending_wrap,
   record_dump = T.test_terminal_record_dump,
   record_limits = T.test_terminal_record_limits,
+  record_trace = T.test_terminal_record_traces_grid_change,
   claude_title_status = T.test_claude_title_reports_status,
 }
 
@@ -325,6 +326,7 @@ local setup_ok, setup_err = xpcall(function()
   test("tmux terminal repaint keeps a pending wrap", agent_tests.tmux_pending_wrap)
   test("terminal record dumps output and repaints", agent_tests.record_dump)
   test("terminal record keeps its size limit", agent_tests.record_limits)
+  test("terminal record traces a terminal grid change", agent_tests.record_trace)
   test("claude title reports working and done", agent_tests.claude_title_status)
   test("agent window picker keeps the tiled panel together", function()
     agent_tests.tiled_workspace_picker(repo, worktree)
