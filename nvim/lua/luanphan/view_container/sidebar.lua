@@ -159,7 +159,8 @@ function M.render(bar, groups, active, offsets)
       api.nvim_buf_set_extmark(buf, ns, index - 1, 0, { end_col = row.prefix_width, hl_group = "Comment" })
       if row.item.icon and row.icon_col >= row.prefix_width then
         api.nvim_buf_set_extmark(buf, ns, index - 1, 0, {
-          virt_text = { { row.item.icon, "Comment" } }, virt_text_win_col = row.icon_col, hl_mode = "combine",
+          virt_text = { { row.item.icon, row.item.icon_hl or "Comment" } }, virt_text_win_col = row.icon_col,
+          hl_mode = "combine",
         })
       end
     end

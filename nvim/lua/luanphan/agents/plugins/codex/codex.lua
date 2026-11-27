@@ -1,5 +1,6 @@
 local M = {
   icon = "\u{ec81}",
+  icon_color = "#FFFFFF",
   plugin = "luanphan-codex-agent",
   status = { initial = "idle" },
 }

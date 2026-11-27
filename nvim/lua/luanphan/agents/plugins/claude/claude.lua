@@ -2,6 +2,7 @@
 -- "✳ name" means idle or waiting for input (">" and "*" when only ASCII is allowed).
 local M = {
   icon = "\u{ec82}",
+  icon_color = "#D97757",
   plugin = "luanphan-claude-agent",
   status = { initial = "idle" },
   defaults = { cmd = "mclaude" },

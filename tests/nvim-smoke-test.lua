@@ -57,6 +57,7 @@ local agent_tests = {
   record_trace = T.test_terminal_record_traces_grid_change,
   tab_switch_grid = T.test_agent_tab_switch_keeps_terminal_grid,
   claude_title_status = T.test_claude_title_reports_status,
+  icon_colors = T.test_agent_icon_colors,
 }
 
 local lsp_lifecycle_tests = {
@@ -330,6 +331,7 @@ local setup_ok, setup_err = xpcall(function()
   test("terminal record traces a terminal grid change", agent_tests.record_trace)
   test("agent tab switch keeps the terminal grid", agent_tests.tab_switch_grid)
   test("claude title reports working and done", agent_tests.claude_title_status)
+  test("agent icons keep their colors", agent_tests.icon_colors)
   test("agent window picker keeps the tiled panel together", function()
     agent_tests.tiled_workspace_picker(repo, worktree)
   end)

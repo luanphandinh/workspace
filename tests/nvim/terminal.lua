@@ -1208,6 +1208,70 @@ assert(view.tab_label(buf) == "Fix the parser", "claude title kept its status pr
   assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
 end
 
+local function test_agent_icon_colors()
+  if vim.fn.executable("tmux") == 0 then return end
+  for _, style in ipairs({ "vertical", "horizontal" }) do
+    local root = uv.fs_mkdtemp("/tmp/nvim-agent-icons-XXXXXX")
+    local script = root .. "/test.lua"
+    write(root .. "/settings.toml", { "[agent_float]", 'display_style = "tile"', 'window_bar_style = "' .. style .. '"' })
+    write(script, vim.list_extend({
+      "local root = " .. string.format("%q", root),
+      "local style = " .. string.format("%q", style),
+      "vim.g.luanphan_global_settings_path = root .. '/settings.toml'",
+      "vim.g.luanphan_recent_paths_file = root .. '/recent.json'",
+      "vim.g.luanphan_claude_sessions_dir = root .. '/sessions'",
+      "vim.g.luanphan_codex_sessions_dir = root .. '/codex-sessions'",
+      "vim.g.luanphan_cursor_sessions_dir = root .. '/cursor-sessions'",
+      "vim.g.luanphan_terminal_sessions_dir = root .. '/terminal-sessions'",
+    }, vim.split([=[
+local api = vim.api
+local claude = require("luanphan.agents.plugins.claude.claude")
+claude.defaults.cmd = { "sleep", "60" }
+local agents = require("luanphan.agents.main")
+-- The horizontal bar shows one tab per workspace with its active pane's icon, so claude goes last.
+assert(agents.new("terminal", { view_mode = true }), "could not open a shell pane")
+assert(agents.new("claude"), "could not open a claude pane")
+local shell_icon = require("luanphan.view_container.shell").icon
+-- The highlight that colors an icon in the window bar: the sidebar's virtual text, or the
+-- strongest highlight over the icon's bytes in the tab bar.
+local function icon_highlight(icon)
+  for _, win in ipairs(api.nvim_list_wins()) do
+    local buf = api.nvim_win_get_buf(win)
+    if vim.bo[buf].filetype:find("window%-bar$") then
+      local found, priority
+      for _, mark in ipairs(api.nvim_buf_get_extmarks(buf, -1, 0, -1, { details = true })) do
+        local row, col, details = mark[2], mark[3], mark[4]
+        if details.virt_text and details.virt_text[1][1] == icon then return details.virt_text[1][2] end
+        if details.hl_group and details.end_col then
+          local line = api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or ""
+          local start = line:find(icon, 1, true)
+          if start and col <= start - 1 and details.end_col >= start - 1 + #icon
+            and (not priority or details.priority > priority) then
+            found, priority = details.hl_group, details.priority
+          end
+        end
+      end
+      if found then return found end
+    end
+  end
+end
+local group
+assert(vim.wait(5000, function() group = icon_highlight(claude.icon); return group ~= nil end, 20),
+  style .. " bar never showed the claude icon")
+local function color(name) return api.nvim_get_hl(0, { name = name, link = false }).fg end
+assert(color(group) == 0xD97757, style .. " bar draws the claude icon with " .. group)
+local shell_group = icon_highlight(shell_icon)
+assert(shell_group == nil or color(shell_group) ~= 0xD97757, style .. " bar colored the shell icon like claude")
+vim.cmd.colorscheme("default")
+assert(color(group) == 0xD97757, "a colorscheme change cleared the claude icon color")
+]=], "\n", { plain = true })))
+    local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
+    vim.system({ "tmux", "-S", agent_socket(script), "kill-server" }):wait()
+    vim.fn.delete(root, "rf")
+    assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
+  end
+end
+
 local function test_terminal_view_container(repo)
   local old_cwd = vim.fn.getcwd()
   close_toggleterm_terminals()
@@ -1274,6 +1338,9 @@ local function test_terminal_view_container(repo)
     assert_true(vim.api.nvim_win_get_config(agent_win).zindex > terminal_layer
         and agent_bar and vim.api.nvim_win_get_config(agent_bar).zindex > terminal_layer,
       "integrated terminal can draw over the agent panel")
+    local floating = require("luanphan.view_container").layout(require("luanphan.global_settings").read().floating_terminal)
+    assert_true(floating.body.zindex > terminal_layer and (not floating.bar or floating.bar.zindex > terminal_layer),
+      "integrated terminal can draw over the floating terminal")
     assert_true(agents.hide(), "could not close the agent overlay")
     vim.api.nvim_buf_delete(agent_buf, { force = true })
     assert_true(vim.api.nvim_win_is_valid(first_win) and vim.fn.jobwait({ first_job }, 0)[1] == -1,
@@ -1478,6 +1545,7 @@ return {
   test_terminal_record_traces_grid_change = test_terminal_record_traces_grid_change,
   test_agent_tab_switch_keeps_terminal_grid = test_agent_tab_switch_keeps_terminal_grid,
   test_claude_title_reports_status = test_claude_title_reports_status,
+  test_agent_icon_colors = test_agent_icon_colors,
   test_terminal_view_container = test_terminal_view_container,
   test_worktree_switch_hides_toggleterm = test_worktree_switch_hides_toggleterm,
 }

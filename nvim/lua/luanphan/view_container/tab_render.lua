@@ -62,7 +62,7 @@ function M.render(self, win, context, single_tab)
 end
 
 function M.render_windows(bar)
-	local labels, highlights, columns = {}, {}, {}
+	local labels, highlights, columns, icons = {}, {}, {}, {}
 	local focused = vim.api.nvim_get_current_win() == bar.win
 	local col = 0
 	bar.animating = false
@@ -77,6 +77,11 @@ function M.render_windows(bar)
 		if item and item.icon and item.icon ~= "" then label = label .. " " .. item.icon end
 		local active = (focused and index == bar.selected) or (not focused and row.active)
 		labels[index], highlights[index] = tab_text(label, active)
+		if item and item.icon_hl and item.icon and item.icon ~= "" then
+			-- The icon ends the label, which tab_text follows with "] " or " ".
+			local stop = #labels[index] - (active and 2 or 1)
+			icons[index] = { stop - #item.icon, stop, item.icon_hl }
+		end
 		col = col + vim.fn.strdisplaywidth(labels[index])
 		columns[index] = col
 	end
@@ -91,6 +96,13 @@ function M.render_windows(bar)
 	local offset = 0
 	for index, text in ipairs(labels) do
 		vim.api.nvim_buf_set_extmark(buf, window_tabs, 0, offset, { end_col = offset + #text, hl_group = highlights[index] })
+		local icon = icons[index]
+		if icon then
+			-- Above the tab highlight (default extmark priority 4096), so focus and selection keep the
+			-- icon's own color.
+			vim.api.nvim_buf_set_extmark(buf, window_tabs, 0, offset + icon[1],
+				{ end_col = offset + icon[2], hl_group = icon[3], priority = 4097 })
+		end
 		offset = offset + #text
 	end
 end

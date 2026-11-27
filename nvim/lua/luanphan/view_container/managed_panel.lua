@@ -10,8 +10,21 @@ local terminal = require("luanphan.view_container.terminal")
 local pane_status = require("luanphan.view_container.pane_status")
 local M = {}
 
+local function icon_highlight(kind)
+  return "LuanphanViewIcon" .. kind:gsub("^%l", string.upper)
+end
+
 function M.create(owner, opts)
   local backend, providers = opts.backend, opts.providers
+  -- A provider's `icon_color` keeps its icon in that color in the sidebar and the tab bar, on any
+  -- row or tab highlight. A colorscheme change clears the groups, so they are defined again.
+  local function define_icon_highlights()
+    for kind, provider in pairs(providers) do
+      if provider.icon_color then vim.api.nvim_set_hl(0, icon_highlight(kind), { fg = provider.icon_color }) end
+    end
+  end
+  define_icon_highlights()
+  vim.api.nvim_create_autocmd("ColorScheme", { callback = define_icon_highlights })
   local sessions = opts.sessions or require("luanphan.view_container.session_store").create({
     valid_id = require("luanphan.view_container.uuid").is_valid, directory = opts.session_dir,
   })
@@ -403,6 +416,7 @@ function M.create(owner, opts)
           return {
             id = sessions.key(instance), sort_id = instance.thread_id, bufnr = instance.bufnr,
             label = instance.label, icon = providers[instance.kind].icon, thread = instance,
+            icon_hl = providers[instance.kind].icon_color and icon_highlight(instance.kind) or nil,
             pane_order = instance.pane_order,
           }
         end)

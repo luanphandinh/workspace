@@ -51,7 +51,8 @@ function M.layout(settings, opts)
   local frame = {
     relative = "editor", row = 0, col = 0, width = vim.o.columns - inset,
     height = math.max(opts.min_height or 4, vim.o.lines - vim.o.cmdheight) - inset,
-    border = border, zindex = opts.zindex or 40,
+    -- Docked panels are part of the editor layout, so floating panels always draw over them.
+    border = border, zindex = opts.zindex or (opts.docked and 30 or 40),
   }
   local body, bar
   if opts.docked then
