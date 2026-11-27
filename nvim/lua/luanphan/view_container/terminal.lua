@@ -169,18 +169,12 @@ function M.bind_navigation(buf, navigate)
   end
 end
 
-function M.mount(buf, win, open, prepare, highlights)
-  local placeholder
-  if not win or not api.nvim_win_is_valid(win) then
-    -- Reserve the winbar before attaching a live terminal so its grid stays stable.
-    if vim.bo[buf].buftype == "terminal" then placeholder = api.nvim_create_buf(false, true) end
-    win = open(placeholder or buf)
-  end
-  prepare(win)
+function M.mount(buf, win, open, highlights)
+  -- Open the window empty: the panel fits it around its sidebar before the terminal enters.
+  if not win or not api.nvim_win_is_valid(win) then win = open() end
   -- Drop editor columns first: a narrower window would make Neovim rewrap the terminal and move its cursor.
   M.configure_window(win, highlights)
   if api.nvim_win_get_buf(win) ~= buf then api.nvim_win_set_buf(win, buf) end
-  if placeholder then pcall(api.nvim_buf_delete, placeholder, { force = true }) end
   api.nvim_set_current_win(win)
   M.configure_window(win, highlights)
   return win

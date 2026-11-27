@@ -12,7 +12,7 @@ local M = vim.tbl_extend("force", window, {
 	tab_label = tabs.tab_label, workspace_groups = bars.workspace_groups,
 	select = picker.select, compact_picker_opts = picker.compact_opts, layout = geometry.layout,
 })
-local Container = { reserve = tabs.reserve, render = tabs.render,
+local Container = { render = tabs.render,
 	refresh_tile_highlights = tiles.refresh_tile_highlights }
 Container.__index = Container
 local watched_layouts = setmetatable({}, { __mode = "k" })
@@ -388,7 +388,6 @@ function Container:reflow(anchor, context, layout, active, opts)
 	if not vim.api.nvim_win_is_valid(anchor) then return end
 	if not panes then
 		if active and vim.api.nvim_win_get_buf(anchor) ~= active.bufnr then
-			self:reserve(anchor)
 			vim.api.nvim_win_set_buf(anchor, active.bufnr)
 		end
 		local buf = vim.api.nvim_win_get_buf(anchor)

@@ -183,14 +183,6 @@ local function tile(self, anchor, context, geometry, tabs)
 		local win = is_anchor and anchor or previous[tab.id]
 		local opened = not win or not vim.api.nvim_win_is_valid(win)
 		local frame = layout[index]
-		local reserve_bar
-		if (opened or (is_anchor and anchor_buf ~= old_anchor_buf)) and vim.bo[tab.bufnr].buftype == "terminal" then
-			-- Reserve the bar before Neovim measures the terminal's new viewport.
-			reserve_bar = vim.api.nvim_create_autocmd("BufWinEnter", {
-				buffer = tab.bufnr, once = true,
-				callback = function() self:reserve(vim.api.nvim_get_current_win()) end,
-			})
-		end
 		if opened then
 			win = require("luanphan.view_container.terminal").open_window(tab.bufnr, false, frame)
 		else
@@ -207,7 +199,6 @@ local function tile(self, anchor, context, geometry, tabs)
 		if vim.api.nvim_win_get_buf(win) ~= tab.bufnr then
 			vim.api.nvim_win_set_buf(win, tab.bufnr)
 		end
-		if reserve_bar then pcall(vim.api.nvim_del_autocmd, reserve_bar) end
 		self:render(win, context, tab)
 		panes[#panes + 1] = { win = win, tab = tab, opened = opened }
 	end

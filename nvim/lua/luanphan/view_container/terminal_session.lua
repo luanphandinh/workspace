@@ -97,8 +97,7 @@ function M.create(profile)
       container:layout_sidebar(win, layout)
       return win
     end
-    return terminal_pane.mount(buf, opts and opts.reuse_win, open, function(win) container:reserve(win) end,
-      container.opts.highlights)
+    return terminal_pane.mount(buf, opts and opts.reuse_win, open, container.opts.highlights)
   end
 
   local function open_terminal(opts, on_start)
@@ -204,7 +203,6 @@ function M.create(profile)
     if win then
       view_container.show_panel(profile.panel)
       container:use_anchor(view_container.group_anchor(win))
-      container:reserve(win)
       terminal_pane.configure_window(win, container.opts.highlights)
       pcall(show, cur, win)
     end

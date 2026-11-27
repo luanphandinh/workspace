@@ -23,13 +23,6 @@ function M.bind_title(buf, callback)
 	})
 end
 
-function M.reserve(_, win)
-	if not win or not vim.api.nvim_win_is_valid(win) then
-		return
-	end
-	vim.api.nvim_set_option_value("winbar", "%#TabLineFill# ", { win = win, scope = "local" })
-end
-
 local function tab_text(label, selected)
 	if selected then return " [" .. label .. "] ", "TabLineSel" end
 	return " " .. label .. " ", "TabLine"
