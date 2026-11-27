@@ -30,14 +30,48 @@
   overflow-wrap: anywhere;
 }
 
-@media (min-width: 1500px) {
-  .preview-toc {
-    position: fixed;
+/* [toc] sits inside a paragraph, so the browser leaves empty paragraphs around it. */
+.markdown-body > p:empty {
+  display: none;
+}
+
+/* Wide windows: the contents sidebar stays at the left edge and the document stays centered.
+   The left column cannot be narrower than the sidebar, so widening the sidebar (drag its
+   bottom-right corner) pushes the document right only once they would overlap. */
+@media (min-width: 1000px) {
+  #page-ctn:has(.markdown-body > .preview-toc) {
+    max-width: none;
+  }
+
+  .markdown-body:has(> .preview-toc) {
+    display: grid;
+    grid-template-columns: minmax(auto, 1fr) minmax(0, 900px) minmax(0, 1fr);
+    column-gap: 32px;
+    align-items: start;
+    padding: 32px 24px;
+  }
+
+  .markdown-body:has(> .preview-toc) > * {
+    grid-column: 2;
+  }
+
+  /* Grid items keep both margins, so trim heading tops to match the usual collapsed spacing. */
+  .markdown-body:has(> .preview-toc) > :is(h1, h2, h3, h4, h5, h6) {
+    margin-top: 8px;
+  }
+
+  .markdown-body > .preview-toc {
+    grid-column: 1;
+    grid-row: 1 / span 5000;
+    justify-self: start;
+    position: sticky;
     top: 24px;
-    left: 20px;
     width: 240px;
+    min-width: 160px;
+    max-width: 50vw;
     max-height: calc(100vh - 48px);
     box-sizing: border-box;
     overflow-y: auto;
+    resize: horizontal;
   }
 }
