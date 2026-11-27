@@ -244,6 +244,10 @@ local function reopen(panel, source_buf)
   if restored.key == panel.key and api.nvim_win_is_valid(restored.anchor) then return restored end
 end
 
+function M.in_panel(win)
+  return panel_for(win) ~= nil
+end
+
 function M.open_reference(win, path, line, column)
   local panel = panel_for(win)
   if not panel then return end

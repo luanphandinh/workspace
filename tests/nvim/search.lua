@@ -1098,15 +1098,16 @@ local function test_workspace_folder_browser()
     "expect_jump('<C-o>', second)",
     "expect_jump('<C-i>', first)",
     "expect_jump('<C-i>', third)",
-    "vim.b[third].luanphan_view_kind = nil",
+    "local agent_win = vim.api.nvim_get_current_win()",
     "vim.fn.maparg('<leader>p', 'n', false, true).callback()",
     "prompt_bufnr = vim.api.nvim_get_current_buf()",
     "picker = action_state.get_current_picker(prompt_bufnr)",
     "picker:set_prompt('open-from-agent')",
     "assert_true(vim.wait(3000, function() local selection = picker:get_selection(); return selection and tostring(selection.value):find('open-from-agent.txt', 1, true) end, 20), 'file picker did not find the fixture')",
     "actions.select_default(prompt_bufnr)",
-    "assert_true(realpath(vim.api.nvim_buf_get_name(0)) == realpath(" .. string.format("%q", editor_file) .. "), 'file picker did not open the selected file')",
-    "assert_true(vim.api.nvim_win_get_config(0).relative == '' and vim.bo[third].buftype == 'terminal', 'file picker replaced the agent terminal pane')",
+    "assert_true(vim.wait(3000, function() return realpath(vim.api.nvim_buf_get_name(0)) == realpath(" .. string.format("%q", editor_file) .. ") end, 20), 'file picker did not open the selected file')",
+    "assert_true(require('luanphan.view_container.editor').window(agent_win) == vim.api.nvim_get_current_win(), 'file picker from an agent did not open in its editor tile')",
+    "assert_true(vim.api.nvim_win_is_valid(agent_win) and vim.api.nvim_win_get_buf(agent_win) == third, 'file picker replaced the agent terminal pane')",
   })
   local output = vim.fn.systemlist(child_nvim_luafile_command(station, script))
   assert_true(vim.v.shell_error == 0, table.concat(output, "\n"))
