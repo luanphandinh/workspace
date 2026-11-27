@@ -169,12 +169,13 @@ function M.bind_navigation(buf, navigate)
   end
 end
 
-function M.mount(buf, win, open, highlights)
+function M.mount(buf, win, open, prepare, highlights)
   -- Open the window empty: the panel fits it around its sidebar before the terminal enters.
   if not win or not api.nvim_win_is_valid(win) then win = open() end
   -- Drop editor columns first: a narrower window would make Neovim rewrap the terminal and move its cursor.
   M.configure_window(win, highlights)
   if api.nvim_win_get_buf(win) ~= buf then api.nvim_win_set_buf(win, buf) end
+  prepare(win)
   api.nvim_set_current_win(win)
   M.configure_window(win, highlights)
   return win

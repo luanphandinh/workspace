@@ -12,7 +12,7 @@ local M = vim.tbl_extend("force", window, {
 	tab_label = tabs.tab_label, workspace_groups = bars.workspace_groups,
 	select = picker.select, compact_picker_opts = picker.compact_opts, layout = geometry.layout,
 })
-local Container = { render = tabs.render,
+local Container = { reserve = tabs.reserve, render = tabs.render,
 	refresh_tile_highlights = tiles.refresh_tile_highlights }
 Container.__index = Container
 local watched_layouts = setmetatable({}, { __mode = "k" })

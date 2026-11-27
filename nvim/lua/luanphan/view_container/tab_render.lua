@@ -23,6 +23,14 @@ function M.bind_title(buf, callback)
 	})
 end
 
+-- A buffer shown in a window for the first time comes without a winbar. Give the window its bar row
+-- before a new terminal starts there, so the terminal starts at its final height.
+function M.reserve(_, win)
+	if vim.api.nvim_get_option_value("winbar", { win = win }) == "" then
+		vim.api.nvim_set_option_value("winbar", "%#TabLineFill# ", { win = win, scope = "local" })
+	end
+end
+
 local function tab_text(label, selected)
 	if selected then return " [" .. label .. "] ", "TabLineSel" end
 	return " " .. label .. " ", "TabLine"

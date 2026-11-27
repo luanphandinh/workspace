@@ -89,14 +89,38 @@ end
 -- A change becomes a "trace" event.
 local api = vim.api
 local last_grid = setmetatable({}, { __mode = "k" })
+local last_call = { name = "none", time = 0 }
+local watched = {}
+
+-- Normal output only changes or appends lines, and scrollback trims and clears start at the top.
+-- Lines removed below the top mean Neovim pulled scrollback onto a taller screen and dropped a row
+-- again: the terminal was resized, maybe inside one call. This runs on Neovim's next refresh, so
+-- it names the last wrapped call instead of a traceback.
+local function watch(buf, pane)
+  watched[buf] = true
+  api.nvim_buf_attach(buf, false, {
+    on_lines = function(_, _, _, first, last, new_last)
+      if (vim.luanphan_tmux_panes_by_buffer or {})[buf] ~= pane then
+        watched[buf] = nil
+        return true
+      end
+      if new_last < last and first > 0 and active() then
+        M.add(pane, "trace", ("lines removed %d-%d->%d last_call=%s %dms ago"):format(first, last, new_last,
+          last_call.name, vim.uv.now() - last_call.time))
+      end
+    end,
+  })
+end
 
 local function check(source, details)
   local panes = vim.luanphan_tmux_panes_by_buffer
   if not panes then return end
   local grids = {}
   for _, win in ipairs(api.nvim_list_wins()) do
-    local pane = panes[api.nvim_win_get_buf(win)]
+    local buf = api.nvim_win_get_buf(win)
+    local pane = panes[buf]
     if pane then
+      if not watched[buf] then watch(buf, pane) end
       local bar = api.nvim_get_option_value("winbar", { win = win }) ~= "" and 1 or 0
       local width, height = api.nvim_win_get_width(win), api.nvim_win_get_height(win) - bar
       local grid = grids[pane]
@@ -125,6 +149,7 @@ local function wrap(name)
   api[name] = function(...)
     if tracing or not active() then return original(...) end
     tracing = true
+    last_call.name, last_call.time = name, vim.uv.now()
     local args = { ... }
     local result = { pcall(original, ...) }
     check(name, function()
@@ -141,6 +166,15 @@ for _, name in ipairs({ "nvim_set_option_value", "nvim_win_set_buf", "nvim_win_s
   "nvim_command", "nvim_cmd", "nvim_exec2" }) do
   wrap(name)
 end
+
+-- These run inside calls such as nvim_win_set_buf, so they also see a grid that changes and
+-- changes back before the call returns.
+api.nvim_create_autocmd({ "BufWinEnter", "WinNew", "WinEnter", "WinResized", "VimResized" }, {
+  group = api.nvim_create_augroup("LuanphanTerminalRecordGrid", { clear = true }),
+  callback = function(event)
+    if active() then check(event.event, function() return debug.traceback("", 3) end) end
+  end,
+})
 
 api.nvim_set_decoration_provider(api.nvim_create_namespace("luanphan_terminal_record"), {
   on_start = function()

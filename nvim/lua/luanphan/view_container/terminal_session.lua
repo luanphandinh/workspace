@@ -97,7 +97,8 @@ function M.create(profile)
       container:layout_sidebar(win, layout)
       return win
     end
-    return terminal_pane.mount(buf, opts and opts.reuse_win, open, container.opts.highlights)
+    return terminal_pane.mount(buf, opts and opts.reuse_win, open, function(win) container:reserve(win) end,
+      container.opts.highlights)
   end
 
   local function open_terminal(opts, on_start)

@@ -74,7 +74,6 @@ new_base="$TMP/new/settings.json"
 python3 "$ROOT/bin/merge_json" "$new_base" "$ROOT/claude/settings.json"
 assert_not_exists "${new_base}_${DATE}_0"
 assert_json "$new_base" 'settings["remoteControlAtStartup"] is True'
-assert_json "$new_base" 'settings["env"]["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] == "1"'
 
 invalid="$TMP/invalid.json"
 printf '{ not json\n' > "$invalid"

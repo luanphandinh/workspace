@@ -1033,8 +1033,14 @@ local function test_terminal_record_traces_grid_change()
 local api = vim.api
 api.nvim_feedkeys(vim.keycode(vim.g.mapleader .. "t"), "xt", false)
 assert(vim.wait(4000, function() return vim.b.luanphan_tmux_pane and vim.bo.buftype == "terminal" end), "tmux terminal did not attach")
-local id, win = vim.b.luanphan_tmux_pane, api.nvim_get_current_win()
-vim.wait(100)
+local id, win, buf = vim.b.luanphan_tmux_pane, api.nvim_get_current_win(), api.nvim_get_current_buf()
+-- Scrollback and blank rows at the bottom, like an inline UI below its prompt: a taller screen
+-- then pulls a scrollback line onto it.
+vim.system({ "tmux", "-S", root .. "/socket", "send-keys", "-t", id, "clear; seq 1 200; printf '\\033[3A\\r\\033[J'; sleep 60", "Enter" }):wait()
+assert(vim.wait(5000, function()
+  return table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), "\n"):find("\n197\n", 1, true) ~= nil
+end, 20), "output did not arrive")
+vim.wait(200)
 -- Remove and restore the bar in one tick, the change that shifts a terminal unnoticed.
 local function flip_winbar()
   local bar = vim.wo[win].winbar
@@ -1042,6 +1048,8 @@ local function flip_winbar()
   vim.wo[win].winbar = bar
 end
 flip_winbar()
+-- Neovim copies the resized screen into the buffer on its next refresh.
+vim.wait(300)
 vim.cmd("silent TerminalRecordDump " .. root .. "/dump.log")
 local data = assert(io.open(root .. "/dump.log", "rb")):read("*a")
 local traces = {}
@@ -1050,6 +1058,8 @@ for line in data:gmatch("\t" .. vim.pesc(id) .. "\ttrace\t%d+\n(nvim_set_option_
 end
 assert(#traces == 2, "the dump does not trace both winbar changes:\n" .. table.concat(traces, "\n"))
 assert(data:find("flip_winbar", 1, true), "the trace does not name the caller")
+assert(data:find("\t" .. vim.pesc(id) .. "\ttrace\t%d+\nlines removed [^\n]*last_call=nvim_set_option_value"),
+  "the dump does not show the scrollback line the flip pulled onto the screen")
 ]=], "\n", { plain = true })))
   local output = vim.fn.systemlist(child_nvim_luafile_command(root, script))
   vim.system({ "tmux", "-S", socket, "kill-server" }):wait()
