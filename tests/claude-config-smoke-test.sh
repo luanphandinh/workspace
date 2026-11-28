@@ -77,20 +77,24 @@ assert_json "$new_base" 'settings["remoteControlAtStartup"] is True'
 
 # Run the configured status line command the way Claude Code does: in a shell, with session JSON on stdin.
 status_home="$TMP/status-home"
-mkdir -p "$status_home/bin"
+mkdir -p "$status_home/bin" "$status_home/.claude/sessions"
 cp "$ROOT/bin/claude-code-statusline" "$status_home/bin/"
+# Claude Code writes one state file per process; bridgeSessionId is set while Remote Control is connected.
+printf '%s' '{"pid":101,"sessionId":"connected-session","bridgeSessionId":"session_example"}' > "$status_home/.claude/sessions/101.json"
+printf '%s' '{"pid":102,"sessionId":"local-session","bridgeSessionId":null}' > "$status_home/.claude/sessions/102.json"
 status_command=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["statusLine"]["command"])' "$new_base")
-status_line=$(printf '%s' '{"model":{"id":"claude-opus-5-5","display_name":"Opus"},"effort":{"level":"high"},"context_window":{"context_window_size":200000,"used_percentage":10}}' |
+green=$(printf '\033[32m') red=$(printf '\033[31m') reset=$(printf '\033[0m')
+status_line=$(printf '%s' '{"session_id":"connected-session","model":{"id":"claude-opus-5-5","display_name":"Opus"},"effort":{"level":"high"},"context_window":{"context_window_size":200000,"used_percentage":10}}' |
 	HOME="$status_home" sh -c "$status_command")
-case "$status_line" in
-	"Opus · high │ ctx 20.0k/200.0k (10%)") ;;
-	*) printf 'status line is not just model, effort, and context: %s\n' "$status_line" >&2; exit 1 ;;
-esac
-status_line=$(printf '%s' '{"model":{"id":"example-model","display_name":"Example"}}' | HOME="$status_home" sh -c "$status_command")
-case "$status_line" in
-	"Example │ ctx 0/? (0%)") ;;
-	*) printf 'status line showed an effort the model does not report: %s\n' "$status_line" >&2; exit 1 ;;
-esac
+if [ "$status_line" != "Opus · high │ ctx 20.0k/200.0k (10%) │ ${green}rc${reset}" ]; then
+	printf 'status line is not model, effort, context, and a green rc: %s\n' "$status_line" >&2
+	exit 1
+fi
+status_line=$(printf '%s' '{"session_id":"local-session","model":{"id":"example-model","display_name":"Example"}}' | HOME="$status_home" sh -c "$status_command")
+if [ "$status_line" != "Example │ ctx 0/? (0%) │ ${red}rc off${reset}" ]; then
+	printf 'status line showed an effort the model does not report or a missing Remote Control: %s\n' "$status_line" >&2
+	exit 1
+fi
 
 invalid="$TMP/invalid.json"
 printf '{ not json\n' > "$invalid"

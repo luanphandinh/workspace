@@ -4,6 +4,7 @@
 Fields:
   model        model name, with its effort level when the model supports effort
   ctx          current context tokens / model window (from stdin context_window)
+  rc           green when the session is connected to Remote Control, red when not
 
 Input:  Claude Code pipes a JSON blob on stdin.
 Output: one line to stdout.
@@ -16,6 +17,9 @@ from datetime import datetime
 from pathlib import Path
 
 ERR_LOG = Path("/tmp/claude-code-statusline.err.log")
+# Claude Code keeps one state file per process here; bridgeSessionId is set while Remote Control is connected.
+SESSIONS_DIR = Path.home() / ".claude" / "sessions"
+GREEN, RED, RESET = "\033[32m", "\033[31m", "\033[0m"
 
 
 def _num(v):
@@ -43,6 +47,19 @@ def fmt_k(n: int) -> str:
     if n >= 1_000:
         return f"{n / 1_000:.1f}k"
     return str(int(n))
+
+
+def remote_control_connected(session_id) -> bool:
+    if not session_id:
+        return False
+    for path in SESSIONS_DIR.glob("*.json"):
+        try:
+            state = json.loads(path.read_text())
+        except Exception:
+            continue
+        if isinstance(state, dict) and state.get("sessionId") == session_id and state.get("bridgeSessionId"):
+            return True
+    return False
 
 
 def render(data: dict) -> str:
@@ -75,6 +92,7 @@ def render(data: dict) -> str:
     parts = [
         model_name,
         f"ctx {fmt_k(ctx)}/{fmt_k(ctx_limit) if ctx_limit else '?'} ({ctx_pct:.0f}%)",
+        f"{GREEN}rc{RESET}" if remote_control_connected(data.get("session_id")) else f"{RED}rc off{RESET}",
     ]
     return " │ ".join(parts)
 
